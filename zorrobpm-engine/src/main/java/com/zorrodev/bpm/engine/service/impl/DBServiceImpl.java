@@ -16,6 +16,7 @@ import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
+import com.zorrodev.bpm.engine.entity.ParallelGatewayEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
@@ -27,6 +28,7 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
+import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
@@ -40,9 +42,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -59,6 +63,7 @@ public class DBServiceImpl implements DBService {
     private final IncidentRepository incidentRepository;
     private final TimerJobRepository timerJobRepository;
     private final MessageSubscriptionRepository messageSubscriptionRepository;
+    private final ParallelGatewayRepository parallelGatewayRepository;
     private final ProcessInstanceMapper processInstanceMapper;
 
     @Override
@@ -143,6 +148,11 @@ public class DBServiceImpl implements DBService {
     public ProcessInstance getProcessInstance(UUID processInstanceId) {
         ProcessInstanceEntity entity = processInstanceRepository.findById(processInstanceId).orElseThrow();
         return processInstanceMapper.toDTO(entity);
+    }
+
+    @Override
+    public void lockProcessInstance(UUID processInstanceId) {
+        processInstanceRepository.findByIdForUpdate(processInstanceId).orElseThrow();
     }
 
     @Override
@@ -397,6 +407,31 @@ public class DBServiceImpl implements DBService {
         MessageSubscriptionEntity entity = messageSubscriptionRepository.findById(subscriptionId).orElseThrow();
         entity.setConsumed(true);
         messageSubscriptionRepository.save(entity);
+    }
+
+    @Override
+    public void recordParallelGatewayArrival(UUID processInstanceId, String gatewayElementId, String enteredFlowId) {
+        if (parallelGatewayRepository.existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(
+                processInstanceId, gatewayElementId, enteredFlowId)) {
+            return;
+        }
+        ParallelGatewayEntity entity = new ParallelGatewayEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setProcessInstanceId(processInstanceId);
+        entity.setGatewayElementId(gatewayElementId);
+        entity.setEnteredFlowId(enteredFlowId);
+        entity.setCreatedAt(Instant.now());
+        parallelGatewayRepository.save(entity);
+    }
+
+    @Override
+    public Set<String> getParallelGatewayArrivedFlows(UUID processInstanceId, String gatewayElementId) {
+        return new HashSet<>(parallelGatewayRepository.findEnteredFlows(processInstanceId, gatewayElementId));
+    }
+
+    @Override
+    public void clearParallelGatewayArrivals(UUID processInstanceId, String gatewayElementId) {
+        parallelGatewayRepository.deleteByProcessInstanceIdAndGatewayElementId(processInstanceId, gatewayElementId);
     }
 
     private Activity getActivity(ActivityEntity activityEntity) {

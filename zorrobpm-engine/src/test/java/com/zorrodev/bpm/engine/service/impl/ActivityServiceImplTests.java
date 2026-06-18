@@ -27,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import com.zorrodev.bpm.contract.exception.EngineException;
@@ -327,9 +328,10 @@ public class ActivityServiceImplTests {
         when(dbService.createToken(eq(token1.getId()))).thenReturn(token2);
         when(dbService.getToken(eq(token2.getId()))).thenReturn(token2);
 
-        Activity activity = new Activity();
-        when(dbService.getActivitiesByTokenAndBpmnElementId(any(UUID.class), eq("flow2"))).thenReturn(List.of(activity));
-        when(dbService.getActivitiesByTokenAndBpmnElementId(any(UUID.class), eq("flow3"))).thenReturn(List.of(), List.of(activity));
+        // join fires only once both incoming flows have arrived: first branch sees {flow2}, the
+        // second sees {flow2, flow3}. Arrival recording itself is a no-op on the mock.
+        when(dbService.getParallelGatewayArrivedFlows(eq(processInstanceId), eq("parallel2")))
+            .thenReturn(Set.of("flow2"), Set.of("flow2", "flow3"));
 
         activityService.execute(processInstanceId, tokenId, "startEvent");
 
@@ -342,6 +344,41 @@ public class ActivityServiceImplTests {
         List<BpmnElementType> elementTypes = elementCaptor.getAllValues().stream().map(BpmnElementModel::getType).toList();
 
         assertThat(elementTypes).contains(BpmnElementType.START_EVENT, BpmnElementType.END_EVENT, BpmnElementType.PARALLEL_GATEWAY);
+
+        // the join consumed its arrivals exactly once when it fired (so a later loop starts fresh)
+        verify(dbService, times(1)).clearParallelGatewayArrivals(processInstanceId, "parallel2");
+    }
+
+    @Test
+    public void parallelJoinDoesNotFireUntilAllBranchesArrive() {
+        // A join with two incoming flows must stay parked while only one branch has arrived, and
+        // must not consume (clear) the partial arrivals.
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        BpmnElementModel join = new BpmnElementModel();
+        join.setId("join1");
+        join.setType(BpmnElementType.PARALLEL_GATEWAY);
+        join.setIncoming(List.of("flowA", "flowB"));
+        join.setOutgoing(List.of("flowOut"));
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(join);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.getParallelGatewayArrivedFlows(processInstanceId, "join1")).thenReturn(Set.of("flowA"));
+
+        activityService.execute(processInstanceId, token, "join1");
+
+        // not all incomings arrived: the join neither fires (no join activity) nor consumes arrivals
+        verify(dbService, times(0)).createActivity(eq(processInstanceId), any(UUID.class), eq(join));
+        verify(dbService, times(0)).clearParallelGatewayArrivals(any(), any());
     }
 
     @Test
@@ -717,6 +754,74 @@ public class ActivityServiceImplTests {
         // resumed: end reached and instance completed
         verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
         verify(dbService, times(1)).completeProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void completeServiceTaskIsIdempotentForFinishedActivity() {
+        // RabbitMQ is at-least-once: a redelivered completion must not advance the token twice.
+        UUID serviceTaskId = UUID.randomUUID();
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setType(BpmnElementType.SERVICE_TASK);
+        activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+
+        activityService.completeServiceTask(serviceTaskId, List.of());
+
+        verify(dbService, times(0)).setVariables(any(), any());
+        verify(dbService, times(0)).completeActivity(any());
+        verify(dbService, times(0)).completeServiceTask(any());
+    }
+
+    @Test
+    public void completionAcquiresInstanceLockBeforeAdvancing() {
+        // The per-instance pessimistic lock is what serialises concurrent async branches so they
+        // cannot race on a parallel-gateway join. It must be taken on every resume path, even the
+        // idempotent short-circuit.
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setType(BpmnElementType.SERVICE_TASK);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+
+        activityService.completeServiceTask(serviceTaskId, List.of());
+
+        verify(dbService).lockProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void unsupportedElementTypeRaisesIncidentInsteadOfLosingToken() {
+        // An element type with no registered handler must not silently drop the token (which would
+        // strand the instance). It is parked as an incident instead.
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        BpmnElementModel unsupported = new BpmnElementModel();
+        unsupported.setId("unsupported1");
+        unsupported.setType(BpmnElementType.MESSAGE_START_EVENT); // no handler registered
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(unsupported);
+
+        UUID activityId = UUID.randomUUID();
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.createActivity(processInstanceId, token, unsupported)).thenReturn(activityId);
+
+        activityService.execute(processInstanceId, token, "unsupported1");
+
+        verify(dbService).errorActivity(activityId);
+        verify(dbService).createIncident(eq(activityId), any());
     }
 
     @Test

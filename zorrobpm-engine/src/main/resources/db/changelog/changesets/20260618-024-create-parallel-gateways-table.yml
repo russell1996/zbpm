@@ -1,0 +1,47 @@
+databaseChangeLog:
+  - logicalFilePath: 20260618-024
+  - changeSet:
+      id: 20260618-024
+      author: zorrodev
+      changes:
+        - createTable:
+            tableName: parallel_gateways
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    primaryKeyName: pk_parallel_gateways
+              - column:
+                  name: process_instance_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: gateway_element_id
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: entered_flow_id
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            constraintName: uk_parallel_gateways__arrival
+            tableName: parallel_gateways
+            columnNames: process_instance_id, gateway_element_id, entered_flow_id
+        - createIndex:
+            tableName: parallel_gateways
+            indexName: idx_parallel_gateways__lookup
+            columns:
+              - column:
+                  name: process_instance_id
+              - column:
+                  name: gateway_element_id
