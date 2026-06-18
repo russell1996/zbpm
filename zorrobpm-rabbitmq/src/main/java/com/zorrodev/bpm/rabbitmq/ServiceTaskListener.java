@@ -39,7 +39,7 @@ public class ServiceTaskListener {
         log.info("Sent data for job {} to {}: {}", detail.getJob(), queueName, detail.getVariables());
     }
 
-    @RabbitListener(queuesToDeclare = @org.springframework.amqp.rabbit.annotation.Queue("zorrobpm.complete-service-task"))
+    @RabbitListener(queues = com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration.COMPLETE_QUEUE)
     public void on(ServiceTaskCompleteData data) {
         log.info("Service task to complete message received - {}", data.getServiceTaskId());
         ServiceTaskCompleted serviceTaskCompleted = new ServiceTaskCompleted();
