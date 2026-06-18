@@ -6,8 +6,15 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Records the arrival of one branch at a parallel-gateway join, identified by the incoming flow it
+ * arrived through. A join fires once arrivals exist for every incoming flow; the rows are then
+ * deleted ("consumed") so that a process looping back through the same join starts counting afresh
+ * instead of re-firing on stale arrivals.
+ */
 @Getter
 @Setter
 @Entity
@@ -16,5 +23,7 @@ public class ParallelGatewayEntity {
     @Id
     private UUID id;
     private UUID processInstanceId;
-    private UUID enteredFlowId;
+    private String gatewayElementId;
+    private String enteredFlowId;
+    private Instant createdAt;
 }
