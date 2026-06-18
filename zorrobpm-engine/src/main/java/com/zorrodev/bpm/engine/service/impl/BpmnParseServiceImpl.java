@@ -255,6 +255,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
         com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel boundaryExt = new com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel();
         boundaryExt.setAttachedToRef(boundaryEvent.getAttachedToRef());
+        // BPMN: cancelActivity defaults to true (interrupting) when the attribute is absent
+        boundaryExt.setInterrupting(boundaryEvent.getCancelActivity() == null || boundaryEvent.getCancelActivity());
         element.getExtensions().setBoundaryEventExtension(boundaryExt);
 
         if (boundaryEvent.getTimerEventDefinition() != null) {
