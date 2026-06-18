@@ -40,4 +40,22 @@ public class BpmnBoundaryEventModel {
 
     @XmlElement(name = "timerEventDefinition", namespace = NS)
     private BpmnTimerEventDefinitionModel timerEventDefinition;
+
+    @XmlElement(name = "errorEventDefinition", namespace = NS)
+    private BpmnErrorEventDefinitionModel errorEventDefinition;
+
+    @XmlElement(name = "messageEventDefinition", namespace = NS)
+    private BpmnMessageEventDefinitionModel messageEventDefinition;
+
+    @XmlElement(name = "signalEventDefinition", namespace = NS)
+    private BpmnSignalEventDefinitionModel signalEventDefinition;
+
+    @XmlElement(name = "escalationEventDefinition", namespace = NS)
+    private BpmnEscalationEventDefinitionModel escalationEventDefinition;
+
+    @XmlElement(name = "conditionalEventDefinition", namespace = NS)
+    private BpmnConditionalEventDefinitionModel conditionalEventDefinition;
+
+    @XmlElement(name = "compensateEventDefinition", namespace = NS)
+    private BpmnCompensateEventDefinitionModel compensateEventDefinition;
 }

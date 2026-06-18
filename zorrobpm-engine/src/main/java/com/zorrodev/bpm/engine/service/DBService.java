@@ -29,6 +29,10 @@ public interface DBService {
 
     void cancelActiveActivities(UUID processInstanceId);
 
+    /** Cancels active (created/in-progress) activities carried by a single token (e.g. an
+     *  interrupted subprocess scope). */
+    void cancelActiveActivitiesForToken(UUID tokenId);
+
     ProcessInstance getProcessInstance(UUID processInstanceId);
 
     /**
@@ -80,6 +84,9 @@ public interface DBService {
     void markTimerJobFired(UUID timerJobId);
 
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName);
+
+    /** Creates a message subscription for a message boundary event attached to {@code activityId}. */
+    UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId);
 
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
 

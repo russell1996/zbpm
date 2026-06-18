@@ -12,4 +12,5 @@ public class MessageSubscription {
     private UUID processInstanceId;
     private UUID activityId;
     private String messageName;
+    private String boundaryElementId;
 }

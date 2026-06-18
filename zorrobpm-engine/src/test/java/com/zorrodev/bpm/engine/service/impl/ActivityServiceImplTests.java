@@ -610,6 +610,51 @@ public class ActivityServiceImplTests {
     }
 
     @Test
+    public void nonInterruptingBoundaryTimerKeepsHostAndSpawnsParallelBranch() throws IOException {
+        // test-boundary-noninterrupting.bpmn: userTask1 has a NON-interrupting timer boundary
+        // (cancelActivity="false") -> boundaryTask. Firing must NOT cancel the host and must run
+        // the boundary path on a new (parallel) token.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-boundary-noninterrupting.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+        UUID hostActivityId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        Activity host = new Activity();
+        host.setId(hostActivityId);
+        host.setProcessInstanceId(processInstanceId);
+        host.setBpmnElementId("userTask1");
+        host.setToken(token);
+        host.setType(BpmnElementType.USER_TASK);
+        host.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
+
+        Token branch = new Token();
+        branch.setId(UUID.randomUUID());
+        branch.setParentId(token);
+
+        when(dbService.getActivity(hostActivityId)).thenReturn(host);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.createToken(token)).thenReturn(branch);
+        when(dbService.createActivity(eq(processInstanceId), any(UUID.class), eq(bpmn.getElement("boundaryTask")))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(eq(processInstanceId), any(UUID.class), eq(bpmn.getFlow("flowB")))).thenReturn(UUID.randomUUID());
+
+        activityService.fireBoundaryTimer(hostActivityId, "boundary1");
+
+        // host stays alive, a parallel branch token is created, and the boundary task is entered
+        verify(dbService, times(0)).cancelActivity(hostActivityId);
+        verify(dbService).createToken(token);
+        verify(dbService, times(1)).createActivity(processInstanceId, branch.getId(), bpmn.getElement("boundaryTask"));
+        verify(dbService, times(0)).completeProcessInstance(any());
+    }
+
+    @Test
     public void timerCatchEventSchedulesTimerJobAndParks() throws IOException {
         // test-timer.bpmn: startEvent -> timer1 (catch, PT5M) -> endEvent.
         // The token must park at the timer and a timer job be scheduled; end is not reached yet.
@@ -792,6 +837,49 @@ public class ActivityServiceImplTests {
         activityService.completeServiceTask(serviceTaskId, List.of());
 
         verify(dbService).lockProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void unhandledErrorEndRaisesIncident() {
+        // An error end event with no catching boundary anywhere must be recorded as an incident,
+        // not silently end the instance.
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID tokenId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+        pi.setParentActivityId(null); // top-level instance, nowhere to propagate
+
+        BpmnElementModel errEnd = new BpmnElementModel();
+        errEnd.setId("errEnd");
+        errEnd.setType(BpmnElementType.ERROR_END_EVENT);
+        com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel ext =
+            new com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel();
+        com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel ed =
+            new com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel();
+        ed.setType(com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType.ERROR);
+        ed.setCode("E-1");
+        ext.setEventDefinition(ed);
+        errEnd.setExtensions(ext);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(errEnd);
+
+        Token token = new Token();
+        token.setId(tokenId);
+
+        UUID activityId = UUID.randomUUID();
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.getToken(tokenId)).thenReturn(token);
+        when(dbService.createActivity(processInstanceId, tokenId, errEnd)).thenReturn(activityId);
+
+        activityService.execute(processInstanceId, tokenId, "errEnd");
+
+        verify(dbService).errorActivity(activityId);
+        verify(dbService).createIncident(eq(activityId), any());
     }
 
     @Test
