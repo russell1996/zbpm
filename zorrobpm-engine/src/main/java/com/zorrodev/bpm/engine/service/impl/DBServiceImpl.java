@@ -15,6 +15,7 @@ import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
+import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ParallelGatewayEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
@@ -27,6 +28,7 @@ import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
@@ -63,6 +65,7 @@ public class DBServiceImpl implements DBService {
     private final IncidentRepository incidentRepository;
     private final TimerJobRepository timerJobRepository;
     private final MessageSubscriptionRepository messageSubscriptionRepository;
+    private final MessageStartSubscriptionRepository messageStartSubscriptionRepository;
     private final ParallelGatewayRepository parallelGatewayRepository;
     private final ProcessInstanceMapper processInstanceMapper;
 
@@ -423,6 +426,38 @@ public class DBServiceImpl implements DBService {
         MessageSubscriptionEntity entity = messageSubscriptionRepository.findById(subscriptionId).orElseThrow();
         entity.setConsumed(true);
         messageSubscriptionRepository.save(entity);
+    }
+
+    @Override
+    public void createMessageStartSubscription(String processKey, UUID processDefinitionId, String elementId, String messageName) {
+        MessageStartSubscriptionEntity entity = new MessageStartSubscriptionEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setProcessKey(processKey);
+        entity.setProcessDefinitionId(processDefinitionId);
+        entity.setElementId(elementId);
+        entity.setMessageName(messageName);
+        entity.setCreatedAt(Instant.now());
+        messageStartSubscriptionRepository.save(entity);
+    }
+
+    @Override
+    public void deleteMessageStartSubscriptionsByKey(String processKey) {
+        messageStartSubscriptionRepository.deleteByProcessKey(processKey);
+    }
+
+    @Override
+    public List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> findMessageStartSubscriptions(String messageName) {
+        return messageStartSubscriptionRepository.findByMessageName(messageName).stream()
+            .map(e -> {
+                com.zorrodev.bpm.engine.dto.MessageStartSubscription sub = new com.zorrodev.bpm.engine.dto.MessageStartSubscription();
+                sub.setId(e.getId());
+                sub.setProcessKey(e.getProcessKey());
+                sub.setProcessDefinitionId(e.getProcessDefinitionId());
+                sub.setElementId(e.getElementId());
+                sub.setMessageName(e.getMessageName());
+                return sub;
+            })
+            .toList();
     }
 
     @Override

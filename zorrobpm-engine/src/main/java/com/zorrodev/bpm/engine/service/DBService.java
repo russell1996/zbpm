@@ -92,6 +92,15 @@ public interface DBService {
 
     void consumeMessageSubscription(UUID subscriptionId);
 
+    /** Replaces any message-start subscriptions for {@code processKey} with a fresh one (newer
+     *  versions supersede older ones). */
+    void createMessageStartSubscription(String processKey, UUID processDefinitionId, String elementId, String messageName);
+
+    /** Removes all message-start subscriptions for a process key (used before re-registering a new version). */
+    void deleteMessageStartSubscriptionsByKey(String processKey);
+
+    List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> findMessageStartSubscriptions(String messageName);
+
     /**
      * Records that a branch has arrived at a parallel-gateway join through {@code enteredFlowId}.
      * Idempotent: a repeated arrival for the same incoming flow does not create a duplicate.

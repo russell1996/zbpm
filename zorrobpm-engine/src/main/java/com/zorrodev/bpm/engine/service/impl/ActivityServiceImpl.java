@@ -77,6 +77,9 @@ public class ActivityServiceImpl implements ActivityService {
     private Map<BpmnElementType, ElementHandler> createHandlers() {
         Map<BpmnElementType, ElementHandler> map = new EnumMap<>(BpmnElementType.class);
         map.put(BpmnElementType.START_EVENT, (pi, t, bpmn, el) -> processStartEvent(pi, t, bpmn, el));
+        // message/timer start events, once triggered, behave like a plain start: complete and continue
+        map.put(BpmnElementType.MESSAGE_START_EVENT, this::processStartEvent);
+        map.put(BpmnElementType.TIMER_START_EVENT, this::processStartEvent);
         map.put(BpmnElementType.END_EVENT, this::processEndEvent);
         map.put(BpmnElementType.TERMINATE_END_EVENT, this::processTerminateEnd);
         map.put(BpmnElementType.ERROR_END_EVENT, this::processErrorEnd);
@@ -601,10 +604,21 @@ public class ActivityServiceImpl implements ActivityService {
     @Override
     public void correlateMessage(String messageName, UUID processInstanceId, List<ProcessVariable> variables) {
         List<MessageSubscription> subscriptions = dbService.findMessageSubscriptions(messageName, processInstanceId);
-        if (subscriptions.isEmpty()) {
+
+        // untargeted correlation may also start new instances via message start events
+        List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> startSubscriptions =
+            processInstanceId == null ? dbService.findMessageStartSubscriptions(messageName) : List.of();
+
+        if (subscriptions.isEmpty() && startSubscriptions.isEmpty()) {
             log.info("No active subscription for message '{}' (instance {})", messageName, processInstanceId);
             return;
         }
+
+        for (com.zorrodev.bpm.engine.dto.MessageStartSubscription start : startSubscriptions) {
+            log.info("Message '{}' starting a new instance of {} at {}", messageName, start.getProcessDefinitionId(), start.getElementId());
+            startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables);
+        }
+
         for (MessageSubscription subscription : subscriptions) {
             dbService.consumeMessageSubscription(subscription.getId());
             if (subscription.getBoundaryElementId() != null) {
@@ -636,12 +650,22 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public UUID startProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
+        if (bpmn.getStartEvent() == null) {
+            throw new EngineException("Process definition " + processDefinitionId
+                + " has no plain start event; it can only be started by a message or timer start event");
+        }
+        return startProcessInstanceAt(parentActivityId, processDefinitionId, bpmn.getStartEvent().getId(), variables);
+    }
+
+    /**
+     * Starts a process instance beginning at a specific start element (used by message/timer start
+     * events, which begin at their own start node rather than the plain start).
+     */
+    private UUID startProcessInstanceAt(UUID parentActivityId, UUID processDefinitionId, String startEventId, List<ProcessVariable> variables) {
         UUID processInstanceId = dbService.createProcessInstance(parentActivityId, processDefinitionId, variables);
 
         dbService.setVariables(processInstanceId, variables);
-
-        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
-        String startEventId = bpmn.getStartEvent().getId();
 
         UUID parentTokenId = null;
         if (parentActivityId != null) {

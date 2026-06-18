@@ -896,7 +896,7 @@ public class ActivityServiceImplTests {
 
         BpmnElementModel unsupported = new BpmnElementModel();
         unsupported.setId("unsupported1");
-        unsupported.setType(BpmnElementType.MESSAGE_START_EVENT); // no handler registered
+        unsupported.setType(BpmnElementType.SEND_TASK); // no handler registered
 
         BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
         bpmn.addElement(unsupported);
