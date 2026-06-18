@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -238,7 +239,14 @@ public class ActivityServiceImpl implements ActivityService {
 
             ElementHandler handler = handlers.get(type);
             if (handler == null) {
-                log.info("Unsupported BpmnElementType: " + type);
+                // No handler for this element type: park the token as an incident instead of
+                // silently dropping it (which would strand the process instance forever). An
+                // operator can see the incident and decide how to proceed.
+                log.error("{}/{}: Unsupported BpmnElementType {} at element {}, raising incident",
+                    processInstanceId, tokenId, type, element.getId());
+                UUID activityId = dbService.createActivity(processInstanceId, tokenId, element);
+                dbService.errorActivity(activityId);
+                dbService.createIncident(activityId, "Unsupported BPMN element type: " + type);
                 return;
             }
             try {
@@ -313,17 +321,14 @@ public class ActivityServiceImpl implements ActivityService {
                 execute(processInstanceId, newTokenId, bpmn, target);
             }
         } else if (incomings.size() > 1) {
-            boolean reached = true;
-
-            for (String incoming : incomings) {
-                List<Activity> activities = dbService.getActivitiesByTokenAndBpmnElementId(tokenId, incoming);
-                if (activities.isEmpty()) {
-                    reached = false;
-                    break;
-                }
-            }
+            // A join fires only once every incoming flow has arrived. Arrivals are recorded in
+            // processFlow and consumed here, so a process that loops back through the same join
+            // waits for a fresh set of arrivals instead of re-firing on stale ones.
+            Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, bpmnElement.getId());
+            boolean reached = arrived.containsAll(incomings);
 
             if (reached) {
+                dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
                 Token token = dbService.getToken(tokenId);
                 UUID oldTokenId = token.getParentId();
                 UUID activityId = dbService.createActivity(processInstanceId, oldTokenId, bpmnElement);
@@ -392,9 +397,27 @@ public class ActivityServiceImpl implements ActivityService {
         serviceTaskEnqueueService.enqueueAfterCommit(activityId);
     }
 
+    /**
+     * Reads the activity, takes a pessimistic write lock on its process instance, then re-reads the
+     * activity under that lock. Serialises all execution touching one instance so concurrent async
+     * branches cannot race on joins or double-advance a token; the re-read returns a status that is
+     * consistent with the lock (a competing transaction has already committed by the time we hold it).
+     */
+    private Activity lockAndReload(UUID activityId) {
+        Activity activity = dbService.getActivity(activityId);
+        dbService.lockProcessInstance(activity.getProcessInstanceId());
+        return dbService.getActivity(activityId);
+    }
+
     @Override
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables) {
-        Activity activity = dbService.getActivity(serviceTaskId);
+        Activity activity = lockAndReload(serviceTaskId);
+        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
+            // already finished, e.g. a redelivered RabbitMQ completion or a boundary-timer
+            // interruption — avoid double execution (the message broker is at-least-once)
+            log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
+            return;
+        }
         UUID processInstanceId = activity.getProcessInstanceId();
         UUID tokenId = activity.getToken();
 
@@ -448,7 +471,7 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables) {
-        Activity activity = dbService.getActivity(userTaskId);
+        Activity activity = lockAndReload(userTaskId);
         if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
             // already finished, e.g. interrupted by a boundary timer — avoid double execution
             log.info("Ignoring completion of user task {} in status {}", userTaskId, activity.getStatus());
@@ -472,7 +495,13 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public void signal(UUID activityId, List<ProcessVariable> variables) {
-        Activity activity = dbService.getActivity(activityId);
+        Activity activity = lockAndReload(activityId);
+        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
+            // already resumed, e.g. a timer that fired twice or a message correlated concurrently —
+            // avoid double execution of the waiting element's outgoing flows
+            log.info("Ignoring signal of {} in status {}", activityId, activity.getStatus());
+            return;
+        }
         UUID processInstanceId = activity.getProcessInstanceId();
         UUID tokenId = activity.getToken();
 
@@ -492,7 +521,7 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public void fireBoundaryTimer(UUID hostActivityId, String boundaryElementId) {
-        Activity host = dbService.getActivity(hostActivityId);
+        Activity host = lockAndReload(hostActivityId);
         if (host.getStatus() == ActivityStatus.COMPLETED || host.getStatus() == ActivityStatus.CANCELLED) {
             // host already finished before the timer fired: interrupting boundary is a no-op
             log.info("Boundary timer {} fired but host activity {} is {}, ignoring", boundaryElementId, hostActivityId, host.getStatus());
@@ -529,6 +558,7 @@ public class ActivityServiceImpl implements ActivityService {
     public void resolveIncident(UUID incidentId, List<ProcessVariable> variables) {
         Incident incident = dbService.getIncident(incidentId);
         Activity activity = dbService.getActivity(incident.getActivityId());
+        dbService.lockProcessInstance(activity.getProcessInstanceId());
 
         if (variables != null && !variables.isEmpty()) {
             dbService.setVariables(activity.getProcessInstanceId(), variables);
@@ -595,6 +625,13 @@ public class ActivityServiceImpl implements ActivityService {
         if (flowActivityId != null) {
             dbService.completeActivity(flowActivityId);
             log.info("{}/{}: Flow: {}/{} => from {}/{} to {}/{}", processInstanceId, tokenId, flowActivityId, flowId, source.getType(), source.getId(), target.getType(), target.getId());
+
+            // Arriving at a parallel-gateway join: record this incoming flow so the join can tell
+            // when every branch has arrived. Recorded only for flows actually taken (conditional
+            // flows that evaluate false never reach here).
+            if (target.getType() == BpmnElementType.PARALLEL_GATEWAY && target.getIncoming().size() > 1) {
+                dbService.recordParallelGatewayArrival(processInstanceId, target.getId(), flowId);
+            }
         }
 
         return flowActivityId;
@@ -625,9 +662,12 @@ public class ActivityServiceImpl implements ActivityService {
         ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
         UUID parentActivityId = pi.getParentActivityId();
         if (parentActivityId != null) {
+            // a call activity finished: continuation mutates the *parent* instance, so lock it
+            // (consistent child→parent ordering keeps this deadlock-free) before advancing it
+            Activity parentActivity = dbService.getActivity(parentActivityId);
+            dbService.lockProcessInstance(parentActivity.getProcessInstanceId());
             dbService.completeActivity(parentActivityId);
 
-            Activity parentActivity = dbService.getActivity(parentActivityId);
             UUID parentProcessInstanceId = parentActivity.getProcessInstanceId();
             ProcessInstance parentProcessInstance = dbService.getProcessInstance(parentActivity.getProcessInstanceId());
             UUID parentProcessDefinitionId = parentProcessInstance.getProcessDefinitionId();
