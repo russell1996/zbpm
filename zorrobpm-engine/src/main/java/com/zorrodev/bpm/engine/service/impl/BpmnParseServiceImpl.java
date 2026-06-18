@@ -77,6 +77,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 attachEventDefinition(element, startEvent.getErrorEventDefinition(), startEvent.getSignalEventDefinition(),
                     startEvent.getEscalationEventDefinition(), startEvent.getConditionalEventDefinition(), null, null, registry);
                 pd.addElement(element);
+                // the plain (none) top-level start is where instances begin; message/timer starts
+                // are triggers handled separately and must not be treated as the process start
+                if (element.getType() == BpmnElementType.START_EVENT) {
+                    pd.setStartEvent(element);
+                }
                 if (startEvent.getExtensionElements() != null && startEvent.getExtensionElements().getProperties() != null && startEvent.getExtensionElements().getProperties().getProperties() != null) {
                     List<PropertyModel> properties = startEvent.getExtensionElements().getProperties().getProperties();
                     for (PropertyModel property : properties) {
@@ -162,7 +167,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (process.getSubProcesses() != null) {
                 for (BpmnSubProcessModel subProcess : process.getSubProcesses()) {
-                    BpmnElementModel element = toSubProcessElement(subProcess, pd);
+                    BpmnElementModel element = toSubProcessElement(subProcess, pd, registry);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -170,11 +175,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (process.getBoundaryEvents() != null) {
                 for (BpmnBoundaryEventModel boundaryEvent : process.getBoundaryEvents()) {
-                    if (boundaryEvent.getTimerEventDefinition() == null) {
-                        continue; // only interrupting timer boundaries are executable today
+                    boolean timer = boundaryEvent.getTimerEventDefinition() != null;
+                    boolean error = boundaryEvent.getErrorEventDefinition() != null;
+                    if (!timer && !error) {
+                        continue; // only timer and error boundaries are executable today
                     }
                     BpmnElementModel element = toBoundaryElement(boundaryEvent);
                     element.setProcessDefinition(pd);
+                    attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), null, null, null, null, null, registry);
                     pd.addElement(element);
                 }
             }
@@ -239,7 +247,6 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(boundaryEvent.getId());
         element.setName(boundaryEvent.getName());
-        element.setType(BpmnElementType.BOUNDARY_TIMER_EVENT);
         if (boundaryEvent.getOutgoing() != null) {
             element.getOutgoing().addAll(boundaryEvent.getOutgoing());
         }
@@ -250,20 +257,27 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         boundaryExt.setAttachedToRef(boundaryEvent.getAttachedToRef());
         element.getExtensions().setBoundaryEventExtension(boundaryExt);
 
-        TimerEventExtensionModel timer = new TimerEventExtensionModel();
-        if (boundaryEvent.getTimerEventDefinition().getTimeDate() != null) {
-            timer.setType(TimerEventType.DATE);
-            timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeDate());
-        } else if (boundaryEvent.getTimerEventDefinition().getTimeDuration() != null) {
-            timer.setType(TimerEventType.DURATION);
-            timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeDuration());
+        if (boundaryEvent.getTimerEventDefinition() != null) {
+            element.setType(BpmnElementType.BOUNDARY_TIMER_EVENT);
+            TimerEventExtensionModel timer = new TimerEventExtensionModel();
+            if (boundaryEvent.getTimerEventDefinition().getTimeDate() != null) {
+                timer.setType(TimerEventType.DATE);
+                timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeDate());
+            } else if (boundaryEvent.getTimerEventDefinition().getTimeDuration() != null) {
+                timer.setType(TimerEventType.DURATION);
+                timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeDuration());
+            }
+            element.getExtensions().setTimerEventExtension(timer);
+        } else if (boundaryEvent.getErrorEventDefinition() != null) {
+            // error boundaries are always interrupting; the error code is resolved into the
+            // element's eventDefinition extension by attachEventDefinition in the caller
+            element.setType(BpmnElementType.ERROR_BOUNDARY_EVENT);
         }
-        element.getExtensions().setTimerEventExtension(timer);
 
         return element;
     }
 
-    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd) {
+    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(sub.getId());
         element.setName(sub.getName());
@@ -290,6 +304,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnEndEventModel end : sub.getEndEvents()) {
                 BpmnElementModel child = toElementModel(end);
                 child.setProcessDefinition(pd);
+                attachEventDefinition(child, end.getErrorEventDefinition(), end.getSignalEventDefinition(),
+                    end.getEscalationEventDefinition(), null, null, end.getCompensateEventDefinition(), registry);
                 pd.addElement(child);
             }
         }
@@ -407,9 +423,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(endEvent.getId());
         element.setName(endEvent.getName());
-        element.setType(endEvent.getTerminateEventDefinition() != null
-            ? BpmnElementType.TERMINATE_END_EVENT
-            : BpmnElementType.END_EVENT);
+        if (endEvent.getTerminateEventDefinition() != null) {
+            element.setType(BpmnElementType.TERMINATE_END_EVENT);
+        } else if (endEvent.getErrorEventDefinition() != null) {
+            element.setType(BpmnElementType.ERROR_END_EVENT);
+        } else {
+            element.setType(BpmnElementType.END_EVENT);
+        }
         element.setIncoming(endEvent.getIncoming());
         return element;
     }

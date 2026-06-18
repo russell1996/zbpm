@@ -9,6 +9,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
+import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
@@ -78,6 +79,7 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.START_EVENT, (pi, t, bpmn, el) -> processStartEvent(pi, t, bpmn, el));
         map.put(BpmnElementType.END_EVENT, this::processEndEvent);
         map.put(BpmnElementType.TERMINATE_END_EVENT, this::processTerminateEnd);
+        map.put(BpmnElementType.ERROR_END_EVENT, this::processErrorEnd);
         map.put(BpmnElementType.SERVICE_TASK, (pi, t, bpmn, el) -> enterServiceTask(pi, t, el));
         map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
         map.put(BpmnElementType.EXCLUSIVE_GATEWAY, this::processExclusiveGateway);
@@ -697,6 +699,110 @@ public class ActivityServiceImpl implements ActivityService {
 
         dbService.cancelActiveActivities(processInstanceId);
         dbService.completeProcessInstance(processInstanceId);
+    }
+
+    /**
+     * Error end event: completes its activity, then throws a BPMN error that propagates up the scope
+     * hierarchy looking for a matching error boundary (see {@link #throwError}). If nothing catches it
+     * the error is recorded as an incident on this element instead of silently ending the instance.
+     */
+    private void processErrorEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        String errorCode = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getCode)
+            .orElse(null);
+
+        log.info("{}/{}: Error end {} thrown (code={}) at {}", processInstanceId, tokenId, bpmnElement.getId(), errorCode, activityId);
+
+        boolean handled = throwError(processInstanceId, tokenId, errorCode);
+        if (!handled) {
+            dbService.errorActivity(activityId);
+            dbService.createIncident(activityId, "Unhandled BPMN error" + (errorCode != null ? " '" + errorCode + "'" : ""));
+        }
+    }
+
+    /**
+     * Propagates a BPMN error from {@code tokenId} outward through the scope hierarchy, looking for
+     * an interrupting error boundary that matches {@code errorCode} (a boundary without a code is a
+     * catch-all). Search order: enclosing embedded subprocess scopes (innermost first), then — if the
+     * instance is a called process — the call activity in the parent instance, recursively. When a
+     * handler is found the interrupted scope is cancelled and flow continues from the boundary.
+     *
+     * @return {@code true} if an error boundary handled the error, {@code false} if it escaped unhandled.
+     */
+    private boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode) {
+        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+
+        // walk enclosing embedded-subprocess scopes, innermost first
+        Token tok = dbService.getToken(tokenId);
+        while (tok != null && tok.getScopeActivityId() != null) {
+            Activity scope = dbService.getActivity(tok.getScopeActivityId());
+            BpmnElementModel boundary = findErrorBoundary(bpmn, scope.getBpmnElementId(), errorCode);
+            if (boundary != null) {
+                dbService.cancelActiveActivitiesForToken(tok.getId());
+                dbService.cancelActivity(scope.getId());
+                log.info("{}: error '{}' caught by boundary {} on subprocess {}", processInstanceId, errorCode, boundary.getId(), scope.getBpmnElementId());
+                proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary);
+                return true;
+            }
+            tok = tok.getParentId() != null ? dbService.getToken(tok.getParentId()) : null;
+        }
+
+        // reached the top of this instance: propagate to the parent instance via the call activity
+        if (pi.getParentActivityId() != null) {
+            Activity callActivity = dbService.getActivity(pi.getParentActivityId());
+            UUID parentInstanceId = callActivity.getProcessInstanceId();
+            dbService.lockProcessInstance(parentInstanceId);
+            ProcessInstance parentPi = dbService.getProcessInstance(parentInstanceId);
+            BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentPi.getProcessDefinitionId());
+            BpmnElementModel boundary = findErrorBoundary(parentBpmn, callActivity.getBpmnElementId(), errorCode);
+
+            // the error escapes this child instance regardless of whether the parent catches it
+            dbService.cancelActiveActivities(processInstanceId);
+            dbService.completeProcessInstance(processInstanceId);
+
+            if (boundary != null) {
+                dbService.cancelActivity(callActivity.getId());
+                log.info("{}: error '{}' caught by boundary {} on call activity {}", parentInstanceId, errorCode, boundary.getId(), callActivity.getBpmnElementId());
+                proceedToOutgoing(parentInstanceId, callActivity.getToken(), parentBpmn, boundary);
+                return true;
+            }
+            // not caught on the call activity: keep propagating within the parent instance
+            return throwError(parentInstanceId, callActivity.getToken(), errorCode);
+        }
+
+        return false;
+    }
+
+    /**
+     * Finds an interrupting error boundary attached to {@code attachedToRef} whose error code matches
+     * {@code errorCode}; a boundary with no code is a catch-all. Returns {@code null} if none.
+     */
+    private BpmnElementModel findErrorBoundary(BpmnProcessDefinitionModel bpmn, String attachedToRef, String errorCode) {
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.ERROR_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (!attachedToRef.equals(attached)) {
+                continue;
+            }
+            String boundaryCode = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getEventDefinition)
+                .map(EventDefinitionExtensionModel::getCode)
+                .orElse(null);
+            if (boundaryCode == null || boundaryCode.equals(errorCode)) {
+                return element;
+            }
+        }
+        return null;
     }
 
     private void processStartEvent(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {

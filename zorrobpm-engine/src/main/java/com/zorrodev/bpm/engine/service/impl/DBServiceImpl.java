@@ -145,6 +145,15 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void cancelActiveActivitiesForToken(UUID tokenId) {
+        List<ActivityEntity> active = activityRepository.findByTokenAndStatusIn(
+            tokenId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));
+        for (ActivityEntity activity : active) {
+            activityRepository.setStatusAndCompletedAt(activity.getId(), ActivityStatus.CANCELLED, Instant.now());
+        }
+    }
+
+    @Override
     public ProcessInstance getProcessInstance(UUID processInstanceId) {
         ProcessInstanceEntity entity = processInstanceRepository.findById(processInstanceId).orElseThrow();
         return processInstanceMapper.toDTO(entity);

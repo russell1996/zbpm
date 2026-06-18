@@ -353,6 +353,24 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseErrorBoundary() throws IOException {
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-error-boundary.bpmn"));
+        BpmnParseService service = new BpmnParseServiceImpl();
+        BpmnProcessDefinitionModel bpmn = service.parse(bpmnStr);
+
+        BpmnElementModel boundary = bpmn.getElement("errBoundary");
+        assertThat(boundary).isNotNull();
+        assertThat(boundary.getType()).isEqualTo(BpmnElementType.ERROR_BOUNDARY_EVENT);
+        assertThat(boundary.getExtensions().getBoundaryEventExtension().getAttachedToRef()).isEqualTo("sub1");
+        assertThat(boundary.getExtensions().getEventDefinition().getCode()).isEqualTo("E-1");
+        assertThat(boundary.getOutgoing()).containsExactly("flowB");
+
+        BpmnElementModel subErrEnd = bpmn.getElement("subErrEnd");
+        assertThat(subErrEnd.getType()).isEqualTo(BpmnElementType.ERROR_END_EVENT);
+        assertThat(subErrEnd.getExtensions().getEventDefinition().getCode()).isEqualTo("E-1");
+    }
+
+    @Test
     void testParseEventDefinitions() throws IOException {
         // error/signal/escalation event definitions are resolved against definitions-level declarations
         String bpmnStr = Files.readString(Path.of("src/test/files/test-event-definitions.bpmn"));
