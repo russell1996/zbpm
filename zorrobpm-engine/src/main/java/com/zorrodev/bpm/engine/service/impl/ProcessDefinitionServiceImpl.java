@@ -13,6 +13,7 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.BpmnService;
+import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.event.ProcessDefinitionCreatedEvent;
@@ -44,6 +45,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final BpmnService bpmnService;
     private final BpmnParseService bpmnParseService;
     private final FileService fileService;
+    private final DBService dbService;
 
     private final ApplicationEventPublisher publisher;
 
@@ -87,12 +89,35 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             bpmnService.addProcessDefinition(id, model);
             fileService.saveFile(id, bpmn);
 
+            registerMessageStartSubscriptions(key, id, model);
+
             publishProcessDefinitionCreatedEvent(processDefinitionEntity, model, bpmn);
         } else {
             processDefinitionEntity = processDefinitionEntityOptional.get();
         }
 
         return fromEntity(processDefinitionEntity);
+    }
+
+    /**
+     * Registers (and supersedes prior versions of) message start subscriptions for the deployed
+     * definition, so a correlated message of that name starts a new instance of the latest version.
+     */
+    private void registerMessageStartSubscriptions(String key, UUID processDefinitionId, BpmnProcessDefinitionModel model) {
+        var messageStarts = model.getMessageStartEvents();
+        if (messageStarts.isEmpty()) {
+            return;
+        }
+        dbService.deleteMessageStartSubscriptionsByKey(key);
+        for (BpmnElementModel start : messageStarts) {
+            String messageName = Optional.ofNullable(start.getExtensions())
+                .map(BpmnElementExtensionModel::getMessageEventExtension)
+                .map(com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel::getMessageName)
+                .orElse(null);
+            if (messageName != null) {
+                dbService.createMessageStartSubscription(key, processDefinitionId, start.getId(), messageName);
+            }
+        }
     }
 
     private void publishProcessDefinitionCreatedEvent(ProcessDefinitionEntity processDefinitionEntity, BpmnProcessDefinitionModel model, String bpmn) {

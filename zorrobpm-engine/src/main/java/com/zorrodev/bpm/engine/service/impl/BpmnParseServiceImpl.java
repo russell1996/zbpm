@@ -76,6 +76,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 element.setProcessDefinition(pd);
                 attachEventDefinition(element, startEvent.getErrorEventDefinition(), startEvent.getSignalEventDefinition(),
                     startEvent.getEscalationEventDefinition(), startEvent.getConditionalEventDefinition(), null, null, registry);
+                if (startEvent.getMessageEventDefinition() != null) {
+                    if (element.getExtensions() == null) {
+                        element.setExtensions(new BpmnElementExtensionModel());
+                    }
+                    MessageEventExtensionModel msg = new MessageEventExtensionModel();
+                    String ref = startEvent.getMessageEventDefinition().getMessageRef();
+                    msg.setMessageName(messageNames.getOrDefault(ref, ref));
+                    element.getExtensions().setMessageEventExtension(msg);
+                }
                 pd.addElement(element);
                 // the plain (none) top-level start is where instances begin; message/timer starts
                 // are triggers handled separately and must not be treated as the process start
@@ -382,8 +391,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             .filter(e -> e.getMessageEventDefinition()==null)
             .filter(e -> e.getTimerEventDefinition()==null)
             .count();
-        if (vanillaStartEventCount != 1) {
-            throw new BpmnParseException("Start event should be exactly one in the process definition xml");
+        // at most one plain (none) start is allowed; a process may instead start via message/timer
+        // start events, so zero plain starts is valid as long as some start event exists
+        if (vanillaStartEventCount > 1) {
+            throw new BpmnParseException("At most one plain start event is allowed in the process definition xml");
         }
         if (Optional.ofNullable(process.getEndEvents()).isEmpty()) {
             throw new BpmnParseException("No end events in the process definition xml");
