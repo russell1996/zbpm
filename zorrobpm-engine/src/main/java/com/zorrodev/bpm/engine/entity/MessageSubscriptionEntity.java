@@ -25,4 +25,7 @@ public class MessageSubscriptionEntity {
     private String messageName;
     private boolean consumed;
     private Instant createdAt;
+    /** Non-null when this subscription is a message boundary event: the boundary element to fire
+     *  (interrupting/non-interrupting) instead of signalling {@code activityId} as a catch. */
+    private String boundaryElementId;
 }

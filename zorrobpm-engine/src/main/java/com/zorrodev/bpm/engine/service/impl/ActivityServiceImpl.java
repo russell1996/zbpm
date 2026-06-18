@@ -443,6 +443,36 @@ public class ActivityServiceImpl implements ActivityService {
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
+        scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
+    }
+
+    /**
+     * Registers a message subscription for every message boundary event attached to the given host
+     * activity. When such a message is later correlated the boundary fires (see {@link #correlateMessage}).
+     */
+    private void scheduleMessageBoundaries(UUID processInstanceId, UUID hostActivityId, BpmnElementModel host) {
+        BpmnProcessDefinitionModel pd = host.getProcessDefinition();
+        if (pd == null) {
+            return;
+        }
+        for (BpmnElementModel element : pd.getElements()) {
+            if (element.getType() != BpmnElementType.MESSAGE_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attachedTo = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (!host.getId().equals(attachedTo)) {
+                continue;
+            }
+            String messageName = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getMessageEventExtension)
+                .map(MessageEventExtensionModel::getMessageName)
+                .orElseThrow(() -> new EngineException("Message boundary " + element.getId() + " has no message name"));
+            dbService.createMessageSubscription(processInstanceId, hostActivityId, messageName, element.getId());
+            log.info("{}: Message boundary {} subscribed to '{}' on host activity {}", processInstanceId, element.getId(), messageName, hostActivityId);
+        }
     }
 
     /**
@@ -523,15 +553,28 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public void fireBoundaryTimer(UUID hostActivityId, String boundaryElementId) {
+        fireBoundary(hostActivityId, boundaryElementId, List.of());
+    }
+
+    /**
+     * Fires a boundary event (timer or message) on its host activity. Interrupting boundaries cancel
+     * the host and continue the host's token from the boundary; non-interrupting ones leave the host
+     * running and spawn a parallel branch on a new token. A no-op if the host already finished.
+     */
+    private void fireBoundary(UUID hostActivityId, String boundaryElementId, List<ProcessVariable> variables) {
         Activity host = lockAndReload(hostActivityId);
         if (host.getStatus() == ActivityStatus.COMPLETED || host.getStatus() == ActivityStatus.CANCELLED) {
-            // host already finished before the timer fired: interrupting boundary is a no-op
-            log.info("Boundary timer {} fired but host activity {} is {}, ignoring", boundaryElementId, hostActivityId, host.getStatus());
+            // host already finished before the boundary fired
+            log.info("Boundary {} fired but host activity {} is {}, ignoring", boundaryElementId, hostActivityId, host.getStatus());
             return;
         }
 
         UUID processInstanceId = host.getProcessInstanceId();
         UUID tokenId = host.getToken();
+
+        if (variables != null && !variables.isEmpty()) {
+            dbService.setVariables(processInstanceId, variables);
+        }
 
         ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
@@ -544,13 +587,13 @@ public class ActivityServiceImpl implements ActivityService {
 
         if (interrupting) {
             dbService.cancelActivity(hostActivityId);
-            log.info("{}/{}: Boundary timer {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
+            log.info("{}/{}: Boundary {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
             proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary);
         } else {
             // non-interrupting: the host keeps running; the boundary spawns a parallel branch on a
             // new token (child of the host's token)
             Token branch = dbService.createToken(tokenId);
-            log.info("{}/{}: Boundary timer {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
+            log.info("{}/{}: Boundary {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
             proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary);
         }
     }
@@ -564,8 +607,15 @@ public class ActivityServiceImpl implements ActivityService {
         }
         for (MessageSubscription subscription : subscriptions) {
             dbService.consumeMessageSubscription(subscription.getId());
-            log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
-            signal(subscription.getActivityId(), variables);
+            if (subscription.getBoundaryElementId() != null) {
+                // message boundary: fire the boundary (interrupt/non-interrupt the host)
+                log.info("Correlating message '{}' to boundary {} on instance {} activity {}", messageName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables);
+            } else {
+                // message catch: signal the waiting activity
+                log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                signal(subscription.getActivityId(), variables);
+            }
         }
     }
 
