@@ -1,93 +1,221 @@
-# ZBPM
+# ZorroBPM CE
 
+Лёгкий движок бизнес-процессов BPMN 2.0 на Spring Boot. Деплой BPMN-процессов, запуск экземпляров, выполнение внешней работы через брокер сообщений и управление пользовательскими задачами — всё через простой REST API.
 
+> ⚠️ **Статус — Community Edition, ранняя стадия.**
+> Рабочий одноузловой движок с хорошим покрытием happy-path тестами. **Ещё не готов к промышленной эксплуатации:** нет встроенной аутентификации/авторизации, рассчитан на запуск в **одном экземпляре** (таймеры и версионирование определений пока небезопасны при нескольких репликах). Запускайте в доверённой сети / за аутентифицирующим шлюзом. См. [Ограничения](#ограничения-и-замечания-по-проду).
 
-## Getting started
+## Обзор
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+ZorroBPM исполняет определения BPMN-процессов:
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+- **Деплой** BPMN XML → парсится, версионируется (по `id`/ключу процесса) и сохраняется.
+- **Запуск** экземпляров; движок обходит граф процесса токенами.
+- **Сервис-задачи** отправляются внешним **воркерам** через RabbitMQ и завершаются асинхронно.
+- **Пользовательские задачи** ждут завершения через API.
+- Поддержаны **таймеры, сообщения, шлюзы, подпроцессы, call activity, инциденты** (см. матрицу ниже).
 
-## Add your files
+## Поддержка BPMN
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+| Поддерживается | Пока не поддерживается |
+|---|---|
+| Start / End / Terminate-end события | **Message / Timer _start_ события** (парсятся, но не запускают экземпляр) |
+| Потоки управления (sequence flow) | Inclusive / условные шлюзы |
+| Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации, Error / Escalation события |
+| Parallel gateway (split / join) | Непрерывающие boundary-события; Signal-события |
+| Service task (внешние воркеры через RabbitMQ) | Multi-instance (параллельный / последовательный) |
+| User task (assignee, кандидаты-пользователи/группы, form key) | Business rule (DMN) / script задачи |
+| Call activity, встроенный подпроцесс | |
+| Промежуточные **catch**: обычное ожидание, **message** (+корреляция), **timer** (дата/длительность) | |
+| Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
+| **Boundary timer** (прерывающий) | |
+| Инциденты (создаются автоматически при ошибке) + ручное разрешение | |
+
+Условия вычисляются движком **Camunda FEEL**.
+
+## Архитектура
+
+Многомодульный Maven-проект:
+
+| Модуль | Ответственность |
+|---|---|
+| `zorrobpm-contract` | Контракты REST API (HTTP-interface) + DTO/модели |
+| `zorrobpm-engine` | Ядро: парсинг BPMN, исполнение, persistence (JPA), таймеры, инциденты |
+| `zorrobpm-rest` | REST-контроллеры, реализующие контракты |
+| `zorrobpm-rabbitmq` | Интеграция с RabbitMQ для отправки/завершения сервис-задач (+ DLQ) |
+| `zorrobpm-event` / `zorrobpm-exchange` | Полезная нагрузка доменных событий и сообщений брокера |
+| `zorrobpm-client` | Готовые Java-клиенты к API |
+| `zorrobpm-job-handler-spring-boot-starter` | SDK для написания внешних воркеров |
+| `zorrobpm-ce` | Запускаемое Spring Boot приложение (собирает всё вместе) |
+| `zorrobpm-test` | Общие тестовые помощники |
+
+**Поток исполнения:**
 
 ```
-cd existing_repo
-git remote add origin https://<internal-git-host>/ismet/microservices/zorro-bpm/zbpm.git
-git branch -M master
-git push -uf origin master
+REST  ──▶ RuntimeService ──▶ ActivityService (обход графа токенами)
+                                  │
+                                  ├─▶ DBService (PostgreSQL через JPA)
+                                  ├─▶ ScriptService (условия FEEL)
+                                  └─▶ сервис-задачи ──▶ RabbitMQ ──▶ внешний воркер
+                                                                          │
+RabbitMQ (zorrobpm.complete-service-task) ◀── завершение ◀───────────────┘
+TimerScheduler (@Scheduled) ──▶ срабатывание таймеров ──▶ ActivityService
 ```
 
-## Integrate with your tools
+## Технологический стек
 
-* [Set up project integrations](https://<internal-git-host>/ismet/microservices/zorro-bpm/zbpm/-/settings/integrations)
+Java 21 · Spring Boot 4.0.5 · PostgreSQL 16 · RabbitMQ 3.13 · Liquibase · Camunda FEEL · springdoc-openapi.
 
-## Collaborate with your team
+## Требования
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+- **JDK 21** (Docker-сборка использует Temurin 21). *Примечание: в POM движка `java.version=17`, но собирать/запускать нужно на 21.*
+- Maven 3.9+
+- Docker + Docker Compose (для быстрого старта)
 
-## Test and Deploy
+## Быстрый старт (Docker Compose)
 
-Use the built-in continuous integration in GitLab.
+```bash
+git clone https://<internal-git-host>/ismet/microservices/zorro-bpm/zbpm.git
+cd zbpm
+cp .env.example .env        # при необходимости поправьте креды/порты
+docker compose up -d --build
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Поднимутся PostgreSQL, RabbitMQ и приложение. Затем:
 
-***
+- База API: `http://localhost:8080`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+- Management UI RabbitMQ: `http://localhost:9300` (по умолчанию `zorrodev`/`zorrodev`)
 
-# Editing this README
+Остановить: `docker compose down` (добавьте `-v`, чтобы удалить тома с данными).
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## Локальная разработка
 
-## Suggestions for a good README
+```bash
+# Собрать всё и прогнать тесты (unit + интеграционные на H2)
+JAVA_HOME=/путь/к/jdk-21 mvn clean verify
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+# Запустить только модуль приложения (нужны доступные Postgres + RabbitMQ)
+mvn -pl zorrobpm-ce -am spring-boot:run
+```
 
-## Name
-Choose a self-explaining name for your project.
+Docker-сборка образа пропускает тесты (`-DskipTests`); запускайте `mvn verify` локально/в CI как контроль качества.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Конфигурация
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Переменные окружения (со значениями по умолчанию):
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `DB_URL` | `jdbc:postgresql://localhost:5432/zorrobpm-db` | JDBC URL |
+| `DB_USERNAME` / `DB_PASSWORD` | `zorrodev` / `zorrodev` | Креды БД |
+| `RABBITMQ_HOST` / `RABBITMQ_PORT` | `localhost` / `5672` | Адрес брокера |
+| `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` | `zorrodev` / `zorrodev` | Креды брокера |
+| `APP_FILES_DIR` | `~/.zorrobpm/files` | Каталог хранения BPMN-файлов |
+| `APP_PORT` | `8080` | HTTP-порт |
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Свойства движка / обмена сообщениями (`application.properties`):
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+| Свойство | По умолчанию | Назначение |
+|---|---|---|
+| `zorrobpm.engine.max-execution-depth` | `1000` | Защита от бесконечных циклов / рекурсивных call activity |
+| `zorrobpm.engine.timer-poll-interval-ms` | `5000` | Интервал опроса таймеров |
+| `spring.rabbitmq.listener.simple.retry.max-attempts` | `5` | Число попыток завершения до отправки в DLQ |
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## REST API
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+| Метод и путь | Описание |
+|---|---|
+| `POST /process-definitions` | Деплой BPMN (`{ "bpmn": "<xml>" }`) |
+| `GET /process-definitions` | Список (постранично; `latestVersionOnly`) |
+| `GET /process-definitions/{id}` | Метаданные определения |
+| `GET /process-definitions/{id}/xml` | Исходный BPMN XML |
+| `POST /process-instances` | Запуск экземпляра |
+| `POST /service-tasks/{id}/complete` | Завершить сервис-задачу |
+| `POST /user-tasks/{id}/complete` | Завершить пользовательскую задачу |
+| `POST /incidents/{id}/resolve` | Разрешить инцидент (повторно исполняет элемент) |
+| `GET /process-instances` · `/user-tasks` · `/service-tasks` · `/variables` · `/incidents` | Постраничные запросы |
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+**Пример — деплой, запуск, просмотр:**
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```bash
+# Деплой
+curl -X POST http://localhost:8080/process-definitions \
+  -H 'Content-Type: application/json' \
+  -d "{\"bpmn\": $(jq -Rs . < my-process.bpmn)}"
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+# Запуск (по ключу, последняя версия)
+curl -X POST http://localhost:8080/process-instances \
+  -H 'Content-Type: application/json' \
+  -d '{"processDefinitionKey":"my-process","variables":[{"name":"amount","type":"LONG","value":"100"}]}'
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+# Запрос экземпляра
+curl "http://localhost:8080/process-instances?id=<INSTANCE_ID>&pageIndex=0&pageSize=10"
+```
 
-## License
-For open source projects, say how it is licensed.
+`ProcessVariable` = `{ "name": ..., "type": "STRING|LONG|BOOLEAN", "value": "..." }`.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## Сервис-задачи: написание воркера
+
+Сервис-задача в BPMN объявляет **тип job** (в стиле Zeebe `taskDefinition` type). Создайте приложение-воркер:
+
+1. Добавьте зависимость:
+
+```xml
+<dependency>
+  <groupId>com.zorrodev.bpm</groupId>
+  <artifactId>zorrobpm-job-handler-spring-boot-starter</artifactId>
+  <version>0.7.17-SNAPSHOT</version>
+</dependency>
+```
+
+2. Реализуйте обработчик на каждый тип job:
+
+```java
+@Component
+public class ChargeHandler implements JobHandler {
+    @Override public String getJob() { return "charge-card"; }   // совпадает с типом job у задачи
+
+    @Override public List<ProcessVariable> handleJob(JobDetailModel job) {
+        // ... работа с job.getVariables() ...
+        ProcessVariable result = new ProcessVariable();
+        result.setName("chargeStatus"); result.setType("STRING"); result.setValue("OK");
+        return List.of(result);
+    }
+}
+```
+
+Стартер автоматически подписывается на `zorrobpm.jobs.<job>` и публикует завершение в `zorrobpm.complete-service-task`. Воркер должен смотреть на тот же брокер RabbitMQ, что и движок.
+
+## Java-клиент
+
+```xml
+<dependency>
+  <groupId>com.zorrodev.bpm</groupId>
+  <artifactId>zorrobpm-client</artifactId>
+  <version>0.7.17-SNAPSHOT</version>
+</dependency>
+```
+
+Задайте `M11S_ZORRODEV_BPM_URL` (по умолчанию `http://localhost:8080`) и внедрите `RuntimeClient`, `ProcessDefinitionClient`, `QueryClient`.
+
+## База данных и миграции
+
+Схема управляется **Liquibase** (`zorrobpm-engine/src/main/resources/db/changelog`), применяется автоматически при старте. Ключевые таблицы: `process_definitions`, `process_instances`, `activities`, `tokens`, `variables`, `user_tasks`, `service_tasks`, `incidents`, `timer_jobs`, `message_subscriptions`, `parallel_gateways`.
+
+## Ограничения и замечания по проду
+
+- **Нет аутентификации/авторизации** — все эндпоинты открыты. Размещайте сервис за аутентифицирующим шлюзом и в закрытой сети.
+- **Только один экземпляр** — таймеры опрашиваются без leader-election, версионирование определений использует JVM-лок; несколько реплик могут дублировать срабатывание таймеров и конфликтовать на версионировании.
+- **CORS полностью открыт**, размер тела запроса не ограничен — ужесточите перед публичным доступом.
+- **Сборка требует JDK 21**, хотя в POM движка указано `java.version=17`.
+- При апгрейде на существующем брокере очередь `zorrobpm.complete-service-task` получает dead-letter-аргументы — если она уже есть без них, удалите её один раз (`PRECONDITION_FAILED` при переобъявлении).
+
+## CI/CD
+
+GitLab CI (`.gitlab-ci.yml`) деплоит через Docker Compose на ветке по умолчанию. Тесты в пайплайне пока **не** запускаются — прогоняйте `mvn verify` перед мержем.
+
+## Лицензия
+
+Apache License 2.0.
