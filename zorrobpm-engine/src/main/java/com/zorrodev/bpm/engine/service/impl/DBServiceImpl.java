@@ -382,6 +382,11 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName) {
+        return createMessageSubscription(processInstanceId, activityId, messageName, null);
+    }
+
+    @Override
+    public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId) {
         UUID id = UUID.randomUUID();
         MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
         entity.setId(id);
@@ -390,6 +395,7 @@ public class DBServiceImpl implements DBService {
         entity.setMessageName(messageName);
         entity.setConsumed(false);
         entity.setCreatedAt(Instant.now());
+        entity.setBoundaryElementId(boundaryElementId);
         messageSubscriptionRepository.save(entity);
         return id;
     }
@@ -406,6 +412,7 @@ public class DBServiceImpl implements DBService {
                 sub.setProcessInstanceId(e.getProcessInstanceId());
                 sub.setActivityId(e.getActivityId());
                 sub.setMessageName(e.getMessageName());
+                sub.setBoundaryElementId(e.getBoundaryElementId());
                 return sub;
             })
             .toList();

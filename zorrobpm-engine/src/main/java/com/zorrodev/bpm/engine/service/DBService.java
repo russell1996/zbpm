@@ -85,6 +85,9 @@ public interface DBService {
 
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName);
 
+    /** Creates a message subscription for a message boundary event attached to {@code activityId}. */
+    UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId);
+
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
 
     void consumeMessageSubscription(UUID subscriptionId);

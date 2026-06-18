@@ -177,12 +177,19 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 for (BpmnBoundaryEventModel boundaryEvent : process.getBoundaryEvents()) {
                     boolean timer = boundaryEvent.getTimerEventDefinition() != null;
                     boolean error = boundaryEvent.getErrorEventDefinition() != null;
-                    if (!timer && !error) {
-                        continue; // only timer and error boundaries are executable today
+                    boolean message = boundaryEvent.getMessageEventDefinition() != null;
+                    if (!timer && !error && !message) {
+                        continue; // only timer, error and message boundaries are executable today
                     }
                     BpmnElementModel element = toBoundaryElement(boundaryEvent);
                     element.setProcessDefinition(pd);
                     attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), null, null, null, null, null, registry);
+                    if (message) {
+                        MessageEventExtensionModel msg = new MessageEventExtensionModel();
+                        String ref = boundaryEvent.getMessageEventDefinition().getMessageRef();
+                        msg.setMessageName(messageNames.getOrDefault(ref, ref));
+                        element.getExtensions().setMessageEventExtension(msg);
+                    }
                     pd.addElement(element);
                 }
             }
@@ -274,6 +281,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             // error boundaries are always interrupting; the error code is resolved into the
             // element's eventDefinition extension by attachEventDefinition in the caller
             element.setType(BpmnElementType.ERROR_BOUNDARY_EVENT);
+        } else if (boundaryEvent.getMessageEventDefinition() != null) {
+            // the message name is resolved into messageEventExtension by the caller
+            element.setType(BpmnElementType.MESSAGE_BOUNDARY_EVENT);
         }
 
         return element;
