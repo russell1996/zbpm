@@ -532,14 +532,27 @@ public class ActivityServiceImpl implements ActivityService {
 
         UUID processInstanceId = host.getProcessInstanceId();
         UUID tokenId = host.getToken();
-        dbService.cancelActivity(hostActivityId);
 
         ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel boundary = bpmn.getElement(boundaryElementId);
 
-        log.info("{}/{}: Boundary timer {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary);
+        boolean interrupting = Optional.ofNullable(boundary.getExtensions())
+            .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+            .map(BoundaryEventExtensionModel::isInterrupting)
+            .orElse(true);
+
+        if (interrupting) {
+            dbService.cancelActivity(hostActivityId);
+            log.info("{}/{}: Boundary timer {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
+            proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary);
+        } else {
+            // non-interrupting: the host keeps running; the boundary spawns a parallel branch on a
+            // new token (child of the host's token)
+            Token branch = dbService.createToken(tokenId);
+            log.info("{}/{}: Boundary timer {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
+            proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary);
+        }
     }
 
     @Override

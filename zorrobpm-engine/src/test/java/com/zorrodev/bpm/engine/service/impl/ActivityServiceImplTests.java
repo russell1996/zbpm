@@ -610,6 +610,51 @@ public class ActivityServiceImplTests {
     }
 
     @Test
+    public void nonInterruptingBoundaryTimerKeepsHostAndSpawnsParallelBranch() throws IOException {
+        // test-boundary-noninterrupting.bpmn: userTask1 has a NON-interrupting timer boundary
+        // (cancelActivity="false") -> boundaryTask. Firing must NOT cancel the host and must run
+        // the boundary path on a new (parallel) token.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-boundary-noninterrupting.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+        UUID hostActivityId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        Activity host = new Activity();
+        host.setId(hostActivityId);
+        host.setProcessInstanceId(processInstanceId);
+        host.setBpmnElementId("userTask1");
+        host.setToken(token);
+        host.setType(BpmnElementType.USER_TASK);
+        host.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
+
+        Token branch = new Token();
+        branch.setId(UUID.randomUUID());
+        branch.setParentId(token);
+
+        when(dbService.getActivity(hostActivityId)).thenReturn(host);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.createToken(token)).thenReturn(branch);
+        when(dbService.createActivity(eq(processInstanceId), any(UUID.class), eq(bpmn.getElement("boundaryTask")))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(eq(processInstanceId), any(UUID.class), eq(bpmn.getFlow("flowB")))).thenReturn(UUID.randomUUID());
+
+        activityService.fireBoundaryTimer(hostActivityId, "boundary1");
+
+        // host stays alive, a parallel branch token is created, and the boundary task is entered
+        verify(dbService, times(0)).cancelActivity(hostActivityId);
+        verify(dbService).createToken(token);
+        verify(dbService, times(1)).createActivity(processInstanceId, branch.getId(), bpmn.getElement("boundaryTask"));
+        verify(dbService, times(0)).completeProcessInstance(any());
+    }
+
+    @Test
     public void timerCatchEventSchedulesTimerJobAndParks() throws IOException {
         // test-timer.bpmn: startEvent -> timer1 (catch, PT5M) -> endEvent.
         // The token must park at the timer and a timer job be scheduled; end is not reached yet.
