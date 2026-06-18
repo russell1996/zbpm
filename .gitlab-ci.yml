@@ -1,0 +1,27 @@
+stages:
+  - deploy
+
+variables:
+  COMPOSE_PROJECT_NAME: zorrobpm
+  DEPLOY_DIR: /opt/zorro-bpm
+
+deploy:
+  stage: deploy
+  tags:
+    - zbpm
+  script:
+    - docker compose version
+    - mkdir -p "$DEPLOY_DIR"
+    - cp -a ./ "$DEPLOY_DIR"/
+    - cd "$DEPLOY_DIR"
+    - docker compose build
+    - docker compose up -d --remove-orphans
+    - docker compose ps
+    - docker image prune -f
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: false
