@@ -795,6 +795,49 @@ public class ActivityServiceImplTests {
     }
 
     @Test
+    public void unhandledErrorEndRaisesIncident() {
+        // An error end event with no catching boundary anywhere must be recorded as an incident,
+        // not silently end the instance.
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID tokenId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+        pi.setParentActivityId(null); // top-level instance, nowhere to propagate
+
+        BpmnElementModel errEnd = new BpmnElementModel();
+        errEnd.setId("errEnd");
+        errEnd.setType(BpmnElementType.ERROR_END_EVENT);
+        com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel ext =
+            new com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel();
+        com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel ed =
+            new com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel();
+        ed.setType(com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType.ERROR);
+        ed.setCode("E-1");
+        ext.setEventDefinition(ed);
+        errEnd.setExtensions(ext);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(errEnd);
+
+        Token token = new Token();
+        token.setId(tokenId);
+
+        UUID activityId = UUID.randomUUID();
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.getToken(tokenId)).thenReturn(token);
+        when(dbService.createActivity(processInstanceId, tokenId, errEnd)).thenReturn(activityId);
+
+        activityService.execute(processInstanceId, tokenId, "errEnd");
+
+        verify(dbService).errorActivity(activityId);
+        verify(dbService).createIncident(eq(activityId), any());
+    }
+
+    @Test
     public void unsupportedElementTypeRaisesIncidentInsteadOfLosingToken() {
         // An element type with no registered handler must not silently drop the token (which would
         // strand the instance). It is parked as an incident instead.

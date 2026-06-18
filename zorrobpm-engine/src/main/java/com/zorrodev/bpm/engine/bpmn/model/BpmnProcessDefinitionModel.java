@@ -22,16 +22,17 @@ public class BpmnProcessDefinitionModel {
     private String startFormKey;
     private final Map<String, BpmnElementModel> elements = new HashMap<>();
     @Getter
+    @Setter
     private BpmnElementModel startEvent;
     private final Map<String, BpmnFlowModel> flows = new HashMap<>();
 
+    /**
+     * Adds an element to the process. The process-level start event is set explicitly by the parser
+     * (see {@code BpmnParseService}) — it is NOT inferred here, because flattened nested start events
+     * (e.g. inside an embedded subprocess) must not be mistaken for the process start.
+     */
     public void addElement(BpmnElementModel element) {
         elements.put(element.getId(), element);
-        if (element.getType() == BpmnElementType.START_EVENT
-            || element.getType() == BpmnElementType.MESSAGE_START_EVENT
-            || element.getType() == BpmnElementType.TIMER_START_EVENT) {
-            startEvent = element;
-        }
     }
 
     public BpmnElementModel getElement(String bpmnId) {

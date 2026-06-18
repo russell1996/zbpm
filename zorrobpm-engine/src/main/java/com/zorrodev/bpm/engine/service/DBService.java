@@ -29,6 +29,10 @@ public interface DBService {
 
     void cancelActiveActivities(UUID processInstanceId);
 
+    /** Cancels active (created/in-progress) activities carried by a single token (e.g. an
+     *  interrupted subprocess scope). */
+    void cancelActiveActivitiesForToken(UUID tokenId);
+
     ProcessInstance getProcessInstance(UUID processInstanceId);
 
     /**
