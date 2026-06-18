@@ -27,4 +27,16 @@ public class BpmnIntermediateThrowEventModel {
 
     @XmlElement(name = "messageEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private BpmnMessageEventDefinitionModel messageEventDefinition;
+
+    @XmlElement(name = "signalEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnSignalEventDefinitionModel signalEventDefinition;
+
+    @XmlElement(name = "escalationEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnEscalationEventDefinitionModel escalationEventDefinition;
+
+    @XmlElement(name = "linkEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnLinkEventDefinitionModel linkEventDefinition;
+
+    @XmlElement(name = "compensateEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnCompensateEventDefinitionModel compensateEventDefinition;
 }

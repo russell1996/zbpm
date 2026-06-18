@@ -20,4 +20,6 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
     List<ActivityEntity> findByTokenAndBpmnElementId(UUID token, String bpmnElementId);
 
     List<ActivityEntity> findByProcessInstanceIdAndStatusIn(UUID processInstanceId, Collection<ActivityStatus> statuses);
+
+    List<ActivityEntity> findByTokenAndStatusIn(UUID token, Collection<ActivityStatus> statuses);
 }
