@@ -85,6 +85,20 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     msg.setMessageName(messageNames.getOrDefault(ref, ref));
                     element.getExtensions().setMessageEventExtension(msg);
                 }
+                if (startEvent.getTimerEventDefinition() != null) {
+                    if (element.getExtensions() == null) {
+                        element.setExtensions(new BpmnElementExtensionModel());
+                    }
+                    TimerEventExtensionModel timer = new TimerEventExtensionModel();
+                    if (startEvent.getTimerEventDefinition().getTimeDate() != null) {
+                        timer.setType(TimerEventType.DATE);
+                        timer.setExpression(startEvent.getTimerEventDefinition().getTimeDate());
+                    } else if (startEvent.getTimerEventDefinition().getTimeDuration() != null) {
+                        timer.setType(TimerEventType.DURATION);
+                        timer.setExpression(startEvent.getTimerEventDefinition().getTimeDuration());
+                    }
+                    element.getExtensions().setTimerEventExtension(timer);
+                }
                 pd.addElement(element);
                 // the plain (none) top-level start is where instances begin; message/timer starts
                 // are triggers handled separately and must not be treated as the process start

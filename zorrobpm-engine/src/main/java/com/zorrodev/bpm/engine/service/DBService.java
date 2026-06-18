@@ -101,6 +101,15 @@ public interface DBService {
 
     List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> findMessageStartSubscriptions(String messageName);
 
+    /** Replaces any timer-start jobs for {@code processKey} with a fresh one. */
+    void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, java.time.Instant dueAt);
+
+    void deleteTimerStartJobsByKey(String processKey);
+
+    List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobs(java.time.Instant now);
+
+    void markTimerStartJobFired(UUID timerStartJobId);
+
     /**
      * Records that a branch has arrived at a parallel-gateway join through {@code enteredFlowId}.
      * Idempotent: a repeated arrival for the same incoming flow does not create a duplicate.

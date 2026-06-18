@@ -658,6 +658,11 @@ public class ActivityServiceImpl implements ActivityService {
         return startProcessInstanceAt(parentActivityId, processDefinitionId, bpmn.getStartEvent().getId(), variables);
     }
 
+    @Override
+    public UUID startProcessInstanceFromStartEvent(UUID processDefinitionId, String startElementId, List<ProcessVariable> variables) {
+        return startProcessInstanceAt(null, processDefinitionId, startElementId, variables);
+    }
+
     /**
      * Starts a process instance beginning at a specific start element (used by message/timer start
      * events, which begin at their own start node rather than the plain start).

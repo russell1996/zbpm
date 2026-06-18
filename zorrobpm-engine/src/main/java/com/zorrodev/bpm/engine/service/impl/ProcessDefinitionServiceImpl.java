@@ -90,6 +90,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             fileService.saveFile(id, bpmn);
 
             registerMessageStartSubscriptions(key, id, model);
+            registerTimerStartJobs(key, id, model);
 
             publishProcessDefinitionCreatedEvent(processDefinitionEntity, model, bpmn);
         } else {
@@ -117,6 +118,31 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             if (messageName != null) {
                 dbService.createMessageStartSubscription(key, processDefinitionId, start.getId(), messageName);
             }
+        }
+    }
+
+    /**
+     * Registers (and supersedes prior versions of) timer start jobs for the deployed definition.
+     * Duration timers are due relative to deploy time; date timers at the given instant.
+     */
+    private void registerTimerStartJobs(String key, UUID processDefinitionId, BpmnProcessDefinitionModel model) {
+        var timerStarts = model.getTimerStartEvents();
+        if (timerStarts.isEmpty()) {
+            return;
+        }
+        dbService.deleteTimerStartJobsByKey(key);
+        for (BpmnElementModel start : timerStarts) {
+            com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel timer = Optional.ofNullable(start.getExtensions())
+                .map(BpmnElementExtensionModel::getTimerEventExtension)
+                .orElse(null);
+            if (timer == null || timer.getType() == null || timer.getExpression() == null) {
+                continue;
+            }
+            Instant dueAt = switch (timer.getType()) {
+                case DURATION -> Instant.now().plus(java.time.Duration.parse(timer.getExpression()));
+                case DATE -> Instant.parse(timer.getExpression());
+            };
+            dbService.createTimerStartJob(key, processDefinitionId, start.getId(), dueAt);
         }
     }
 
