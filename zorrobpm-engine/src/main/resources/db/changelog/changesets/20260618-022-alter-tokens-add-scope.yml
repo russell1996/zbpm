@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - logicalFilePath: 20260618-022
+  - changeSet:
+      id: 20260618-022
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: tokens
+            columns:
+              - column:
+                  name: scope_activity_id
+                  type: uuid

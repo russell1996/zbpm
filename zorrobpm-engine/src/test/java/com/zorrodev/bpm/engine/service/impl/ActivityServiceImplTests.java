@@ -25,10 +25,15 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import com.zorrodev.bpm.contract.exception.EngineException;
+import org.springframework.test.util.ReflectionTestUtils;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -412,5 +417,336 @@ public class ActivityServiceImplTests {
         List<BpmnElementType> elementTypes = elementCaptor.getAllValues().stream().map(BpmnElementModel::getType).toList();
 
         assertThat(elementTypes).contains(BpmnElementType.START_EVENT, BpmnElementType.END_EVENT, BpmnElementType.CALL_ACTIVITY);
+    }
+
+    @Test
+    public void messageThrowBroadcastsAndPassesThrough() throws IOException {
+        // test-message-throw.bpmn: startEvent -> msgThrow (message "ping") -> endEvent.
+        // The throw delivers the message in-engine (correlate) and continues to completion.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-message-throw.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        assertThat(bpmn.getElement("msgThrow").getExtensions().getMessageEventExtension().getMessageName())
+            .isEqualTo("ping");
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.getVariables(processInstanceId)).thenReturn(List.of());
+        when(dbService.findMessageSubscriptions("ping", null)).thenReturn(List.of());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("msgThrow"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
+
+        activityService.execute(processInstanceId, token, "startEvent");
+
+        verify(dbService).findMessageSubscriptions("ping", null);
+        verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
+        verify(dbService, times(1)).completeProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void messageCatchSubscribesAndResumesOnCorrelation() throws IOException {
+        // test-message.bpmn: startEvent -> msgCatch (message "order-approved") -> endEvent.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-message.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        // parser resolves messageRef -> message name
+        assertThat(bpmn.getElement("msgCatch").getExtensions().getMessageEventExtension().getMessageName())
+            .isEqualTo("order-approved");
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+        UUID msgActivityId = UUID.randomUUID();
+        UUID subscriptionId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        Activity msgActivity = new Activity();
+        msgActivity.setId(msgActivityId);
+        msgActivity.setProcessInstanceId(processInstanceId);
+        msgActivity.setBpmnElementId("msgCatch");
+        msgActivity.setToken(token);
+        msgActivity.setType(BpmnElementType.MESSAGE_CATCH_EVENT);
+
+        com.zorrodev.bpm.engine.dto.MessageSubscription subscription = new com.zorrodev.bpm.engine.dto.MessageSubscription();
+        subscription.setId(subscriptionId);
+        subscription.setProcessInstanceId(processInstanceId);
+        subscription.setActivityId(msgActivityId);
+        subscription.setMessageName("order-approved");
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.getActivity(msgActivityId)).thenReturn(msgActivity);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("msgCatch"))).thenReturn(msgActivityId);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
+        when(dbService.findMessageSubscriptions("order-approved", processInstanceId)).thenReturn(List.of(subscription));
+
+        activityService.execute(processInstanceId, token, "startEvent");
+
+        verify(dbService).createMessageSubscription(processInstanceId, msgActivityId, "order-approved");
+        verify(dbService, times(0)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
+
+        activityService.correlateMessage("order-approved", processInstanceId, List.of());
+
+        verify(dbService).consumeMessageSubscription(subscriptionId);
+        verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
+        verify(dbService, times(1)).completeProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void userTaskWithTimerBoundarySchedulesBoundaryJob() throws IOException {
+        // test-boundary.bpmn: userTask1 has an interrupting timer boundary (PT10M) -> escalationEnd
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-boundary.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+        UUID userActivityId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("userTask1"))).thenReturn(userActivityId);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+
+        activityService.execute(processInstanceId, token, "startEvent");
+
+        // token parks at the user task and a boundary timer is scheduled against it
+        verify(dbService).createTimerJob(eq(userActivityId), any(), eq("boundary1"));
+        verify(dbService, times(0)).completeProcessInstance(any());
+    }
+
+    @Test
+    public void boundaryTimerCancelsHostAndTakesBoundaryPath() throws IOException {
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-boundary.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+        UUID hostActivityId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        Activity host = new Activity();
+        host.setId(hostActivityId);
+        host.setProcessInstanceId(processInstanceId);
+        host.setBpmnElementId("userTask1");
+        host.setToken(token);
+        host.setType(BpmnElementType.USER_TASK);
+        host.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
+
+        when(dbService.getActivity(hostActivityId)).thenReturn(host);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("escalationEnd"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flowB"))).thenReturn(UUID.randomUUID());
+
+        activityService.fireBoundaryTimer(hostActivityId, "boundary1");
+
+        verify(dbService).cancelActivity(hostActivityId);
+        verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("escalationEnd"));
+        verify(dbService, times(1)).completeProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void timerCatchEventSchedulesTimerJobAndParks() throws IOException {
+        // test-timer.bpmn: startEvent -> timer1 (catch, PT5M) -> endEvent.
+        // The token must park at the timer and a timer job be scheduled; end is not reached yet.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-timer.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+        UUID timerActivityId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("timer1"))).thenReturn(timerActivityId);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+
+        Instant before = Instant.now();
+        activityService.execute(processInstanceId, token, "startEvent");
+
+        ArgumentCaptor<Instant> dueAtCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(dbService).createTimerJob(eq(timerActivityId), dueAtCaptor.capture());
+        // PT5M from now
+        assertThat(dueAtCaptor.getValue()).isBetween(before.plusSeconds(290), Instant.now().plusSeconds(310));
+        verify(dbService, times(0)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
+        verify(dbService, times(0)).completeProcessInstance(any());
+    }
+
+    @Test
+    public void intermediateThrowEventPassesThrough() throws IOException {
+        // test-throw.bpmn: startEvent -> throw1 (intermediate throw) -> endEvent.
+        // A plain throw event has no side effect and must flow straight through to completion.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-throw.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("throw1"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
+
+        activityService.execute(processInstanceId, token, "startEvent");
+
+        verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("throw1"));
+        verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
+        verify(dbService, times(1)).completeProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void elementFailureRaisesIncidentInsteadOfPropagating() throws IOException {
+        // test5.bpmn has an exclusive gateway whose condition "x = 1" is evaluated via the script
+        // service. If the script returns a non-boolean, the (Boolean) cast in processFlow throws.
+        // That failure must become an incident at the gateway, not propagate out of execute().
+        String bpmnStr = Files.readString(Path.of("src/test/files/test5.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        UUID gatewayActivityId = UUID.randomUUID();
+        Activity gatewayActivity = new Activity();
+        gatewayActivity.setId(gatewayActivityId);
+        gatewayActivity.setBpmnElementId("xor1");
+        gatewayActivity.setToken(token);
+        gatewayActivity.setProcessInstanceId(processInstanceId);
+        gatewayActivity.setType(BpmnElementType.EXCLUSIVE_GATEWAY);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+        when(dbService.getActivitiesByTokenAndBpmnElementId(token, "xor1")).thenReturn(List.of(gatewayActivity));
+        when(scriptService.evaluateScript(eq("x = 1"), any())).thenReturn("not-a-boolean");
+
+        // must not throw: the bad condition result is turned into an incident
+        activityService.execute(processInstanceId, token, "startEvent");
+
+        verify(dbService).errorActivity(gatewayActivityId);
+        verify(dbService).createIncident(eq(gatewayActivityId), any());
+    }
+
+    @Test
+    public void catchEventParksTokenAndResumesOnSignal() throws IOException {
+        // test-catch.bpmn: startEvent -> catch1 (intermediate catch) -> endEvent.
+        // The catch event is a wait state: execute() must park the token there, and only
+        // signal() may resume it to completion.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-catch.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID token = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        UUID catchActivityId = UUID.randomUUID();
+        Activity catchActivity = new Activity();
+        catchActivity.setType(BpmnElementType.INTERMEDIATE_CATCH_EVENT);
+        catchActivity.setProcessInstanceId(processInstanceId);
+        catchActivity.setBpmnElementId("catch1");
+        catchActivity.setToken(token);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.getActivity(catchActivityId)).thenReturn(catchActivity);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("catch1"))).thenReturn(catchActivityId);
+        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
+
+        activityService.execute(processInstanceId, token, "startEvent");
+
+        // token parked at the catch event: end not reached, instance not completed
+        verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("catch1"));
+        verify(dbService, times(0)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
+        verify(dbService, times(0)).completeProcessInstance(any());
+
+        activityService.signal(catchActivityId, List.of());
+
+        // resumed: end reached and instance completed
+        verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
+        verify(dbService, times(1)).completeProcessInstance(processInstanceId);
+    }
+
+    @Test
+    public void recursionDepthGuardStopsInfiniteLoop() throws IOException {
+        // test-loop.bpmn: startEvent -> parallel1, and flow2: parallel1 -> parallel1 (self loop).
+        // Without the depth guard this recurses through execute() until StackOverflowError.
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-loop.bpmn"));
+        BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
+
+        UUID processDefinitionId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID tokenId = UUID.randomUUID();
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        Token token = new Token();
+        token.setId(UUID.randomUUID());
+        token.setParentId(null);
+
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.createToken(any())).thenReturn(token);
+
+        // keep the limit low so the test fails fast and never risks an actual StackOverflowError
+        ReflectionTestUtils.setField(activityService, "maxExecutionDepth", 100);
+
+        assertThatThrownBy(() -> activityService.execute(processInstanceId, tokenId, "parallel1"))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Execution depth limit");
     }
 }

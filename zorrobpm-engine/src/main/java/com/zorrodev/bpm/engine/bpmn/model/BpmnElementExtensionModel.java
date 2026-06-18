@@ -13,4 +13,6 @@ public class BpmnElementExtensionModel {
     private TimerEventExtensionModel timerEventExtension;
     private MessageEventExtensionModel messageEventExtension;
     private CallActivityExtensionModel callActivityExtension;
+    private SubProcessExtensionModel subProcessExtension;
+    private BoundaryEventExtensionModel boundaryEventExtension;
 }

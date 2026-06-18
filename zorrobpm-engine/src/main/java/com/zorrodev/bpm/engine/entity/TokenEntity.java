@@ -16,4 +16,6 @@ public class TokenEntity {
     @Id
     private UUID id;
     private UUID parentId;
+    /** Activity id of the enclosing embedded subprocess, or null for the top-level scope. */
+    private UUID scopeActivityId;
 }

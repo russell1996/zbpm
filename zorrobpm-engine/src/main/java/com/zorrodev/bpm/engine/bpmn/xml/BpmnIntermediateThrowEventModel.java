@@ -26,5 +26,5 @@ public class BpmnIntermediateThrowEventModel {
     private List<String>  outgoing;
 
     @XmlElement(name = "messageEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
-    private Object messageEventDefinition;
+    private BpmnMessageEventDefinitionModel messageEventDefinition;
 }

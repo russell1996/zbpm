@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.service.impl;
 
+import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
@@ -9,7 +10,13 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
+import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
+import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
@@ -21,9 +28,14 @@ import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -38,6 +50,169 @@ public class ActivityServiceImpl implements ActivityService {
     private final ScriptService scriptService;
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
 
+    /**
+     * Handler for a single BPMN element type. Method references capture {@code this} lazily,
+     * so building the registry as a field initializer is safe even before the injected
+     * dependencies are assigned by the generated constructor.
+     */
+    @FunctionalInterface
+    private interface ElementHandler {
+        void handle(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element);
+    }
+
+    /**
+     * Maximum number of nested {@link #execute} calls for a single triggering request.
+     * Guards against unbounded control-flow loops and self/mutually-recursive call activities
+     * that would otherwise grow the call stack until {@link StackOverflowError}.
+     */
+    @Value("${zorrobpm.engine.max-execution-depth:1000}")
+    private int maxExecutionDepth = 1000;
+
+    private final ThreadLocal<Integer> executionDepth = ThreadLocal.withInitial(() -> 0);
+
+    private final Map<BpmnElementType, ElementHandler> handlers = createHandlers();
+
+    private Map<BpmnElementType, ElementHandler> createHandlers() {
+        Map<BpmnElementType, ElementHandler> map = new EnumMap<>(BpmnElementType.class);
+        map.put(BpmnElementType.START_EVENT, (pi, t, bpmn, el) -> processStartEvent(pi, t, bpmn, el));
+        map.put(BpmnElementType.END_EVENT, this::processEndEvent);
+        map.put(BpmnElementType.TERMINATE_END_EVENT, this::processTerminateEnd);
+        map.put(BpmnElementType.SERVICE_TASK, (pi, t, bpmn, el) -> enterServiceTask(pi, t, el));
+        map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
+        map.put(BpmnElementType.EXCLUSIVE_GATEWAY, this::processExclusiveGateway);
+        map.put(BpmnElementType.PARALLEL_GATEWAY, this::processParallelGateway);
+        map.put(BpmnElementType.CALL_ACTIVITY, this::processCallActivity);
+        map.put(BpmnElementType.SUB_PROCESS, this::processSubProcess);
+        // Catch events are wait states: the token parks here until an external trigger
+        // (timer fires / message correlated) resumes it via signal(...). Until the timer
+        // and message subsystems land, these elements at least park cleanly with an active
+        // activity instead of silently falling through to "Unsupported".
+        map.put(BpmnElementType.INTERMEDIATE_CATCH_EVENT, (pi, t, bpmn, el) -> enterWaitState(pi, t, el));
+        map.put(BpmnElementType.MESSAGE_CATCH_EVENT, (pi, t, bpmn, el) -> enterMessageCatch(pi, t, el));
+        map.put(BpmnElementType.TIMER_CATCH_EVENT, (pi, t, bpmn, el) -> enterTimerCatch(pi, t, el));
+        // Throw events are pass-through: a plain intermediate throw has no side effect and simply
+        // continues. (Message throw publishing is added with the message subsystem.)
+        map.put(BpmnElementType.INTERMEDIATE_THROW_EVENT, this::processThrowEvent);
+        map.put(BpmnElementType.MESSAGE_THROW_EVENT, this::processMessageThrow);
+        return map;
+    }
+
+    /**
+     * Follows every outgoing sequence flow of {@code element} unconditionally and executes the
+     * target of each. Shared "continue from here" step used by start events, completed tasks,
+     * signalled wait states and parent continuation after a subprocess/call activity ends.
+     */
+    private void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
+        for (String outgoing : element.getOutgoing()) {
+            processFlow(processInstanceId, tokenId, outgoing, false, null);
+            BpmnFlowModel flow = bpmn.getFlow(outgoing);
+            BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
+            execute(processInstanceId, tokenId, bpmn, target);
+        }
+    }
+
+    /**
+     * Parks the token at a catch/wait element: records an active activity and stops. The token
+     * stays here until {@link #signal(UUID, List)} is called for the created activity.
+     */
+    private void processThrowEvent(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /**
+     * Message throw: completes the activity, then delivers the message in-engine by correlating it
+     * to any instance waiting on it (so a process can wake another), and continues. Process
+     * variables are passed along as the message payload.
+     */
+    private void processMessageThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        String messageName = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getMessageEventExtension)
+            .map(MessageEventExtensionModel::getMessageName)
+            .orElse(null);
+
+        log.info("{}/{}: Throwing message '{}' at {}: {}/{}", processInstanceId, tokenId, messageName, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        if (messageName != null) {
+            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            correlateMessage(messageName, null, variables);
+        }
+
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    private void enterWaitState(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        log.info("{}/{}: Waiting at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+    }
+
+    /**
+     * Parks the token at a timer catch event and schedules a timer job for its due time. The
+     * timer scheduler later fires the job and resumes the token via {@link #signal(UUID, List)}.
+     */
+    private void enterTimerCatch(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        Instant dueAt = computeDueAt(bpmnElement);
+        dbService.createTimerJob(activityId, dueAt);
+        log.info("{}/{}: Timer scheduled for {} at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getId(), dueAt, activityId, bpmnElement.getType());
+    }
+
+    /**
+     * Parks the token at a message catch event and registers a subscription. A later
+     * {@link #correlateMessage(String, UUID, List)} for the same message resumes the token.
+     */
+    private void enterMessageCatch(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        String messageName = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getMessageEventExtension)
+            .map(MessageEventExtensionModel::getMessageName)
+            .orElseThrow(() -> new EngineException("Message catch event " + bpmnElement.getId() + " has no message name"));
+        dbService.createMessageSubscription(processInstanceId, activityId, messageName);
+        log.info("{}/{}: Subscribed to message '{}' at {}: {}/{}", processInstanceId, tokenId, messageName, bpmnElement.getType(), activityId, bpmnElement.getId());
+    }
+
+    private Instant computeDueAt(BpmnElementModel element) {
+        TimerEventExtensionModel timer = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .orElse(null);
+        if (timer == null || timer.getType() == null || timer.getExpression() == null) {
+            throw new EngineException("Timer event " + element.getId() + " has no timer definition");
+        }
+        return switch (timer.getType()) {
+            case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
+            case DATE -> Instant.parse(timer.getExpression());
+        };
+    }
+
+    /**
+     * Parks the token at the failing element as an incident instead of propagating the exception
+     * (which would roll back the whole process transaction). Marks the element's activity ERROR
+     * and records an incident the operator can later resolve via
+     * {@link #resolveIncident(UUID, List)}, which re-executes the element.
+     */
+    private void raiseIncident(UUID processInstanceId, UUID tokenId, BpmnElementModel element, Exception e) {
+        String message = e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : "");
+        log.error("{}/{}: Incident at {} {}: {}", processInstanceId, tokenId, element.getType(), element.getId(), message, e);
+
+        // the handler creates the element's activity before doing the risky work, so it is visible
+        // to this same-transaction query; pick the most recent one for this token + element
+        List<Activity> activities = dbService.getActivitiesByTokenAndBpmnElementId(tokenId, element.getId());
+        if (activities.isEmpty()) {
+            log.error("{}/{}: No activity found for failed element {}, incident not recorded", processInstanceId, tokenId, element.getId());
+            return;
+        }
+        UUID activityId = activities.get(activities.size() - 1).getId();
+        dbService.errorActivity(activityId);
+        dbService.createIncident(activityId, message);
+    }
+
     @Override
     public void execute(UUID processInstanceId, UUID tokenId, String bpmnElementId) {
         ProcessInstance processInstanceEntity = dbService.getProcessInstance(processInstanceId);
@@ -49,24 +224,39 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     private void execute(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
-        BpmnElementType type = element.getType();
+        int depth = executionDepth.get() + 1;
+        if (depth > maxExecutionDepth) {
+            // Thrown before incrementing the counter: parent frames restore depth via their
+            // finally blocks while unwinding, and the outermost frame removes the ThreadLocal.
+            throw new EngineException("Execution depth limit (" + maxExecutionDepth + ") exceeded at element '"
+                + element.getId() + "' in process instance " + processInstanceId
+                + " — likely an unbounded loop or recursive call activity");
+        }
+        executionDepth.set(depth);
+        try {
+            BpmnElementType type = element.getType();
 
-        if (type == BpmnElementType.START_EVENT) {
-            processStartEvent(processInstanceId, tokenId, bpmn, element);
-        } else if (type == BpmnElementType.END_EVENT) {
-            processEndEvent(processInstanceId, tokenId, element);
-        } else if (type == BpmnElementType.SERVICE_TASK) {
-            enterServiceTask(processInstanceId, tokenId, element);
-        } else if (type == BpmnElementType.USER_TASK) {
-            enterUserTask(processInstanceId, tokenId, element);
-        } else if (type == BpmnElementType.EXCLUSIVE_GATEWAY) {
-            processExclusiveGateway(processInstanceId, tokenId, bpmn, element);
-        } else if (type == BpmnElementType.PARALLEL_GATEWAY) {
-            processParallelGateway(processInstanceId, tokenId, bpmn, element);
-        } else if (type == BpmnElementType.CALL_ACTIVITY) {
-            processCallActivity(processInstanceId, tokenId, bpmn, element);
-        } else {
-            log.info("Unsupported BpmnElementType: " + type);
+            ElementHandler handler = handlers.get(type);
+            if (handler == null) {
+                log.info("Unsupported BpmnElementType: " + type);
+                return;
+            }
+            try {
+                handler.handle(processInstanceId, tokenId, bpmn, element);
+            } catch (EngineException e) {
+                // engine-level aborts (e.g. depth limit) propagate; they are not element failures
+                throw e;
+            } catch (Exception e) {
+                // any element failure (bad FEEL result, variable conversion, service error, ...)
+                // parks the token as an incident instead of rolling back the whole process
+                raiseIncident(processInstanceId, tokenId, element, e);
+            }
+        } finally {
+            if (depth <= 1) {
+                executionDepth.remove();
+            } else {
+                executionDepth.set(depth - 1);
+            }
         }
     }
 
@@ -83,6 +273,26 @@ public class ActivityServiceImpl implements ActivityService {
         UUID processDefinitionId = pd.getId();
 
         startProcessInstance(activityId, processDefinitionId, variables);
+    }
+
+    /**
+     * Enters an embedded subprocess: records the subprocess container activity, creates a child
+     * token scoped to it, and starts the subprocess's nested start event. When the nested end
+     * event is reached (see {@link #processEndEvent}) the container completes and the parent token
+     * continues from the subprocess's outgoing flows.
+     */
+    private void processSubProcess(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+
+        String startEventId = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getSubProcessExtension)
+            .map(SubProcessExtensionModel::getStartEventId)
+            .orElseThrow(() -> new EngineException("Subprocess " + bpmnElement.getId() + " has no start event"));
+
+        Token childToken = dbService.createToken(tokenId, activityId);
+        log.info("{}/{}: Entering {}: {}/{} (scope token {})", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), childToken.getId());
+
+        execute(processInstanceId, childToken.getId(), bpmn, bpmn.getElement(startEventId));
     }
 
     private void processParallelGateway(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
@@ -198,14 +408,7 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        List<String> outgoings = bpmnElement.getOutgoing();
-        for (String outgoing : outgoings) {
-            processFlow(processInstanceId, tokenId, outgoing, false, null);
-            BpmnFlowModel flow = bpmn.getFlow(outgoing);
-            String targetRef = flow.getTargetRef();
-            BpmnElementModel target = bpmn.getElement(targetRef);
-            execute(processInstanceId, tokenId, bpmn, target);
-        }
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
     }
 
     private void enterUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
@@ -213,11 +416,44 @@ public class ActivityServiceImpl implements ActivityService {
         dbService.createUserTask(activityId);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
+    }
+
+    /**
+     * Schedules interrupting timer boundary jobs for any timer boundary event attached to the
+     * given host activity. When such a timer fires before the host completes, the host is cancelled
+     * and flow continues from the boundary's outgoing (see {@link #fireBoundaryTimer}).
+     */
+    private void scheduleBoundaryTimers(UUID processInstanceId, UUID hostActivityId, BpmnElementModel host) {
+        BpmnProcessDefinitionModel pd = host.getProcessDefinition();
+        if (pd == null) {
+            return;
+        }
+        for (BpmnElementModel element : pd.getElements()) {
+            if (element.getType() != BpmnElementType.BOUNDARY_TIMER_EVENT) {
+                continue;
+            }
+            String attachedTo = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (host.getId().equals(attachedTo)) {
+                Instant dueAt = computeDueAt(element);
+                dbService.createTimerJob(hostActivityId, dueAt, element.getId());
+                log.info("{}: Boundary timer {} scheduled for {} on host activity {}", processInstanceId, element.getId(), dueAt, hostActivityId);
+            }
+        }
     }
 
     @Override
     public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables) {
         Activity activity = dbService.getActivity(userTaskId);
+        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
+            // already finished, e.g. interrupted by a boundary timer — avoid double execution
+            log.info("Ignoring completion of user task {} in status {}", userTaskId, activity.getStatus());
+            return;
+        }
         UUID processInstanceId = activity.getProcessInstanceId();
         UUID token = activity.getToken();
 
@@ -231,20 +467,75 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        List<String> outgoings = bpmnElement.getOutgoing();
-        for (String outgoing : outgoings) {
-            processFlow(processInstanceId, token, outgoing, false, null);
-            BpmnFlowModel flow = bpmn.getFlow(outgoing);
-            String targetRef = flow.getTargetRef();
-            BpmnElementModel target = bpmn.getElement(targetRef);
-            execute(processInstanceId, token, bpmn, target);
+        proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement);
+    }
+
+    @Override
+    public void signal(UUID activityId, List<ProcessVariable> variables) {
+        Activity activity = dbService.getActivity(activityId);
+        UUID processInstanceId = activity.getProcessInstanceId();
+        UUID tokenId = activity.getToken();
+
+        if (variables != null && !variables.isEmpty()) {
+            dbService.setVariables(processInstanceId, variables);
+        }
+        dbService.completeActivity(activityId);
+
+        log.info("{}/{}: Signalling {}: {}/{}", processInstanceId, tokenId, activity.getType(), activityId, activity.getBpmnElementId());
+
+        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
+        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
+
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    @Override
+    public void fireBoundaryTimer(UUID hostActivityId, String boundaryElementId) {
+        Activity host = dbService.getActivity(hostActivityId);
+        if (host.getStatus() == ActivityStatus.COMPLETED || host.getStatus() == ActivityStatus.CANCELLED) {
+            // host already finished before the timer fired: interrupting boundary is a no-op
+            log.info("Boundary timer {} fired but host activity {} is {}, ignoring", boundaryElementId, hostActivityId, host.getStatus());
+            return;
+        }
+
+        UUID processInstanceId = host.getProcessInstanceId();
+        UUID tokenId = host.getToken();
+        dbService.cancelActivity(hostActivityId);
+
+        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
+        BpmnElementModel boundary = bpmn.getElement(boundaryElementId);
+
+        log.info("{}/{}: Boundary timer {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary);
+    }
+
+    @Override
+    public void correlateMessage(String messageName, UUID processInstanceId, List<ProcessVariable> variables) {
+        List<MessageSubscription> subscriptions = dbService.findMessageSubscriptions(messageName, processInstanceId);
+        if (subscriptions.isEmpty()) {
+            log.info("No active subscription for message '{}' (instance {})", messageName, processInstanceId);
+            return;
+        }
+        for (MessageSubscription subscription : subscriptions) {
+            dbService.consumeMessageSubscription(subscription.getId());
+            log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
+            signal(subscription.getActivityId(), variables);
         }
     }
 
     @Override
-    public void resolveIncident(UUID incidentId) {
+    public void resolveIncident(UUID incidentId, List<ProcessVariable> variables) {
         Incident incident = dbService.getIncident(incidentId);
         Activity activity = dbService.getActivity(incident.getActivityId());
+
+        if (variables != null && !variables.isEmpty()) {
+            dbService.setVariables(activity.getProcessInstanceId(), variables);
+        }
+        dbService.completeIncident(incidentId);
+
+        log.info("{}/{}: Resolving incident {} at {}: re-executing", activity.getProcessInstanceId(), activity.getToken(), incidentId, activity.getBpmnElementId());
         execute(activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId());
     }
 
@@ -309,12 +600,27 @@ public class ActivityServiceImpl implements ActivityService {
         return flowActivityId;
     }
 
-    private void processEndEvent(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
+    private void processEndEvent(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
         dbService.completeActivity(activityId);
-        dbService.completeProcessInstance(processInstanceId);
 
         log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        Token endToken = dbService.getToken(tokenId);
+        if (endToken != null && endToken.getScopeActivityId() != null) {
+            // end of an embedded subprocess scope: complete the container and continue the parent
+            // token from the subprocess's outgoing flows; the process instance stays running
+            UUID subProcessActivityId = endToken.getScopeActivityId();
+            dbService.completeActivity(subProcessActivityId);
+            Activity subProcessActivity = dbService.getActivity(subProcessActivityId);
+            BpmnElementModel subProcessElement = bpmn.getElement(subProcessActivity.getBpmnElementId());
+            UUID parentTokenId = endToken.getParentId();
+            log.info("{}/{}: Completing {}: {}/{}", processInstanceId, parentTokenId, subProcessElement.getType(), subProcessActivityId, subProcessElement.getId());
+            proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement);
+            return;
+        }
+
+        dbService.completeProcessInstance(processInstanceId);
 
         ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
         UUID parentActivityId = pi.getParentActivityId();
@@ -333,18 +639,24 @@ public class ActivityServiceImpl implements ActivityService {
 
             log.info("{}/{}: Completing {}: {}/{}", parentProcessInstanceId, parentToken, parentActivity.getType(), parentActivityId, parentActivity.getBpmnElementId());
 
-            BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(parentProcessDefinitionId);
             BpmnElementModel parentBpmnElement = parentBpmn.getElement(parentActivity.getBpmnElementId());
 
-            List<String> outgoings = parentBpmnElement.getOutgoing();
-            for (String outgoing : outgoings) {
-                processFlow(parentProcessInstanceId, parentToken, outgoing, false, null);
-                BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                String targetRef = flow.getTargetRef();
-                BpmnElementModel target = bpmn.getElement(targetRef);
-                execute(parentProcessInstanceId, parentToken, parentBpmn, target);
-            }
+            proceedToOutgoing(parentProcessInstanceId, parentToken, parentBpmn, parentBpmnElement);
         }
+    }
+
+    /**
+     * Terminate end event: ends the whole process instance immediately, cancelling any other
+     * active activities (parked user tasks, waiting catch events, parallel branches).
+     */
+    private void processTerminateEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        log.info("{}/{}: Terminating instance at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        dbService.cancelActiveActivities(processInstanceId);
+        dbService.completeProcessInstance(processInstanceId);
     }
 
     private void processStartEvent(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
@@ -353,14 +665,7 @@ public class ActivityServiceImpl implements ActivityService {
 
         log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
 
-        List<String> outgoings = bpmnElement.getOutgoing();
-        for (String outgoing : outgoings) {
-            processFlow(processInstanceId, tokenId, outgoing, false, null);
-            BpmnFlowModel flow = bpmn.getFlow(outgoing);
-            String targetRef = flow.getTargetRef();
-            BpmnElementModel target = bpmn.getElement(targetRef);
-            execute(processInstanceId, tokenId, bpmn, target);
-        }
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
     }
 
 }

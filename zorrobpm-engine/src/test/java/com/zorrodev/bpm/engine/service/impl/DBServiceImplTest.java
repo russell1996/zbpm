@@ -21,7 +21,13 @@ import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.dto.TimerJob;
+import com.zorrodev.bpm.engine.dto.MessageSubscription;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
+import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
@@ -60,6 +66,8 @@ class DBServiceImplTest {
     @Mock private VariableRepository variableRepository;
     @Mock private TokenRepository tokenRepository;
     @Mock private IncidentRepository incidentRepository;
+    @Mock private TimerJobRepository timerJobRepository;
+    @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
 
     @InjectMocks
@@ -409,9 +417,124 @@ class DBServiceImplTest {
     }
 
     @Test
-    void getIncident_returnsNull() {
-        Incident result = dbService.getIncident(UUID.randomUUID());
-        assertThat(result).isNull();
+    void getIncident_mapsEntity() {
+        UUID incidentId = UUID.randomUUID();
+        UUID activityId = UUID.randomUUID();
+        IncidentEntity entity = new IncidentEntity();
+        entity.setId(incidentId);
+        entity.setActivityId(activityId);
+        entity.setMessage("boom");
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(entity));
+
+        Incident result = dbService.getIncident(incidentId);
+
+        assertThat(result.getId()).isEqualTo(incidentId);
+        assertThat(result.getActivityId()).isEqualTo(activityId);
+        assertThat(result.getMessage()).isEqualTo("boom");
+    }
+
+    @Test
+    void completeIncident_setsCompletedAt() {
+        UUID incidentId = UUID.randomUUID();
+        IncidentEntity entity = new IncidentEntity();
+        entity.setId(incidentId);
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(entity));
+
+        dbService.completeIncident(incidentId);
+
+        ArgumentCaptor<IncidentEntity> captor = ArgumentCaptor.forClass(IncidentEntity.class);
+        verify(incidentRepository).save(captor.capture());
+        assertThat(captor.getValue().getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void createTimerJob_persistsUnfiredJob() {
+        UUID activityId = UUID.randomUUID();
+        Instant dueAt = Instant.now().plusSeconds(60);
+
+        UUID id = dbService.createTimerJob(activityId, dueAt);
+
+        assertThat(id).isNotNull();
+        ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);
+        verify(timerJobRepository).save(captor.capture());
+        assertThat(captor.getValue().getActivityId()).isEqualTo(activityId);
+        assertThat(captor.getValue().getDueAt()).isEqualTo(dueAt);
+        assertThat(captor.getValue().isFired()).isFalse();
+    }
+
+    @Test
+    void findDueTimerJobs_mapsEntities() {
+        Instant now = Instant.now();
+        TimerJobEntity entity = new TimerJobEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setActivityId(UUID.randomUUID());
+        entity.setDueAt(now.minusSeconds(1));
+        when(timerJobRepository.findByFiredFalseAndDueAtLessThanEqual(now)).thenReturn(List.of(entity));
+
+        List<TimerJob> jobs = dbService.findDueTimerJobs(now);
+
+        assertThat(jobs).hasSize(1);
+        assertThat(jobs.get(0).getActivityId()).isEqualTo(entity.getActivityId());
+    }
+
+    @Test
+    void markTimerJobFired_setsFired() {
+        UUID id = UUID.randomUUID();
+        TimerJobEntity entity = new TimerJobEntity();
+        entity.setId(id);
+        when(timerJobRepository.findById(id)).thenReturn(Optional.of(entity));
+
+        dbService.markTimerJobFired(id);
+
+        ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);
+        verify(timerJobRepository).save(captor.capture());
+        assertThat(captor.getValue().isFired()).isTrue();
+    }
+
+    @Test
+    void createMessageSubscription_persistsUnconsumed() {
+        UUID processInstanceId = UUID.randomUUID();
+        UUID activityId = UUID.randomUUID();
+
+        UUID id = dbService.createMessageSubscription(processInstanceId, activityId, "msg1");
+
+        assertThat(id).isNotNull();
+        ArgumentCaptor<MessageSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageSubscriptionEntity.class);
+        verify(messageSubscriptionRepository).save(captor.capture());
+        assertThat(captor.getValue().getMessageName()).isEqualTo("msg1");
+        assertThat(captor.getValue().getActivityId()).isEqualTo(activityId);
+        assertThat(captor.getValue().isConsumed()).isFalse();
+    }
+
+    @Test
+    void findMessageSubscriptions_byNameAndInstance() {
+        UUID processInstanceId = UUID.randomUUID();
+        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setProcessInstanceId(processInstanceId);
+        entity.setActivityId(UUID.randomUUID());
+        entity.setMessageName("msg1");
+        when(messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId("msg1", processInstanceId))
+            .thenReturn(List.of(entity));
+
+        List<MessageSubscription> subs = dbService.findMessageSubscriptions("msg1", processInstanceId);
+
+        assertThat(subs).hasSize(1);
+        assertThat(subs.get(0).getActivityId()).isEqualTo(entity.getActivityId());
+    }
+
+    @Test
+    void consumeMessageSubscription_setsConsumed() {
+        UUID id = UUID.randomUUID();
+        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
+        entity.setId(id);
+        when(messageSubscriptionRepository.findById(id)).thenReturn(Optional.of(entity));
+
+        dbService.consumeMessageSubscription(id);
+
+        ArgumentCaptor<MessageSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageSubscriptionEntity.class);
+        verify(messageSubscriptionRepository).save(captor.capture());
+        assertThat(captor.getValue().isConsumed()).isTrue();
     }
 
     private static ProcessVariable newVar(String name, String value, ProcessVariableType type) {

@@ -7,8 +7,9 @@ import java.util.UUID;
 
 @Getter
 @Setter
-public class Token {
+public class MessageSubscription {
     private UUID id;
-    private UUID parentId;
-    private UUID scopeActivityId;
+    private UUID processInstanceId;
+    private UUID activityId;
+    private String messageName;
 }

@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - logicalFilePath: 20260618-023
+  - changeSet:
+      id: 20260618-023
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: timer_jobs
+            columns:
+              - column:
+                  name: boundary_element_id
+                  type: varchar(255)

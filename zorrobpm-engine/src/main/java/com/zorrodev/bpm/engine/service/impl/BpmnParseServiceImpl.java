@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
+import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
@@ -19,7 +20,9 @@ import jakarta.xml.bind.JAXB;
 import org.springframework.stereotype.Service;
 
 import java.io.StringReader;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -32,6 +35,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             BpmnProcessDefinitionModel process = definitions.getProcess();
 
             checkBpmn(process);
+
+            Map<String, String> messageNames = new HashMap<>();
+            if (definitions.getMessages() != null) {
+                for (com.zorrodev.bpm.engine.bpmn.xml.BpmnMessageModel message : definitions.getMessages()) {
+                    messageNames.put(message.getId(), message.getName());
+                }
+            }
 
             com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd = new com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel();
             pd.setExecutionPlatformVersion(definitions.getExecutionPlatformVersion());
@@ -55,7 +65,6 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnEndEventModel endEvent : process.getEndEvents()) {
                 BpmnElementModel element = toElementModel(endEvent);
                 element.setProcessDefinition(pd);
-                element.setType(BpmnElementType.END_EVENT);
                 pd.addElement(element);
             }
 
@@ -97,7 +106,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
             if (process.getIntermediateCatchEvents() != null) {
                 for (BpmnIntermediateCatchEventModel catchEvent : process.getIntermediateCatchEvents()) {
-                    BpmnElementModel element = toElementModel(catchEvent);
+                    BpmnElementModel element = toElementModel(catchEvent, messageNames);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -105,7 +114,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (process.getIntermediateThrowEvents() != null) {
                 for (BpmnIntermediateThrowEventModel throwEvent : process.getIntermediateThrowEvents()) {
-                    BpmnElementModel element = toElementModel(throwEvent);
+                    BpmnElementModel element = toElementModel(throwEvent, messageNames);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -119,10 +128,126 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
 
+            if (process.getSubProcesses() != null) {
+                for (BpmnSubProcessModel subProcess : process.getSubProcesses()) {
+                    BpmnElementModel element = toSubProcessElement(subProcess, pd);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
+
+            if (process.getBoundaryEvents() != null) {
+                for (BpmnBoundaryEventModel boundaryEvent : process.getBoundaryEvents()) {
+                    if (boundaryEvent.getTimerEventDefinition() == null) {
+                        continue; // only interrupting timer boundaries are executable today
+                    }
+                    BpmnElementModel element = toBoundaryElement(boundaryEvent);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
+
             return pd;
         } catch (Exception e) {
             throw new BpmnParseException(e);
         }
+    }
+
+    private BpmnElementModel toBoundaryElement(BpmnBoundaryEventModel boundaryEvent) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(boundaryEvent.getId());
+        element.setName(boundaryEvent.getName());
+        element.setType(BpmnElementType.BOUNDARY_TIMER_EVENT);
+        if (boundaryEvent.getOutgoing() != null) {
+            element.getOutgoing().addAll(boundaryEvent.getOutgoing());
+        }
+
+        element.setExtensions(new BpmnElementExtensionModel());
+
+        com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel boundaryExt = new com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel();
+        boundaryExt.setAttachedToRef(boundaryEvent.getAttachedToRef());
+        element.getExtensions().setBoundaryEventExtension(boundaryExt);
+
+        TimerEventExtensionModel timer = new TimerEventExtensionModel();
+        if (boundaryEvent.getTimerEventDefinition().getTimeDate() != null) {
+            timer.setType(TimerEventType.DATE);
+            timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeDate());
+        } else if (boundaryEvent.getTimerEventDefinition().getTimeDuration() != null) {
+            timer.setType(TimerEventType.DURATION);
+            timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeDuration());
+        }
+        element.getExtensions().setTimerEventExtension(timer);
+
+        return element;
+    }
+
+    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(sub.getId());
+        element.setName(sub.getName());
+        element.setType(BpmnElementType.SUB_PROCESS);
+        if (sub.getIncoming() != null) {
+            element.getIncoming().addAll(sub.getIncoming());
+        }
+        if (sub.getOutgoing() != null) {
+            element.getOutgoing().addAll(sub.getOutgoing());
+        }
+
+        com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel ext = new com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel();
+
+        // flatten nested flow nodes and flows into the same process definition
+        if (sub.getStartEvents() != null) {
+            for (BpmnStartEventModel start : sub.getStartEvents()) {
+                BpmnElementModel child = toElementModel(start);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+                ext.setStartEventId(child.getId());
+            }
+        }
+        if (sub.getEndEvents() != null) {
+            for (BpmnEndEventModel end : sub.getEndEvents()) {
+                BpmnElementModel child = toElementModel(end);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getServiceTasks() != null) {
+            for (BpmnServiceTaskModel serviceTask : sub.getServiceTasks()) {
+                BpmnElementModel child = toElementModel(serviceTask);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getUserTasks() != null) {
+            for (BpmnUserTaskModel userTask : sub.getUserTasks()) {
+                BpmnElementModel child = toElementModel(userTask);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getExclusiveGateways() != null) {
+            for (BpmnExclusiveGatewayModel gateway : sub.getExclusiveGateways()) {
+                BpmnElementModel child = toElementModel(gateway);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getParallelGateways() != null) {
+            for (BpmnParallelGatewayModel gateway : sub.getParallelGateways()) {
+                BpmnElementModel child = toElementModel(gateway);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getFlows() != null) {
+            for (BpmnSequenceFlowModel flow : sub.getFlows()) {
+                pd.addFlow(toFlowModel(flow));
+            }
+        }
+
+        element.setExtensions(new BpmnElementExtensionModel());
+        element.getExtensions().setSubProcessExtension(ext);
+        return element;
     }
 
     private BpmnFlowModel toFlowModel(BpmnSequenceFlowModel flow) {
@@ -200,7 +325,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(endEvent.getId());
         element.setName(endEvent.getName());
-        element.setType(BpmnElementType.END_EVENT);
+        element.setType(endEvent.getTerminateEventDefinition() != null
+            ? BpmnElementType.TERMINATE_END_EVENT
+            : BpmnElementType.END_EVENT);
         element.setIncoming(endEvent.getIncoming());
         return element;
     }
@@ -255,7 +382,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         return element;
     }
 
-    private BpmnElementModel toElementModel(BpmnIntermediateCatchEventModel catchEvent) {
+    private BpmnElementModel toElementModel(BpmnIntermediateCatchEventModel catchEvent, Map<String, String> messageNames) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(catchEvent.getId());
         element.setName(catchEvent.getName());
@@ -276,17 +403,29 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (catchEvent.getTimerEventDefinition().getTimeDate() != null) {
                 timer.setType(TimerEventType.DATE);
+                timer.setExpression(catchEvent.getTimerEventDefinition().getTimeDate());
             } else if (catchEvent.getTimerEventDefinition().getTimeDuration() != null) {
                 timer.setType(TimerEventType.DURATION);
+                timer.setExpression(catchEvent.getTimerEventDefinition().getTimeDuration());
             }
 
             element.getExtensions().setTimerEventExtension(timer);
         }
 
+        if (catchEvent.getMessageEventDefinition() != null) {
+            if (element.getExtensions() == null) {
+                element.setExtensions(new BpmnElementExtensionModel());
+            }
+            MessageEventExtensionModel message = new MessageEventExtensionModel();
+            String ref = catchEvent.getMessageEventDefinition().getMessageRef();
+            message.setMessageName(messageNames.getOrDefault(ref, ref));
+            element.getExtensions().setMessageEventExtension(message);
+        }
+
         return element;
     }
 
-    private BpmnElementModel toElementModel(BpmnIntermediateThrowEventModel throwEvent) {
+    private BpmnElementModel toElementModel(BpmnIntermediateThrowEventModel throwEvent, Map<String, String> messageNames) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(throwEvent.getId());
         element.setName(throwEvent.getName());
@@ -295,6 +434,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
         if (throwEvent.getMessageEventDefinition() != null) {
             element.setType(BpmnElementType.MESSAGE_THROW_EVENT);
+            MessageEventExtensionModel message = new MessageEventExtensionModel();
+            String ref = throwEvent.getMessageEventDefinition().getMessageRef();
+            message.setMessageName(messageNames.getOrDefault(ref, ref));
+            element.setExtensions(new BpmnElementExtensionModel());
+            element.getExtensions().setMessageEventExtension(message);
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_THROW_EVENT);
         }

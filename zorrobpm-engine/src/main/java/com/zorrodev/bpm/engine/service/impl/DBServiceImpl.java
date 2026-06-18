@@ -11,7 +11,11 @@ import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.dto.TimerJob;
+import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
+import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
@@ -21,6 +25,8 @@ import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
@@ -51,6 +57,8 @@ public class DBServiceImpl implements DBService {
     private final VariableRepository variableRepository;
     private final TokenRepository tokenRepository;
     private final IncidentRepository incidentRepository;
+    private final TimerJobRepository timerJobRepository;
+    private final MessageSubscriptionRepository messageSubscriptionRepository;
     private final ProcessInstanceMapper processInstanceMapper;
 
     @Override
@@ -109,6 +117,26 @@ public class DBServiceImpl implements DBService {
     @Override
     public void completeActivity(UUID activityId) {
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
+    }
+
+    @Override
+    public void errorActivity(UUID activityId) {
+        // ERROR is a parked state, not a completion: leave completedAt unset
+        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.ERROR, null);
+    }
+
+    @Override
+    public void cancelActivity(UUID activityId) {
+        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.CANCELLED, Instant.now());
+    }
+
+    @Override
+    public void cancelActiveActivities(UUID processInstanceId) {
+        List<ActivityEntity> active = activityRepository.findByProcessInstanceIdAndStatusIn(
+            processInstanceId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));
+        for (ActivityEntity activity : active) {
+            activityRepository.setStatusAndCompletedAt(activity.getId(), ActivityStatus.CANCELLED, Instant.now());
+        }
     }
 
     @Override
@@ -220,27 +248,33 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public Token createToken(UUID parentId) {
+        return createToken(parentId, null);
+    }
+
+    @Override
+    public Token createToken(UUID parentId, UUID scopeActivityId) {
         TokenEntity tokenEntity = new TokenEntity();
         tokenEntity.setId(UUID.randomUUID());
         tokenEntity.setParentId(parentId);
+        tokenEntity.setScopeActivityId(scopeActivityId);
         tokenRepository.save(tokenEntity);
 
-        Token token = new Token();
-        token.setId(tokenEntity.getId());
-        token.setParentId(tokenEntity.getParentId());
-        return token;
+        return toToken(tokenEntity);
     }
 
     @Override
     public Token getToken(UUID tokenId) {
         return tokenRepository.findById(tokenId)
-            .map(t -> {
-                Token token = new Token();
-                token.setId(t.getId());
-                token.setParentId(t.getParentId());
-                return token;
-            })
+            .map(this::toToken)
             .orElseThrow();
+    }
+
+    private Token toToken(TokenEntity entity) {
+        Token token = new Token();
+        token.setId(entity.getId());
+        token.setParentId(entity.getParentId());
+        token.setScopeActivityId(entity.getScopeActivityId());
+        return token;
     }
 
     @Override
@@ -270,7 +304,99 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public Incident getIncident(UUID incidentId) {
-        return null;
+        IncidentEntity entity = incidentRepository.findById(incidentId).orElseThrow();
+        Incident incident = new Incident();
+        incident.setId(entity.getId());
+        incident.setActivityId(entity.getActivityId());
+        incident.setMessage(entity.getMessage());
+        incident.setCreatedAt(entity.getCreatedAt());
+        incident.setCompletedAt(entity.getCompletedAt());
+        return incident;
+    }
+
+    @Override
+    public void completeIncident(UUID incidentId) {
+        IncidentEntity entity = incidentRepository.findById(incidentId).orElseThrow();
+        entity.setCompletedAt(Instant.now());
+        incidentRepository.save(entity);
+    }
+
+    @Override
+    public UUID createTimerJob(UUID activityId, Instant dueAt) {
+        return createTimerJob(activityId, dueAt, null);
+    }
+
+    @Override
+    public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId) {
+        UUID id = UUID.randomUUID();
+        TimerJobEntity entity = new TimerJobEntity();
+        entity.setId(id);
+        entity.setActivityId(activityId);
+        entity.setDueAt(dueAt);
+        entity.setFired(false);
+        entity.setCreatedAt(Instant.now());
+        entity.setBoundaryElementId(boundaryElementId);
+        timerJobRepository.save(entity);
+        return id;
+    }
+
+    @Override
+    public List<TimerJob> findDueTimerJobs(Instant now) {
+        return timerJobRepository.findByFiredFalseAndDueAtLessThanEqual(now).stream()
+            .map(e -> {
+                TimerJob job = new TimerJob();
+                job.setId(e.getId());
+                job.setActivityId(e.getActivityId());
+                job.setDueAt(e.getDueAt());
+                job.setBoundaryElementId(e.getBoundaryElementId());
+                return job;
+            })
+            .toList();
+    }
+
+    @Override
+    public void markTimerJobFired(UUID timerJobId) {
+        TimerJobEntity entity = timerJobRepository.findById(timerJobId).orElseThrow();
+        entity.setFired(true);
+        timerJobRepository.save(entity);
+    }
+
+    @Override
+    public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName) {
+        UUID id = UUID.randomUUID();
+        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
+        entity.setId(id);
+        entity.setProcessInstanceId(processInstanceId);
+        entity.setActivityId(activityId);
+        entity.setMessageName(messageName);
+        entity.setConsumed(false);
+        entity.setCreatedAt(Instant.now());
+        messageSubscriptionRepository.save(entity);
+        return id;
+    }
+
+    @Override
+    public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId) {
+        List<MessageSubscriptionEntity> entities = processInstanceId != null
+            ? messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId(messageName, processInstanceId)
+            : messageSubscriptionRepository.findByConsumedFalseAndMessageName(messageName);
+        return entities.stream()
+            .map(e -> {
+                MessageSubscription sub = new MessageSubscription();
+                sub.setId(e.getId());
+                sub.setProcessInstanceId(e.getProcessInstanceId());
+                sub.setActivityId(e.getActivityId());
+                sub.setMessageName(e.getMessageName());
+                return sub;
+            })
+            .toList();
+    }
+
+    @Override
+    public void consumeMessageSubscription(UUID subscriptionId) {
+        MessageSubscriptionEntity entity = messageSubscriptionRepository.findById(subscriptionId).orElseThrow();
+        entity.setConsumed(true);
+        messageSubscriptionRepository.save(entity);
     }
 
     private Activity getActivity(ActivityEntity activityEntity) {

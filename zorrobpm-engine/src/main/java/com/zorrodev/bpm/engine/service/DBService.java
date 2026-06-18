@@ -23,6 +23,12 @@ public interface DBService {
 
     void completeActivity(UUID executionId);
 
+    void errorActivity(UUID activityId);
+
+    void cancelActivity(UUID activityId);
+
+    void cancelActiveActivities(UUID processInstanceId);
+
     ProcessInstance getProcessInstance(UUID processInstanceId);
 
     void createServiceTask(UUID activityId);
@@ -45,6 +51,8 @@ public interface DBService {
 
     Token createToken(UUID parentId);
 
+    Token createToken(UUID parentId, UUID scopeActivityId);
+
     Token getToken(UUID tokenId);
 
     Integer getMaxProcessDefinitionVersionByKey(String key);
@@ -54,4 +62,20 @@ public interface DBService {
     UUID createIncident(UUID activityId, String message);
 
     Incident getIncident(UUID incidentId);
+
+    void completeIncident(UUID incidentId);
+
+    UUID createTimerJob(UUID activityId, java.time.Instant dueAt);
+
+    UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId);
+
+    List<com.zorrodev.bpm.engine.dto.TimerJob> findDueTimerJobs(java.time.Instant now);
+
+    void markTimerJobFired(UUID timerJobId);
+
+    UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName);
+
+    List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
+
+    void consumeMessageSubscription(UUID subscriptionId);
 }

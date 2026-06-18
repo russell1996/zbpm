@@ -3,12 +3,14 @@ package com.zorrodev.bpm.engine.dto;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Getter
 @Setter
-public class Token {
+public class TimerJob {
     private UUID id;
-    private UUID parentId;
-    private UUID scopeActivityId;
+    private UUID activityId;
+    private Instant dueAt;
+    private String boundaryElementId;
 }
