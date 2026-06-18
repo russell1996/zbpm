@@ -31,6 +31,12 @@ public interface DBService {
 
     ProcessInstance getProcessInstance(UUID processInstanceId);
 
+    /**
+     * Acquires a pessimistic write lock on the process instance for the duration of the current
+     * transaction, serialising concurrent execution that touches the same instance.
+     */
+    void lockProcessInstance(UUID processInstanceId);
+
     void createServiceTask(UUID activityId);
 
     void completeServiceTask(UUID serviceTaskId);
@@ -78,4 +84,20 @@ public interface DBService {
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
 
     void consumeMessageSubscription(UUID subscriptionId);
+
+    /**
+     * Records that a branch has arrived at a parallel-gateway join through {@code enteredFlowId}.
+     * Idempotent: a repeated arrival for the same incoming flow does not create a duplicate.
+     */
+    void recordParallelGatewayArrival(UUID processInstanceId, String gatewayElementId, String enteredFlowId);
+
+    /**
+     * Returns the set of incoming flow ids that have so far arrived at the given join.
+     */
+    java.util.Set<String> getParallelGatewayArrivedFlows(UUID processInstanceId, String gatewayElementId);
+
+    /**
+     * Clears all recorded arrivals for the given join, so a later loop through it starts afresh.
+     */
+    void clearParallelGatewayArrivals(UUID processInstanceId, String gatewayElementId);
 }
