@@ -22,6 +22,7 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
+import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
 import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
@@ -34,6 +35,7 @@ import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
+import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
@@ -66,6 +68,7 @@ public class DBServiceImpl implements DBService {
     private final TimerJobRepository timerJobRepository;
     private final MessageSubscriptionRepository messageSubscriptionRepository;
     private final MessageStartSubscriptionRepository messageStartSubscriptionRepository;
+    private final TimerStartJobRepository timerStartJobRepository;
     private final ParallelGatewayRepository parallelGatewayRepository;
     private final ProcessInstanceMapper processInstanceMapper;
 
@@ -458,6 +461,46 @@ public class DBServiceImpl implements DBService {
                 return sub;
             })
             .toList();
+    }
+
+    @Override
+    public void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, Instant dueAt) {
+        TimerStartJobEntity entity = new TimerStartJobEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setProcessKey(processKey);
+        entity.setProcessDefinitionId(processDefinitionId);
+        entity.setElementId(elementId);
+        entity.setDueAt(dueAt);
+        entity.setFired(false);
+        entity.setCreatedAt(Instant.now());
+        timerStartJobRepository.save(entity);
+    }
+
+    @Override
+    public void deleteTimerStartJobsByKey(String processKey) {
+        timerStartJobRepository.deleteByProcessKey(processKey);
+    }
+
+    @Override
+    public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobs(Instant now) {
+        return timerStartJobRepository.findByFiredFalseAndDueAtLessThanEqual(now).stream()
+            .map(e -> {
+                com.zorrodev.bpm.engine.dto.TimerStartJob job = new com.zorrodev.bpm.engine.dto.TimerStartJob();
+                job.setId(e.getId());
+                job.setProcessKey(e.getProcessKey());
+                job.setProcessDefinitionId(e.getProcessDefinitionId());
+                job.setElementId(e.getElementId());
+                job.setDueAt(e.getDueAt());
+                return job;
+            })
+            .toList();
+    }
+
+    @Override
+    public void markTimerStartJobFired(UUID timerStartJobId) {
+        TimerStartJobEntity entity = timerStartJobRepository.findById(timerStartJobId).orElseThrow();
+        entity.setFired(true);
+        timerStartJobRepository.save(entity);
     }
 
     @Override

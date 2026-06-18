@@ -49,11 +49,13 @@ class TimerSchedulerTest {
     @Test
     void scheduler_firesEachDueJob_andIsolatesFailures() {
         TimerJobExecutor executorMock = org.mockito.Mockito.mock(TimerJobExecutor.class);
-        TimerScheduler scheduler = new TimerScheduler(dbService, executorMock);
+        TimerStartJobExecutor startExecutorMock = org.mockito.Mockito.mock(TimerStartJobExecutor.class);
+        TimerScheduler scheduler = new TimerScheduler(dbService, executorMock, startExecutorMock);
 
         TimerJob bad = job();
         TimerJob good = job();
         when(dbService.findDueTimerJobs(any())).thenReturn(List.of(bad, good));
+        when(dbService.findDueTimerStartJobs(any())).thenReturn(List.of());
         org.mockito.Mockito.doThrow(new RuntimeException("boom")).when(executorMock).fire(eq(bad.getId()), any(), any());
 
         scheduler.fireDueTimers();
