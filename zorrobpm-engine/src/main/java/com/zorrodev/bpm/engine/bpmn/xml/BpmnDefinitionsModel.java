@@ -21,6 +21,12 @@ public class BpmnDefinitionsModel {
     private BpmnProcessDefinitionModel process;
     @XmlElement(name = "message", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnMessageModel> messages;
+    @XmlElement(name = "error", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnErrorModel> errors;
+    @XmlElement(name = "signal", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnSignalModel> signals;
+    @XmlElement(name = "escalation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnEscalationModel> escalations;
     @XmlAttribute(namespace = "http://camunda.org/schema/modeler/1.0", name = "executionPlatformVersion")
     private String executionPlatformVersion;
 }

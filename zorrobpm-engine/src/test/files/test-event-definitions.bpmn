@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_evt" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="err1" name="My Error" errorCode="E-500" />
+  <bpmn:signal id="sig1" name="my-signal" />
+  <bpmn:escalation id="esc1" name="My Escalation" escalationCode="ESC-1" />
+  <bpmn:process id="evtproc" name="evtproc" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="errEnd" />
+    <bpmn:endEvent id="errEnd">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:errorEventDefinition id="ed1" errorRef="err1" />
+    </bpmn:endEvent>
+    <bpmn:intermediateCatchEvent id="sigCatch">
+      <bpmn:signalEventDefinition id="sd1" signalRef="sig1" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:intermediateThrowEvent id="escThrow">
+      <bpmn:escalationEventDefinition id="esd1" escalationRef="esc1" />
+    </bpmn:intermediateThrowEvent>
+  </bpmn:process>
+</bpmn:definitions>
