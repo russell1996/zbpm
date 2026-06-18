@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import org.junit.jupiter.api.Test;
@@ -349,5 +350,30 @@ class BpmnParseServiceImplTest {
         assertThat(flow6.getFlowId()).isEqualTo("flow2");
         assertThat(flow6.getSourceRef()).isEqualTo("callActivity1");
         assertThat(flow6.getTargetRef()).isEqualTo("endEvent1");
+    }
+
+    @Test
+    void testParseEventDefinitions() throws IOException {
+        // error/signal/escalation event definitions are resolved against definitions-level declarations
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-event-definitions.bpmn"));
+
+        BpmnParseService service = new BpmnParseServiceImpl();
+        BpmnProcessDefinitionModel bpmn = service.parse(bpmnStr);
+
+        var errEnd = bpmn.getElement("errEnd").getExtensions().getEventDefinition();
+        assertThat(errEnd).isNotNull();
+        assertThat(errEnd.getType()).isEqualTo(EventDefinitionType.ERROR);
+        assertThat(errEnd.getReference()).isEqualTo("err1");
+        assertThat(errEnd.getCode()).isEqualTo("E-500");
+
+        var sigCatch = bpmn.getElement("sigCatch").getExtensions().getEventDefinition();
+        assertThat(sigCatch).isNotNull();
+        assertThat(sigCatch.getType()).isEqualTo(EventDefinitionType.SIGNAL);
+        assertThat(sigCatch.getName()).isEqualTo("my-signal");
+
+        var escThrow = bpmn.getElement("escThrow").getExtensions().getEventDefinition();
+        assertThat(escThrow).isNotNull();
+        assertThat(escThrow.getType()).isEqualTo(EventDefinitionType.ESCALATION);
+        assertThat(escThrow.getCode()).isEqualTo("ESC-1");
     }
 }

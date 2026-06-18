@@ -30,4 +30,13 @@ public class BpmnIntermediateCatchEventModel {
 
     @XmlElement(name = "timerEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private BpmnTimerEventDefinitionModel  timerEventDefinition;
+
+    @XmlElement(name = "signalEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnSignalEventDefinitionModel signalEventDefinition;
+
+    @XmlElement(name = "conditionalEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnConditionalEventDefinitionModel conditionalEventDefinition;
+
+    @XmlElement(name = "linkEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnLinkEventDefinitionModel linkEventDefinition;
 }
