@@ -8,6 +8,7 @@ import lombok.Setter;
 public class ProcessDefinitionsQueryParameters {
     private Integer pageIndex = 0;
     private Integer pageSize = 20;
+    private String name;
     private String processDefinitionKey;
     private Integer processDefinitionVersion;
     private Boolean latestVersionOnly;

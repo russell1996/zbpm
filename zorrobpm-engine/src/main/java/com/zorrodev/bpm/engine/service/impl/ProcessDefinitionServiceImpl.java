@@ -25,6 +25,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -32,6 +33,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -215,12 +217,22 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     public PagedDataDTO<ProcessDefinition> getProcessDefinitions(ProcessDefinitionsQueryParameters parameters) {
         PageRequest pageRequest = PageRequest.of(parameters.getPageIndex(), parameters.getPageSize(), Sort.by("name", "version").ascending());
 
-        Page<ProcessDefinitionEntity> page;
-        if (parameters.getLatestVersionOnly() == null || !parameters.getLatestVersionOnly()) {
-            page = processDefinitionRepository.findAll(pageRequest);
-        } else {
-            page = processDefinitionRepository.findAllLatest(pageRequest);
+        List<Specification<ProcessDefinitionEntity>> specifications = new LinkedList<>();
+        if (parameters.getName() != null && !parameters.getName().isBlank()) {
+            specifications.add(ProcessDefinitionRepository.byNameContains(parameters.getName()));
         }
+        if (parameters.getProcessDefinitionKey() != null) {
+            specifications.add(ProcessDefinitionRepository.byKey(parameters.getProcessDefinitionKey()));
+        }
+        if (parameters.getProcessDefinitionVersion() != null) {
+            specifications.add(ProcessDefinitionRepository.byVersion(parameters.getProcessDefinitionVersion()));
+        }
+        if (Boolean.TRUE.equals(parameters.getLatestVersionOnly())) {
+            specifications.add(ProcessDefinitionRepository.latestVersion());
+        }
+
+        Page<ProcessDefinitionEntity> page =
+            processDefinitionRepository.findAll(Specification.allOf(specifications), pageRequest);
 
         PagedDataDTO<ProcessDefinition> data = new PagedDataDTO<>();
         data.setPageIndex(parameters.getPageIndex());

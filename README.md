@@ -132,7 +132,7 @@ Docker-сборка образа пропускает тесты (`-DskipTests`)
 | Метод и путь | Описание |
 |---|---|
 | `POST /process-definitions` | Деплой BPMN (`{ "bpmn": "<xml>" }`) |
-| `GET /process-definitions` | Список (постранично; `latestVersionOnly`) |
+| `GET /process-definitions` | Список (постранично; фильтры: `name` — частичное совпадение без учёта регистра, `processDefinitionKey`, `processDefinitionVersion`, `latestVersionOnly`) |
 | `GET /process-definitions/{id}` | Метаданные определения |
 | `GET /process-definitions/{id}/xml` | Исходный BPMN XML |
 | `POST /process-instances` | Запуск экземпляра |
