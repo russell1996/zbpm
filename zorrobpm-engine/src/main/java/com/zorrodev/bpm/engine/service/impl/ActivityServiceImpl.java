@@ -18,6 +18,7 @@ import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
+import com.zorrodev.bpm.engine.dto.SignalSubscription;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
@@ -103,6 +104,9 @@ public class ActivityServiceImpl implements ActivityService {
         // continues. (Message throw publishing is added with the message subsystem.)
         map.put(BpmnElementType.INTERMEDIATE_THROW_EVENT, this::processThrowEvent);
         map.put(BpmnElementType.MESSAGE_THROW_EVENT, this::processMessageThrow);
+        // Signal catch parks and subscribes; signal throw broadcasts to all active subscribers (1:N).
+        map.put(BpmnElementType.SIGNAL_CATCH_EVENT, (pi, t, bpmn, el) -> enterSignalCatch(pi, t, el));
+        map.put(BpmnElementType.SIGNAL_THROW_EVENT, this::processSignalThrow);
         return map;
     }
 
@@ -155,6 +159,46 @@ public class ActivityServiceImpl implements ActivityService {
         }
 
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /**
+     * Signal throw: completes the activity, then broadcasts the signal to every active subscriber
+     * (1:N, in contrast to a message's 1:1 correlation), and continues. The signal name comes from the
+     * resolved event definition.
+     */
+    private void processSignalThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        String signalName = signalName(bpmnElement);
+        log.info("{}/{}: Throwing signal '{}' at {}: {}/{}", processInstanceId, tokenId, signalName, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        if (signalName != null) {
+            broadcastSignal(signalName, dbService.getVariables(processInstanceId));
+        }
+
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /**
+     * Parks the token at a signal catch event and registers a subscription. A later
+     * {@link #broadcastSignal(String, List)} for the same signal resumes the token.
+     */
+    private void enterSignalCatch(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        String signalName = signalName(bpmnElement);
+        if (signalName == null) {
+            throw new EngineException("Signal catch event " + bpmnElement.getId() + " has no signal name");
+        }
+        dbService.createSignalSubscription(processInstanceId, activityId, signalName);
+        log.info("{}/{}: Subscribed to signal '{}' at {}: {}/{}", processInstanceId, tokenId, signalName, bpmnElement.getType(), activityId, bpmnElement.getId());
+    }
+
+    private String signalName(BpmnElementModel element) {
+        return Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getName)
+            .orElse(null);
     }
 
     private void enterWaitState(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
@@ -633,6 +677,24 @@ public class ActivityServiceImpl implements ActivityService {
                 log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
                 signal(subscription.getActivityId(), variables);
             }
+        }
+    }
+
+    /**
+     * Broadcasts a signal: wakes every active subscription with the matching name, across process
+     * instances (1:N). Each waiting activity is signalled under its own per-instance lock (via
+     * {@link #signal}), so concurrent broadcasts/correlations stay isolated per instance.
+     */
+    private void broadcastSignal(String signalName, List<ProcessVariable> variables) {
+        List<SignalSubscription> subscriptions = dbService.findSignalSubscriptions(signalName);
+        if (subscriptions.isEmpty()) {
+            log.info("No active subscription for signal '{}'", signalName);
+            return;
+        }
+        for (SignalSubscription subscription : subscriptions) {
+            dbService.consumeSignalSubscription(subscription.getId());
+            log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
+            signal(subscription.getActivityId(), variables);
         }
     }
 
