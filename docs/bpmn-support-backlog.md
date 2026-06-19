@@ -11,7 +11,8 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > требует scoped-переменных), BPMN-04 (signal-инфра — делается с T2 signal catch/throw).
 >
 > **Прогресс (T2):** ✅ BPMN-24 (send task = message throw в форме задачи),
-> BPMN-25 (receive task = message catch / wait-state в форме задачи).
+> BPMN-25 (receive task = message catch / wait-state в форме задачи),
+> BPMN-04 (signal_subscriptions + broadcast 1:N) и BPMN-22 (signal catch/throw).
 
 ## Легенда
 
@@ -56,7 +57,7 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 scope; при отсутствии — поведение по умолчанию (incident); покрыто тестами на 2 уровнях вложенности.
 
 ### BPMN-04 — Подписки на signal
-**T0 · M · TODO · зависит: BPMN-01, BPMN-02**
+**T0 · M · DONE · зависит: BPMN-01, BPMN-02**
 Таблица `signal_subscriptions` (по аналогии с `message_subscriptions`) + сервис
 broadcast-доставки сигнала всем активным подписчикам (в отличие от message — 1:1).
 **Приёмка**: миграция Liquibase; broadcast будит все ожидающие активности; конкурентная
@@ -136,7 +137,7 @@ Split: запускает все ветки с истинным условием
 **Приёмка**: первое наступившее событие продолжает поток, прочие подписки/таймеры снимаются; тесты.
 
 ### BPMN-22 — Signal catch / throw
-**T2 · M · TODO · зависит: BPMN-04**
+**T2 · M · DONE · зависит: BPMN-04**
 Промежуточный signal catch (подписка) и throw (broadcast всем подписчикам процесса/глобально).
 **Приёмка**: throw будит всех ожидающих; тесты на нескольких подписчиков.
 
