@@ -3,7 +3,9 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
+import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
+import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,9 @@ class ProcessDefinitionResourceTest {
 
     @Mock
     private FileService fileService;
+
+    @Mock
+    private BpmnStructureService bpmnStructureService;
 
     @InjectMocks
     private ProcessDefinitionResource resource;
@@ -86,5 +91,27 @@ class ProcessDefinitionResourceTest {
         String result = resource.getProcessDefinitionXml(id);
 
         assertThat(result).isEqualTo("<bpmn/>");
+    }
+
+    @Test
+    void getProcessDefinitionStructure_returnsValueWhenPresent() {
+        UUID id = UUID.randomUUID();
+        BpmnProcessStructure structure = new BpmnProcessStructure();
+        structure.setId(id);
+        when(bpmnStructureService.getStructure(id)).thenReturn(Optional.of(structure));
+
+        BpmnProcessStructure result = resource.getProcessDefinitionStructure(id);
+
+        assertThat(result).isSameAs(structure);
+    }
+
+    @Test
+    void getProcessDefinitionStructure_throwsNotFoundWhenAbsent() {
+        UUID id = UUID.randomUUID();
+        when(bpmnStructureService.getStructure(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> resource.getProcessDefinitionStructure(id))
+            .isInstanceOf(ResponseStatusException.class)
+            .matches(ex -> ((ResponseStatusException) ex).getStatusCode().equals(HttpStatus.NOT_FOUND));
     }
 }

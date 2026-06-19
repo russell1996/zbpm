@@ -4,7 +4,9 @@ import com.zorrodev.bpm.contract.ProcessDefinitionContract;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
+import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
+import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +26,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
 
     private final ProcessDefinitionService processDefinitionService;
     private final FileService fileService;
+    private final BpmnStructureService bpmnStructureService;
 
     @Override
     public ProcessDefinition addProcessDefinition(AddProcessDefinitionDTO dto) {
@@ -44,6 +47,12 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
     @Override
     public String getProcessDefinitionXml(UUID id) {
         return fileService.getFileBytes(id);
+    }
+
+    @Override
+    public BpmnProcessStructure getProcessDefinitionStructure(UUID id) {
+        return bpmnStructureService.getStructure(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
     }
 
 }

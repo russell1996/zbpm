@@ -135,6 +135,7 @@ Docker-сборка образа пропускает тесты (`-DskipTests`)
 | `GET /process-definitions` | Список (постранично; фильтры: `name` — частичное совпадение без учёта регистра, `processDefinitionKey`, `processDefinitionVersion`, `latestVersionOnly`) |
 | `GET /process-definitions/{id}` | Метаданные определения |
 | `GET /process-definitions/{id}/xml` | Исходный BPMN XML |
+| `GET /process-definitions/{id}/structure` | Разобранная структура BPMN в виде вложенного JSON (узлы/рёбра, подпроцессы и boundary-события вложены) — для инспекции и UI |
 | `POST /process-instances` | Запуск экземпляра |
 | `POST /service-tasks/{id}/complete` | Завершить сервис-задачу |
 | `POST /user-tasks/{id}/complete` | Завершить пользовательскую задачу |
