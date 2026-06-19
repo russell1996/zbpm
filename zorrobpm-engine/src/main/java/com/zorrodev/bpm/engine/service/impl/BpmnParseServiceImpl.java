@@ -179,6 +179,23 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     pd.addElement(element);
                 }
             }
+            if (Optional.ofNullable(process.getInclusiveGateways()).isPresent()) {
+                for (BpmnInclusiveGatewayModel inclusiveGateway : process.getInclusiveGateways()) {
+                    BpmnElementModel element = new BpmnElementModel();
+                    element.setId(inclusiveGateway.getId());
+                    element.setName(inclusiveGateway.getName());
+                    element.setType(BpmnElementType.INCLUSIVE_GATEWAY);
+                    element.setIncoming(inclusiveGateway.getIncoming());
+                    element.setOutgoing(inclusiveGateway.getOutgoing());
+                    if (inclusiveGateway.getDefaultFlow() != null) {
+                        element.setExtensions(new BpmnElementExtensionModel());
+                        element.getExtensions().setExclusiveGatewayExtension(new ExclusiveGatewayExtensionModel());
+                        element.getExtensions().getExclusiveGatewayExtension().setDefaultFlowId(inclusiveGateway.getDefaultFlow());
+                    }
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
             if (Optional.ofNullable(process.getFlows()).isPresent()) {
                 for (BpmnSequenceFlowModel flow : process.getFlows()) {
                     BpmnFlowModel element = toFlowModel(flow);

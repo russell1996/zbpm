@@ -144,4 +144,13 @@ public interface DBService {
      * Clears all recorded arrivals for the given join, so a later loop through it starts afresh.
      */
     void clearParallelGatewayArrivals(UUID processInstanceId, String gatewayElementId);
+
+    /**
+     * Records, for an inclusive-gateway join, how many branches its split activated (the number of
+     * arrivals the join must wait for). Stored as a marker row alongside the arrival rows.
+     */
+    void recordInclusiveExpected(UUID processInstanceId, String gatewayElementId, int expectedCount);
+
+    /** Expected arrival count recorded for an inclusive join, or {@code null} if none was recorded. */
+    Integer getInclusiveExpected(UUID processInstanceId, String gatewayElementId);
 }
