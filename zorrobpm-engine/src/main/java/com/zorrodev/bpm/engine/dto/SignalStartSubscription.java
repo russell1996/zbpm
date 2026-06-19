@@ -7,10 +7,10 @@ import java.util.UUID;
 
 @Getter
 @Setter
-public class SignalSubscription {
+public class SignalStartSubscription {
     private UUID id;
-    private UUID processInstanceId;
-    private UUID activityId;
+    private String processKey;
+    private UUID processDefinitionId;
+    private String elementId;
     private String signalName;
-    private String boundaryElementId;
 }

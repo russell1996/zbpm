@@ -94,10 +94,22 @@ public interface DBService {
 
     UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName);
 
+    /** Creates a signal subscription for a signal boundary event attached to {@code activityId}. */
+    UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName, String boundaryElementId);
+
     /** All active (unconsumed) subscriptions for {@code signalName}; a signal throw wakes them all. */
     List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName);
 
     void consumeSignalSubscription(UUID subscriptionId);
+
+    /** Replaces any signal-start subscriptions for {@code processKey} with a fresh one (newer
+     *  versions supersede older ones). */
+    void createSignalStartSubscription(String processKey, UUID processDefinitionId, String elementId, String signalName);
+
+    void deleteSignalStartSubscriptionsByKey(String processKey);
+
+    /** All signal-start subscriptions for {@code signalName}; a broadcast starts an instance of each. */
+    List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> findSignalStartSubscriptions(String signalName);
 
     /** Replaces any message-start subscriptions for {@code processKey} with a fresh one (newer
      *  versions supersede older ones). */

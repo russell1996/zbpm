@@ -67,4 +67,10 @@ public class BpmnProcessDefinitionModel {
             .toList();
     }
 
+    public List<BpmnElementModel> getSignalStartEvents() {
+        return elements.values().stream()
+            .filter(e -> e.getType() == BpmnElementType.SIGNAL_START_EVENT)
+            .toList();
+    }
+
 }
