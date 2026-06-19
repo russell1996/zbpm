@@ -20,13 +20,14 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Поддерживается | Пока не поддерживается |
 |---|---|
 | Start / End / Terminate-end события | Inclusive / условные шлюзы |
-| **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Event-based gateway |
-| Потоки управления (sequence flow) | Multi-instance (параллельный / последовательный) |
+| **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Multi-instance (параллельный / последовательный) |
+| Потоки управления (sequence flow) | Conditional / Link события (парсятся, исполнение — позже) |
 | Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации |
-| Parallel gateway (split / join) | Conditional / Link события (парсятся, исполнение — позже) |
+| Parallel gateway (split / join) | Transaction sub-process |
+| **Event-based gateway** (гонка catch-событий: message / timer / signal) | Event sub-process |
 | Service task (внешние воркеры через RabbitMQ) | Business rule (DMN) / script задачи |
-| User task (assignee, кандидаты-пользователи/группы, form key) | Transaction sub-process |
-| **Send / Receive task** (message throw / catch в форме задачи) | Event sub-process |
+| User task (assignee, кандидаты-пользователи/группы, form key) | |
+| **Send / Receive task** (message throw / catch в форме задачи) | |
 | Call activity, встроенный подпроцесс | |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция), **timer** (дата/длительность) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |

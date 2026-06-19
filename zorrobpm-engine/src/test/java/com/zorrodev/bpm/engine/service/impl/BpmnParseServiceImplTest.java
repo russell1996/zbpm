@@ -458,6 +458,19 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseEventBasedGateway() throws IOException {
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-event-based-gateway.bpmn")));
+
+        BpmnElementModel gw = bpmn.getElement("eventGw");
+        assertThat(gw.getType()).isEqualTo(BpmnElementType.EVENT_BASED_GATEWAY);
+        assertThat(gw.getOutgoing()).containsExactlyInAnyOrder("flowM", "flowT");
+        // its targets are catch events fed by the gateway
+        assertThat(bpmn.getElement("msgCatch").getType()).isEqualTo(BpmnElementType.MESSAGE_CATCH_EVENT);
+        assertThat(bpmn.getElement("timerCatch").getType()).isEqualTo(BpmnElementType.TIMER_CATCH_EVENT);
+    }
+
+    @Test
     void testParseEscalationConstructs() throws IOException {
         // non-interrupting escalation boundary on a sub-process + escalation end inside it
         BpmnProcessDefinitionModel ni = new BpmnParseServiceImpl()
