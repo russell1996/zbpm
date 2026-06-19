@@ -19,16 +19,18 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 | Поддерживается | Пока не поддерживается |
 |---|---|
-| Start / End / Terminate-end события | **Message / Timer _start_ события** (парсятся, но не запускают экземпляр) |
-| Потоки управления (sequence flow) | Inclusive / условные шлюзы |
-| Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации, Error / Escalation события |
-| Parallel gateway (split / join) | Непрерывающие boundary-события; Signal-события |
-| Service task (внешние воркеры через RabbitMQ) | Multi-instance (параллельный / последовательный) |
-| User task (assignee, кандидаты-пользователи/группы, form key) | Business rule (DMN) / script задачи |
-| Call activity, встроенный подпроцесс | |
+| Start / End / Terminate-end события | Inclusive / условные шлюзы |
+| **Message start** (старт по сообщению) и **Timer start** (старт по расписанию) | Event-based gateway |
+| Потоки управления (sequence flow) | Multi-instance (параллельный / последовательный) |
+| Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации; Escalation-события |
+| Parallel gateway (split / join) | Signal-события (парсятся, исполнение — позже) |
+| Service task (внешние воркеры через RabbitMQ) | Conditional / Link события (парсятся, исполнение — позже) |
+| User task (assignee, кандидаты-пользователи/группы, form key) | Business rule (DMN) / script задачи; Send / Receive task |
+| Call activity, встроенный подпроцесс | Event sub-process |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция), **timer** (дата/длительность) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
-| **Boundary timer** (прерывающий) | |
+| **Error end** + **Error boundary** (с распространением по scope и в родительский процесс) | |
+| **Boundary**: timer и message, **прерывающие и непрерывающие** | |
 | Инциденты (создаются автоматически при ошибке) + ручное разрешение | |
 
 Условия вычисляются движком **Camunda FEEL**.
