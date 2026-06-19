@@ -9,6 +9,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-12 (message start), BPMN-13 (timer start), BPMN-14 (message boundary),
 > BPMN-15 (non-interrupting boundary). ⏸ Отложены: BPMN-16/17 (multi-instance —
 > требует scoped-переменных), BPMN-04 (signal-инфра — делается с T2 signal catch/throw).
+>
+> **Прогресс (T2):** ✅ BPMN-24 (send task = message throw в форме задачи),
+> BPMN-25 (receive task = message catch / wait-state в форме задачи).
 
 ## Легенда
 
@@ -143,13 +146,13 @@ Signal-start (broadcast стартует экземпляры) и signal-boundar
 **Приёмка**: сигнал стартует все подписанные определения и прерывает подписанные активности; тесты.
 
 ### BPMN-24 — Send task
-**T2 · S · TODO**
+**T2 · S · DONE**
 Send task = семантика message-throw в форме задачи (публикация/корреляция сообщения).
 Убрать «мёртвый» `SEND_TASK` из enum либо реализовать его.
 **Приёмка**: парсинг + исполнение как throw; тесты.
 
 ### BPMN-25 — Receive task
-**T2 · S · TODO · зависит: message catch**
+**T2 · S · DONE · зависит: message catch**
 Receive task = message catch в форме задачи (wait-state + подписка).
 Реализовать `RECEIVE_TASK` (сейчас мёртвый в enum).
 **Приёмка**: парковка до корреляции сообщения; тесты.

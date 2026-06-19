@@ -25,7 +25,8 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации; Escalation-события |
 | Parallel gateway (split / join) | Signal-события (парсятся, исполнение — позже) |
 | Service task (внешние воркеры через RabbitMQ) | Conditional / Link события (парсятся, исполнение — позже) |
-| User task (assignee, кандидаты-пользователи/группы, form key) | Business rule (DMN) / script задачи; Send / Receive task |
+| User task (assignee, кандидаты-пользователи/группы, form key) | Business rule (DMN) / script задачи |
+| **Send / Receive task** (message throw / catch в форме задачи) | Transaction sub-process |
 | Call activity, встроенный подпроцесс | Event sub-process |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция), **timer** (дата/длительность) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
