@@ -362,6 +362,7 @@ public class ActivityServiceImpl implements ActivityService {
 
         if (incomings.size() == 1) {
             UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+            dbService.completeActivity(activityId);
             log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
 
             Token newToken = dbService.createToken(tokenId);
@@ -385,6 +386,7 @@ public class ActivityServiceImpl implements ActivityService {
                 Token token = dbService.getToken(tokenId);
                 UUID oldTokenId = token.getParentId();
                 UUID activityId = dbService.createActivity(processInstanceId, oldTokenId, bpmnElement);
+                dbService.completeActivity(activityId);
                 log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
                 for (String outgoing : outgoings) {
                     processFlow(processInstanceId, oldTokenId, outgoing, false, null);
@@ -435,6 +437,8 @@ public class ActivityServiceImpl implements ActivityService {
                 processFlow(processInstanceId, token, matchedOutgoing, false, null);
             }
 
+            // routing decided successfully: the gateway is a pass-through, mark it completed
+            dbService.completeActivity(activityId);
             BpmnFlowModel flow = bpmn.getFlow(matchedOutgoing);
             String targetRef = flow.getTargetRef();
             BpmnElementModel target = bpmn.getElement(targetRef);
@@ -442,6 +446,7 @@ public class ActivityServiceImpl implements ActivityService {
         } else if (outgoings.size() == 1 && incoming.size() > 1) {
             String outgoing = outgoings.get(0);
             processFlow(processInstanceId, token, outgoing, false, null);
+            dbService.completeActivity(activityId);
             BpmnFlowModel flow = bpmn.getFlow(outgoing);
             String targetRef = flow.getTargetRef();
             BpmnElementModel target = bpmn.getElement(targetRef);
