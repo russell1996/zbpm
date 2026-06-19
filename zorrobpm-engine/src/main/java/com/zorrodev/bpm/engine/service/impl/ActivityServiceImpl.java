@@ -81,6 +81,7 @@ public class ActivityServiceImpl implements ActivityService {
         // message/timer start events, once triggered, behave like a plain start: complete and continue
         map.put(BpmnElementType.MESSAGE_START_EVENT, this::processStartEvent);
         map.put(BpmnElementType.TIMER_START_EVENT, this::processStartEvent);
+        map.put(BpmnElementType.SIGNAL_START_EVENT, this::processStartEvent);
         map.put(BpmnElementType.END_EVENT, this::processEndEvent);
         map.put(BpmnElementType.TERMINATE_END_EVENT, this::processTerminateEnd);
         map.put(BpmnElementType.ERROR_END_EVENT, this::processErrorEnd);
@@ -494,6 +495,36 @@ public class ActivityServiceImpl implements ActivityService {
 
         scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
         scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
+        scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
+    }
+
+    /**
+     * Registers a signal subscription for every signal boundary event attached to the given host
+     * activity. When such a signal is later broadcast the boundary fires (see {@link #broadcastSignal}).
+     */
+    private void scheduleSignalBoundaries(UUID processInstanceId, UUID hostActivityId, BpmnElementModel host) {
+        BpmnProcessDefinitionModel pd = host.getProcessDefinition();
+        if (pd == null) {
+            return;
+        }
+        for (BpmnElementModel element : pd.getElements()) {
+            if (element.getType() != BpmnElementType.SIGNAL_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attachedTo = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (!host.getId().equals(attachedTo)) {
+                continue;
+            }
+            String signalName = signalName(element);
+            if (signalName == null) {
+                throw new EngineException("Signal boundary " + element.getId() + " has no signal name");
+            }
+            dbService.createSignalSubscription(processInstanceId, hostActivityId, signalName, element.getId());
+            log.info("{}: Signal boundary {} subscribed to '{}' on host activity {}", processInstanceId, element.getId(), signalName, hostActivityId);
+        }
     }
 
     /**
@@ -687,14 +718,31 @@ public class ActivityServiceImpl implements ActivityService {
      */
     private void broadcastSignal(String signalName, List<ProcessVariable> variables) {
         List<SignalSubscription> subscriptions = dbService.findSignalSubscriptions(signalName);
-        if (subscriptions.isEmpty()) {
+        List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> startSubscriptions =
+            dbService.findSignalStartSubscriptions(signalName);
+
+        if (subscriptions.isEmpty() && startSubscriptions.isEmpty()) {
             log.info("No active subscription for signal '{}'", signalName);
             return;
         }
+
+        // signal start: every subscribed definition starts a fresh instance (broadcast)
+        for (com.zorrodev.bpm.engine.dto.SignalStartSubscription start : startSubscriptions) {
+            log.info("Signal '{}' starting a new instance of {} at {}", signalName, start.getProcessDefinitionId(), start.getElementId());
+            startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables);
+        }
+
         for (SignalSubscription subscription : subscriptions) {
             dbService.consumeSignalSubscription(subscription.getId());
-            log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
-            signal(subscription.getActivityId(), variables);
+            if (subscription.getBoundaryElementId() != null) {
+                // signal boundary: fire the boundary (interrupt/non-interrupt the host)
+                log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables);
+            } else {
+                // signal catch: signal the waiting activity
+                log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                signal(subscription.getActivityId(), variables);
+            }
         }
     }
 
