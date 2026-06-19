@@ -85,6 +85,8 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.END_EVENT, this::processEndEvent);
         map.put(BpmnElementType.TERMINATE_END_EVENT, this::processTerminateEnd);
         map.put(BpmnElementType.ERROR_END_EVENT, this::processErrorEnd);
+        map.put(BpmnElementType.ESCALATION_END_EVENT, this::processEscalationEnd);
+        map.put(BpmnElementType.ESCALATION_THROW_EVENT, this::processEscalationThrow);
         map.put(BpmnElementType.SERVICE_TASK, (pi, t, bpmn, el) -> enterServiceTask(pi, t, el));
         map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
         // Send task = message throw in task form; Receive task = message catch (wait state) in task form.
@@ -863,6 +865,16 @@ public class ActivityServiceImpl implements ActivityService {
 
         log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
 
+        finishBranch(processInstanceId, tokenId, bpmn);
+    }
+
+    /**
+     * Ends the current branch at an end event: if the token is inside an embedded subprocess scope,
+     * completes the container and continues the parent token from the subprocess's outgoing flows;
+     * otherwise completes the process instance and continues the parent call activity (if any). Shared
+     * by plain and escalation end events.
+     */
+    private void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn) {
         Token endToken = dbService.getToken(tokenId);
         if (endToken != null && endToken.getScopeActivityId() != null) {
             // end of an embedded subprocess scope: complete the container and continue the parent
@@ -1017,6 +1029,156 @@ public class ActivityServiceImpl implements ActivityService {
                 .map(EventDefinitionExtensionModel::getCode)
                 .orElse(null);
             if (boundaryCode == null || boundaryCode.equals(errorCode)) {
+                return element;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Escalation end event: completes its activity, raises a (non-critical) escalation that propagates
+     * up the scope hierarchy looking for an escalation boundary, then ends the branch like a plain end
+     * event. An uncaught escalation is non-critical — it does not create an incident.
+     */
+    private void processEscalationEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        String escalationCode = escalationCode(bpmnElement);
+        log.info("{}/{}: Escalation end {} thrown (code={}) at {}", processInstanceId, tokenId, bpmnElement.getId(), escalationCode, activityId);
+
+        boolean interrupted = throwEscalation(processInstanceId, tokenId, escalationCode);
+        // if an interrupting boundary cancelled this token's scope, the branch is already gone
+        if (!interrupted) {
+            finishBranch(processInstanceId, tokenId, bpmn);
+        }
+    }
+
+    /**
+     * Escalation throw event: completes its activity, raises a (non-critical) escalation, then continues
+     * down its own outgoing flow regardless of whether the escalation was caught (escalation, unlike a
+     * thrown error, never interrupts the throwing path).
+     */
+    private void processEscalationThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        String escalationCode = escalationCode(bpmnElement);
+        log.info("{}/{}: Escalation throw {} (code={}) at {}", processInstanceId, tokenId, bpmnElement.getId(), escalationCode, activityId);
+
+        boolean interrupted = throwEscalation(processInstanceId, tokenId, escalationCode);
+        // escalation never interrupts the throwing path unless an interrupting boundary on an enclosing
+        // scope of this very token fired (cancelling it); otherwise continue down the outgoing flow
+        if (!interrupted) {
+            proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+        }
+    }
+
+    private String escalationCode(BpmnElementModel element) {
+        return Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getCode)
+            .orElse(null);
+    }
+
+    /**
+     * Propagates an escalation from {@code tokenId} outward through the scope hierarchy, looking for an
+     * escalation boundary that matches {@code escalationCode} (a boundary without a code is a catch-all).
+     * Mirrors {@link #throwError} but supports non-interrupting boundaries (the host scope keeps running
+     * and a parallel branch is spawned) and never cancels the instance or raises an incident, because an
+     * escalation is non-critical.
+     *
+     * @return {@code true} if an interrupting boundary on a scope enclosing {@code tokenId} fired
+     *         (so the throwing path was cancelled and must not continue), {@code false} otherwise.
+     */
+    private boolean throwEscalation(UUID processInstanceId, UUID tokenId, String escalationCode) {
+        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+
+        // walk enclosing embedded-subprocess scopes, innermost first
+        Token tok = dbService.getToken(tokenId);
+        while (tok != null && tok.getScopeActivityId() != null) {
+            Activity scope = dbService.getActivity(tok.getScopeActivityId());
+            BpmnElementModel boundary = findEscalationBoundary(bpmn, scope.getBpmnElementId(), escalationCode);
+            if (boundary != null) {
+                if (isInterrupting(boundary)) {
+                    dbService.cancelActiveActivitiesForToken(tok.getId());
+                    dbService.cancelActivity(scope.getId());
+                    log.info("{}: escalation '{}' caught (interrupting) by boundary {} on subprocess {}", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId());
+                    proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary);
+                    return true;
+                }
+                Token branch = dbService.createToken(tok.getParentId());
+                log.info("{}: escalation '{}' caught (non-interrupting) by boundary {} on subprocess {} (branch token {})", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId(), branch.getId());
+                proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary);
+                return false;
+            }
+            tok = tok.getParentId() != null ? dbService.getToken(tok.getParentId()) : null;
+        }
+
+        // reached the top of this instance: propagate to the parent instance via the call activity
+        if (pi.getParentActivityId() != null) {
+            Activity callActivity = dbService.getActivity(pi.getParentActivityId());
+            UUID parentInstanceId = callActivity.getProcessInstanceId();
+            dbService.lockProcessInstance(parentInstanceId);
+            ProcessInstance parentPi = dbService.getProcessInstance(parentInstanceId);
+            BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentPi.getProcessDefinitionId());
+            BpmnElementModel boundary = findEscalationBoundary(parentBpmn, callActivity.getBpmnElementId(), escalationCode);
+
+            if (boundary != null) {
+                if (isInterrupting(boundary)) {
+                    // interrupting escalation on a call activity cancels the child instance
+                    dbService.cancelActiveActivities(processInstanceId);
+                    dbService.completeProcessInstance(processInstanceId);
+                    dbService.cancelActivity(callActivity.getId());
+                    log.info("{}: escalation '{}' caught (interrupting) by boundary {} on call activity {}", parentInstanceId, escalationCode, boundary.getId(), callActivity.getBpmnElementId());
+                    proceedToOutgoing(parentInstanceId, callActivity.getToken(), parentBpmn, boundary);
+                    return true; // child instance was cancelled, so the throwing path is gone
+                }
+                // the child instance keeps running; a parallel branch is spawned in the parent
+                Token branch = dbService.createToken(callActivity.getToken());
+                log.info("{}: escalation '{}' caught (non-interrupting) by boundary {} on call activity {} (branch token {})", parentInstanceId, escalationCode, boundary.getId(), callActivity.getBpmnElementId(), branch.getId());
+                proceedToOutgoing(parentInstanceId, branch.getId(), parentBpmn, boundary);
+                return false;
+            }
+            // not caught on the call activity: keep propagating within the parent instance for handling,
+            // but the child's throwing path is not interrupted by it
+            throwEscalation(parentInstanceId, callActivity.getToken(), escalationCode);
+            return false;
+        }
+
+        log.info("{}: escalation '{}' escaped unhandled (non-critical, ignored)", processInstanceId, escalationCode);
+        return false;
+    }
+
+    private boolean isInterrupting(BpmnElementModel boundary) {
+        return Optional.ofNullable(boundary.getExtensions())
+            .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+            .map(BoundaryEventExtensionModel::isInterrupting)
+            .orElse(true);
+    }
+
+    /**
+     * Finds an escalation boundary attached to {@code attachedToRef} whose escalation code matches
+     * {@code escalationCode}; a boundary with no code is a catch-all. Returns {@code null} if none.
+     */
+    private BpmnElementModel findEscalationBoundary(BpmnProcessDefinitionModel bpmn, String attachedToRef, String escalationCode) {
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.ESCALATION_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (!attachedToRef.equals(attached)) {
+                continue;
+            }
+            String boundaryCode = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getEventDefinition)
+                .map(EventDefinitionExtensionModel::getCode)
+                .orElse(null);
+            if (boundaryCode == null || boundaryCode.equals(escalationCode)) {
                 return element;
             }
         }

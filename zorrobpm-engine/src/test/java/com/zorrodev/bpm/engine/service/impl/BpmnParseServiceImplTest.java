@@ -458,6 +458,34 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseEscalationConstructs() throws IOException {
+        // non-interrupting escalation boundary on a sub-process + escalation end inside it
+        BpmnProcessDefinitionModel ni = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-escalation-noninterrupting.bpmn")));
+
+        BpmnElementModel boundary = ni.getElement("escBoundary");
+        assertThat(boundary.getType()).isEqualTo(BpmnElementType.ESCALATION_BOUNDARY_EVENT);
+        assertThat(boundary.getExtensions().getBoundaryEventExtension().isInterrupting()).isFalse();
+        assertThat(boundary.getExtensions().getEventDefinition().getCode()).isEqualTo("ESC-1");
+
+        BpmnElementModel escEnd = ni.getElement("subEscEnd");
+        assertThat(escEnd.getType()).isEqualTo(BpmnElementType.ESCALATION_END_EVENT);
+        assertThat(escEnd.getExtensions().getEventDefinition().getCode()).isEqualTo("ESC-1");
+
+        // interrupting escalation boundary + escalation throw
+        BpmnProcessDefinitionModel in = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-escalation-interrupting.bpmn")));
+
+        assertThat(in.getElement("escBoundary").getType()).isEqualTo(BpmnElementType.ESCALATION_BOUNDARY_EVENT);
+        assertThat(in.getElement("escBoundary").getExtensions().getBoundaryEventExtension().isInterrupting()).isTrue();
+
+        // a top-level escalation throw
+        BpmnProcessDefinitionModel thr = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-escalation-throw.bpmn")));
+        assertThat(thr.getElement("escThrow").getType()).isEqualTo(BpmnElementType.ESCALATION_THROW_EVENT);
+    }
+
+    @Test
     void testParseSignalBoundary() throws IOException {
         String bpmnStr = Files.readString(Path.of("src/test/files/test-signal-boundary.bpmn"));
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl().parse(bpmnStr);
