@@ -37,6 +37,8 @@ public class BpmnProcessDefinitionModel {
     private List<BpmnExclusiveGatewayModel> exclusiveGateways;
     @XmlElement(name = "parallelGateway", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnParallelGatewayModel> parallelGateways;
+    @XmlElement(name = "eventBasedGateway", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnEventBasedGatewayModel> eventBasedGateways;
     @XmlElement(name = "intermediateCatchEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnIntermediateCatchEventModel> intermediateCatchEvents;
     @XmlElement(name = "intermediateThrowEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
