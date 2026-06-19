@@ -215,12 +215,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     boolean timer = boundaryEvent.getTimerEventDefinition() != null;
                     boolean error = boundaryEvent.getErrorEventDefinition() != null;
                     boolean message = boundaryEvent.getMessageEventDefinition() != null;
-                    if (!timer && !error && !message) {
-                        continue; // only timer, error and message boundaries are executable today
+                    boolean signal = boundaryEvent.getSignalEventDefinition() != null;
+                    if (!timer && !error && !message && !signal) {
+                        continue; // only timer, error, message and signal boundaries are executable today
                     }
                     BpmnElementModel element = toBoundaryElement(boundaryEvent);
                     element.setProcessDefinition(pd);
-                    attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), null, null, null, null, null, registry);
+                    attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), boundaryEvent.getSignalEventDefinition(), null, null, null, null, registry);
                     if (message) {
                         MessageEventExtensionModel msg = new MessageEventExtensionModel();
                         String ref = boundaryEvent.getMessageEventDefinition().getMessageRef();
@@ -321,6 +322,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         } else if (boundaryEvent.getMessageEventDefinition() != null) {
             // the message name is resolved into messageEventExtension by the caller
             element.setType(BpmnElementType.MESSAGE_BOUNDARY_EVENT);
+        } else if (boundaryEvent.getSignalEventDefinition() != null) {
+            // the signal name is resolved into the eventDefinition extension by the caller
+            element.setType(BpmnElementType.SIGNAL_BOUNDARY_EVENT);
         }
 
         return element;
@@ -418,9 +422,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         long vanillaStartEventCount = process.getStartEvents().stream()
             .filter(e -> e.getMessageEventDefinition()==null)
             .filter(e -> e.getTimerEventDefinition()==null)
+            .filter(e -> e.getSignalEventDefinition()==null)
             .count();
-        // at most one plain (none) start is allowed; a process may instead start via message/timer
-        // start events, so zero plain starts is valid as long as some start event exists
+        // at most one plain (none) start is allowed; a process may instead start via message/timer/
+        // signal start events, so zero plain starts is valid as long as some start event exists
         if (vanillaStartEventCount > 1) {
             throw new BpmnParseException("At most one plain start event is allowed in the process definition xml");
         }
@@ -534,6 +539,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.MESSAGE_START_EVENT);
         } else if (startEvent.getTimerEventDefinition() != null) {
             element.setType(BpmnElementType.TIMER_START_EVENT);
+        } else if (startEvent.getSignalEventDefinition() != null) {
+            element.setType(BpmnElementType.SIGNAL_START_EVENT);
         } else {
             element.setType(BpmnElementType.START_EVENT);
         }

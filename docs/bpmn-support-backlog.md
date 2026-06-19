@@ -12,7 +12,8 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 >
 > **Прогресс (T2):** ✅ BPMN-24 (send task = message throw в форме задачи),
 > BPMN-25 (receive task = message catch / wait-state в форме задачи),
-> BPMN-04 (signal_subscriptions + broadcast 1:N) и BPMN-22 (signal catch/throw).
+> BPMN-04 (signal_subscriptions + broadcast 1:N), BPMN-22 (signal catch/throw)
+> и BPMN-23 (signal start + signal boundary, прерывающий/непрерывающий).
 
 ## Легенда
 
@@ -142,7 +143,7 @@ Split: запускает все ветки с истинным условием
 **Приёмка**: throw будит всех ожидающих; тесты на нескольких подписчиков.
 
 ### BPMN-23 — Signal start + signal boundary
-**T2 · M · TODO · зависит: BPMN-04, BPMN-03**
+**T2 · M · DONE · зависит: BPMN-04, BPMN-03**
 Signal-start (broadcast стартует экземпляры) и signal-boundary (прерывающий/непрерывающий).
 **Приёмка**: сигнал стартует все подписанные определения и прерывает подписанные активности; тесты.
 
