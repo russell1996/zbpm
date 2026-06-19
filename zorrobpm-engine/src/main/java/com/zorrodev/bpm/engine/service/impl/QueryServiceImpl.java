@@ -120,6 +120,15 @@ public class QueryServiceImpl implements QueryService {
     @Override
     public PagedDataDTO<Incident> findIncidents(IncidentQuery query) {
         List<Specification<IncidentEntity>> specifications = new LinkedList<>();
+        if (query.getId() != null) {
+            specifications.add(IncidentRepository.byId(query.getId()));
+        }
+        if (query.getProcessInstanceId() != null) {
+            specifications.add(IncidentRepository.byProcessInstanceId(query.getProcessInstanceId()));
+        }
+        if (query.getBpmnElementId() != null) {
+            specifications.add(IncidentRepository.byBpmnElementId(query.getBpmnElementId()));
+        }
         Specification<IncidentEntity> all = Specification.allOf(specifications);
         return toDTO(incidentRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), incidentMapper::toDTO);
     }

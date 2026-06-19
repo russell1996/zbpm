@@ -408,9 +408,15 @@ public class ActivityServiceImpl implements ActivityService {
         List<String> incoming = bpmnElement.getIncoming();
 
         if (outgoings.size() > 1 && incoming.size() == 1) {
+            // null-safe: a gateway without a <default> attribute has no extensions at all
+            String defaultFlowId = Optional.ofNullable(bpmnElement.getExtensions())
+                .map(BpmnElementExtensionModel::getExclusiveGatewayExtension)
+                .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
+                .orElse(null);
+
             String matchedOutgoing = null;
             for (String outgoing : outgoings) {
-                Boolean defaultFlow = Objects.equals(outgoing, Optional.ofNullable(bpmnElement).map(BpmnElementModel::getExtensions).map(BpmnElementExtensionModel::getExclusiveGatewayExtension).map(ExclusiveGatewayExtensionModel::getDefaultFlowId).orElse(null));
+                Boolean defaultFlow = Objects.equals(outgoing, defaultFlowId);
                 UUID flowActivityId = processFlow(processInstanceId, token, outgoing, true, defaultFlow);
                 if (flowActivityId != null) {
                     matchedOutgoing = outgoing;
@@ -418,19 +424,21 @@ public class ActivityServiceImpl implements ActivityService {
                 }
             }
 
-            if (matchedOutgoing != null) {
-                BpmnFlowModel flow = bpmn.getFlow(matchedOutgoing);
-                String targetRef = flow.getTargetRef();
-                BpmnElementModel target = bpmn.getElement(targetRef);
-                execute(processInstanceId, token, bpmn, target);
-            } else {
-                String outgoing = bpmnElement.getExtensions().getExclusiveGatewayExtension().getDefaultFlowId();
-                processFlow(processInstanceId, token, outgoing, false, null);
-                BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                String targetRef = flow.getTargetRef();
-                BpmnElementModel target = bpmn.getElement(targetRef);
-                execute(processInstanceId, token, bpmn, target);
+            if (matchedOutgoing == null) {
+                if (defaultFlowId == null) {
+                    // BPMN: no outgoing condition evaluated true and no default flow is defined. Raise
+                    // an incident (not an NPE) so an operator can fix the data and re-run the gateway.
+                    throw new IllegalStateException("Exclusive gateway '" + bpmnElement.getId()
+                        + "' could not be evaluated: no outgoing sequence flow condition was true and no default flow is defined");
+                }
+                matchedOutgoing = defaultFlowId;
+                processFlow(processInstanceId, token, matchedOutgoing, false, null);
             }
+
+            BpmnFlowModel flow = bpmn.getFlow(matchedOutgoing);
+            String targetRef = flow.getTargetRef();
+            BpmnElementModel target = bpmn.getElement(targetRef);
+            execute(processInstanceId, token, bpmn, target);
         } else if (outgoings.size() == 1 && incoming.size() > 1) {
             String outgoing = outgoings.get(0);
             processFlow(processInstanceId, token, outgoing, false, null);
