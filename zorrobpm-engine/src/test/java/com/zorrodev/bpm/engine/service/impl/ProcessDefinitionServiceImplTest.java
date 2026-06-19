@@ -18,6 +18,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -137,35 +138,35 @@ class ProcessDefinitionServiceImplTest {
     }
 
     @Test
-    void getProcessDefinitions_defaultUsesFindAll() {
+    void getProcessDefinitions_queriesViaSpecification() {
         ProcessDefinitionsQueryParameters params = new ProcessDefinitionsQueryParameters();
         params.setPageIndex(0);
         params.setPageSize(10);
 
         Page<ProcessDefinitionEntity> page = new PageImpl<>(List.of(entity(UUID.randomUUID(), "k", 1)));
-        when(processDefinitionRepository.findAll(any(Pageable.class))).thenReturn(page);
+        when(processDefinitionRepository.findAll(any(Specification.class), any(Pageable.class))).thenReturn(page);
 
         PagedDataDTO<ProcessDefinition> result = service.getProcessDefinitions(params);
 
         assertThat(result.getData()).hasSize(1);
         assertThat(result.getTotalElements()).isEqualTo(1);
-        verify(processDefinitionRepository, never()).findAllLatest(any());
     }
 
     @Test
-    void getProcessDefinitions_latestOnlyUsesFindAllLatest() {
+    void getProcessDefinitions_withNameAndLatestFilters_queriesViaSpecification() {
         ProcessDefinitionsQueryParameters params = new ProcessDefinitionsQueryParameters();
         params.setPageIndex(0);
         params.setPageSize(10);
+        params.setName("order");
         params.setLatestVersionOnly(true);
 
         Page<ProcessDefinitionEntity> page = new PageImpl<>(List.of(entity(UUID.randomUUID(), "k", 2)));
-        when(processDefinitionRepository.findAllLatest(any(Pageable.class))).thenReturn(page);
+        when(processDefinitionRepository.findAll(any(Specification.class), any(Pageable.class))).thenReturn(page);
 
         PagedDataDTO<ProcessDefinition> result = service.getProcessDefinitions(params);
 
         assertThat(result.getData()).hasSize(1);
-        verify(processDefinitionRepository, never()).findAll(any(Pageable.class));
+        verify(processDefinitionRepository, never()).findAllLatest(any());
     }
 
     private static ProcessDefinitionEntity entity(UUID id, String key, int version) {
