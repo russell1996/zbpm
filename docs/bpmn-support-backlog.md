@@ -4,6 +4,12 @@
 Документ — источник задач; каждую задачу делаем отдельной веткой с тестами и
 BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 
+> **Прогресс (T0+T1):** ✅ выполнены BPMN-01/02 (парсинг event-definition'ов + реестр),
+> BPMN-03 (propagation по scope), BPMN-10 (error end), BPMN-11 (error boundary),
+> BPMN-12 (message start), BPMN-13 (timer start), BPMN-14 (message boundary),
+> BPMN-15 (non-interrupting boundary). ⏸ Отложены: BPMN-16/17 (multi-instance —
+> требует scoped-переменных), BPMN-04 (signal-инфра — делается с T2 signal catch/throw).
+
 ## Легенда
 
 - **Приоритет / Tier**: `T0` фундамент → `T1` критичное → `T2` частое → `T3` расширения.
