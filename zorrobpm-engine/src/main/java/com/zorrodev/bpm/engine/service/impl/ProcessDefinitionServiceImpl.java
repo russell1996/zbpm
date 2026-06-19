@@ -91,6 +91,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
 
             registerMessageStartSubscriptions(key, id, model);
             registerTimerStartJobs(key, id, model);
+            registerSignalStartSubscriptions(key, id, model);
 
             publishProcessDefinitionCreatedEvent(processDefinitionEntity, model, bpmn);
         } else {
@@ -117,6 +118,27 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
                 .orElse(null);
             if (messageName != null) {
                 dbService.createMessageStartSubscription(key, processDefinitionId, start.getId(), messageName);
+            }
+        }
+    }
+
+    /**
+     * Registers (and supersedes prior versions of) signal start subscriptions for the deployed
+     * definition, so a broadcast signal of that name starts a new instance of the latest version.
+     */
+    private void registerSignalStartSubscriptions(String key, UUID processDefinitionId, BpmnProcessDefinitionModel model) {
+        var signalStarts = model.getSignalStartEvents();
+        if (signalStarts.isEmpty()) {
+            return;
+        }
+        dbService.deleteSignalStartSubscriptionsByKey(key);
+        for (BpmnElementModel start : signalStarts) {
+            String signalName = Optional.ofNullable(start.getExtensions())
+                .map(BpmnElementExtensionModel::getEventDefinition)
+                .map(com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel::getName)
+                .orElse(null);
+            if (signalName != null) {
+                dbService.createSignalStartSubscription(key, processDefinitionId, start.getId(), signalName);
             }
         }
     }

@@ -18,6 +18,7 @@ import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
+import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ParallelGatewayEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
@@ -33,6 +34,7 @@ import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
+import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
@@ -70,6 +72,7 @@ public class DBServiceImpl implements DBService {
     private final TimerJobRepository timerJobRepository;
     private final MessageSubscriptionRepository messageSubscriptionRepository;
     private final SignalSubscriptionRepository signalSubscriptionRepository;
+    private final SignalStartSubscriptionRepository signalStartSubscriptionRepository;
     private final MessageStartSubscriptionRepository messageStartSubscriptionRepository;
     private final TimerStartJobRepository timerStartJobRepository;
     private final ParallelGatewayRepository parallelGatewayRepository;
@@ -436,6 +439,11 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName) {
+        return createSignalSubscription(processInstanceId, activityId, signalName, null);
+    }
+
+    @Override
+    public UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName, String boundaryElementId) {
         UUID id = UUID.randomUUID();
         SignalSubscriptionEntity entity = new SignalSubscriptionEntity();
         entity.setId(id);
@@ -444,6 +452,7 @@ public class DBServiceImpl implements DBService {
         entity.setSignalName(signalName);
         entity.setConsumed(false);
         entity.setCreatedAt(Instant.now());
+        entity.setBoundaryElementId(boundaryElementId);
         signalSubscriptionRepository.save(entity);
         return id;
     }
@@ -457,6 +466,7 @@ public class DBServiceImpl implements DBService {
                 sub.setProcessInstanceId(e.getProcessInstanceId());
                 sub.setActivityId(e.getActivityId());
                 sub.setSignalName(e.getSignalName());
+                sub.setBoundaryElementId(e.getBoundaryElementId());
                 return sub;
             })
             .toList();
@@ -467,6 +477,38 @@ public class DBServiceImpl implements DBService {
         SignalSubscriptionEntity entity = signalSubscriptionRepository.findById(subscriptionId).orElseThrow();
         entity.setConsumed(true);
         signalSubscriptionRepository.save(entity);
+    }
+
+    @Override
+    public void createSignalStartSubscription(String processKey, UUID processDefinitionId, String elementId, String signalName) {
+        SignalStartSubscriptionEntity entity = new SignalStartSubscriptionEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setProcessKey(processKey);
+        entity.setProcessDefinitionId(processDefinitionId);
+        entity.setElementId(elementId);
+        entity.setSignalName(signalName);
+        entity.setCreatedAt(Instant.now());
+        signalStartSubscriptionRepository.save(entity);
+    }
+
+    @Override
+    public void deleteSignalStartSubscriptionsByKey(String processKey) {
+        signalStartSubscriptionRepository.deleteByProcessKey(processKey);
+    }
+
+    @Override
+    public List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> findSignalStartSubscriptions(String signalName) {
+        return signalStartSubscriptionRepository.findBySignalName(signalName).stream()
+            .map(e -> {
+                com.zorrodev.bpm.engine.dto.SignalStartSubscription sub = new com.zorrodev.bpm.engine.dto.SignalStartSubscription();
+                sub.setId(e.getId());
+                sub.setProcessKey(e.getProcessKey());
+                sub.setProcessDefinitionId(e.getProcessDefinitionId());
+                sub.setElementId(e.getElementId());
+                sub.setSignalName(e.getSignalName());
+                return sub;
+            })
+            .toList();
     }
 
     @Override

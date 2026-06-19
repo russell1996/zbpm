@@ -442,4 +442,31 @@ class BpmnParseServiceImplTest {
         assertThat(throwEvt.getType()).isEqualTo(BpmnElementType.SIGNAL_THROW_EVENT);
         assertThat(throwEvt.getExtensions().getEventDefinition().getName()).isEqualTo("go");
     }
+
+    @Test
+    void testParseSignalStartEvent() throws IOException {
+        // a start event with a signalEventDefinition becomes SIGNAL_START_EVENT (no plain start needed)
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-signal-start-receiver.bpmn"));
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl().parse(bpmnStr);
+
+        assertThat(bpmn.getStartEvent()).isNull();
+        assertThat(bpmn.getSignalStartEvents()).hasSize(1);
+        BpmnElementModel sigStart = bpmn.getSignalStartEvents().get(0);
+        assertThat(sigStart.getId()).isEqualTo("signalStart");
+        assertThat(sigStart.getType()).isEqualTo(BpmnElementType.SIGNAL_START_EVENT);
+        assertThat(sigStart.getExtensions().getEventDefinition().getName()).isEqualTo("kickoff");
+    }
+
+    @Test
+    void testParseSignalBoundary() throws IOException {
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-signal-boundary.bpmn"));
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl().parse(bpmnStr);
+
+        BpmnElementModel boundary = bpmn.getElement("sigBoundary");
+        assertThat(boundary.getType()).isEqualTo(BpmnElementType.SIGNAL_BOUNDARY_EVENT);
+        assertThat(boundary.getExtensions().getBoundaryEventExtension().getAttachedToRef()).isEqualTo("gate1");
+        assertThat(boundary.getExtensions().getBoundaryEventExtension().isInterrupting()).isTrue();
+        assertThat(boundary.getExtensions().getEventDefinition().getName()).isEqualTo("cancel");
+        assertThat(boundary.getOutgoing()).containsExactly("flowBnd");
+    }
 }
