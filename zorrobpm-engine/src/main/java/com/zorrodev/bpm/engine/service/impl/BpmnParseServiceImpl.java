@@ -130,6 +130,20 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     pd.addElement(element);
                 }
             }
+            if (Optional.ofNullable(process.getSendTasks()).isPresent()) {
+                for (BpmnSendTaskModel sendTask : process.getSendTasks()) {
+                    BpmnElementModel element = toElementModel(sendTask, messageNames);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
+            if (Optional.ofNullable(process.getReceiveTasks()).isPresent()) {
+                for (BpmnReceiveTaskModel receiveTask : process.getReceiveTasks()) {
+                    BpmnElementModel element = toElementModel(receiveTask, messageNames);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
             if (Optional.ofNullable(process.getUserTasks()).isPresent()) {
                 for (BpmnUserTaskModel userTask : process.getUserTasks()) {
                     BpmnElementModel element = toElementModel(userTask);
@@ -426,6 +440,38 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setExtensions(new BpmnElementExtensionModel());
             element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
             element.getExtensions().getServiceTaskExtension().setJob(serviceTask.getExtensionElements().getTaskDefinition().getType());
+        }
+        return element;
+    }
+
+    private BpmnElementModel toElementModel(BpmnSendTaskModel sendTask, Map<String, String> messageNames) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(sendTask.getId());
+        element.setName(sendTask.getName());
+        element.setType(BpmnElementType.SEND_TASK);
+        element.setIncoming(sendTask.getIncoming());
+        element.setOutgoing(sendTask.getOutgoing());
+        if (sendTask.getMessageRef() != null) {
+            MessageEventExtensionModel message = new MessageEventExtensionModel();
+            message.setMessageName(messageNames.getOrDefault(sendTask.getMessageRef(), sendTask.getMessageRef()));
+            element.setExtensions(new BpmnElementExtensionModel());
+            element.getExtensions().setMessageEventExtension(message);
+        }
+        return element;
+    }
+
+    private BpmnElementModel toElementModel(BpmnReceiveTaskModel receiveTask, Map<String, String> messageNames) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(receiveTask.getId());
+        element.setName(receiveTask.getName());
+        element.setType(BpmnElementType.RECEIVE_TASK);
+        element.setIncoming(receiveTask.getIncoming());
+        element.setOutgoing(receiveTask.getOutgoing());
+        if (receiveTask.getMessageRef() != null) {
+            MessageEventExtensionModel message = new MessageEventExtensionModel();
+            message.setMessageName(messageNames.getOrDefault(receiveTask.getMessageRef(), receiveTask.getMessageRef()));
+            element.setExtensions(new BpmnElementExtensionModel());
+            element.getExtensions().setMessageEventExtension(message);
         }
         return element;
     }

@@ -408,4 +408,21 @@ class BpmnParseServiceImplTest {
         assertThat(escThrow.getType()).isEqualTo(EventDefinitionType.ESCALATION);
         assertThat(escThrow.getCode()).isEqualTo("ESC-1");
     }
+
+    @Test
+    void testParseSendReceiveTasks() throws IOException {
+        // send/receive tasks resolve their messageRef to the definitions-level message name
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-send-receive.bpmn"));
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl().parse(bpmnStr);
+
+        BpmnElementModel send = bpmn.getElement("sendTask1");
+        assertThat(send.getType()).isEqualTo(BpmnElementType.SEND_TASK);
+        assertThat(send.getExtensions().getMessageEventExtension().getMessageName()).isEqualTo("notify");
+        assertThat(send.getOutgoing()).containsExactly("flow2");
+
+        BpmnElementModel receive = bpmn.getElement("receiveTask1");
+        assertThat(receive.getType()).isEqualTo(BpmnElementType.RECEIVE_TASK);
+        assertThat(receive.getExtensions().getMessageEventExtension().getMessageName()).isEqualTo("approve");
+        assertThat(receive.getOutgoing()).containsExactly("flow3");
+    }
 }

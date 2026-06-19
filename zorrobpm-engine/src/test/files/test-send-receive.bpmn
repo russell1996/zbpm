@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_sr" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="notifyMsg" name="notify" />
+  <bpmn:message id="approveMsg" name="approve" />
+  <bpmn:process id="test-send-receive" name="test-send-receive" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="sendTask1" />
+    <bpmn:sendTask id="sendTask1" name="sendTask1" messageRef="notifyMsg">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:sendTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="sendTask1" targetRef="receiveTask1" />
+    <bpmn:receiveTask id="receiveTask1" name="receiveTask1" messageRef="approveMsg">
+      <bpmn:incoming>flow2</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:sequenceFlow id="flow3" name="flow3" sourceRef="receiveTask1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
