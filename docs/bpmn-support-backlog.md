@@ -14,7 +14,8 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-25 (receive task = message catch / wait-state в форме задачи),
 > BPMN-04 (signal_subscriptions + broadcast 1:N), BPMN-22 (signal catch/throw),
 > BPMN-23 (signal start + signal boundary, прерывающий/непрерывающий) и
-> BPMN-27 (escalation throw/end + escalation boundary, прерывающий/непрерывающий).
+> BPMN-27 (escalation throw/end + escalation boundary, прерывающий/непрерывающий)
+> и BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные).
 > Замечание по BPMN-27: escalation throw внутри встроенного подпроцесса не
 > поддержан (модель подпроцесса не парсит intermediate-события); используйте
 > escalation end внутри подпроцесса либо throw на верхнем уровне / в call activity.
@@ -136,7 +137,7 @@ Split: запускает все ветки с истинным условием
 **Приёмка**: корректный inclusive join по реально активным веткам; тесты на разветвление 1/2/все.
 
 ### BPMN-21 — Event-based gateway
-**T2 · M · TODO · зависит: message/timer/signal catch**
+**T2 · M · DONE · зависит: message/timer/signal catch**
 Гонка между несколькими catch-событиями (message/timer/signal): срабатывает первое,
 остальные отменяются.
 **Приёмка**: первое наступившее событие продолжает поток, прочие подписки/таймеры снимаются; тесты.
