@@ -92,6 +92,13 @@ public interface DBService {
 
     void consumeMessageSubscription(UUID subscriptionId);
 
+    UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName);
+
+    /** All active (unconsumed) subscriptions for {@code signalName}; a signal throw wakes them all. */
+    List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName);
+
+    void consumeSignalSubscription(UUID subscriptionId);
+
     /** Replaces any message-start subscriptions for {@code processKey} with a fresh one (newer
      *  versions supersede older ones). */
     void createMessageStartSubscription(String processKey, UUID processDefinitionId, String elementId, String messageName);
