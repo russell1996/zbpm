@@ -94,6 +94,7 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.RECEIVE_TASK, (pi, t, bpmn, el) -> enterMessageCatch(pi, t, el));
         map.put(BpmnElementType.EXCLUSIVE_GATEWAY, this::processExclusiveGateway);
         map.put(BpmnElementType.PARALLEL_GATEWAY, this::processParallelGateway);
+        map.put(BpmnElementType.EVENT_BASED_GATEWAY, this::processEventBasedGateway);
         map.put(BpmnElementType.CALL_ACTIVITY, this::processCallActivity);
         map.put(BpmnElementType.SUB_PROCESS, this::processSubProcess);
         // Catch events are wait states: the token parks here until an external trigger
@@ -356,6 +357,38 @@ public class ActivityServiceImpl implements ActivityService {
         log.info("{}/{}: Entering {}: {}/{} (scope token {})", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), childToken.getId());
 
         execute(processInstanceId, childToken.getId(), bpmn, bpmn.getElement(startEventId));
+    }
+
+    /**
+     * Event-based gateway: a pass-through that arms every outgoing catch event (message/timer/signal)
+     * on the same token, letting them race. When the first one fires, {@link #signal} cancels the
+     * losing siblings (see {@link #isBehindEventBasedGateway}).
+     */
+    private void processEventBasedGateway(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        log.info("{}/{}: Entering and completing {}: {}/{} (arming {} event(s))", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), bpmnElement.getOutgoing().size());
+
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /** True if {@code element} is a catch event whose (only) incoming flow comes from an event-based gateway. */
+    private boolean isBehindEventBasedGateway(BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
+        if (element.getIncoming() == null) {
+            return false;
+        }
+        for (String incoming : element.getIncoming()) {
+            BpmnFlowModel flow = bpmn.getFlow(incoming);
+            if (flow == null) {
+                continue;
+            }
+            BpmnElementModel source = bpmn.getElement(flow.getSourceRef());
+            if (source != null && source.getType() == BpmnElementType.EVENT_BASED_GATEWAY) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void processParallelGateway(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
@@ -643,6 +676,14 @@ public class ActivityServiceImpl implements ActivityService {
         ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
+
+        if (isBehindEventBasedGateway(bpmn, bpmnElement)) {
+            // event-based gateway race: this catch won. Cancel the losing sibling catches still parked
+            // on this token (the winner is already COMPLETED, so it is not cancelled). Any later trigger
+            // for a cancelled sibling is ignored by the status guard above.
+            dbService.cancelActiveActivitiesForToken(tokenId);
+            log.info("{}/{}: event-based gateway: {} won, losing siblings cancelled", processInstanceId, tokenId, bpmnElement.getId());
+        }
 
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
     }
