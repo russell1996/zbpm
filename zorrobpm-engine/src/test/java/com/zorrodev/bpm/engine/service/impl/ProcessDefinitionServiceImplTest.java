@@ -49,6 +49,9 @@ class ProcessDefinitionServiceImplTest {
     private FileService fileService;
 
     @Mock
+    private com.zorrodev.bpm.engine.service.DBService dbService;
+
+    @Mock
     private ApplicationEventPublisher publisher;
 
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
@@ -62,6 +65,7 @@ class ProcessDefinitionServiceImplTest {
             bpmnService,
             bpmnParseService,
             fileService,
+            dbService,
             publisher
         );
     }

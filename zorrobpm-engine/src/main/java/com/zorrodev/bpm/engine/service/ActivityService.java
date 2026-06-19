@@ -36,4 +36,10 @@ public interface ActivityService {
     void resolveIncident(UUID incidentId, List<ProcessVariable> variables);
 
     UUID startProcessInstance(UUID parentProcessInstanceId, UUID processDefinitionId, List<ProcessVariable> variables);
+
+    /**
+     * Starts a new instance beginning at a specific start element (used by message/timer start
+     * triggers, which begin at their own start node).
+     */
+    UUID startProcessInstanceFromStartEvent(UUID processDefinitionId, String startElementId, List<ProcessVariable> variables);
 }

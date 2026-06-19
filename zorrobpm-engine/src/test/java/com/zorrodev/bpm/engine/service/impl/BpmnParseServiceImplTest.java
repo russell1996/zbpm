@@ -353,6 +353,20 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseMessageStartOnly() throws IOException {
+        // a process whose only start is a message start must parse (no plain start required)
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-message-start.bpmn"));
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl().parse(bpmnStr);
+
+        assertThat(bpmn.getStartEvent()).isNull(); // no plain start
+        assertThat(bpmn.getMessageStartEvents()).hasSize(1);
+        BpmnElementModel msgStart = bpmn.getMessageStartEvents().get(0);
+        assertThat(msgStart.getId()).isEqualTo("msgStart");
+        assertThat(msgStart.getType()).isEqualTo(BpmnElementType.MESSAGE_START_EVENT);
+        assertThat(msgStart.getExtensions().getMessageEventExtension().getMessageName()).isEqualTo("order-received");
+    }
+
+    @Test
     void testParseErrorBoundary() throws IOException {
         String bpmnStr = Files.readString(Path.of("src/test/files/test-error-boundary.bpmn"));
         BpmnParseService service = new BpmnParseServiceImpl();
