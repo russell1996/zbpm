@@ -85,6 +85,9 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.ERROR_END_EVENT, this::processErrorEnd);
         map.put(BpmnElementType.SERVICE_TASK, (pi, t, bpmn, el) -> enterServiceTask(pi, t, el));
         map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
+        // Send task = message throw in task form; Receive task = message catch (wait state) in task form.
+        map.put(BpmnElementType.SEND_TASK, this::processMessageThrow);
+        map.put(BpmnElementType.RECEIVE_TASK, (pi, t, bpmn, el) -> enterMessageCatch(pi, t, el));
         map.put(BpmnElementType.EXCLUSIVE_GATEWAY, this::processExclusiveGateway);
         map.put(BpmnElementType.PARALLEL_GATEWAY, this::processParallelGateway);
         map.put(BpmnElementType.CALL_ACTIVITY, this::processCallActivity);
