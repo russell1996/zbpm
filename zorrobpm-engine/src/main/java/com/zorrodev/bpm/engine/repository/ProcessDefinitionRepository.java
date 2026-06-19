@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.repository;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +12,30 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface ProcessDefinitionRepository extends JpaRepository<ProcessDefinitionEntity, UUID>, JpaSpecificationExecutor<ProcessDefinitionEntity> {
+
+    /** Case-insensitive partial match on the process name. */
+    static Specification<ProcessDefinitionEntity> byNameContains(String name) {
+        return (root, query, cb) -> cb.like(cb.lower(root.get("name")), "%" + name.toLowerCase() + "%");
+    }
+
+    static Specification<ProcessDefinitionEntity> byKey(String key) {
+        return (root, query, cb) -> cb.equal(root.get("key"), key);
+    }
+
+    static Specification<ProcessDefinitionEntity> byVersion(Integer version) {
+        return (root, query, cb) -> cb.equal(root.get("version"), version);
+    }
+
+    /** Keeps only the latest version of each key, via a correlated max-version subquery. */
+    static Specification<ProcessDefinitionEntity> latestVersion() {
+        return (root, query, cb) -> {
+            var subquery = query.subquery(Integer.class);
+            var sub = subquery.from(ProcessDefinitionEntity.class);
+            subquery.select(cb.max(sub.get("version")))
+                .where(cb.equal(sub.get("key"), root.get("key")));
+            return cb.equal(root.get("version"), subquery);
+        };
+    }
 
     Optional<ProcessDefinitionEntity> findBySha256(String sha256);
 
