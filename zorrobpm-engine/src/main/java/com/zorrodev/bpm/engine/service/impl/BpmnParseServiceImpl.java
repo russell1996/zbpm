@@ -216,12 +216,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     boolean error = boundaryEvent.getErrorEventDefinition() != null;
                     boolean message = boundaryEvent.getMessageEventDefinition() != null;
                     boolean signal = boundaryEvent.getSignalEventDefinition() != null;
-                    if (!timer && !error && !message && !signal) {
-                        continue; // only timer, error, message and signal boundaries are executable today
+                    boolean escalation = boundaryEvent.getEscalationEventDefinition() != null;
+                    if (!timer && !error && !message && !signal && !escalation) {
+                        continue; // only timer, error, message, signal and escalation boundaries are executable today
                     }
                     BpmnElementModel element = toBoundaryElement(boundaryEvent);
                     element.setProcessDefinition(pd);
-                    attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), boundaryEvent.getSignalEventDefinition(), null, null, null, null, registry);
+                    attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), boundaryEvent.getSignalEventDefinition(), boundaryEvent.getEscalationEventDefinition(), null, null, null, registry);
                     if (message) {
                         MessageEventExtensionModel msg = new MessageEventExtensionModel();
                         String ref = boundaryEvent.getMessageEventDefinition().getMessageRef();
@@ -325,6 +326,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         } else if (boundaryEvent.getSignalEventDefinition() != null) {
             // the signal name is resolved into the eventDefinition extension by the caller
             element.setType(BpmnElementType.SIGNAL_BOUNDARY_EVENT);
+        } else if (boundaryEvent.getEscalationEventDefinition() != null) {
+            // the escalation code is resolved into the eventDefinition extension by the caller;
+            // escalation boundaries are interrupting or non-interrupting per cancelActivity
+            element.setType(BpmnElementType.ESCALATION_BOUNDARY_EVENT);
         }
 
         return element;
@@ -515,6 +520,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.TERMINATE_END_EVENT);
         } else if (endEvent.getErrorEventDefinition() != null) {
             element.setType(BpmnElementType.ERROR_END_EVENT);
+        } else if (endEvent.getEscalationEventDefinition() != null) {
+            element.setType(BpmnElementType.ESCALATION_END_EVENT);
         } else {
             element.setType(BpmnElementType.END_EVENT);
         }
@@ -635,6 +642,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.getExtensions().setMessageEventExtension(message);
         } else if (throwEvent.getSignalEventDefinition() != null) {
             element.setType(BpmnElementType.SIGNAL_THROW_EVENT);
+        } else if (throwEvent.getEscalationEventDefinition() != null) {
+            element.setType(BpmnElementType.ESCALATION_THROW_EVENT);
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_THROW_EVENT);
         }
