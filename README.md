@@ -22,7 +22,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Start / End / Terminate-end события | Inclusive / условные шлюзы |
 | **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Event-based gateway |
 | Потоки управления (sequence flow) | Multi-instance (параллельный / последовательный) |
-| Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации; Escalation-события |
+| Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации |
 | Parallel gateway (split / join) | Conditional / Link события (парсятся, исполнение — позже) |
 | Service task (внешние воркеры через RabbitMQ) | Business rule (DMN) / script задачи |
 | User task (assignee, кандидаты-пользователи/группы, form key) | Transaction sub-process |
@@ -31,8 +31,9 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция), **timer** (дата/длительность) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
 | **Signal catch / throw** (broadcast всем подписчикам, 1:N) | |
+| **Escalation** throw / end + **escalation boundary** (прерывающий и непрерывающий) | |
 | **Error end** + **Error boundary** (с распространением по scope и в родительский процесс) | |
-| **Boundary**: timer, message и **signal**, **прерывающие и непрерывающие** | |
+| **Boundary**: timer, message, **signal** и **escalation**, **прерывающие и непрерывающие** | |
 | Инциденты (создаются автоматически при ошибке) + ручное разрешение | |
 
 Условия вычисляются движком **Camunda FEEL**.

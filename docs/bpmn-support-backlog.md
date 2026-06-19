@@ -12,8 +12,12 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 >
 > **Прогресс (T2):** ✅ BPMN-24 (send task = message throw в форме задачи),
 > BPMN-25 (receive task = message catch / wait-state в форме задачи),
-> BPMN-04 (signal_subscriptions + broadcast 1:N), BPMN-22 (signal catch/throw)
-> и BPMN-23 (signal start + signal boundary, прерывающий/непрерывающий).
+> BPMN-04 (signal_subscriptions + broadcast 1:N), BPMN-22 (signal catch/throw),
+> BPMN-23 (signal start + signal boundary, прерывающий/непрерывающий) и
+> BPMN-27 (escalation throw/end + escalation boundary, прерывающий/непрерывающий).
+> Замечание по BPMN-27: escalation throw внутри встроенного подпроцесса не
+> поддержан (модель подпроцесса не парсит intermediate-события); используйте
+> escalation end внутри подпроцесса либо throw на верхнем уровне / в call activity.
 
 ## Легенда
 
@@ -166,7 +170,7 @@ Receive task = message catch в форме задачи (wait-state + подпи
 **Приёмка**: прерывающий отменяет родительский scope, непрерывающий — параллелен; тесты.
 
 ### BPMN-27 — Escalation throw / boundary / end
-**T2 · M · TODO · зависит: BPMN-03**
+**T2 · M · DONE · зависит: BPMN-03**
 Escalation как «некритичная» ошибка (не прерывает обязательно): throw, boundary
 (interrupting/non-interrupting), escalation-end.
 **Приёмка**: распространение по scope как у error, но non-interrupting по умолчанию; тесты.
