@@ -425,4 +425,21 @@ class BpmnParseServiceImplTest {
         assertThat(receive.getExtensions().getMessageEventExtension().getMessageName()).isEqualTo("approve");
         assertThat(receive.getOutgoing()).containsExactly("flow3");
     }
+
+    @Test
+    void testParseSignalCatchAndThrow() throws IOException {
+        // intermediate catch/throw with a signalEventDefinition become SIGNAL_CATCH/THROW with the
+        // signal name resolved from the definitions-level <signal>
+        String bpmnStr = Files.readString(Path.of("src/test/files/test-signal.bpmn"));
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl().parse(bpmnStr);
+
+        BpmnElementModel catchA = bpmn.getElement("signalCatchA");
+        assertThat(catchA.getType()).isEqualTo(BpmnElementType.SIGNAL_CATCH_EVENT);
+        assertThat(catchA.getExtensions().getEventDefinition().getType()).isEqualTo(EventDefinitionType.SIGNAL);
+        assertThat(catchA.getExtensions().getEventDefinition().getName()).isEqualTo("go");
+
+        BpmnElementModel throwEvt = bpmn.getElement("signalThrow");
+        assertThat(throwEvt.getType()).isEqualTo(BpmnElementType.SIGNAL_THROW_EVENT);
+        assertThat(throwEvt.getExtensions().getEventDefinition().getName()).isEqualTo("go");
+    }
 }

@@ -23,13 +23,14 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Message start** (старт по сообщению) и **Timer start** (старт по расписанию) | Event-based gateway |
 | Потоки управления (sequence flow) | Multi-instance (параллельный / последовательный) |
 | Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации; Escalation-события |
-| Parallel gateway (split / join) | Signal-события (парсятся, исполнение — позже) |
+| Parallel gateway (split / join) | Signal start / signal boundary (catch/throw уже есть) |
 | Service task (внешние воркеры через RabbitMQ) | Conditional / Link события (парсятся, исполнение — позже) |
 | User task (assignee, кандидаты-пользователи/группы, form key) | Business rule (DMN) / script задачи |
 | **Send / Receive task** (message throw / catch в форме задачи) | Transaction sub-process |
 | Call activity, встроенный подпроцесс | Event sub-process |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция), **timer** (дата/длительность) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
+| **Signal catch / throw** (broadcast всем подписчикам, 1:N) | |
 | **Error end** + **Error boundary** (с распространением по scope и в родительский процесс) | |
 | **Boundary**: timer и message, **прерывающие и непрерывающие** | |
 | Инциденты (создаются автоматически при ошибке) + ручное разрешение | |
@@ -205,7 +206,7 @@ public class ChargeHandler implements JobHandler {
 
 ## База данных и миграции
 
-Схема управляется **Liquibase** (`zorrobpm-engine/src/main/resources/db/changelog`), применяется автоматически при старте. Ключевые таблицы: `process_definitions`, `process_instances`, `activities`, `tokens`, `variables`, `user_tasks`, `service_tasks`, `incidents`, `timer_jobs`, `message_subscriptions`, `parallel_gateways`.
+Схема управляется **Liquibase** (`zorrobpm-engine/src/main/resources/db/changelog`), применяется автоматически при старте. Ключевые таблицы: `process_definitions`, `process_instances`, `activities`, `tokens`, `variables`, `user_tasks`, `service_tasks`, `incidents`, `timer_jobs`, `message_subscriptions`, `signal_subscriptions`, `parallel_gateways`.
 
 ## Ограничения и замечания по проду
 
