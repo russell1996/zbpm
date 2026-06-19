@@ -11,8 +11,14 @@ import java.util.UUID;
 public interface ParallelGatewayRepository extends JpaRepository<ParallelGatewayEntity, UUID> {
 
     @Query("SELECT pg.enteredFlowId FROM ParallelGatewayEntity pg "
-        + "WHERE pg.processInstanceId = :processInstanceId AND pg.gatewayElementId = :gatewayElementId")
+        + "WHERE pg.processInstanceId = :processInstanceId AND pg.gatewayElementId = :gatewayElementId "
+        + "AND pg.expectedCount IS NULL")
     List<String> findEnteredFlows(UUID processInstanceId, String gatewayElementId);
+
+    @Query("SELECT pg.expectedCount FROM ParallelGatewayEntity pg "
+        + "WHERE pg.processInstanceId = :processInstanceId AND pg.gatewayElementId = :gatewayElementId "
+        + "AND pg.expectedCount IS NOT NULL")
+    List<Integer> findExpectedCounts(UUID processInstanceId, String gatewayElementId);
 
     boolean existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(
         UUID processInstanceId, String gatewayElementId, String enteredFlowId);

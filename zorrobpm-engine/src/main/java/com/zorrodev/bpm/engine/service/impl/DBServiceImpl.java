@@ -608,6 +608,26 @@ public class DBServiceImpl implements DBService {
         parallelGatewayRepository.deleteByProcessInstanceIdAndGatewayElementId(processInstanceId, gatewayElementId);
     }
 
+    @Override
+    public void recordInclusiveExpected(UUID processInstanceId, String gatewayElementId, int expectedCount) {
+        ParallelGatewayEntity entity = new ParallelGatewayEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setProcessInstanceId(processInstanceId);
+        entity.setGatewayElementId(gatewayElementId);
+        // marker row (holds the expected count, not an arrival); entered_flow_id is NOT NULL in the
+        // schema, so reuse the gateway id and distinguish marker rows by expected_count being set.
+        entity.setEnteredFlowId(gatewayElementId);
+        entity.setExpectedCount(expectedCount);
+        entity.setCreatedAt(Instant.now());
+        parallelGatewayRepository.save(entity);
+    }
+
+    @Override
+    public Integer getInclusiveExpected(UUID processInstanceId, String gatewayElementId) {
+        return parallelGatewayRepository.findExpectedCounts(processInstanceId, gatewayElementId)
+            .stream().findFirst().orElse(null);
+    }
+
     private Activity getActivity(ActivityEntity activityEntity) {
         Activity activity = new Activity();
         activity.setId(activityEntity.getId());

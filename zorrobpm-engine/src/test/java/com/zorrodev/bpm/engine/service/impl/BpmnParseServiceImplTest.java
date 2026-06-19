@@ -458,6 +458,21 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseInclusiveGateway() throws IOException {
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-inclusive-gateway.bpmn")));
+
+        BpmnElementModel split = bpmn.getElement("split");
+        assertThat(split.getType()).isEqualTo(BpmnElementType.INCLUSIVE_GATEWAY);
+        assertThat(split.getExtensions().getExclusiveGatewayExtension().getDefaultFlowId()).isEqualTo("flowDefault");
+        assertThat(split.getOutgoing()).containsExactlyInAnyOrder("flowA", "flowB", "flowDefault");
+
+        BpmnElementModel join = bpmn.getElement("join");
+        assertThat(join.getType()).isEqualTo(BpmnElementType.INCLUSIVE_GATEWAY);
+        assertThat(join.getIncoming()).containsExactlyInAnyOrder("flowA", "flowB", "flowDefault");
+    }
+
+    @Test
     void testParseEventBasedGateway() throws IOException {
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
             .parse(Files.readString(Path.of("src/test/files/test-event-based-gateway.bpmn")));
