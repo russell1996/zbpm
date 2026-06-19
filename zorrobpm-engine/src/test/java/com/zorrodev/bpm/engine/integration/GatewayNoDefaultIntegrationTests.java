@@ -110,5 +110,7 @@ public class GatewayNoDefaultIntegrationTests {
             .toList();
         assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("endA") && a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(activities).noneMatch(a -> a.getBpmnElementId().equals("endB"));
+        // the gateway is a pass-through and must be marked COMPLETED once it routes, not left CREATED
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("xor") && a.getStatus() == ActivityStatus.COMPLETED);
     }
 }
