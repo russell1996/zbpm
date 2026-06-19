@@ -27,6 +27,10 @@ public class BpmnProcessDefinitionModel {
     private List<BpmnSequenceFlowModel> flows;
     @XmlElement(name = "serviceTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnServiceTaskModel> serviceTasks;
+    @XmlElement(name = "sendTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnSendTaskModel> sendTasks;
+    @XmlElement(name = "receiveTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnReceiveTaskModel> receiveTasks;
     @XmlElement(name = "userTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnUserTaskModel> userTasks;
     @XmlElement(name = "exclusiveGateway", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
