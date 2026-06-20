@@ -20,7 +20,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные)
 > и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
 >
-> **Прогресс (T3):** ✅ BPMN-36 (data IO mappings — `zeebe:ioMapping` input/output как FEEL-трансформации
+> **Прогресс (T3):** ✅ BPMN-32 (compensation — compensation boundary + intermediate throw, откат
+> завершённых compensation-bounded активностей в обратном порядке; targeted/в подпроцессе отложены),
+> BPMN-36 (data IO mappings — `zeebe:ioMapping` input/output как FEEL-трансформации
 > на service/user task; строгая scope-локальность отложена, переменные плоские),
 > BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link),
 > BPMN-30 (script task — inline FEEL-выражение, результат пишется в переменную; ошибка скрипта → инцидент),
@@ -223,9 +225,18 @@ Inline-скрипт на FEEL (`<bpmn:script>` + `scriptFormat="feel"`) вычи
 **Приёмка**: задача исполняет DMN-решение и пишет результат в переменные; тесты.
 
 ### BPMN-32 — Compensation
-**T3 · L · TODO · зависит: BPMN-03**
-Compensation boundary + compensation throw + откат завершённых активностей в обратном порядке.
-**Приёмка**: throw компенсации запускает зарегистрированные хендлеры завершённых задач; тесты.
+**T3 · L · DONE (throw + boundary, обратный порядок) · зависит: BPMN-03**
+Compensation boundary (привязка хендлера к активности через `<bpmn:association>`) + промежуточный
+compensation throw. Throw находит завершённые compensation-bounded активности экземпляра и выполняет их
+хендлеры в обратном порядке (по `createdAt` DESC — для линейного потока это обратный порядок завершения),
+синхронно на токене throw, затем продолжает по своему исходящему потоку. Хендлер — отдельная активность вне
+основного потока (без входящего потока), исполняется только при компенсации; `proceedToOutgoing` сделан
+null-safe для хендлеров без исходящего потока.
+Отложено (отдельные заходы): targeted-компенсация (по `activityRef`), compensation **end**-событие,
+компенсация в scope подпроцесса, асинхронные service-task хендлеры (детерминированный реверс требует
+явного порядка вместо `createdAt`).
+**Приёмка**: throw компенсации запускает хендлеры завершённых задач в обратном порядке; тест с
+арифметической кодировкой порядка (B→A над log=0 даёт 21, не 12).
 
 ### BPMN-33 — Transaction sub-process + Cancel
 **T3 · M · TODO · зависит: BPMN-32**
@@ -298,7 +309,7 @@ message boundary; message-**start** с ключом отложен.
 | BPMN-27 | Escalation | T2 | M | 03 |
 | BPMN-30 | Script task | T3 | M (DONE) | — |
 | BPMN-31 | Business rule (DMN) | T3 | L | — |
-| BPMN-32 | Compensation | T3 | L | 03 |
+| BPMN-32 | Compensation | T3 | L (DONE: throw+boundary) | 03 |
 | BPMN-33 | Transaction + Cancel | T3 | M | 32 |
 | BPMN-34 | Link events | T3 | S | 01 |
 | BPMN-35 | Conditional events | T3 | M (DONE: catch/boundary) | 01 |

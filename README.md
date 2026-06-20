@@ -21,8 +21,8 @@ ZorroBPM исполняет определения BPMN-процессов:
 |---|---|
 | Start / End / Terminate-end события | Multi-instance (параллельный / последовательный) |
 | **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional **start** событие (catch/boundary — поддержаны) |
-| Потоки управления (sequence flow) | Компенсации |
-| Exclusive gateway (условия на FEEL + поток по умолчанию) | Transaction sub-process |
+| Потоки управления (sequence flow) | Компенсация: targeted (по activityRef) / в подпроцессе |
+| Exclusive gateway (условия на FEEL + поток по умолчанию) | Transaction sub-process / cancel |
 | Parallel gateway (split / join) | Event sub-process: не-message-триггеры (timer/error/signal) |
 | **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | Business rule (DMN) задачи |
 | **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
@@ -38,6 +38,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Signal catch / throw** (broadcast всем подписчикам, 1:N) | |
 | **Link catch / throw** (внутрипроцессный «goto» по имени link) | |
 | **Conditional** catch / boundary (FEEL-условие на данных; реоценка при изменении переменных) | |
+| **Compensation** boundary + throw (откат завершённых активностей в обратном порядке) | |
 | **Escalation** throw / end + **escalation boundary** (прерывающий и непрерывающий) | |
 | **Error end** + **Error boundary** (с распространением по scope и в родительский процесс) | |
 | **Boundary**: timer, message, **signal** и **escalation**, **прерывающие и непрерывающие** | |
