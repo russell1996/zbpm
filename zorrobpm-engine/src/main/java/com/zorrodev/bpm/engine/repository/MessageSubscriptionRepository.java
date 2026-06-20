@@ -11,4 +11,6 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
     List<MessageSubscriptionEntity> findByConsumedFalseAndMessageNameAndProcessInstanceId(String messageName, UUID processInstanceId);
 
     List<MessageSubscriptionEntity> findByConsumedFalseAndMessageName(String messageName);
+
+    List<MessageSubscriptionEntity> findByConsumedFalseAndMessageNameAndCorrelationKey(String messageName, String correlationKey);
 }
