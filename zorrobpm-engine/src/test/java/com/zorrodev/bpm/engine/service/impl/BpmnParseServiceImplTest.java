@@ -510,6 +510,18 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseMultiInstance() throws IOException {
+        // a userTask's multiInstanceLoopCharacteristics is read into the multi-instance extension
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-multi-instance.bpmn")));
+
+        BpmnElementModel miTask = bpmn.getElement("miTask");
+        assertThat(miTask.getType()).isEqualTo(BpmnElementType.USER_TASK);
+        assertThat(miTask.getExtensions().getMultiInstanceExtension().isSequential()).isFalse();
+        assertThat(miTask.getExtensions().getMultiInstanceExtension().getCardinality()).isEqualTo("3");
+    }
+
+    @Test
     void testParseTransactionCancel() throws IOException {
         // a <transaction> is flattened like a subprocess; a cancel end -> CANCEL_END_EVENT and a cancel
         // boundary on the transaction -> CANCEL_BOUNDARY_EVENT
