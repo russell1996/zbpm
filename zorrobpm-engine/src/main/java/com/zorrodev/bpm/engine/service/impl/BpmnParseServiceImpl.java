@@ -623,6 +623,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.TIMER_CATCH_EVENT);
         } else if (catchEvent.getSignalEventDefinition() != null) {
             element.setType(BpmnElementType.SIGNAL_CATCH_EVENT);
+        } else if (catchEvent.getLinkEventDefinition() != null) {
+            element.setType(BpmnElementType.LINK_CATCH_EVENT);
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_CATCH_EVENT);
         }
@@ -673,6 +675,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.SIGNAL_THROW_EVENT);
         } else if (throwEvent.getEscalationEventDefinition() != null) {
             element.setType(BpmnElementType.ESCALATION_THROW_EVENT);
+        } else if (throwEvent.getLinkEventDefinition() != null) {
+            element.setType(BpmnElementType.LINK_THROW_EVENT);
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_THROW_EVENT);
         }
