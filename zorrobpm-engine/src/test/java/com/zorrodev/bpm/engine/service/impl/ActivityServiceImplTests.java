@@ -536,7 +536,7 @@ public class ActivityServiceImplTests {
 
         activityService.execute(processInstanceId, token, "startEvent");
 
-        verify(dbService).createMessageSubscription(processInstanceId, msgActivityId, "order-approved");
+        verify(dbService).createMessageSubscription(processInstanceId, msgActivityId, "order-approved", null, null);
         verify(dbService, times(0)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
 
         activityService.correlateMessage("order-approved", processInstanceId, List.of());

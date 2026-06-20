@@ -40,9 +40,17 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             checkBpmn(process);
 
             Map<String, String> messageNames = new HashMap<>();
+            Map<String, String> messageKeys = new HashMap<>();
             if (definitions.getMessages() != null) {
                 for (com.zorrodev.bpm.engine.bpmn.xml.BpmnMessageModel message : definitions.getMessages()) {
                     messageNames.put(message.getId(), message.getName());
+                    String key = Optional.ofNullable(message.getExtensionElements())
+                        .map(ExtensionElements::getSubscription)
+                        .map(com.zorrodev.bpm.engine.bpmn.xml.extension.SubscriptionModel::getCorrelationKey)
+                        .orElse(null);
+                    if (key != null) {
+                        messageKeys.put(message.getId(), key);
+                    }
                 }
             }
 
@@ -140,7 +148,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
             if (Optional.ofNullable(process.getReceiveTasks()).isPresent()) {
                 for (BpmnReceiveTaskModel receiveTask : process.getReceiveTasks()) {
-                    BpmnElementModel element = toElementModel(receiveTask, messageNames);
+                    BpmnElementModel element = toElementModel(receiveTask, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -212,7 +220,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
             if (process.getIntermediateCatchEvents() != null) {
                 for (BpmnIntermediateCatchEventModel catchEvent : process.getIntermediateCatchEvents()) {
-                    BpmnElementModel element = toElementModel(catchEvent, messageNames);
+                    BpmnElementModel element = toElementModel(catchEvent, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
                     attachEventDefinition(element, null, catchEvent.getSignalEventDefinition(), null,
                         catchEvent.getConditionalEventDefinition(), catchEvent.getLinkEventDefinition(), null, registry);
@@ -265,6 +273,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         MessageEventExtensionModel msg = new MessageEventExtensionModel();
                         String ref = boundaryEvent.getMessageEventDefinition().getMessageRef();
                         msg.setMessageName(messageNames.getOrDefault(ref, ref));
+                        msg.setCorrelationKeyExpression(messageKeys.get(ref));
                         element.getExtensions().setMessageEventExtension(msg);
                     }
                     pd.addElement(element);
@@ -535,7 +544,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         return element;
     }
 
-    private BpmnElementModel toElementModel(BpmnReceiveTaskModel receiveTask, Map<String, String> messageNames) {
+    private BpmnElementModel toElementModel(BpmnReceiveTaskModel receiveTask, Map<String, String> messageNames, Map<String, String> messageKeys) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(receiveTask.getId());
         element.setName(receiveTask.getName());
@@ -545,6 +554,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (receiveTask.getMessageRef() != null) {
             MessageEventExtensionModel message = new MessageEventExtensionModel();
             message.setMessageName(messageNames.getOrDefault(receiveTask.getMessageRef(), receiveTask.getMessageRef()));
+            message.setCorrelationKeyExpression(messageKeys.get(receiveTask.getMessageRef()));
             element.setExtensions(new BpmnElementExtensionModel());
             element.getExtensions().setMessageEventExtension(message);
         }
@@ -646,7 +656,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         return element;
     }
 
-    private BpmnElementModel toElementModel(BpmnIntermediateCatchEventModel catchEvent, Map<String, String> messageNames) {
+    private BpmnElementModel toElementModel(BpmnIntermediateCatchEventModel catchEvent, Map<String, String> messageNames, Map<String, String> messageKeys) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(catchEvent.getId());
         element.setName(catchEvent.getName());
@@ -689,6 +699,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             MessageEventExtensionModel message = new MessageEventExtensionModel();
             String ref = catchEvent.getMessageEventDefinition().getMessageRef();
             message.setMessageName(messageNames.getOrDefault(ref, ref));
+            message.setCorrelationKeyExpression(messageKeys.get(ref));
             element.getExtensions().setMessageEventExtension(message);
         }
 

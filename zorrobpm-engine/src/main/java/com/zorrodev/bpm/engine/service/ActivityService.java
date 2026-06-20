@@ -28,6 +28,13 @@ public interface ActivityService {
     void correlateMessage(String messageName, UUID processInstanceId, List<ProcessVariable> variables);
 
     /**
+     * Correlates a message by a correlation-key value: only subscriptions whose stored key matches are
+     * resumed (targeted delivery among instances sharing a message name). A null {@code correlationKey}
+     * falls back to name-based correlation (optionally scoped to {@code processInstanceId}).
+     */
+    void correlateMessage(String messageName, String correlationKey, UUID processInstanceId, List<ProcessVariable> variables);
+
+    /**
      * Fires an interrupting timer boundary: if the host activity is still active it is cancelled
      * and flow continues from the boundary event's outgoing flows. Called by the timer scheduler.
      */

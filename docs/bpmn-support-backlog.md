@@ -21,7 +21,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > **Прогресс (T3):** ✅ BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link),
 > BPMN-30 (script task — inline FEEL-выражение, результат пишется в переменную; ошибка скрипта → инцидент),
 > BPMN-35 (conditional catch/boundary — FEEL-условие на данных, реоценка при изменении переменных;
-> conditional **start** отложен — нужен кросс-instance триггер).
+> conditional **start** отложен — нужен кросс-instance триггер),
+> BPMN-37 (корреляция сообщений по ключу — `zeebe:subscription correlationKey`, точечная доставка
+> нужному экземпляру среди коллизий по имени; message-start с ключом отложен).
 > Замечание по BPMN-27: escalation throw внутри встроенного подпроцесса не
 > поддержан (модель подпроцесса не парсит intermediate-события); используйте
 > escalation end внутри подпроцесса либо throw на верхнем уровне / в call activity.
@@ -239,10 +241,15 @@ IO-маппинги на уровне задач (`zeebe:ioMapping` input/output
 **Приёмка**: input/output трансформации применяются; локальные переменные не «протекают»; тесты.
 
 ### BPMN-37 — Корреляция сообщений по ключу
-**T3 · M · TODO · зависит: message catch/start**
-Correlation key (по значению переменной), а не только по имени сообщения; точечная доставка
-в нужный экземпляр.
-**Приёмка**: сообщение коррелируется по ключу к конкретному экземпляру; тесты на коллизии имён.
+**T3 · M · DONE (catch/receive/boundary; message-start с ключом отложен) · зависит: message catch/start**
+Correlation key задаётся как `<zeebe:subscription correlationKey="=expr">` на `<bpmn:message>`; FEEL-выражение
+вычисляется в контексте подписывающегося экземпляра при создании подписки (через expression-движок,
+см. BPMN-30) и сохраняется в `message_subscriptions.correlation_key`. `correlateMessage(name, key, ...)`
+доставляет только подпискам с совпадающим ключом — точечно нужному экземпляру среди коллизий по имени.
+Без ключа — прежнее поведение (по имени, опц. по экземпляру). Покрывает message catch, receive task и
+message boundary; message-**start** с ключом отложен.
+**Приёмка**: сообщение коррелируется по ключу к конкретному экземпляру; тесты на коллизии имён
+(две инстанции одного определения, ключ выбирает нужную) + несовпадающий ключ никого не будит.
 
 ---
 
@@ -277,7 +284,7 @@ Correlation key (по значению переменной), а не тольк
 | BPMN-34 | Link events | T3 | S | 01 |
 | BPMN-35 | Conditional events | T3 | M (DONE: catch/boundary) | 01 |
 | BPMN-36 | Data IO mappings | T3 | M | — |
-| BPMN-37 | Корреляция по ключу | T3 | M | message |
+| BPMN-37 | Корреляция по ключу | T3 | M (DONE) | message |
 
 ## Примечания
 
