@@ -23,7 +23,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional **start** событие (catch/boundary — поддержаны) |
 | Потоки управления (sequence flow) | Компенсации |
 | Exclusive gateway (условия на FEEL + поток по умолчанию) | Transaction sub-process |
-| Parallel gateway (split / join) | Event sub-process: непрерывающий / не-message-триггеры |
+| Parallel gateway (split / join) | Event sub-process: не-message-триггеры (timer/error/signal) |
 | **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | Business rule (DMN) задачи |
 | **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
 | Service task (внешние воркеры через RabbitMQ) | |
@@ -31,7 +31,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Send / Receive task** (message throw / catch в форме задачи) | |
 | **Script task** (inline FEEL-выражение, результат в переменную) | |
 | Call activity, встроенный подпроцесс | |
-| **Event sub-process** (message-триггер, **прерывающий**; отменяет основной поток и выполняет обработчик) | |
+| **Event sub-process** (message-триггер, **прерывающий и непрерывающий**) | |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция по имени и по **ключу**), **timer** (дата/длительность) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
 | **Signal catch / throw** (broadcast всем подписчикам, 1:N) | |

@@ -1148,12 +1148,16 @@ public class ActivityServiceImpl implements ActivityService {
         }
 
         for (MessageSubscription subscription : subscriptions) {
-            dbService.consumeMessageSubscription(subscription.getId());
             if (subscription.getEventSubprocessId() != null) {
-                // message-started event sub-process: start the handler within the subscribed instance
+                // message-started event sub-process: start the handler within the subscribed instance. The
+                // subscription is consumed only for interrupting handlers (a non-interrupting one keeps
+                // listening and can fire again) — triggerEventSubprocess decides.
                 log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
-                triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables);
-            } else if (subscription.getBoundaryElementId() != null) {
+                triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, subscription.getId());
+                continue;
+            }
+            dbService.consumeMessageSubscription(subscription.getId());
+            if (subscription.getBoundaryElementId() != null) {
                 // message boundary: fire the boundary (interrupt/non-interrupt the host)
                 log.info("Correlating message '{}' to boundary {} on instance {} activity {}", messageName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
                 fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables);
@@ -1167,13 +1171,15 @@ public class ActivityServiceImpl implements ActivityService {
 
     /**
      * Starts a message-triggered event sub-process within {@code processInstanceId}. An interrupting event
-     * sub-process cancels the instance's active activities (the main flow) and runs the handler on a fresh
-     * token so its end event completes the instance. A no-op if the instance has already completed.
+     * sub-process consumes the subscription, cancels the instance's active activities (the main flow) and
+     * runs the handler on a fresh token so its end event completes the instance. A non-interrupting one
+     * keeps the subscription and the main flow, running the handler in its own subprocess scope (its end
+     * completes only the scope). A no-op if the instance has already completed.
      *
-     * <p>Scope: top-level, message-triggered, interrupting event sub-processes. Non-interrupting handlers
-     * and non-message triggers are not yet supported.
+     * <p>Scope: top-level, message-triggered event sub-processes. Non-message triggers and event
+     * sub-processes nested inside an embedded subprocess are not yet supported.
      */
-    private void triggerEventSubprocess(UUID processInstanceId, String eventSubprocessId, List<ProcessVariable> variables) {
+    private void triggerEventSubprocess(UUID processInstanceId, String eventSubprocessId, List<ProcessVariable> variables, UUID subscriptionId) {
         dbService.lockProcessInstance(processInstanceId);
         ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
         if (pi.getCompletedAt() != null) {
@@ -1191,14 +1197,22 @@ public class ActivityServiceImpl implements ActivityService {
         }
 
         if (ext.isInterrupting()) {
-            // interrupting: cancel the main flow, then run the handler on a fresh (non-scope) token so its
-            // end event completes the whole instance
+            // interrupting: consume the subscription, cancel the main flow, then run the handler on a fresh
+            // (non-scope) token so its end event completes the whole instance
+            dbService.consumeMessageSubscription(subscriptionId);
             dbService.cancelActiveActivities(processInstanceId);
             Token token = dbService.createToken(null);
             log.info("{}/{}: Interrupting event sub-process {} starting at {}", processInstanceId, token.getId(), eventSubprocessId, ext.getStartEventId());
             execute(processInstanceId, token.getId(), ext.getStartEventId());
         } else {
-            log.warn("{}: Non-interrupting event sub-process {} is not yet supported, ignoring", processInstanceId, eventSubprocessId);
+            // non-interrupting: leave the subscription (it can fire again) and the main flow alone; run the
+            // handler in its own subprocess scope so its end completes only the scope (see finishBranch),
+            // not the instance
+            Token branchToken = dbService.createToken(null);
+            UUID containerActivityId = dbService.createActivity(processInstanceId, branchToken.getId(), eventSubProcess);
+            Token scopeToken = dbService.createToken(branchToken.getId(), containerActivityId);
+            log.info("{}/{}: Non-interrupting event sub-process {} starting at {} (scope {})", processInstanceId, scopeToken.getId(), eventSubprocessId, ext.getStartEventId(), containerActivityId);
+            execute(processInstanceId, scopeToken.getId(), ext.getStartEventId());
         }
     }
 
