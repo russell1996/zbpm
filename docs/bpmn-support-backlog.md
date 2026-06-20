@@ -20,7 +20,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные)
 > и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
 >
-> **Прогресс (T3):** ✅ BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link),
+> **Прогресс (T3):** ✅ BPMN-36 (data IO mappings — `zeebe:ioMapping` input/output как FEEL-трансформации
+> на service/user task; строгая scope-локальность отложена, переменные плоские),
+> BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link),
 > BPMN-30 (script task — inline FEEL-выражение, результат пишется в переменную; ошибка скрипта → инцидент),
 > BPMN-35 (conditional catch/boundary — FEEL-условие на данных, реоценка при изменении переменных;
 > conditional **start** отложен — нужен кросс-instance триггер),
@@ -248,10 +250,14 @@ Conditional **catch** (промежуточный) и **boundary** (прерыв
 (pass-through на входе, пробуждение параллельной веткой, прерывающий boundary).
 
 ### BPMN-36 — Data input/output mappings
-**T3 · M · TODO**
-IO-маппинги на уровне задач (`zeebe:ioMapping` input/output), локальные переменные scope
-вместо плоских на весь экземпляр; пропагация в/из call activity по маппингу.
-**Приёмка**: input/output трансформации применяются; локальные переменные не «протекают»; тесты.
+**T3 · M · DONE (трансформации; строгая локальность отложена)**
+`zeebe:ioMapping` на service/user task: input-маппинги применяются при активации, output — при завершении.
+Каждый маппинг вычисляет FEEL-выражение `source` (через expression-движок, см. BPMN-30) и пишет результат
+в `target` (`applyIoMappings` в `enterServiceTask`/`enterUserTask` и `completeServiceTask`/`completeUserTask`).
+Отложено (отдельный заход): **локальные переменные scope** (сейчас переменные плоские на весь экземпляр —
+маппинги «протекают» как instance-переменные, строгая изоляция не реализована) и пропагация в/из call
+activity по маппингу.
+**Приёмка**: input/output трансформации применяются; тесты (input на активации, output на завершении).
 
 ### BPMN-37 — Корреляция сообщений по ключу
 **T3 · M · DONE (catch/receive/boundary; message-start с ключом отложен) · зависит: message catch/start**
@@ -296,7 +302,7 @@ message boundary; message-**start** с ключом отложен.
 | BPMN-33 | Transaction + Cancel | T3 | M | 32 |
 | BPMN-34 | Link events | T3 | S | 01 |
 | BPMN-35 | Conditional events | T3 | M (DONE: catch/boundary) | 01 |
-| BPMN-36 | Data IO mappings | T3 | M | — |
+| BPMN-36 | Data IO mappings | T3 | M (DONE: трансформации) | — |
 | BPMN-37 | Корреляция по ключу | T3 | M (DONE) | message |
 
 ## Примечания

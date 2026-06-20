@@ -15,6 +15,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel;
@@ -858,12 +859,46 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     private void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
+        applyIoMappings(processInstanceId, bpmnElement, true);
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         dbService.createServiceTask(activityId);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         serviceTaskEnqueueService.enqueueAfterCommit(activityId);
+    }
+
+    /**
+     * Applies a task's {@code zeebe:ioMapping}: each input ({@code inputs=true}) or output mapping evaluates
+     * its source FEEL expression against the current variables and writes the result to its target. Inputs
+     * run on activation, outputs on completion. Variables are flat (process-instance scoped) — true local
+     * scope isolation is not yet implemented, so mapped variables persist on the instance.
+     */
+    private void applyIoMappings(UUID processInstanceId, BpmnElementModel element, boolean inputs) {
+        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getIoMappingExtension)
+            .orElse(null);
+        if (io == null) {
+            return;
+        }
+        List<IoMappingExtensionModel.Mapping> mappings = inputs ? io.getInputs() : io.getOutputs();
+        if (mappings == null || mappings.isEmpty()) {
+            return;
+        }
+        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+        List<ProcessVariable> results = new ArrayList<>();
+        for (IoMappingExtensionModel.Mapping mapping : mappings) {
+            if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
+                continue;
+            }
+            String expression = mapping.getSource().startsWith("=") ? mapping.getSource().substring(1) : mapping.getSource();
+            Object value = scriptService.evaluateExpression(expression, variables);
+            results.add(toProcessVariable(mapping.getTarget(), value));
+        }
+        if (!results.isEmpty()) {
+            dbService.setVariables(processInstanceId, results);
+            log.info("{}: Applied {} {} mapping(s) at {}", processInstanceId, results.size(), inputs ? "input" : "output", element.getId());
+        }
     }
 
     /**
@@ -900,11 +935,13 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
+        applyIoMappings(processInstanceId, bpmnElement, false);
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
         triggerConditionalEvents(processInstanceId);
     }
 
     private void enterUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
+        applyIoMappings(processInstanceId, bpmnElement, true);
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         dbService.createUserTask(activityId);
 
@@ -1021,6 +1058,7 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
+        applyIoMappings(processInstanceId, bpmnElement, false);
         proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement);
         triggerConditionalEvents(processInstanceId);
     }
