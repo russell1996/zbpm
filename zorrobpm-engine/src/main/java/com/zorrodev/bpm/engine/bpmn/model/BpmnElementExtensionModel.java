@@ -9,6 +9,7 @@ import lombok.Setter;
 public class BpmnElementExtensionModel {
     private ServiceTaskExtensionModel serviceTaskExtension;
     private ScriptTaskExtensionModel scriptTaskExtension;
+    private IoMappingExtensionModel ioMappingExtension;
     private UserTaskExtensionModel userTaskExtension;
     private ExclusiveGatewayExtensionModel exclusiveGatewayExtension;
     private TimerEventExtensionModel timerEventExtension;

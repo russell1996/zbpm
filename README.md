@@ -30,6 +30,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | User task (assignee, кандидаты-пользователи/группы, form key) | |
 | **Send / Receive task** (message throw / catch в форме задачи) | |
 | **Script task** (inline FEEL-выражение, результат в переменную) | |
+| **IO mappings** (`zeebe:ioMapping` input/output, FEEL-трансформации на service/user task) | |
 | Call activity, встроенный подпроцесс | |
 | **Event sub-process** (message-триггер, **прерывающий и непрерывающий**) | |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция по имени и по **ключу**), **timer** (дата/длительность) | |

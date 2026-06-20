@@ -510,6 +510,22 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseIoMapping() throws IOException {
+        // a task's <zeebe:ioMapping> input/output mappings are read into the io-mapping extension
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-io-mapping.bpmn")));
+
+        BpmnElementModel review = bpmn.getElement("review");
+        var io = review.getExtensions().getIoMappingExtension();
+        assertThat(io.getInputs()).hasSize(1);
+        assertThat(io.getInputs().get(0).getSource()).isEqualTo("=orderId");
+        assertThat(io.getInputs().get(0).getTarget()).isEqualTo("taskOrder");
+        assertThat(io.getOutputs()).hasSize(1);
+        assertThat(io.getOutputs().get(0).getSource()).isEqualTo("=approved");
+        assertThat(io.getOutputs().get(0).getTarget()).isEqualTo("decision");
+    }
+
+    @Test
     void testParseMessageCorrelationKey() throws IOException {
         // a message's <zeebe:subscription correlationKey="..."> is read into the subscriber's message extension
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
