@@ -51,6 +51,9 @@ public class BpmnProcessDefinitionModel {
     private List<BpmnCallActivityModel> callActivities;
     @XmlElement(name = "subProcess", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnSubProcessModel> subProcesses;
+    // a <transaction> is an embedded subprocess with cancel semantics; reuse the same POJO/flattening
+    @XmlElement(name = "transaction", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnSubProcessModel> transactions;
     @XmlElement(name = "boundaryEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnBoundaryEventModel> boundaryEvents;
     @XmlElement(name = "association", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")

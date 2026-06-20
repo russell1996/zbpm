@@ -26,4 +26,7 @@ public class BpmnEndEventModel extends BpmnBaseElementModel {
 
     @XmlElement(name = "compensateEventDefinition", namespace = NS)
     private BpmnCompensateEventDefinitionModel compensateEventDefinition;
+
+    @XmlElement(name = "cancelEventDefinition", namespace = NS)
+    private BpmnCancelEventDefinitionModel cancelEventDefinition;
 }

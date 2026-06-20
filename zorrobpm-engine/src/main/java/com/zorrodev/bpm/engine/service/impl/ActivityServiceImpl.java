@@ -131,6 +131,8 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.LINK_CATCH_EVENT, this::processStartEvent);
         // Compensation throw runs the compensation handlers of completed compensation-bounded activities.
         map.put(BpmnElementType.COMPENSATION_THROW_EVENT, this::processCompensationThrow);
+        // Cancel end (inside a transaction) compensates the transaction and routes to its cancel boundary.
+        map.put(BpmnElementType.CANCEL_END_EVENT, this::processCancelEnd);
         return map;
     }
 
@@ -205,10 +207,20 @@ public class ActivityServiceImpl implements ActivityService {
         dbService.completeActivity(activityId);
         log.info("{}/{}: Compensation throw {} at {}", processInstanceId, tokenId, bpmnElement.getId(), activityId);
 
-        List<Activity> completed = new ArrayList<>(dbService.getCompletedActivities(processInstanceId));
-        // reverse completion order; createdAt is set on insert (not stale, unlike the bulk-updated status)
-        completed.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
+        runCompensation(processInstanceId, tokenId, bpmn, dbService.getCompletedActivities(processInstanceId));
 
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /**
+     * Runs the compensation handler of every candidate activity that has a compensation boundary, in
+     * reverse order (by activity creation time descending — the reverse of completion order for a
+     * sequential flow). Each handler runs synchronously on {@code runToken}. Shared by the compensation
+     * throw event and transaction cancellation.
+     */
+    private void runCompensation(UUID processInstanceId, UUID runToken, BpmnProcessDefinitionModel bpmn, List<Activity> candidates) {
+        List<Activity> completed = new ArrayList<>(candidates);
+        completed.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
         for (Activity activity : completed) {
             BpmnElementModel boundary = findCompensationBoundary(bpmn, activity.getBpmnElementId());
             if (boundary == null) {
@@ -222,11 +234,69 @@ public class ActivityServiceImpl implements ActivityService {
             if (handler == null) {
                 continue;
             }
-            log.info("{}/{}: Compensating {} via handler {}", processInstanceId, tokenId, activity.getBpmnElementId(), handlerId);
-            execute(processInstanceId, tokenId, bpmn, handler);
+            log.info("{}/{}: Compensating {} via handler {}", processInstanceId, runToken, activity.getBpmnElementId(), handlerId);
+            execute(processInstanceId, runToken, bpmn, handler);
+        }
+    }
+
+    /**
+     * Cancel end event inside a transaction: compensates the transaction's completed activities (in reverse
+     * order), cancels the transaction scope, and continues from the transaction's cancel boundary. A cancel
+     * end outside a transaction scope falls back to a plain end.
+     *
+     * <p>Scope: cancel end + cancel boundary on a top-level transaction sub-process. Cancel propagation
+     * across nested transactions is not yet supported.
+     */
+    private void processCancelEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        Token endToken = dbService.getToken(tokenId);
+        if (endToken == null || endToken.getScopeActivityId() == null) {
+            log.info("{}/{}: Cancel end {} outside a transaction scope, ending branch", processInstanceId, tokenId, bpmnElement.getId());
+            finishBranch(processInstanceId, tokenId, bpmn);
+            return;
         }
 
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+        UUID scopeActivityId = endToken.getScopeActivityId();
+        Activity scope = dbService.getActivity(scopeActivityId);
+        BpmnElementModel transaction = bpmn.getElement(scope.getBpmnElementId());
+        UUID parentToken = endToken.getParentId();
+        log.info("{}/{}: Cancel end {} cancelling transaction {}", processInstanceId, tokenId, bpmnElement.getId(), transaction.getId());
+
+        // compensate the transaction's completed activities (those carried by this scope token)
+        List<Activity> scopeCompleted = dbService.getCompletedActivities(processInstanceId).stream()
+            .filter(a -> tokenId.equals(a.getToken()))
+            .toList();
+        runCompensation(processInstanceId, tokenId, bpmn, scopeCompleted);
+
+        // cancel the transaction scope, then continue from the (interrupting) cancel boundary
+        dbService.cancelActiveActivitiesForToken(tokenId);
+        dbService.cancelActivity(scopeActivityId);
+
+        BpmnElementModel cancelBoundary = findCancelBoundary(bpmn, transaction.getId());
+        if (cancelBoundary != null) {
+            proceedToOutgoing(processInstanceId, parentToken, bpmn, cancelBoundary);
+        } else {
+            log.warn("{}/{}: Transaction {} cancelled but has no cancel boundary", processInstanceId, tokenId, transaction.getId());
+        }
+    }
+
+    /** Finds the cancel boundary attached to {@code hostId} (a transaction), or null if none. */
+    private BpmnElementModel findCancelBoundary(BpmnProcessDefinitionModel bpmn, String hostId) {
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.CANCEL_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (hostId.equals(attached)) {
+                return element;
+            }
+        }
+        return null;
     }
 
     /** Finds the compensation boundary attached to {@code hostId}, or null if none. */
