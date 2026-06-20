@@ -502,6 +502,11 @@ class BpmnParseServiceImplTest {
         // the event-subprocess start must not be collected as a process-level message start
         assertThat(bpmn.getMessageStartEvents()).noneMatch(e -> e.getId().equals("evStart"));
         assertThat(bpmn.getElement("evStart").getEventSubProcessId()).isEqualTo("cancelHandler");
+
+        // isInterrupting="false" is parsed as a non-interrupting event sub-process
+        BpmnProcessDefinitionModel ni = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-event-subprocess-noninterrupting.bpmn")));
+        assertThat(ni.getElement("pingHandler").getExtensions().getSubProcessExtension().isInterrupting()).isFalse();
     }
 
     @Test
