@@ -13,4 +13,5 @@ public class MessageSubscription {
     private UUID activityId;
     private String messageName;
     private String boundaryElementId;
+    private String eventSubprocessId;
 }
