@@ -20,7 +20,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные)
 > и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
 >
-> **Прогресс (T3):** ✅ BPMN-32 (compensation — compensation boundary + intermediate throw, откат
+> **Прогресс (T3):** ✅ BPMN-33 (transaction sub-process + cancel — cancel-end компенсирует транзакцию и
+> уходит по cancel-boundary; вложенные транзакции отложены),
+> BPMN-32 (compensation — compensation boundary + intermediate throw, откат
 > завершённых compensation-bounded активностей в обратном порядке; targeted/в подпроцессе отложены),
 > BPMN-36 (data IO mappings — `zeebe:ioMapping` input/output как FEEL-трансформации
 > на service/user task; строгая scope-локальность отложена, переменные плоские),
@@ -239,9 +241,15 @@ null-safe для хендлеров без исходящего потока.
 арифметической кодировкой порядка (B→A над log=0 даёт 21, не 12).
 
 ### BPMN-33 — Transaction sub-process + Cancel
-**T3 · M · TODO · зависит: BPMN-32**
-Transaction-subprocess, cancel-end и cancel-boundary, запуск компенсации при отмене.
-**Приёмка**: cancel-end откатывает транзакцию через компенсацию; тесты.
+**T3 · M · DONE (top-level transaction) · зависит: BPMN-32**
+`<bpmn:transaction>` исполняется как встроенный подпроцесс (тот же POJO/flattening/scope-токен; cancel-
+семантику несут cancel-end и cancel-boundary, а не тип контейнера). **Cancel end** внутри транзакции:
+компенсирует завершённые активности транзакции (по scope-токену, в обратном порядке — переиспользует
+`runCompensation` из BPMN-32), отменяет scope (контейнер + активные активности токена) и продолжает поток
+от **cancel boundary** транзакции (прерывающий). Нормальный end транзакции при этом не достигается.
+Отложено: вложенные транзакции / распространение cancel наружу.
+**Приёмка**: cancel-end откатывает транзакцию через компенсацию и уходит по cancel-boundary; тест с
+арифметической кодировкой (txTask +1, компенсация +100, ветка cancel +1000 → log=1101; normalEnd не взят).
 
 ### BPMN-34 — Link events (catch/throw)
 **T3 · S · DONE · зависит: BPMN-01**
@@ -310,7 +318,7 @@ message boundary; message-**start** с ключом отложен.
 | BPMN-30 | Script task | T3 | M (DONE) | — |
 | BPMN-31 | Business rule (DMN) | T3 | L | — |
 | BPMN-32 | Compensation | T3 | L (DONE: throw+boundary) | 03 |
-| BPMN-33 | Transaction + Cancel | T3 | M | 32 |
+| BPMN-33 | Transaction + Cancel | T3 | M (DONE) | 32 |
 | BPMN-34 | Link events | T3 | S | 01 |
 | BPMN-35 | Conditional events | T3 | M (DONE: catch/boundary) | 01 |
 | BPMN-36 | Data IO mappings | T3 | M (DONE: трансформации) | — |

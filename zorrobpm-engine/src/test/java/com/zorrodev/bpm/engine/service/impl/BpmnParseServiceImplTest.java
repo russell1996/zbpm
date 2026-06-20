@@ -510,6 +510,24 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseTransactionCancel() throws IOException {
+        // a <transaction> is flattened like a subprocess; a cancel end -> CANCEL_END_EVENT and a cancel
+        // boundary on the transaction -> CANCEL_BOUNDARY_EVENT
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-transaction-cancel.bpmn")));
+
+        BpmnElementModel tx = bpmn.getElement("tx");
+        assertThat(tx.getType()).isEqualTo(BpmnElementType.SUB_PROCESS);
+        assertThat(tx.getExtensions().getSubProcessExtension().getStartEventId()).isEqualTo("txStart");
+
+        assertThat(bpmn.getElement("cancelEnd").getType()).isEqualTo(BpmnElementType.CANCEL_END_EVENT);
+
+        BpmnElementModel cb = bpmn.getElement("cb");
+        assertThat(cb.getType()).isEqualTo(BpmnElementType.CANCEL_BOUNDARY_EVENT);
+        assertThat(cb.getExtensions().getBoundaryEventExtension().getAttachedToRef()).isEqualTo("tx");
+    }
+
+    @Test
     void testParseCompensation() throws IOException {
         // compensation boundary -> COMPENSATION_BOUNDARY_EVENT with its handler resolved from <association>;
         // an intermediate throw with compensateEventDefinition -> COMPENSATION_THROW_EVENT

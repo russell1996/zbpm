@@ -258,6 +258,16 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
 
+            // a <transaction> is an embedded subprocess (same flattening/scope execution); cancel semantics
+            // are carried by its cancel-end event and cancel boundary, not the container type
+            if (process.getTransactions() != null) {
+                for (BpmnSubProcessModel transaction : process.getTransactions()) {
+                    BpmnElementModel element = toSubProcessElement(transaction, pd, registry, messageNames);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
+
             if (process.getBoundaryEvents() != null) {
                 for (BpmnBoundaryEventModel boundaryEvent : process.getBoundaryEvents()) {
                     boolean timer = boundaryEvent.getTimerEventDefinition() != null;
@@ -267,8 +277,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     boolean escalation = boundaryEvent.getEscalationEventDefinition() != null;
                     boolean conditional = boundaryEvent.getConditionalEventDefinition() != null;
                     boolean compensation = boundaryEvent.getCompensateEventDefinition() != null;
-                    if (!timer && !error && !message && !signal && !escalation && !conditional && !compensation) {
-                        continue; // only timer, error, message, signal, escalation, conditional and compensation boundaries are executable today
+                    boolean cancel = boundaryEvent.getCancelEventDefinition() != null;
+                    if (!timer && !error && !message && !signal && !escalation && !conditional && !compensation && !cancel) {
+                        continue; // only timer, error, message, signal, escalation, conditional, compensation and cancel boundaries are executable today
                     }
                     BpmnElementModel element = toBoundaryElement(boundaryEvent);
                     element.setProcessDefinition(pd);
@@ -402,6 +413,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             // compensation boundary: registers a handler (resolved from <association>) to run on a
             // compensation throw; it never fires/cancels the host like other boundaries
             element.setType(BpmnElementType.COMPENSATION_BOUNDARY_EVENT);
+        } else if (boundaryEvent.getCancelEventDefinition() != null) {
+            // cancel boundary on a transaction: flow continues from here when the transaction is cancelled
+            element.setType(BpmnElementType.CANCEL_BOUNDARY_EVENT);
         }
 
         return element;
@@ -663,6 +677,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.ERROR_END_EVENT);
         } else if (endEvent.getEscalationEventDefinition() != null) {
             element.setType(BpmnElementType.ESCALATION_END_EVENT);
+        } else if (endEvent.getCancelEventDefinition() != null) {
+            element.setType(BpmnElementType.CANCEL_END_EVENT);
         } else {
             element.setType(BpmnElementType.END_EVENT);
         }
