@@ -17,6 +17,8 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-27 (escalation throw/end + escalation boundary, прерывающий/непрерывающий)
 > BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные)
 > и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
+>
+> **Прогресс (T3):** ✅ BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link).
 > Замечание по BPMN-27: escalation throw внутри встроенного подпроцесса не
 > поддержан (модель подпроцесса не парсит intermediate-события); используйте
 > escalation end внутри подпроцесса либо throw на верхнем уровне / в call activity.
@@ -206,7 +208,7 @@ Transaction-subprocess, cancel-end и cancel-boundary, запуск компен
 **Приёмка**: cancel-end откатывает транзакцию через компенсацию; тесты.
 
 ### BPMN-34 — Link events (catch/throw)
-**T3 · S · TODO · зависит: BPMN-01**
+**T3 · S · DONE · зависит: BPMN-01**
 Link throw → соответствующий link catch (внутрипроцессный «goto» для удобства моделирования).
 **Приёмка**: throw продолжает поток от парного catch по имени link; тесты.
 
