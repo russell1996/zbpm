@@ -16,9 +16,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.contract.model.ProcessVariableType;
+
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -79,5 +84,84 @@ public class MultiInstanceIntegrationTests {
             .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
             .toList();
         assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("endEvent") && a.getStatus() == ActivityStatus.COMPLETED);
+    }
+
+    @Transactional
+    @Test
+    void sequentialMultiInstanceRunsOneInstanceAtATime() throws Exception {
+        // sequential loopCardinality 3: exactly one instance is active at any moment; the next is created
+        // only when the current one completes.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-multi-instance-sequential.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        Set<UUID> done = new HashSet<>();
+        for (int i = 0; i < 3; i++) {
+            List<ActivityEntity> pending = activityRepository.findAll().stream()
+                .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+                .filter(a -> a.getBpmnElementId().equals("miTask") && !done.contains(a.getId()))
+                .toList();
+            // only one instance exists at a time (would be 3 at once if parallel)
+            assertThat(pending).hasSize(1);
+            assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
+            runtimeService.completeUserTask(pending.get(0).getId(), List.of());
+            done.add(pending.get(0).getId());
+        }
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        assertThat(miTasks(processInstanceId, ActivityStatus.COMPLETED)).hasSize(3);
+    }
+
+    @Transactional
+    @Test
+    void completionConditionEndsMultiInstanceEarly() throws Exception {
+        // sequential loopCardinality 5 with completionCondition "stop = true": completing the second
+        // instance with stop=true ends the multi-instance early (only 2 of 5 ran).
+        String bpmn = Files.readString(Paths.get("src/test/files/test-multi-instance-completion.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        Set<UUID> done = new HashSet<>();
+        // first instance: stop=false -> a second instance is started
+        UUID first = nextInstance(processInstanceId, done);
+        runtimeService.completeUserTask(first, List.of(bool("stop", false)));
+        done.add(first);
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
+
+        // second instance: stop=true -> completion condition holds, multi-instance ends early
+        UUID second = nextInstance(processInstanceId, done);
+        runtimeService.completeUserTask(second, List.of(bool("stop", true)));
+        done.add(second);
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        // only two instances ran (not five); the flow reached the end
+        assertThat(miTasks(processInstanceId, ActivityStatus.COMPLETED)).hasSize(2);
+        assertThat(activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .anyMatch(a -> a.getBpmnElementId().equals("endEvent") && a.getStatus() == ActivityStatus.COMPLETED)).isTrue();
+    }
+
+    private UUID nextInstance(UUID processInstanceId, Set<UUID> done) {
+        return activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals("miTask") && !done.contains(a.getId()))
+            .map(ActivityEntity::getId)
+            .findFirst().orElseThrow();
+    }
+
+    private ProcessVariable bool(String name, boolean value) {
+        ProcessVariable v = new ProcessVariable();
+        v.setName(name);
+        v.setType(ProcessVariableType.BOOLEAN);
+        v.setValue(Boolean.toString(value));
+        return v;
     }
 }

@@ -20,4 +20,7 @@ public class BpmnMultiInstanceModel {
 
     @XmlElement(name = "loopCardinality", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private String loopCardinality;
+
+    @XmlElement(name = "completionCondition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private String completionCondition;
 }
