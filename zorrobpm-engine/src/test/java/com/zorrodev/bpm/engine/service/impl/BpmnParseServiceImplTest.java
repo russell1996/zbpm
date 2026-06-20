@@ -486,6 +486,25 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseConditionalEvents() throws IOException {
+        // an intermediate catch with a conditionalEventDefinition becomes CONDITIONAL_CATCH_EVENT and a
+        // boundary with one becomes CONDITIONAL_BOUNDARY_EVENT; both carry the FEEL condition expression
+        BpmnProcessDefinitionModel catchBpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-conditional-catch.bpmn")));
+        BpmnElementModel condCatch = catchBpmn.getElement("condCatch");
+        assertThat(condCatch.getType()).isEqualTo(BpmnElementType.CONDITIONAL_CATCH_EVENT);
+        assertThat(condCatch.getExtensions().getEventDefinition().getType()).isEqualTo(EventDefinitionType.CONDITIONAL);
+        assertThat(condCatch.getExtensions().getEventDefinition().getExpression()).isEqualTo("approved = true");
+
+        BpmnProcessDefinitionModel boundaryBpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-conditional-boundary.bpmn")));
+        BpmnElementModel boundary = boundaryBpmn.getElement("abortBoundary");
+        assertThat(boundary.getType()).isEqualTo(BpmnElementType.CONDITIONAL_BOUNDARY_EVENT);
+        assertThat(boundary.getExtensions().getEventDefinition().getExpression()).isEqualTo("abort = true");
+        assertThat(boundary.getExtensions().getBoundaryEventExtension().getAttachedToRef()).isEqualTo("work");
+    }
+
+    @Test
     void testParseInclusiveGateway() throws IOException {
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
             .parse(Files.readString(Path.of("src/test/files/test-inclusive-gateway.bpmn")));

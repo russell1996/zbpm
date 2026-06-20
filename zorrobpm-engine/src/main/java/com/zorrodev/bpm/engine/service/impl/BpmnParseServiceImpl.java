@@ -254,12 +254,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     boolean message = boundaryEvent.getMessageEventDefinition() != null;
                     boolean signal = boundaryEvent.getSignalEventDefinition() != null;
                     boolean escalation = boundaryEvent.getEscalationEventDefinition() != null;
-                    if (!timer && !error && !message && !signal && !escalation) {
-                        continue; // only timer, error, message, signal and escalation boundaries are executable today
+                    boolean conditional = boundaryEvent.getConditionalEventDefinition() != null;
+                    if (!timer && !error && !message && !signal && !escalation && !conditional) {
+                        continue; // only timer, error, message, signal, escalation and conditional boundaries are executable today
                     }
                     BpmnElementModel element = toBoundaryElement(boundaryEvent);
                     element.setProcessDefinition(pd);
-                    attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), boundaryEvent.getSignalEventDefinition(), boundaryEvent.getEscalationEventDefinition(), null, null, null, registry);
+                    attachEventDefinition(element, boundaryEvent.getErrorEventDefinition(), boundaryEvent.getSignalEventDefinition(), boundaryEvent.getEscalationEventDefinition(), boundaryEvent.getConditionalEventDefinition(), null, null, registry);
                     if (message) {
                         MessageEventExtensionModel msg = new MessageEventExtensionModel();
                         String ref = boundaryEvent.getMessageEventDefinition().getMessageRef();
@@ -367,6 +368,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             // the escalation code is resolved into the eventDefinition extension by the caller;
             // escalation boundaries are interrupting or non-interrupting per cancelActivity
             element.setType(BpmnElementType.ESCALATION_BOUNDARY_EVENT);
+        } else if (boundaryEvent.getConditionalEventDefinition() != null) {
+            // the FEEL condition is resolved into the eventDefinition extension by the caller;
+            // conditional boundaries are interrupting or non-interrupting per cancelActivity
+            element.setType(BpmnElementType.CONDITIONAL_BOUNDARY_EVENT);
         }
 
         return element;
@@ -656,6 +661,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.SIGNAL_CATCH_EVENT);
         } else if (catchEvent.getLinkEventDefinition() != null) {
             element.setType(BpmnElementType.LINK_CATCH_EVENT);
+        } else if (catchEvent.getConditionalEventDefinition() != null) {
+            element.setType(BpmnElementType.CONDITIONAL_CATCH_EVENT);
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_CATCH_EVENT);
         }

@@ -19,7 +19,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
 >
 > **Прогресс (T3):** ✅ BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link),
-> BPMN-30 (script task — inline FEEL-выражение, результат пишется в переменную; ошибка скрипта → инцидент).
+> BPMN-30 (script task — inline FEEL-выражение, результат пишется в переменную; ошибка скрипта → инцидент),
+> BPMN-35 (conditional catch/boundary — FEEL-условие на данных, реоценка при изменении переменных;
+> conditional **start** отложен — нужен кросс-instance триггер).
 > Замечание по BPMN-27: escalation throw внутри встроенного подпроцесса не
 > поддержан (модель подпроцесса не парсит intermediate-события); используйте
 > escalation end внутри подпроцесса либо throw на верхнем уровне / в call activity.
@@ -219,9 +221,16 @@ Link throw → соответствующий link catch (внутрипроце
 **Приёмка**: throw продолжает поток от парного catch по имени link; тесты.
 
 ### BPMN-35 — Conditional events
-**T3 · M · TODO · зависит: BPMN-01**
-Conditional start/catch/boundary: срабатывание при истинности FEEL-условия на данных.
-**Приёмка**: изменение переменных, делающее условие истинным, будит/стартует; тесты.
+**T3 · M · DONE (catch/boundary; start отложен) · зависит: BPMN-01**
+Conditional **catch** (промежуточный) и **boundary** (прерывающий/непрерывающий): FEEL-условие на данных.
+Условие проверяется при входе в catch (если уже истинно — pass-through) и переоценивается после каждой
+записи переменных (`completeServiceTask`/`completeUserTask`/`signal`/`fireBoundary`/script task) через
+`triggerConditionalEvents`; параллельная ветка, делающая условие истинным, будит ожидающий catch или
+поджигает boundary на активном хосте. Re-entrancy guard (ThreadLocal) не даёт продолжению сработавшего
+события рекурсивно перезапускать переоценку. Conditional **start** отложен: требует кросс-instance
+триггера переоценки при изменении данных (как у message/signal start, но по условию) — отдельный заход.
+**Приёмка**: изменение переменных, делающее условие истинным, будит catch / поджигает boundary; тесты
+(pass-through на входе, пробуждение параллельной веткой, прерывающий boundary).
 
 ### BPMN-36 — Data input/output mappings
 **T3 · M · TODO**
@@ -266,7 +275,7 @@ Correlation key (по значению переменной), а не тольк
 | BPMN-32 | Compensation | T3 | L | 03 |
 | BPMN-33 | Transaction + Cancel | T3 | M | 32 |
 | BPMN-34 | Link events | T3 | S | 01 |
-| BPMN-35 | Conditional events | T3 | M | 01 |
+| BPMN-35 | Conditional events | T3 | M (DONE: catch/boundary) | 01 |
 | BPMN-36 | Data IO mappings | T3 | M | — |
 | BPMN-37 | Корреляция по ключу | T3 | M | message |
 

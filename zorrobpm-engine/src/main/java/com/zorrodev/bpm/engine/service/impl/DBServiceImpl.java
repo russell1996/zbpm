@@ -166,6 +166,14 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public List<Activity> getActiveActivities(UUID processInstanceId) {
+        return activityRepository.findByProcessInstanceIdAndStatusIn(
+                processInstanceId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS)).stream()
+            .map(this::getActivity)
+            .toList();
+    }
+
+    @Override
     public ProcessInstance getProcessInstance(UUID processInstanceId) {
         ProcessInstanceEntity entity = processInstanceRepository.findById(processInstanceId).orElseThrow();
         return processInstanceMapper.toDTO(entity);
