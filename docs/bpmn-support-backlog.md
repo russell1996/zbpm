@@ -18,7 +18,8 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные)
 > и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
 >
-> **Прогресс (T3):** ✅ BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link).
+> **Прогресс (T3):** ✅ BPMN-34 (link catch/throw — внутрипроцессный «goto» по имени link),
+> BPMN-30 (script task — inline FEEL-выражение, результат пишется в переменную; ошибка скрипта → инцидент).
 > Замечание по BPMN-27: escalation throw внутри встроенного подпроцесса не
 > поддержан (модель подпроцесса не парсит intermediate-события); используйте
 > escalation end внутри подпроцесса либо throw на верхнем уровне / в call activity.
@@ -188,9 +189,14 @@ Escalation как «некритичная» ошибка (не прерывае
 ## Tier 3 — Расширения
 
 ### BPMN-30 — Script task
-**T3 · M · TODO**
-Inline-скрипт (FEEL и/или JS через GraalJS) с доступом к переменным и записью результата.
-**Приёмка**: вычисление и запись переменных; sandbox/таймаут исполнения; тесты.
+**T3 · M · DONE**
+Inline-скрипт на FEEL (`<bpmn:script>` + `scriptFormat="feel"`) вычисляется синхронно в потоке токена;
+результат пишется в переменную `resultVariable` (тип выводится: Boolean→BOOLEAN, целое число→LONG,
+иначе STRING). Ошибка скрипта (синтаксис/исполнение) оставляет активность незавершённой и поднимает
+инцидент, как любой другой сбой элемента. Используется отдельный FEEL-движок выражений
+(`FeelScriptEngineFactory`), в отличие от unary-tests движка для условий потоков.
+Замечание: JS/GraalJS и sandbox/таймаут исполнения — отдельным заходом при необходимости.
+**Приёмка**: вычисление и запись переменных; тесты (числовой/булев/строковый результат + невалидный скрипт→инцидент).
 
 ### BPMN-31 — Business rule task (DMN)
 **T3 · L · TODO**
@@ -255,7 +261,7 @@ Correlation key (по значению переменной), а не тольк
 | BPMN-25 | Receive task | T2 | S | message catch |
 | BPMN-26 | Event sub-process | T2 | L | 03 |
 | BPMN-27 | Escalation | T2 | M | 03 |
-| BPMN-30 | Script task | T3 | M | — |
+| BPMN-30 | Script task | T3 | M (DONE) | — |
 | BPMN-31 | Business rule (DMN) | T3 | L | — |
 | BPMN-32 | Compensation | T3 | L | 03 |
 | BPMN-33 | Transaction + Cancel | T3 | M | 32 |
