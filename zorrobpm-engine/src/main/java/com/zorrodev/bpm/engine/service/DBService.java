@@ -33,6 +33,9 @@ public interface DBService {
      *  interrupted subprocess scope). */
     void cancelActiveActivitiesForToken(UUID tokenId);
 
+    /** Active (created/in-progress) activities of an instance — used to re-evaluate conditional events. */
+    List<Activity> getActiveActivities(UUID processInstanceId);
+
     ProcessInstance getProcessInstance(UUID processInstanceId);
 
     /**
