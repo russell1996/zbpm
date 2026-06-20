@@ -486,6 +486,18 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseMessageCorrelationKey() throws IOException {
+        // a message's <zeebe:subscription correlationKey="..."> is read into the subscriber's message extension
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-message-correlation-key.bpmn")));
+
+        BpmnElementModel awaitUpdate = bpmn.getElement("awaitUpdate");
+        assertThat(awaitUpdate.getType()).isEqualTo(BpmnElementType.MESSAGE_CATCH_EVENT);
+        assertThat(awaitUpdate.getExtensions().getMessageEventExtension().getMessageName()).isEqualTo("orderUpdate");
+        assertThat(awaitUpdate.getExtensions().getMessageEventExtension().getCorrelationKeyExpression()).isEqualTo("=orderId");
+    }
+
+    @Test
     void testParseConditionalEvents() throws IOException {
         // an intermediate catch with a conditionalEventDefinition becomes CONDITIONAL_CATCH_EVENT and a
         // boundary with one becomes CONDITIONAL_BOUNDARY_EVENT; both carry the FEEL condition expression
