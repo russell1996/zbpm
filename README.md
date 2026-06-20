@@ -19,13 +19,14 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 | Поддерживается | Пока не поддерживается |
 |---|---|
-| Start / End / Terminate-end события | Inclusive / условные шлюзы |
-| **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Multi-instance (параллельный / последовательный) |
-| Потоки управления (sequence flow) | Conditional / Link события (парсятся, исполнение — позже) |
-| Exclusive gateway (условия на FEEL + поток по умолчанию) | Компенсации |
-| Parallel gateway (split / join) | Transaction sub-process |
-| **Event-based gateway** (гонка catch-событий: message / timer / signal) | Event sub-process |
-| Service task (внешние воркеры через RabbitMQ) | Business rule (DMN) / script задачи |
+| Start / End / Terminate-end события | Multi-instance (параллельный / последовательный) |
+| **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional / Link события (парсятся, исполнение — позже) |
+| Потоки управления (sequence flow) | Компенсации |
+| Exclusive gateway (условия на FEEL + поток по умолчанию) | Transaction sub-process |
+| Parallel gateway (split / join) | Event sub-process |
+| **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | Business rule (DMN) / script задачи |
+| **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
+| Service task (внешние воркеры через RabbitMQ) | |
 | User task (assignee, кандидаты-пользователи/группы, form key) | |
 | **Send / Receive task** (message throw / catch в форме задачи) | |
 | Call activity, встроенный подпроцесс | |

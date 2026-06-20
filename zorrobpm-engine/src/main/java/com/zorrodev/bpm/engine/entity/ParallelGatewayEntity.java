@@ -26,4 +26,7 @@ public class ParallelGatewayEntity {
     private String gatewayElementId;
     private String enteredFlowId;
     private Instant createdAt;
+    /** Set only on an inclusive-join marker row (entered_flow_id NULL): how many branches the
+     *  inclusive split activated, i.e. how many arrivals the join must wait for. */
+    private Integer expectedCount;
 }
