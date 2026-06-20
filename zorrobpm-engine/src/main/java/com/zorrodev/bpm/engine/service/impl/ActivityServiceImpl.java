@@ -15,6 +15,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.bpmn.model.BusinessRuleExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
@@ -29,6 +30,7 @@ import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +61,7 @@ public class ActivityServiceImpl implements ActivityService {
     private final DBService dbService;
     private final BpmnService bpmnService;
     private final ScriptService scriptService;
+    private final DmnService dmnService;
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
 
     /**
@@ -100,6 +103,8 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.SERVICE_TASK, (pi, t, bpmn, el) -> enterServiceTask(pi, t, el));
         // Script task = synchronous inline FEEL evaluation; the result is written to a process variable.
         map.put(BpmnElementType.SCRIPT_TASK, this::processScriptTask);
+        // Business rule task = evaluate a DMN decision or an inline FEEL expression, store the result.
+        map.put(BpmnElementType.BUSINESS_RULE_TASK, this::processBusinessRuleTask);
         map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
         // Send task = message throw in task form; Receive task = message catch (wait state) in task form.
         map.put(BpmnElementType.SEND_TASK, this::processMessageThrow);
@@ -961,6 +966,38 @@ public class ActivityServiceImpl implements ActivityService {
         dbService.completeActivity(activityId);
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
         triggerConditionalEvents(processInstanceId);
+    }
+
+    /**
+     * Business rule task: evaluates a DMN decision (by {@code decisionId}, via the DMN engine) or an inline
+     * FEEL expression, then writes the result to {@code resultVariable} before continuing. A bad decision /
+     * expression surfaces as an incident, like any other element failure.
+     */
+    private void processBusinessRuleTask(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+
+        BusinessRuleExtensionModel ext = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getBusinessRuleExtension)
+            .orElseThrow(() -> new IllegalStateException("Business rule task '" + bpmnElement.getId() + "' has no decision or expression"));
+
+        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+        Object result;
+        if (ext.getDecisionId() != null && !ext.getDecisionId().isBlank()) {
+            result = dmnService.evaluate(ext.getDecisionId(), variables);
+        } else if (ext.getExpression() != null && !ext.getExpression().isBlank()) {
+            String expression = ext.getExpression().startsWith("=") ? ext.getExpression().substring(1) : ext.getExpression();
+            result = scriptService.evaluateExpression(expression, variables);
+        } else {
+            throw new IllegalStateException("Business rule task '" + bpmnElement.getId() + "' has neither a decision nor an expression");
+        }
+        log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), result);
+
+        if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
+            dbService.setVariables(processInstanceId, List.of(toProcessVariable(ext.getResultVariable(), result)));
+        }
+
+        dbService.completeActivity(activityId);
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
     }
 
     /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */

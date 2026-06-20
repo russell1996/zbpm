@@ -6,6 +6,7 @@ public enum BpmnElementType {
     SEND_TASK,
     RECEIVE_TASK,
     SCRIPT_TASK,
+    BUSINESS_RULE_TASK,
     USER_TASK,
     START_EVENT,
     END_EVENT,
