@@ -249,7 +249,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (process.getSubProcesses() != null) {
                 for (BpmnSubProcessModel subProcess : process.getSubProcesses()) {
-                    BpmnElementModel element = toSubProcessElement(subProcess, pd, registry);
+                    BpmnElementModel element = toSubProcessElement(subProcess, pd, registry, messageNames);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -386,11 +386,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         return element;
     }
 
-    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry) {
+    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(sub.getId());
         element.setName(sub.getName());
-        element.setType(BpmnElementType.SUB_PROCESS);
+        boolean eventSubProcess = Boolean.TRUE.equals(sub.getTriggeredByEvent());
+        element.setType(eventSubProcess ? BpmnElementType.EVENT_SUB_PROCESS : BpmnElementType.SUB_PROCESS);
         if (sub.getIncoming() != null) {
             element.getIncoming().addAll(sub.getIncoming());
         }
@@ -399,12 +400,22 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         }
 
         com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel ext = new com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel();
+        ext.setEventSubProcess(eventSubProcess);
 
         // flatten nested flow nodes and flows into the same process definition
         if (sub.getStartEvents() != null) {
             for (BpmnStartEventModel start : sub.getStartEvents()) {
                 BpmnElementModel child = toElementModel(start);
                 child.setProcessDefinition(pd);
+                if (eventSubProcess) {
+                    // mark the start so it is not collected as a process-level start; record its trigger
+                    child.setEventSubProcessId(sub.getId());
+                    ext.setInterrupting(start.getIsInterrupting() == null || start.getIsInterrupting());
+                    if (start.getMessageEventDefinition() != null) {
+                        String ref = start.getMessageEventDefinition().getMessageRef();
+                        ext.setTriggerMessageName(messageNames.getOrDefault(ref, ref));
+                    }
+                }
                 pd.addElement(child);
                 ext.setStartEventId(child.getId());
             }

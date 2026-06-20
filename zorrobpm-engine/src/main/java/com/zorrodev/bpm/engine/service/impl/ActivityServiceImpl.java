@@ -1149,7 +1149,11 @@ public class ActivityServiceImpl implements ActivityService {
 
         for (MessageSubscription subscription : subscriptions) {
             dbService.consumeMessageSubscription(subscription.getId());
-            if (subscription.getBoundaryElementId() != null) {
+            if (subscription.getEventSubprocessId() != null) {
+                // message-started event sub-process: start the handler within the subscribed instance
+                log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
+                triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables);
+            } else if (subscription.getBoundaryElementId() != null) {
                 // message boundary: fire the boundary (interrupt/non-interrupt the host)
                 log.info("Correlating message '{}' to boundary {} on instance {} activity {}", messageName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
                 fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables);
@@ -1158,6 +1162,43 @@ public class ActivityServiceImpl implements ActivityService {
                 log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
                 signal(subscription.getActivityId(), variables);
             }
+        }
+    }
+
+    /**
+     * Starts a message-triggered event sub-process within {@code processInstanceId}. An interrupting event
+     * sub-process cancels the instance's active activities (the main flow) and runs the handler on a fresh
+     * token so its end event completes the instance. A no-op if the instance has already completed.
+     *
+     * <p>Scope: top-level, message-triggered, interrupting event sub-processes. Non-interrupting handlers
+     * and non-message triggers are not yet supported.
+     */
+    private void triggerEventSubprocess(UUID processInstanceId, String eventSubprocessId, List<ProcessVariable> variables) {
+        dbService.lockProcessInstance(processInstanceId);
+        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+        if (pi.getCompletedAt() != null) {
+            log.info("{}: Event sub-process {} trigger ignored, instance already completed", processInstanceId, eventSubprocessId);
+            return;
+        }
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+        BpmnElementModel eventSubProcess = bpmn.getElement(eventSubprocessId);
+        SubProcessExtensionModel ext = Optional.ofNullable(eventSubProcess.getExtensions())
+            .map(BpmnElementExtensionModel::getSubProcessExtension)
+            .orElseThrow(() -> new EngineException("Event sub-process " + eventSubprocessId + " has no metadata"));
+
+        if (variables != null && !variables.isEmpty()) {
+            dbService.setVariables(processInstanceId, variables);
+        }
+
+        if (ext.isInterrupting()) {
+            // interrupting: cancel the main flow, then run the handler on a fresh (non-scope) token so its
+            // end event completes the whole instance
+            dbService.cancelActiveActivities(processInstanceId);
+            Token token = dbService.createToken(null);
+            log.info("{}/{}: Interrupting event sub-process {} starting at {}", processInstanceId, token.getId(), eventSubprocessId, ext.getStartEventId());
+            execute(processInstanceId, token.getId(), ext.getStartEventId());
+        } else {
+            log.warn("{}: Non-interrupting event sub-process {} is not yet supported, ignoring", processInstanceId, eventSubprocessId);
         }
     }
 
@@ -1243,9 +1284,33 @@ public class ActivityServiceImpl implements ActivityService {
         }
         Token token = dbService.createToken(parentTokenId);
 
+        // register triggers for event sub-processes before the main flow runs, so a message arriving
+        // while the instance is active can start the handler
+        subscribeEventSubprocesses(processInstanceId, processDefinitionId);
+
         execute(processInstanceId, token.getId(), startEventId);
 
         return processInstanceId;
+    }
+
+    /**
+     * Registers an instance-scoped message subscription for every message-triggered event sub-process in
+     * the definition. When such a message is later correlated to this instance the event sub-process is
+     * started (see {@link #triggerEventSubprocess}). Non-message triggers are not yet supported.
+     */
+    private void subscribeEventSubprocesses(UUID processInstanceId, UUID processDefinitionId) {
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
+        for (BpmnElementModel element : bpmn.getEventSubProcesses()) {
+            String messageName = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getSubProcessExtension)
+                .map(SubProcessExtensionModel::getTriggerMessageName)
+                .orElse(null);
+            if (messageName == null) {
+                continue; // only message-triggered event sub-processes are executable today
+            }
+            dbService.createEventSubprocessMessageSubscription(processInstanceId, messageName, element.getId());
+            log.info("{}: Event sub-process {} subscribed to message '{}'", processInstanceId, element.getId(), messageName);
+        }
     }
 
     private UUID processFlow(@NonNull UUID processInstanceId, @NonNull UUID tokenId, String flowId, @NonNull Boolean processExpression, Boolean defaultFlow) {

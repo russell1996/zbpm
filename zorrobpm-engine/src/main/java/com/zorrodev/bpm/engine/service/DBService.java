@@ -94,6 +94,9 @@ public interface DBService {
     /** Creates a message subscription carrying an evaluated correlation-key value (or null). */
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId, String correlationKey);
 
+    /** Creates an instance-scoped message subscription that triggers a message-started event sub-process. */
+    UUID createEventSubprocessMessageSubscription(UUID processInstanceId, String messageName, String eventSubprocessId);
+
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
 
     /** Active subscriptions matching the message name and correlation-key value (targeted delivery). */

@@ -427,6 +427,21 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public UUID createEventSubprocessMessageSubscription(UUID processInstanceId, String messageName, String eventSubprocessId) {
+        UUID id = UUID.randomUUID();
+        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
+        entity.setId(id);
+        entity.setProcessInstanceId(processInstanceId);
+        entity.setActivityId(null);
+        entity.setMessageName(messageName);
+        entity.setConsumed(false);
+        entity.setCreatedAt(Instant.now());
+        entity.setEventSubprocessId(eventSubprocessId);
+        messageSubscriptionRepository.save(entity);
+        return id;
+    }
+
+    @Override
     public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId) {
         List<MessageSubscriptionEntity> entities = processInstanceId != null
             ? messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId(messageName, processInstanceId)
@@ -449,6 +464,7 @@ public class DBServiceImpl implements DBService {
                 sub.setActivityId(e.getActivityId());
                 sub.setMessageName(e.getMessageName());
                 sub.setBoundaryElementId(e.getBoundaryElementId());
+                sub.setEventSubprocessId(e.getEventSubprocessId());
                 return sub;
             })
             .toList();
