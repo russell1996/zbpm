@@ -15,7 +15,8 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-04 (signal_subscriptions + broadcast 1:N), BPMN-22 (signal catch/throw),
 > BPMN-23 (signal start + signal boundary, прерывающий/непрерывающий) и
 > BPMN-27 (escalation throw/end + escalation boundary, прерывающий/непрерывающий)
-> и BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные).
+> BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные)
+> и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
 > Замечание по BPMN-27: escalation throw внутри встроенного подпроцесса не
 > поддержан (модель подпроцесса не парсит intermediate-события); используйте
 > escalation end внутри подпроцесса либо throw на верхнем уровне / в call activity.
@@ -131,7 +132,11 @@ isSequential=true: экземпляры по очереди, по одному �
 ## Tier 2 — Частые конструкции
 
 ### BPMN-20 — Inclusive gateway (split/join)
-**T2 · L · TODO**
+**T2 · L · DONE**
+Замечание: поддержан канонический ромб (один inclusive split → один inclusive join,
+возможно с промежуточными задачами/wait-state). Join ждёт ровно столько прибытий,
+сколько веток активировал split (счётчик в `parallel_gateways.expected_count`).
+Экзотические топологии (несколько split в один join, слияние веток до join) — позже.
 Split: запускает все ветки с истинным условием (плюс default). Join: ждёт все активные
 входящие ветки (сложнее parallel — число ожидаемых динамическое).
 **Приёмка**: корректный inclusive join по реально активным веткам; тесты на разветвление 1/2/все.
