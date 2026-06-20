@@ -7,9 +7,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > **Прогресс (T0+T1):** ✅ выполнены BPMN-01/02 (парсинг event-definition'ов + реестр),
 > BPMN-03 (propagation по scope), BPMN-10 (error end), BPMN-11 (error boundary),
 > BPMN-12 (message start), BPMN-13 (timer start), BPMN-14 (message boundary),
-> BPMN-15 (non-interrupting boundary), BPMN-16 (multi-instance — **частично**: параллельный
-> на user task по `loopCardinality` + агрегирующий join; последовательный/коллекции/loopCounter отложены).
-> ⏸ Отложены: BPMN-17 (sequential multi-instance), per-instance переменные (требуют scoped-переменных).
+> BPMN-15 (non-interrupting boundary), BPMN-16/17 (multi-instance — **частично**: параллельный и
+> последовательный на user task по `loopCardinality` + агрегирующий join + `completionCondition`;
+> input/output-коллекции и loopCounter отложены — требуют scoped-переменных).
 >
 > **Прогресс (T2):** ✅ BPMN-26 (event sub-process — top-level, message-триггер,
 > прерывающий и непрерывающий; не-message-триггеры/вложенность отложены; см. ниже),
@@ -142,9 +142,13 @@ parallel/inclusive gateway (ключ — id активности инстанс�
 **Приёмка**: `loopCardinality`=N → N инстансов; завершение по всем; тест (3 инстанса, join после 3-го).
 
 ### BPMN-17 — Multi-instance (последовательный)
-**T1 · M · TODO · зависит: BPMN-16**
-isSequential=true: экземпляры по очереди, по одному токену за раз.
-**Приёмка**: строго последовательное исполнение; completionCondition прерывает цикл; тесты.
+**T1 · M · DONE (user task) · зависит: BPMN-16**
+isSequential=true на user task: создаётся один инстанс за раз; следующий — при завершении текущего
+(`multiInstanceContinue`), пока не достигнут `loopCardinality` или не выполнится `completionCondition`
+(FEEL-boolean, проверяется после каждого инстанса → ранний выход). По одному активному токену за раз.
+Отложено: input/output-коллекции, loopCounter, MI на подпроцессе/service task.
+**Приёмка**: строго последовательное исполнение (ровно один активный инстанс); completionCondition
+прерывает цикл; тесты (3 по очереди; ранний выход после 2 из 5 при `stop=true`).
 
 ---
 
@@ -310,7 +314,7 @@ message boundary; message-**start** с ключом отложен.
 | BPMN-14 | Message boundary | T1 | M | 03,04 |
 | BPMN-15 | Non-interrupting timer boundary | T1 | S | — |
 | BPMN-16 | Multi-instance параллельный | T1 | L (DONE: user task/cardinality) | — |
-| BPMN-17 | Multi-instance последовательный | T1 | M | 16 |
+| BPMN-17 | Multi-instance последовательный | T1 | M (DONE: user task) | 16 |
 | BPMN-20 | Inclusive gateway | T2 | L | — |
 | BPMN-21 | Event-based gateway | T2 | M | catch-события |
 | BPMN-22 | Signal catch/throw | T2 | M | 04 |

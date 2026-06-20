@@ -670,6 +670,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             MultiInstanceExtensionModel ext = new MultiInstanceExtensionModel();
             ext.setSequential(Boolean.TRUE.equals(mi.getIsSequential()));
             ext.setCardinality(mi.getLoopCardinality() != null ? mi.getLoopCardinality().strip() : null);
+            ext.setCompletionCondition(mi.getCompletionCondition() != null ? mi.getCompletionCondition().strip() : null);
             if (element.getExtensions() == null) {
                 element.setExtensions(new BpmnElementExtensionModel());
             }

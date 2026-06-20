@@ -519,6 +519,14 @@ class BpmnParseServiceImplTest {
         assertThat(miTask.getType()).isEqualTo(BpmnElementType.USER_TASK);
         assertThat(miTask.getExtensions().getMultiInstanceExtension().isSequential()).isFalse();
         assertThat(miTask.getExtensions().getMultiInstanceExtension().getCardinality()).isEqualTo("3");
+
+        // sequential variant with a completion condition
+        BpmnProcessDefinitionModel seq = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-multi-instance-completion.bpmn")));
+        var miSeq = seq.getElement("miTask").getExtensions().getMultiInstanceExtension();
+        assertThat(miSeq.isSequential()).isTrue();
+        assertThat(miSeq.getCardinality()).isEqualTo("5");
+        assertThat(miSeq.getCompletionCondition()).isEqualTo("stop = true");
     }
 
     @Test
