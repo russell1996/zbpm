@@ -10,8 +10,8 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-15 (non-interrupting boundary). ⏸ Отложены: BPMN-16/17 (multi-instance —
 > требует scoped-переменных), BPMN-04 (signal-инфра — делается с T2 signal catch/throw).
 >
-> **Прогресс (T2):** ✅ BPMN-26 (event sub-process — частично: top-level, message-триггер,
-> прерывающий; см. ниже),
+> **Прогресс (T2):** ✅ BPMN-26 (event sub-process — top-level, message-триггер,
+> прерывающий и непрерывающий; не-message-триггеры/вложенность отложены; см. ниже),
 > BPMN-24 (send task = message throw в форме задачи),
 > BPMN-25 (receive task = message catch / wait-state в форме задачи),
 > BPMN-04 (signal_subscriptions + broadcast 1:N), BPMN-22 (signal catch/throw),
@@ -179,18 +179,21 @@ Receive task = message catch в форме задачи (wait-state + подпи
 **Приёмка**: парковка до корреляции сообщения; тесты.
 
 ### BPMN-26 — Event sub-process
-**T2 · L · DONE (частично: top-level, message-триггер, прерывающий) · зависит: BPMN-03**
+**T2 · L · DONE (top-level, message-триггер, прерывающий и непрерывающий) · зависит: BPMN-03**
 Встроенный `<subProcess triggeredByEvent="true">` с message-стартом (`isInterrupting`). При деплое его
 стартовое событие помечается (`eventSubProcessId`) и исключается из process-level message-стартов; при
 старте экземпляра регистрируется instance-scoped подписка (`message_subscriptions.event_subprocess_id`,
-`activity_id` стал nullable). Корреляция сообщения запускает обработчик: **прерывающий** отменяет активные
-активности основного потока (`cancelActiveActivities`) и выполняет обработчик на свежем токене — его
-end-событие завершает экземпляр.
-Отложено (отдельные заходы): **непрерывающий** обработчик (нужен scope-токен + ветка, плюс корректное
-завершение экземпляра при живом обработчике), триггеры **timer/error/signal/escalation**, event-subprocess
-**внутри встроенного подпроцесса** (не top-level).
-**Приёмка**: прерывающий отменяет основной поток и выполняет обработчик; без сообщения основной поток
-завершается штатно; тесты.
+`activity_id` стал nullable). Корреляция сообщения запускает обработчик:
+- **прерывающий**: подписка потребляется, активные активности основного потока отменяются
+  (`cancelActiveActivities`), обработчик выполняется на свежем токене — его end-событие завершает экземпляр;
+- **непрерывающий**: подписка сохраняется (может сработать снова), основной поток продолжается, обработчик
+  выполняется в собственном subprocess-scope (scope-токен) — его end завершает только scope (см. `finishBranch`).
+
+Отложено (отдельные заходы): триггеры **timer/error/signal/escalation**, event-subprocess **внутри
+встроенного подпроцесса** (не top-level). Замечание: при непрерывающем обработчике, переживающем основной
+поток, экземпляр завершается на первом top-level end (общий лимит параллельных веток без join).
+**Приёмка**: прерывающий отменяет основной поток и завершает экземпляр обработчиком; непрерывающий работает
+параллельно и может сработать многократно; без сообщения основной поток завершается штатно; тесты.
 
 ### BPMN-27 — Escalation throw / boundary / end
 **T2 · M · DONE · зависит: BPMN-03**
@@ -285,7 +288,7 @@ message boundary; message-**start** с ключом отложен.
 | BPMN-23 | Signal start/boundary | T2 | M | 03,04 |
 | BPMN-24 | Send task | T2 | S | — |
 | BPMN-25 | Receive task | T2 | S | message catch |
-| BPMN-26 | Event sub-process | T2 | L (DONE: msg/interrupting) | 03 |
+| BPMN-26 | Event sub-process | T2 | L (DONE: msg interrupt+non-int) | 03 |
 | BPMN-27 | Escalation | T2 | M | 03 |
 | BPMN-30 | Script task | T3 | M (DONE) | — |
 | BPMN-31 | Business rule (DMN) | T3 | L | — |
