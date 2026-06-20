@@ -9,4 +9,7 @@ public interface ScriptService {
 
     Object evaluateScript(String script, List<ProcessVariable> variables);
 
+    /** Evaluates a full FEEL expression (any return value), unlike {@link #evaluateScript} which runs a unary test. */
+    Object evaluateExpression(String expression, List<ProcessVariable> variables);
+
 }

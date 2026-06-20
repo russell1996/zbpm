@@ -472,6 +472,20 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseScriptTask() throws IOException {
+        // a scriptTask carries its inline FEEL script and result variable into the script-task extension
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-script-task.bpmn")));
+
+        BpmnElementModel scriptSum = bpmn.getElement("scriptSum");
+        assertThat(scriptSum.getType()).isEqualTo(BpmnElementType.SCRIPT_TASK);
+        assertThat(scriptSum.getExtensions().getScriptTaskExtension().getScript()).isEqualTo("a + b");
+        assertThat(scriptSum.getExtensions().getScriptTaskExtension().getResultVariable()).isEqualTo("sum");
+        assertThat(scriptSum.getExtensions().getScriptTaskExtension().getScriptFormat()).isEqualTo("feel");
+        assertThat(scriptSum.getOutgoing()).containsExactly("flow2");
+    }
+
+    @Test
     void testParseInclusiveGateway() throws IOException {
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
             .parse(Files.readString(Path.of("src/test/files/test-inclusive-gateway.bpmn")));

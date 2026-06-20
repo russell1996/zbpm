@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.engine.bpmn.model.CallActivityExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType;
 import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
@@ -140,6 +141,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             if (Optional.ofNullable(process.getReceiveTasks()).isPresent()) {
                 for (BpmnReceiveTaskModel receiveTask : process.getReceiveTasks()) {
                     BpmnElementModel element = toElementModel(receiveTask, messageNames);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
+            if (Optional.ofNullable(process.getScriptTasks()).isPresent()) {
+                for (BpmnScriptTaskModel scriptTask : process.getScriptTasks()) {
+                    BpmnElementModel element = toElementModel(scriptTask);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -403,6 +411,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 pd.addElement(child);
             }
         }
+        if (sub.getScriptTasks() != null) {
+            for (BpmnScriptTaskModel scriptTask : sub.getScriptTasks()) {
+                BpmnElementModel child = toElementModel(scriptTask);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
         if (sub.getUserTasks() != null) {
             for (BpmnUserTaskModel userTask : sub.getUserTasks()) {
                 BpmnElementModel child = toElementModel(userTask);
@@ -480,6 +495,22 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
             element.getExtensions().getServiceTaskExtension().setJob(serviceTask.getExtensionElements().getTaskDefinition().getType());
         }
+        return element;
+    }
+
+    private BpmnElementModel toElementModel(BpmnScriptTaskModel scriptTask) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(scriptTask.getId());
+        element.setName(scriptTask.getName());
+        element.setType(BpmnElementType.SCRIPT_TASK);
+        element.setIncoming(scriptTask.getIncoming());
+        element.setOutgoing(scriptTask.getOutgoing());
+        ScriptTaskExtensionModel script = new ScriptTaskExtensionModel();
+        script.setScriptFormat(scriptTask.getScriptFormat());
+        script.setScript(scriptTask.getScript() != null ? scriptTask.getScript().strip() : null);
+        script.setResultVariable(scriptTask.getResultVariable());
+        element.setExtensions(new BpmnElementExtensionModel());
+        element.getExtensions().setScriptTaskExtension(script);
         return element;
     }
 
