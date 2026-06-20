@@ -129,6 +129,8 @@ public class ActivityServiceImpl implements ActivityService {
         // Link throw jumps to the matching link catch (an intra-process goto); the catch is a pass-through.
         map.put(BpmnElementType.LINK_THROW_EVENT, this::processLinkThrow);
         map.put(BpmnElementType.LINK_CATCH_EVENT, this::processStartEvent);
+        // Compensation throw runs the compensation handlers of completed compensation-bounded activities.
+        map.put(BpmnElementType.COMPENSATION_THROW_EVENT, this::processCompensationThrow);
         return map;
     }
 
@@ -138,6 +140,9 @@ public class ActivityServiceImpl implements ActivityService {
      * signalled wait states and parent continuation after a subprocess/call activity ends.
      */
     private void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
+        if (element.getOutgoing() == null) {
+            return; // a dead end (e.g. a compensation handler off the main flow has no outgoing flow)
+        }
         for (String outgoing : element.getOutgoing()) {
             processFlow(processInstanceId, tokenId, outgoing, false, null);
             BpmnFlowModel flow = bpmn.getFlow(outgoing);
@@ -182,6 +187,63 @@ public class ActivityServiceImpl implements ActivityService {
 
         // jump to the catch: execute it (records the catch activity and continues from its outgoing)
         execute(processInstanceId, tokenId, bpmn, catchEvent);
+    }
+
+    /**
+     * Compensation throw: completes its own activity, then runs the compensation handler of every completed
+     * compensation-bounded activity in the instance, in reverse order, before continuing down its outgoing
+     * flow. Order is by activity creation time descending — for a sequential flow this is the reverse of the
+     * completion order, as BPMN requires. Each handler (off the main flow, linked by an {@code <association>})
+     * is executed synchronously on the throw's token.
+     *
+     * <p>Scope: "compensate all in the process scope" via an intermediate compensation throw, with
+     * synchronously-executable handlers. Targeted (activityRef) compensation, compensation end events and
+     * compensation within a subprocess scope are not yet supported.
+     */
+    private void processCompensationThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+        log.info("{}/{}: Compensation throw {} at {}", processInstanceId, tokenId, bpmnElement.getId(), activityId);
+
+        List<Activity> completed = new ArrayList<>(dbService.getCompletedActivities(processInstanceId));
+        // reverse completion order; createdAt is set on insert (not stale, unlike the bulk-updated status)
+        completed.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
+
+        for (Activity activity : completed) {
+            BpmnElementModel boundary = findCompensationBoundary(bpmn, activity.getBpmnElementId());
+            if (boundary == null) {
+                continue;
+            }
+            String handlerId = Optional.ofNullable(boundary.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getCompensationHandlerId)
+                .orElse(null);
+            BpmnElementModel handler = handlerId == null ? null : bpmn.getElement(handlerId);
+            if (handler == null) {
+                continue;
+            }
+            log.info("{}/{}: Compensating {} via handler {}", processInstanceId, tokenId, activity.getBpmnElementId(), handlerId);
+            execute(processInstanceId, tokenId, bpmn, handler);
+        }
+
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /** Finds the compensation boundary attached to {@code hostId}, or null if none. */
+    private BpmnElementModel findCompensationBoundary(BpmnProcessDefinitionModel bpmn, String hostId) {
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (hostId.equals(attached)) {
+                return element;
+            }
+        }
+        return null;
     }
 
     private BpmnElementModel findLinkCatch(BpmnProcessDefinitionModel bpmn, String linkName) {
