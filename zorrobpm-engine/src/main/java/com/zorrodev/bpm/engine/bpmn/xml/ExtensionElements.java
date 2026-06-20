@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.bpmn.xml;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.AssignmentDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledElementModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.FormDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.SubscriptionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskDefinitionModel;
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
@@ -24,4 +25,6 @@ public class ExtensionElements {
     private PropertiesModel properties;
     @XmlElement(name = "calledElement", namespace = "http://camunda.org/schema/zeebe/1.0")
     private CalledElementModel calledElement;
+    @XmlElement(name = "subscription", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private SubscriptionModel subscription;
 }

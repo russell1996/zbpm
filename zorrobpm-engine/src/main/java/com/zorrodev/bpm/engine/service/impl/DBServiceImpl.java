@@ -402,11 +402,16 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName) {
-        return createMessageSubscription(processInstanceId, activityId, messageName, null);
+        return createMessageSubscription(processInstanceId, activityId, messageName, null, null);
     }
 
     @Override
     public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId) {
+        return createMessageSubscription(processInstanceId, activityId, messageName, boundaryElementId, null);
+    }
+
+    @Override
+    public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId, String correlationKey) {
         UUID id = UUID.randomUUID();
         MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
         entity.setId(id);
@@ -416,6 +421,7 @@ public class DBServiceImpl implements DBService {
         entity.setConsumed(false);
         entity.setCreatedAt(Instant.now());
         entity.setBoundaryElementId(boundaryElementId);
+        entity.setCorrelationKey(correlationKey);
         messageSubscriptionRepository.save(entity);
         return id;
     }
@@ -425,6 +431,16 @@ public class DBServiceImpl implements DBService {
         List<MessageSubscriptionEntity> entities = processInstanceId != null
             ? messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId(messageName, processInstanceId)
             : messageSubscriptionRepository.findByConsumedFalseAndMessageName(messageName);
+        return toMessageSubscriptions(entities);
+    }
+
+    @Override
+    public List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey) {
+        return toMessageSubscriptions(
+            messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndCorrelationKey(messageName, correlationKey));
+    }
+
+    private List<MessageSubscription> toMessageSubscriptions(List<MessageSubscriptionEntity> entities) {
         return entities.stream()
             .map(e -> {
                 MessageSubscription sub = new MessageSubscription();

@@ -292,8 +292,30 @@ public class ActivityServiceImpl implements ActivityService {
             .map(BpmnElementExtensionModel::getMessageEventExtension)
             .map(MessageEventExtensionModel::getMessageName)
             .orElseThrow(() -> new EngineException("Message catch event " + bpmnElement.getId() + " has no message name"));
-        dbService.createMessageSubscription(processInstanceId, activityId, messageName);
-        log.info("{}/{}: Subscribed to message '{}' at {}: {}/{}", processInstanceId, tokenId, messageName, bpmnElement.getType(), activityId, bpmnElement.getId());
+        String correlationKey = evaluateCorrelationKey(bpmnElement, processInstanceId);
+        dbService.createMessageSubscription(processInstanceId, activityId, messageName, null, correlationKey);
+        log.info("{}/{}: Subscribed to message '{}' (key {}) at {}: {}/{}", processInstanceId, tokenId, messageName, correlationKey, bpmnElement.getType(), activityId, bpmnElement.getId());
+    }
+
+    /**
+     * Evaluates a message subscriber's correlation-key FEEL expression (from its {@code zeebe:subscription})
+     * against the instance variables, producing the value the message is later matched on. Returns null when
+     * the message has no correlation key (name-only correlation).
+     */
+    private String evaluateCorrelationKey(BpmnElementModel element, UUID processInstanceId) {
+        String expression = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getMessageEventExtension)
+            .map(MessageEventExtensionModel::getCorrelationKeyExpression)
+            .filter(s -> !s.isBlank())
+            .orElse(null);
+        if (expression == null) {
+            return null;
+        }
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        Object value = scriptService.evaluateExpression(expression, dbService.getVariables(processInstanceId));
+        return value == null ? null : value.toString();
     }
 
     /**
@@ -946,8 +968,9 @@ public class ActivityServiceImpl implements ActivityService {
                 .map(BpmnElementExtensionModel::getMessageEventExtension)
                 .map(MessageEventExtensionModel::getMessageName)
                 .orElseThrow(() -> new EngineException("Message boundary " + element.getId() + " has no message name"));
-            dbService.createMessageSubscription(processInstanceId, hostActivityId, messageName, element.getId());
-            log.info("{}: Message boundary {} subscribed to '{}' on host activity {}", processInstanceId, element.getId(), messageName, hostActivityId);
+            String correlationKey = evaluateCorrelationKey(element, processInstanceId);
+            dbService.createMessageSubscription(processInstanceId, hostActivityId, messageName, element.getId(), correlationKey);
+            log.info("{}: Message boundary {} subscribed to '{}' (key {}) on host activity {}", processInstanceId, element.getId(), messageName, correlationKey, hostActivityId);
         }
     }
 
@@ -1087,14 +1110,35 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public void correlateMessage(String messageName, UUID processInstanceId, List<ProcessVariable> variables) {
-        List<MessageSubscription> subscriptions = dbService.findMessageSubscriptions(messageName, processInstanceId);
+        correlateMessage(messageName, null, processInstanceId, variables);
+    }
 
-        // untargeted correlation may also start new instances via message start events
+    /**
+     * Correlates a message, optionally by a correlation-key value. When {@code correlationKey} is given,
+     * only subscriptions whose stored key matches are woken (targeted delivery — this disambiguates
+     * multiple instances waiting on the same message name); otherwise the message correlates by name
+     * (optionally narrowed to {@code processInstanceId}).
+     */
+    @Override
+    public void correlateMessage(String messageName, String correlationKey, UUID processInstanceId, List<ProcessVariable> variables) {
+        List<MessageSubscription> subscriptions;
+        if (correlationKey != null) {
+            subscriptions = dbService.findMessageSubscriptionsByKey(messageName, correlationKey);
+            if (processInstanceId != null) {
+                subscriptions = subscriptions.stream()
+                    .filter(s -> processInstanceId.equals(s.getProcessInstanceId()))
+                    .toList();
+            }
+        } else {
+            subscriptions = dbService.findMessageSubscriptions(messageName, processInstanceId);
+        }
+
+        // untargeted correlation by name (no instance, no key) may also start new instances via message starts
         List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> startSubscriptions =
-            processInstanceId == null ? dbService.findMessageStartSubscriptions(messageName) : List.of();
+            (processInstanceId == null && correlationKey == null) ? dbService.findMessageStartSubscriptions(messageName) : List.of();
 
         if (subscriptions.isEmpty() && startSubscriptions.isEmpty()) {
-            log.info("No active subscription for message '{}' (instance {})", messageName, processInstanceId);
+            log.info("No active subscription for message '{}' (instance {}, key {})", messageName, processInstanceId, correlationKey);
             return;
         }
 

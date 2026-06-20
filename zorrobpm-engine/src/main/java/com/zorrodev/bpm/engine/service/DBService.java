@@ -91,7 +91,13 @@ public interface DBService {
     /** Creates a message subscription for a message boundary event attached to {@code activityId}. */
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId);
 
+    /** Creates a message subscription carrying an evaluated correlation-key value (or null). */
+    UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId, String correlationKey);
+
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
+
+    /** Active subscriptions matching the message name and correlation-key value (targeted delivery). */
+    List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey);
 
     void consumeMessageSubscription(UUID subscriptionId);
 

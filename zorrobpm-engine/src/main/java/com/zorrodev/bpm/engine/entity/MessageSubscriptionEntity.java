@@ -28,4 +28,7 @@ public class MessageSubscriptionEntity {
     /** Non-null when this subscription is a message boundary event: the boundary element to fire
      *  (interrupting/non-interrupting) instead of signalling {@code activityId} as a catch. */
     private String boundaryElementId;
+    /** The evaluated correlation-key value this subscription matches on (from the message's
+     *  {@code zeebe:subscription}), or null when the message correlates by name only. */
+    private String correlationKey;
 }
