@@ -510,6 +510,24 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseBusinessRuleTask() throws IOException {
+        // DMN variant: zeebe:calledDecision -> BUSINESS_RULE_TASK with decisionId + resultVariable
+        BpmnProcessDefinitionModel dmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-business-rule-dmn.bpmn")));
+        BpmnElementModel decideDmn = dmn.getElement("decide");
+        assertThat(decideDmn.getType()).isEqualTo(BpmnElementType.BUSINESS_RULE_TASK);
+        assertThat(decideDmn.getExtensions().getBusinessRuleExtension().getDecisionId()).isEqualTo("discount");
+        assertThat(decideDmn.getExtensions().getBusinessRuleExtension().getResultVariable()).isEqualTo("discount");
+
+        // FEEL variant: zeebe:script -> expression + resultVariable
+        BpmnProcessDefinitionModel feel = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-business-rule-feel.bpmn")));
+        var brFeel = feel.getElement("decide").getExtensions().getBusinessRuleExtension();
+        assertThat(brFeel.getExpression()).isEqualTo("=amount * 2");
+        assertThat(brFeel.getResultVariable()).isEqualTo("doubled");
+    }
+
+    @Test
     void testParseMultiInstance() throws IOException {
         // a userTask's multiInstanceLoopCharacteristics is read into the multi-instance extension
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()

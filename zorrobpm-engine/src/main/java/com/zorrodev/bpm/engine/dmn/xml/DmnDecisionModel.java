@@ -1,0 +1,21 @@
+package com.zorrodev.bpm.engine.dmn.xml;
+
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlElement;
+import lombok.Getter;
+import lombok.Setter;
+
+/** A {@code <decision>} with its decision table. */
+@Getter
+@Setter
+@XmlAccessorType(XmlAccessType.FIELD)
+public class DmnDecisionModel {
+    @XmlAttribute
+    private String id;
+    @XmlAttribute
+    private String name;
+    @XmlElement(name = "decisionTable", namespace = DmnDefinitionsModel.NS)
+    private DmnDecisionTableModel decisionTable;
+}

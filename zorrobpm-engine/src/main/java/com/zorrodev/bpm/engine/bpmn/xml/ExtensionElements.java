@@ -2,10 +2,12 @@ package com.zorrodev.bpm.engine.bpmn.xml;
 
 import com.zorrodev.bpm.engine.bpmn.xml.extension.AssignmentDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledElementModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledDecisionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.FormDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.SubscriptionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
 import jakarta.xml.bind.annotation.XmlElement;
@@ -30,4 +32,8 @@ public class ExtensionElements {
     private SubscriptionModel subscription;
     @XmlElement(name = "ioMapping", namespace = "http://camunda.org/schema/zeebe/1.0")
     private IoMappingModel ioMapping;
+    @XmlElement(name = "calledDecision", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private CalledDecisionModel calledDecision;
+    @XmlElement(name = "script", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private ZeebeScriptModel script;
 }
