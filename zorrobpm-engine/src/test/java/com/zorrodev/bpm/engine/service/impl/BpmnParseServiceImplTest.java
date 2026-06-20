@@ -486,6 +486,25 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseEventSubProcess() throws IOException {
+        // a <subProcess triggeredByEvent="true"> with a message start becomes an EVENT_SUB_PROCESS; its
+        // start event is marked (so it is not a process-level start) and the trigger message is resolved
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-event-subprocess.bpmn")));
+
+        BpmnElementModel evSub = bpmn.getElement("cancelHandler");
+        assertThat(evSub.getType()).isEqualTo(BpmnElementType.EVENT_SUB_PROCESS);
+        assertThat(evSub.getExtensions().getSubProcessExtension().isEventSubProcess()).isTrue();
+        assertThat(evSub.getExtensions().getSubProcessExtension().isInterrupting()).isTrue();
+        assertThat(evSub.getExtensions().getSubProcessExtension().getTriggerMessageName()).isEqualTo("cancelOrder");
+        assertThat(evSub.getExtensions().getSubProcessExtension().getStartEventId()).isEqualTo("evStart");
+
+        // the event-subprocess start must not be collected as a process-level message start
+        assertThat(bpmn.getMessageStartEvents()).noneMatch(e -> e.getId().equals("evStart"));
+        assertThat(bpmn.getElement("evStart").getEventSubProcessId()).isEqualTo("cancelHandler");
+    }
+
+    @Test
     void testParseMessageCorrelationKey() throws IOException {
         // a message's <zeebe:subscription correlationKey="..."> is read into the subscriber's message extension
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()

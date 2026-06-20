@@ -27,6 +27,11 @@ public class BpmnSubProcessModel {
     @XmlAttribute
     private String name;
 
+    /** {@code triggeredByEvent="true"} marks this as an event sub-process (triggered by its start
+     *  event's event definition, not by an incoming sequence flow). */
+    @XmlAttribute
+    private Boolean triggeredByEvent;
+
     @XmlElement(name = "incoming", namespace = NS)
     private List<String> incoming;
 
