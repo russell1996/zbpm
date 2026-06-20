@@ -10,6 +10,7 @@ public class BpmnElementExtensionModel {
     private ServiceTaskExtensionModel serviceTaskExtension;
     private ScriptTaskExtensionModel scriptTaskExtension;
     private IoMappingExtensionModel ioMappingExtension;
+    private MultiInstanceExtensionModel multiInstanceExtension;
     private UserTaskExtensionModel userTaskExtension;
     private ExclusiveGatewayExtensionModel exclusiveGatewayExtension;
     private TimerEventExtensionModel timerEventExtension;

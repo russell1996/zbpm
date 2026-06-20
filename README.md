@@ -19,7 +19,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 | Поддерживается | Пока не поддерживается |
 |---|---|
-| Start / End / Terminate-end события | Multi-instance (параллельный / последовательный) |
+| Start / End / Terminate-end события | Multi-instance: последовательный / коллекции / loopCounter |
 | **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional **start** событие (catch/boundary — поддержаны) |
 | Потоки управления (sequence flow) | Компенсация: targeted (по activityRef) / в подпроцессе |
 | Exclusive gateway (условия на FEEL + поток по умолчанию) | Business rule (DMN) задачи |
@@ -28,6 +28,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
 | Service task (внешние воркеры через RabbitMQ) | |
 | User task (assignee, кандидаты-пользователи/группы, form key) | |
+| **Multi-instance** (параллельный, по `loopCardinality`; агрегирующий join по всем инстансам) | |
 | **Send / Receive task** (message throw / catch в форме задачи) | |
 | **Script task** (inline FEEL-выражение, результат в переменную) | |
 | **IO mappings** (`zeebe:ioMapping` input/output, FEEL-трансформации на service/user task) | |

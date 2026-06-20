@@ -17,6 +17,7 @@ import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
@@ -1073,6 +1074,10 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     private void enterUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
+        if (isMultiInstance(bpmnElement)) {
+            enterMultiInstanceUserTask(processInstanceId, token, bpmnElement);
+            return;
+        }
         applyIoMappings(processInstanceId, bpmnElement, true);
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         dbService.createUserTask(activityId);
@@ -1082,6 +1087,74 @@ public class ActivityServiceImpl implements ActivityService {
         scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
         scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
         scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
+    }
+
+    private boolean isMultiInstance(BpmnElementModel element) {
+        return Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
+            .isPresent();
+    }
+
+    /**
+     * Parallel multi-instance user task: spawns N user-task activities (one per instance) on the same token,
+     * recording N as the count the join waits for. Each completion records an arrival; the last one
+     * continues from the task's outgoing (see {@link #completeUserTask}).
+     *
+     * <p>Scope: parallel multi-instance driven by {@code loopCardinality}. Sequential multi-instance,
+     * input/output collections and per-instance variables (loopCounter) are not yet supported (the flat
+     * variable model can't isolate per-instance state).
+     */
+    private void enterMultiInstanceUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
+        MultiInstanceExtensionModel mi = bpmnElement.getExtensions().getMultiInstanceExtension();
+        if (mi.isSequential()) {
+            throw new EngineException("Sequential multi-instance is not yet supported at " + bpmnElement.getId());
+        }
+        int count = resolveCardinality(processInstanceId, bpmnElement);
+        if (count <= 0) {
+            log.info("{}/{}: Multi-instance {} has zero instances, skipping", processInstanceId, token, bpmnElement.getId());
+            proceedToOutgoing(processInstanceId, token, bpmnElement.getProcessDefinition(), bpmnElement);
+            return;
+        }
+        dbService.recordInclusiveExpected(processInstanceId, bpmnElement.getId(), count);
+        for (int i = 0; i < count; i++) {
+            UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
+            dbService.createUserTask(activityId);
+        }
+        log.info("{}/{}: Entering multi-instance {}: {} parallel instances", processInstanceId, token, bpmnElement.getId(), count);
+    }
+
+    /** Resolves a multi-instance activity's instance count from its (literal or FEEL) loop cardinality. */
+    private int resolveCardinality(UUID processInstanceId, BpmnElementModel element) {
+        String expression = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
+            .map(MultiInstanceExtensionModel::getCardinality)
+            .filter(s -> !s.isBlank())
+            .orElseThrow(() -> new EngineException("Multi-instance " + element.getId() + " has no loop cardinality"));
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        Object value = scriptService.evaluateExpression(expression, dbService.getVariables(processInstanceId));
+        if (!(value instanceof Number number)) {
+            throw new EngineException("Multi-instance " + element.getId() + " cardinality did not evaluate to a number: " + value);
+        }
+        return number.intValue();
+    }
+
+    /**
+     * Records a multi-instance iteration's completion and reports whether the join is ready (all instances
+     * done). Reuses the parallel-gateway arrival counter keyed by the activity id (unique per iteration).
+     */
+    private boolean multiInstanceJoinReady(UUID processInstanceId, BpmnElementModel element, UUID completedActivityId) {
+        String miId = element.getId();
+        dbService.recordParallelGatewayArrival(processInstanceId, miId, completedActivityId.toString());
+        Integer expected = dbService.getInclusiveExpected(processInstanceId, miId);
+        Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, miId);
+        if (expected != null && arrived.size() >= expected) {
+            dbService.clearParallelGatewayArrivals(processInstanceId, miId);
+            return true;
+        }
+        log.info("{}: Multi-instance {} not ready: {} of {} instances done", processInstanceId, miId, arrived.size(), expected);
+        return false;
     }
 
     /**
@@ -1191,6 +1264,10 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         applyIoMappings(processInstanceId, bpmnElement, false);
+        if (isMultiInstance(bpmnElement) && !multiInstanceJoinReady(processInstanceId, bpmnElement, userTaskId)) {
+            // other parallel instances are still outstanding; the last one will continue the flow
+            return;
+        }
         proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement);
         triggerConditionalEvents(processInstanceId);
     }
