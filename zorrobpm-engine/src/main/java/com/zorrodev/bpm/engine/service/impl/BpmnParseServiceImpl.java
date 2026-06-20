@@ -2,7 +2,10 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.engine.bpmn.model.CallActivityExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.MappingModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType;
 import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
@@ -520,7 +523,40 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
             element.getExtensions().getServiceTaskExtension().setJob(serviceTask.getExtensionElements().getTaskDefinition().getType());
         }
+        attachIoMapping(element, serviceTask.getExtensionElements());
         return element;
+    }
+
+    /** Reads a {@code zeebe:ioMapping} into the element's extensions (input/output FEEL transformations). */
+    private void attachIoMapping(BpmnElementModel element, ExtensionElements ee) {
+        IoMappingModel io = ee == null ? null : ee.getIoMapping();
+        if (io == null) {
+            return;
+        }
+        boolean hasInputs = io.getInputs() != null && !io.getInputs().isEmpty();
+        boolean hasOutputs = io.getOutputs() != null && !io.getOutputs().isEmpty();
+        if (!hasInputs && !hasOutputs) {
+            return;
+        }
+        IoMappingExtensionModel ext = new IoMappingExtensionModel();
+        ext.setInputs(toMappings(io.getInputs()));
+        ext.setOutputs(toMappings(io.getOutputs()));
+        if (element.getExtensions() == null) {
+            element.setExtensions(new BpmnElementExtensionModel());
+        }
+        element.getExtensions().setIoMappingExtension(ext);
+    }
+
+    private List<IoMappingExtensionModel.Mapping> toMappings(List<MappingModel> src) {
+        if (src == null) {
+            return null;
+        }
+        return src.stream().map(m -> {
+            IoMappingExtensionModel.Mapping mapping = new IoMappingExtensionModel.Mapping();
+            mapping.setSource(m.getSource());
+            mapping.setTarget(m.getTarget());
+            return mapping;
+        }).toList();
     }
 
     private BpmnElementModel toElementModel(BpmnScriptTaskModel scriptTask) {
@@ -595,6 +631,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
         }
+        attachIoMapping(element, userTask.getExtensionElements());
         return element;
     }
 
