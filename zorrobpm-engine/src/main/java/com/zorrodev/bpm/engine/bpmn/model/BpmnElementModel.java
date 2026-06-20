@@ -28,4 +28,9 @@ public class BpmnElementModel {
     @Getter
     @Setter
     private BpmnElementExtensionModel extensions;
+    /** Set on the (flattened) start event of an event sub-process to the owning event-subprocess id, so
+     *  it is not mistaken for a process-level start event (see {@code BpmnProcessDefinitionModel}). */
+    @Getter
+    @Setter
+    private String eventSubProcessId;
 }

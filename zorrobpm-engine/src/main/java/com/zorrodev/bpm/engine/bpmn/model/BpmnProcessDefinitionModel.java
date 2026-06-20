@@ -58,6 +58,14 @@ public class BpmnProcessDefinitionModel {
     public List<BpmnElementModel> getMessageStartEvents() {
         return elements.values().stream()
             .filter(e -> e.getType() == BpmnElementType.MESSAGE_START_EVENT)
+            .filter(e -> e.getEventSubProcessId() == null)
+            .toList();
+    }
+
+    /** Event sub-processes flattened into this definition (containers triggered by an event, not a flow). */
+    public List<BpmnElementModel> getEventSubProcesses() {
+        return elements.values().stream()
+            .filter(e -> e.getType() == BpmnElementType.EVENT_SUB_PROCESS)
             .toList();
     }
 
@@ -70,6 +78,7 @@ public class BpmnProcessDefinitionModel {
     public List<BpmnElementModel> getSignalStartEvents() {
         return elements.values().stream()
             .filter(e -> e.getType() == BpmnElementType.SIGNAL_START_EVENT)
+            .filter(e -> e.getEventSubProcessId() == null)
             .toList();
     }
 

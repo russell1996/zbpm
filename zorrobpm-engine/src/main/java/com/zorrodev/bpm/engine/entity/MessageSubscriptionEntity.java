@@ -31,4 +31,7 @@ public class MessageSubscriptionEntity {
     /** The evaluated correlation-key value this subscription matches on (from the message's
      *  {@code zeebe:subscription}), or null when the message correlates by name only. */
     private String correlationKey;
+    /** Non-null when this subscription triggers a message-started event sub-process: the event
+     *  sub-process element to start (interrupting/non-interrupting) instead of a catch/boundary. */
+    private String eventSubprocessId;
 }
