@@ -7,8 +7,9 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > **Прогресс (T0+T1):** ✅ выполнены BPMN-01/02 (парсинг event-definition'ов + реестр),
 > BPMN-03 (propagation по scope), BPMN-10 (error end), BPMN-11 (error boundary),
 > BPMN-12 (message start), BPMN-13 (timer start), BPMN-14 (message boundary),
-> BPMN-15 (non-interrupting boundary). ⏸ Отложены: BPMN-16/17 (multi-instance —
-> требует scoped-переменных), BPMN-04 (signal-инфра — делается с T2 signal catch/throw).
+> BPMN-15 (non-interrupting boundary), BPMN-16 (multi-instance — **частично**: параллельный
+> на user task по `loopCardinality` + агрегирующий join; последовательный/коллекции/loopCounter отложены).
+> ⏸ Отложены: BPMN-17 (sequential multi-instance), per-instance переменные (требуют scoped-переменных).
 >
 > **Прогресс (T2):** ✅ BPMN-26 (event sub-process — top-level, message-триггер,
 > прерывающий и непрерывающий; не-message-триггеры/вложенность отложены; см. ниже),
@@ -130,12 +131,15 @@ Timer-start (cycle/date/duration) планирует запуск экземпл
 **Приёмка**: хост не отменяется; ветка boundary исполняется параллельно; тесты.
 
 ### BPMN-16 — Multi-instance (параллельный)
-**T1 · L · TODO**
-`multiInstanceLoopCharacteristics` (isSequential=false) на задаче/подпроцессе:
-размножение по коллекции, N параллельных экземпляров, агрегирующий join, `loopCounter`/
-`nrOfInstances`/`nrOfActiveInstances`, `completionCondition`.
-**Приёмка**: коллекция из N → N инстансов; завершение по всем (или по completionCondition);
-переменные элемента (`inputElement`/`outputElement`) мапятся; тесты.
+**T1 · L · DONE (частично: user task по loopCardinality)**
+`multiInstanceLoopCharacteristics` (isSequential=false) на **user task**: по `loopCardinality` (литерал
+или FEEL) порождается N параллельных инстансов (N активностей на одном токене); агрегирующий join ждёт
+все N завершений и затем продолжает поток. Счётчик завершений переиспользует механизм прибытий
+parallel/inclusive gateway (ключ — id активности инстанса, уникальный).
+Отложено (отдельные заходы): размножение по **input-коллекции**, `inputElement`/`outputElement` и
+`loopCounter` (требуют scoped-переменных — плоская модель не изолирует per-instance состояние),
+`completionCondition`, multi-instance на **подпроцессе** и на **service task**.
+**Приёмка**: `loopCardinality`=N → N инстансов; завершение по всем; тест (3 инстанса, join после 3-го).
 
 ### BPMN-17 — Multi-instance (последовательный)
 **T1 · M · TODO · зависит: BPMN-16**
@@ -305,7 +309,7 @@ message boundary; message-**start** с ключом отложен.
 | BPMN-13 | Timer start (exec) | T1 | M | 01 |
 | BPMN-14 | Message boundary | T1 | M | 03,04 |
 | BPMN-15 | Non-interrupting timer boundary | T1 | S | — |
-| BPMN-16 | Multi-instance параллельный | T1 | L | — |
+| BPMN-16 | Multi-instance параллельный | T1 | L (DONE: user task/cardinality) | — |
 | BPMN-17 | Multi-instance последовательный | T1 | M | 16 |
 | BPMN-20 | Inclusive gateway | T2 | L | — |
 | BPMN-21 | Event-based gateway | T2 | M | catch-события |

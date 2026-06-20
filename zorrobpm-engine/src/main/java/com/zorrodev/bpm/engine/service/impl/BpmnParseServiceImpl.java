@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.service.impl;
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.engine.bpmn.model.CallActivityExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.MappingModel;
@@ -664,6 +665,16 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
         }
         attachIoMapping(element, userTask.getExtensionElements());
+        if (userTask.getMultiInstanceLoopCharacteristics() != null) {
+            BpmnMultiInstanceModel mi = userTask.getMultiInstanceLoopCharacteristics();
+            MultiInstanceExtensionModel ext = new MultiInstanceExtensionModel();
+            ext.setSequential(Boolean.TRUE.equals(mi.getIsSequential()));
+            ext.setCardinality(mi.getLoopCardinality() != null ? mi.getLoopCardinality().strip() : null);
+            if (element.getExtensions() == null) {
+                element.setExtensions(new BpmnElementExtensionModel());
+            }
+            element.getExtensions().setMultiInstanceExtension(ext);
+        }
         return element;
     }
 
