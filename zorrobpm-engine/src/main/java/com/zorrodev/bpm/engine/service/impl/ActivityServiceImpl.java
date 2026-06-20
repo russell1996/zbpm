@@ -78,6 +78,8 @@ public class ActivityServiceImpl implements ActivityService {
     private int maxExecutionDepth = 1000;
 
     private final ThreadLocal<Integer> executionDepth = ThreadLocal.withInitial(() -> 0);
+    // re-entrancy guard: a fired conditional event's own continuation must not re-trigger evaluation
+    private final ThreadLocal<Boolean> evaluatingConditionals = ThreadLocal.withInitial(() -> false);
 
     private final Map<BpmnElementType, ElementHandler> handlers = createHandlers();
 
@@ -113,6 +115,9 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.INTERMEDIATE_CATCH_EVENT, (pi, t, bpmn, el) -> enterWaitState(pi, t, el));
         map.put(BpmnElementType.MESSAGE_CATCH_EVENT, (pi, t, bpmn, el) -> enterMessageCatch(pi, t, el));
         map.put(BpmnElementType.TIMER_CATCH_EVENT, (pi, t, bpmn, el) -> enterTimerCatch(pi, t, el));
+        // Conditional catch: passes through if its FEEL condition already holds, otherwise parks until a
+        // variable change re-evaluates it to true (see triggerConditionalEvents).
+        map.put(BpmnElementType.CONDITIONAL_CATCH_EVENT, this::enterConditionalCatch);
         // Throw events are pass-through: a plain intermediate throw has no side effect and simply
         // continues. (Message throw publishing is added with the message subsystem.)
         map.put(BpmnElementType.INTERMEDIATE_THROW_EVENT, this::processThrowEvent);
@@ -289,6 +294,96 @@ public class ActivityServiceImpl implements ActivityService {
             .orElseThrow(() -> new EngineException("Message catch event " + bpmnElement.getId() + " has no message name"));
         dbService.createMessageSubscription(processInstanceId, activityId, messageName);
         log.info("{}/{}: Subscribed to message '{}' at {}: {}/{}", processInstanceId, tokenId, messageName, bpmnElement.getType(), activityId, bpmnElement.getId());
+    }
+
+    /**
+     * Conditional catch event: if its FEEL condition already holds against the current variables it is a
+     * pass-through; otherwise the token parks here (an active activity) until a later variable change
+     * re-evaluates the condition to true (see {@link #triggerConditionalEvents}).
+     */
+    private void enterConditionalCatch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+        if (conditionHolds(bpmnElement, variables)) {
+            dbService.completeActivity(activityId);
+            log.info("{}/{}: Conditional catch {} already true, passing through: {}", processInstanceId, tokenId, bpmnElement.getId(), activityId);
+            proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+        } else {
+            log.info("{}/{}: Waiting on condition at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+        }
+    }
+
+    /** Evaluates a conditional event's FEEL condition against the given variables (a leading {@code =} is stripped). */
+    private boolean conditionHolds(BpmnElementModel element, List<ProcessVariable> variables) {
+        String expression = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getExpression)
+            .filter(s -> !s.isBlank())
+            .orElseThrow(() -> new EngineException("Conditional event " + element.getId() + " has no condition"));
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        Object result = scriptService.evaluateScript(expression, variables);
+        return Boolean.TRUE.equals(result);
+    }
+
+    /**
+     * Re-evaluates the instance's conditional events after a variable change: any parked conditional catch
+     * whose condition is now true is signalled, and any conditional boundary on an active host whose
+     * condition is now true is fired. A thread-local guard stops a fired event's own continuation (which
+     * runs through {@link #signal}/{@link #fireBoundary}) from recursively re-triggering this pass.
+     */
+    private void triggerConditionalEvents(UUID processInstanceId) {
+        if (Boolean.TRUE.equals(evaluatingConditionals.get())) {
+            return;
+        }
+        evaluatingConditionals.set(true);
+        try {
+            ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+            if (pi.getCompletedAt() != null) {
+                return;
+            }
+            BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            for (Activity activity : dbService.getActiveActivities(processInstanceId)) {
+                BpmnElementModel element = bpmn.getElement(activity.getBpmnElementId());
+                if (element == null) {
+                    continue;
+                }
+                if (element.getType() == BpmnElementType.CONDITIONAL_CATCH_EVENT) {
+                    if (conditionHolds(element, variables)) {
+                        log.info("{}: Conditional catch {} satisfied, firing", processInstanceId, element.getId());
+                        signal(activity.getId(), List.of());
+                    }
+                } else {
+                    for (BpmnElementModel boundary : findConditionalBoundaries(bpmn, element.getId())) {
+                        if (conditionHolds(boundary, variables)) {
+                            log.info("{}: Conditional boundary {} satisfied, firing on host {}", processInstanceId, boundary.getId(), element.getId());
+                            fireBoundary(activity.getId(), boundary.getId(), List.of());
+                        }
+                    }
+                }
+            }
+        } finally {
+            evaluatingConditionals.set(false);
+        }
+    }
+
+    private List<BpmnElementModel> findConditionalBoundaries(BpmnProcessDefinitionModel bpmn, String hostId) {
+        List<BpmnElementModel> boundaries = new ArrayList<>();
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.CONDITIONAL_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (hostId.equals(attached)) {
+                boundaries.add(element);
+            }
+        }
+        return boundaries;
     }
 
     private Instant computeDueAt(BpmnElementModel element) {
@@ -709,6 +804,7 @@ public class ActivityServiceImpl implements ActivityService {
 
         dbService.completeActivity(activityId);
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+        triggerConditionalEvents(processInstanceId);
     }
 
     /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */
@@ -783,6 +879,7 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+        triggerConditionalEvents(processInstanceId);
     }
 
     private void enterUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
@@ -902,6 +999,7 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement);
+        triggerConditionalEvents(processInstanceId);
     }
 
     @Override
@@ -936,6 +1034,7 @@ public class ActivityServiceImpl implements ActivityService {
         }
 
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+        triggerConditionalEvents(processInstanceId);
     }
 
     @Override
@@ -983,6 +1082,7 @@ public class ActivityServiceImpl implements ActivityService {
             log.info("{}/{}: Boundary {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
             proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary);
         }
+        triggerConditionalEvents(processInstanceId);
     }
 
     @Override
