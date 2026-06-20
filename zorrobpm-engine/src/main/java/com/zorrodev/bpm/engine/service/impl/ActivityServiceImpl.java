@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnConditionExpressionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
@@ -15,6 +16,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
@@ -92,6 +94,8 @@ public class ActivityServiceImpl implements ActivityService {
         map.put(BpmnElementType.ESCALATION_END_EVENT, this::processEscalationEnd);
         map.put(BpmnElementType.ESCALATION_THROW_EVENT, this::processEscalationThrow);
         map.put(BpmnElementType.SERVICE_TASK, (pi, t, bpmn, el) -> enterServiceTask(pi, t, el));
+        // Script task = synchronous inline FEEL evaluation; the result is written to a process variable.
+        map.put(BpmnElementType.SCRIPT_TASK, this::processScriptTask);
         map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
         // Send task = message throw in task form; Receive task = message catch (wait state) in task form.
         map.put(BpmnElementType.SEND_TASK, this::processMessageThrow);
@@ -675,6 +679,64 @@ public class ActivityServiceImpl implements ActivityService {
             BpmnElementModel target = bpmn.getElement(targetRef);
             execute(processInstanceId, token, bpmn, target);
         }
+    }
+
+    /**
+     * Script task: evaluates the inline FEEL script synchronously against the instance variables and, if a
+     * result variable is configured, writes the result back before continuing. A script error (bad FEEL,
+     * undefined variable, ...) leaves the activity un-completed and surfaces as an incident via the handler
+     * dispatch in {@link #execute}, like any other element failure.
+     */
+    private void processScriptTask(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+
+        ScriptTaskExtensionModel ext = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getScriptTaskExtension)
+            .orElseThrow(() -> new IllegalStateException("Script task '" + bpmnElement.getId() + "' has no script"));
+        String script = ext.getScript();
+        if (script == null || script.isBlank()) {
+            throw new IllegalStateException("Script task '" + bpmnElement.getId() + "' has an empty script");
+        }
+
+        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+        Object result = scriptService.evaluateExpression(script, variables);
+        log.info("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), result);
+
+        String resultVariable = ext.getResultVariable();
+        if (resultVariable != null && !resultVariable.isBlank()) {
+            dbService.setVariables(processInstanceId, List.of(toProcessVariable(resultVariable, result)));
+        }
+
+        dbService.completeActivity(activityId);
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */
+    private ProcessVariable toProcessVariable(String name, Object result) {
+        ProcessVariable variable = new ProcessVariable();
+        variable.setName(name);
+        if (result instanceof Boolean b) {
+            variable.setType(ProcessVariableType.BOOLEAN);
+            variable.setValue(b.toString());
+        } else if (result instanceof Number number && isIntegral(number)) {
+            variable.setType(ProcessVariableType.LONG);
+            variable.setValue(Long.toString(number.longValue()));
+        } else {
+            variable.setType(ProcessVariableType.STRING);
+            variable.setValue(result == null ? "" : result.toString());
+        }
+        return variable;
+    }
+
+    private boolean isIntegral(Number number) {
+        if (number instanceof Long || number instanceof Integer || number instanceof Short || number instanceof Byte) {
+            return true;
+        }
+        if (number instanceof java.math.BigDecimal bd) {
+            return bd.stripTrailingZeros().scale() <= 0;
+        }
+        double d = number.doubleValue();
+        return d == Math.rint(d) && !Double.isInfinite(d);
     }
 
     private void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {

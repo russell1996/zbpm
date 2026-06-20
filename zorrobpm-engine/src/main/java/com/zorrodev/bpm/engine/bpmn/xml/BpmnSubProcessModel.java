@@ -45,6 +45,9 @@ public class BpmnSubProcessModel {
     @XmlElement(name = "serviceTask", namespace = NS)
     private List<BpmnServiceTaskModel> serviceTasks;
 
+    @XmlElement(name = "scriptTask", namespace = NS)
+    private List<BpmnScriptTaskModel> scriptTasks;
+
     @XmlElement(name = "userTask", namespace = NS)
     private List<BpmnUserTaskModel> userTasks;
 
