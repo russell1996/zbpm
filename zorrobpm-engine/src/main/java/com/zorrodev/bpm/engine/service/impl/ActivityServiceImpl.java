@@ -1096,19 +1096,17 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     /**
-     * Parallel multi-instance user task: spawns N user-task activities (one per instance) on the same token,
-     * recording N as the count the join waits for. Each completion records an arrival; the last one
-     * continues from the task's outgoing (see {@link #completeUserTask}).
+     * Multi-instance user task. Parallel: spawns all N user-task activities on the same token at once.
+     * Sequential: spawns only the first instance; the next is created as each completes (see
+     * {@link #multiInstanceContinue}). N comes from {@code loopCardinality}; the join is told to expect N
+     * (reusing the parallel/inclusive arrival mechanism).
      *
-     * <p>Scope: parallel multi-instance driven by {@code loopCardinality}. Sequential multi-instance,
-     * input/output collections and per-instance variables (loopCounter) are not yet supported (the flat
+     * <p>Scope: driven by {@code loopCardinality}, with an optional {@code completionCondition}.
+     * Input/output collections and per-instance variables (loopCounter) are not yet supported (the flat
      * variable model can't isolate per-instance state).
      */
     private void enterMultiInstanceUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         MultiInstanceExtensionModel mi = bpmnElement.getExtensions().getMultiInstanceExtension();
-        if (mi.isSequential()) {
-            throw new EngineException("Sequential multi-instance is not yet supported at " + bpmnElement.getId());
-        }
         int count = resolveCardinality(processInstanceId, bpmnElement);
         if (count <= 0) {
             log.info("{}/{}: Multi-instance {} has zero instances, skipping", processInstanceId, token, bpmnElement.getId());
@@ -1116,11 +1114,12 @@ public class ActivityServiceImpl implements ActivityService {
             return;
         }
         dbService.recordInclusiveExpected(processInstanceId, bpmnElement.getId(), count);
-        for (int i = 0; i < count; i++) {
+        int spawn = mi.isSequential() ? 1 : count;
+        for (int i = 0; i < spawn; i++) {
             UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
             dbService.createUserTask(activityId);
         }
-        log.info("{}/{}: Entering multi-instance {}: {} parallel instances", processInstanceId, token, bpmnElement.getId(), count);
+        log.info("{}/{}: Entering multi-instance {}: {} {} instance(s)", processInstanceId, token, bpmnElement.getId(), count, mi.isSequential() ? "sequential" : "parallel");
     }
 
     /** Resolves a multi-instance activity's instance count from its (literal or FEEL) loop cardinality. */
@@ -1141,20 +1140,45 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     /**
-     * Records a multi-instance iteration's completion and reports whether the join is ready (all instances
-     * done). Reuses the parallel-gateway arrival counter keyed by the activity id (unique per iteration).
+     * Records a multi-instance instance's completion and reports whether the whole multi-instance is done
+     * (so the flow should continue). The multi-instance completes when every instance has finished or the
+     * {@code completionCondition} holds. For a sequential multi-instance that is not yet done, the next
+     * instance is started here. Reuses the parallel/inclusive arrival counter, keyed by the unique activity id.
      */
-    private boolean multiInstanceJoinReady(UUID processInstanceId, BpmnElementModel element, UUID completedActivityId) {
+    private boolean multiInstanceContinue(UUID processInstanceId, UUID token, BpmnElementModel element, UUID completedActivityId) {
         String miId = element.getId();
+        MultiInstanceExtensionModel mi = element.getExtensions().getMultiInstanceExtension();
         dbService.recordParallelGatewayArrival(processInstanceId, miId, completedActivityId.toString());
         Integer expected = dbService.getInclusiveExpected(processInstanceId, miId);
-        Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, miId);
-        if (expected != null && arrived.size() >= expected) {
+        int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, miId).size();
+
+        boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, mi);
+        if (done) {
             dbService.clearParallelGatewayArrivals(processInstanceId, miId);
             return true;
         }
-        log.info("{}: Multi-instance {} not ready: {} of {} instances done", processInstanceId, miId, arrived.size(), expected);
+        if (mi.isSequential()) {
+            // start the next sequential instance on the same token
+            UUID next = dbService.createActivity(processInstanceId, token, element);
+            dbService.createUserTask(next);
+            log.info("{}/{}: Multi-instance {} starting next sequential instance ({} of {} done)", processInstanceId, token, miId, arrived, expected);
+        } else {
+            log.info("{}: Multi-instance {} not ready: {} of {} instances done", processInstanceId, miId, arrived, expected);
+        }
         return false;
+    }
+
+    /** Evaluates a multi-instance {@code completionCondition} (a FEEL boolean), or false if none is set. */
+    private boolean completionConditionMet(UUID processInstanceId, MultiInstanceExtensionModel mi) {
+        String expression = mi.getCompletionCondition();
+        if (expression == null || expression.isBlank()) {
+            return false;
+        }
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        Object result = scriptService.evaluateScript(expression, dbService.getVariables(processInstanceId));
+        return Boolean.TRUE.equals(result);
     }
 
     /**
@@ -1264,8 +1288,8 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         applyIoMappings(processInstanceId, bpmnElement, false);
-        if (isMultiInstance(bpmnElement) && !multiInstanceJoinReady(processInstanceId, bpmnElement, userTaskId)) {
-            // other parallel instances are still outstanding; the last one will continue the flow
+        if (isMultiInstance(bpmnElement) && !multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId)) {
+            // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
         }
         proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement);

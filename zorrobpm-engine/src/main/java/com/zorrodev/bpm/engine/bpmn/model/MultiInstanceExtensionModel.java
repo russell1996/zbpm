@@ -12,4 +12,7 @@ import lombok.Setter;
 public class MultiInstanceExtensionModel {
     private boolean sequential;
     private String cardinality;
+    /** Optional FEEL boolean: when it evaluates true after an instance completes, the multi-instance
+     *  completes early (no further instances are started). */
+    private String completionCondition;
 }
