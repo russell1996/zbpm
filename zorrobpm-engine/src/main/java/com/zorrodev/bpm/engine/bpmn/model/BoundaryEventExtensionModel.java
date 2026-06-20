@@ -12,4 +12,7 @@ public class BoundaryEventExtensionModel {
     /** {@code true} (default) cancels the host activity on fire; {@code false} leaves it running and
      *  spawns a parallel branch from the boundary. */
     private boolean interrupting = true;
+    /** For a compensation boundary: the id of its compensation handler activity (resolved from the
+     *  {@code <bpmn:association>} linking the boundary to the handler). */
+    private String compensationHandlerId;
 }

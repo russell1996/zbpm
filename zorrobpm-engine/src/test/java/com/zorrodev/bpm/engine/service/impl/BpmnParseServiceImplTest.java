@@ -510,6 +510,21 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseCompensation() throws IOException {
+        // compensation boundary -> COMPENSATION_BOUNDARY_EVENT with its handler resolved from <association>;
+        // an intermediate throw with compensateEventDefinition -> COMPENSATION_THROW_EVENT
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-compensation.bpmn")));
+
+        BpmnElementModel bA = bpmn.getElement("bA");
+        assertThat(bA.getType()).isEqualTo(BpmnElementType.COMPENSATION_BOUNDARY_EVENT);
+        assertThat(bA.getExtensions().getBoundaryEventExtension().getAttachedToRef()).isEqualTo("taskA");
+        assertThat(bA.getExtensions().getBoundaryEventExtension().getCompensationHandlerId()).isEqualTo("handlerA");
+
+        assertThat(bpmn.getElement("compThrow").getType()).isEqualTo(BpmnElementType.COMPENSATION_THROW_EVENT);
+    }
+
+    @Test
     void testParseIoMapping() throws IOException {
         // a task's <zeebe:ioMapping> input/output mappings are read into the io-mapping extension
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()

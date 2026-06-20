@@ -266,8 +266,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     boolean signal = boundaryEvent.getSignalEventDefinition() != null;
                     boolean escalation = boundaryEvent.getEscalationEventDefinition() != null;
                     boolean conditional = boundaryEvent.getConditionalEventDefinition() != null;
-                    if (!timer && !error && !message && !signal && !escalation && !conditional) {
-                        continue; // only timer, error, message, signal, escalation and conditional boundaries are executable today
+                    boolean compensation = boundaryEvent.getCompensateEventDefinition() != null;
+                    if (!timer && !error && !message && !signal && !escalation && !conditional && !compensation) {
+                        continue; // only timer, error, message, signal, escalation, conditional and compensation boundaries are executable today
                     }
                     BpmnElementModel element = toBoundaryElement(boundaryEvent);
                     element.setProcessDefinition(pd);
@@ -280,6 +281,19 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         element.getExtensions().setMessageEventExtension(msg);
                     }
                     pd.addElement(element);
+                }
+            }
+
+            // resolve each compensation boundary's handler from the <association> that links them
+            if (process.getAssociations() != null) {
+                for (BpmnElementModel element : pd.getElements()) {
+                    if (element.getType() != BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
+                        continue;
+                    }
+                    String handlerId = resolveCompensationHandler(element.getId(), process.getAssociations());
+                    if (handlerId != null) {
+                        element.getExtensions().getBoundaryEventExtension().setCompensationHandlerId(handlerId);
+                    }
                 }
             }
 
@@ -384,6 +398,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             // the FEEL condition is resolved into the eventDefinition extension by the caller;
             // conditional boundaries are interrupting or non-interrupting per cancelActivity
             element.setType(BpmnElementType.CONDITIONAL_BOUNDARY_EVENT);
+        } else if (boundaryEvent.getCompensateEventDefinition() != null) {
+            // compensation boundary: registers a handler (resolved from <association>) to run on a
+            // compensation throw; it never fires/cancels the host like other boundaries
+            element.setType(BpmnElementType.COMPENSATION_BOUNDARY_EVENT);
         }
 
         return element;
@@ -774,11 +792,27 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.ESCALATION_THROW_EVENT);
         } else if (throwEvent.getLinkEventDefinition() != null) {
             element.setType(BpmnElementType.LINK_THROW_EVENT);
+        } else if (throwEvent.getCompensateEventDefinition() != null) {
+            element.setType(BpmnElementType.COMPENSATION_THROW_EVENT);
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_THROW_EVENT);
         }
 
         return element;
+    }
+
+    /** Finds the compensation handler associated with a boundary: the other end of an {@code <association>}
+     *  touching the boundary (direction is not significant). Returns null if none. */
+    private String resolveCompensationHandler(String boundaryId, List<BpmnAssociationModel> associations) {
+        for (BpmnAssociationModel association : associations) {
+            if (boundaryId.equals(association.getSourceRef())) {
+                return association.getTargetRef();
+            }
+            if (boundaryId.equals(association.getTargetRef())) {
+                return association.getSourceRef();
+            }
+        }
+        return null;
     }
 
     private BpmnElementModel toElementModel(BpmnCallActivityModel callActivity) {

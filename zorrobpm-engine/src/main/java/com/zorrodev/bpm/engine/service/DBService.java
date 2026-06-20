@@ -36,6 +36,9 @@ public interface DBService {
     /** Active (created/in-progress) activities of an instance — used to re-evaluate conditional events. */
     List<Activity> getActiveActivities(UUID processInstanceId);
 
+    /** Completed activities of an instance — used to compensate them (in reverse completion order). */
+    List<Activity> getCompletedActivities(UUID processInstanceId);
+
     ProcessInstance getProcessInstance(UUID processInstanceId);
 
     /**

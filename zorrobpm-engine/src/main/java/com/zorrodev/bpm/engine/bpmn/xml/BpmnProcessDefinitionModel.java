@@ -53,4 +53,6 @@ public class BpmnProcessDefinitionModel {
     private List<BpmnSubProcessModel> subProcesses;
     @XmlElement(name = "boundaryEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnBoundaryEventModel> boundaryEvents;
+    @XmlElement(name = "association", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnAssociationModel> associations;
 }
