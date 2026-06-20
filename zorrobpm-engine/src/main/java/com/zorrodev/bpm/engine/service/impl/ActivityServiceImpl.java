@@ -116,6 +116,9 @@ public class ActivityServiceImpl implements ActivityService {
         // Signal catch parks and subscribes; signal throw broadcasts to all active subscribers (1:N).
         map.put(BpmnElementType.SIGNAL_CATCH_EVENT, (pi, t, bpmn, el) -> enterSignalCatch(pi, t, el));
         map.put(BpmnElementType.SIGNAL_THROW_EVENT, this::processSignalThrow);
+        // Link throw jumps to the matching link catch (an intra-process goto); the catch is a pass-through.
+        map.put(BpmnElementType.LINK_THROW_EVENT, this::processLinkThrow);
+        map.put(BpmnElementType.LINK_CATCH_EVENT, this::processStartEvent);
         return map;
     }
 
@@ -144,6 +147,50 @@ public class ActivityServiceImpl implements ActivityService {
         log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
+    }
+
+    /**
+     * Link throw: an intra-process "goto". Completes the throw activity, then continues from the
+     * matching link catch (same link name) — there is exactly one catch per link name. A throw with
+     * no matching catch is an incident (raised by the {@code orElseThrow}).
+     */
+    private void processLinkThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        dbService.completeActivity(activityId);
+
+        String linkName = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getName)
+            .orElse(null);
+
+        BpmnElementModel catchEvent = findLinkCatch(bpmn, linkName);
+        if (catchEvent == null) {
+            throw new IllegalStateException("Link throw '" + bpmnElement.getId()
+                + "' has no matching link catch for link '" + linkName + "'");
+        }
+        log.info("{}/{}: Link throw {} -> catch {} (link '{}')", processInstanceId, tokenId, bpmnElement.getId(), catchEvent.getId(), linkName);
+
+        // jump to the catch: execute it (records the catch activity and continues from its outgoing)
+        execute(processInstanceId, tokenId, bpmn, catchEvent);
+    }
+
+    private BpmnElementModel findLinkCatch(BpmnProcessDefinitionModel bpmn, String linkName) {
+        if (linkName == null) {
+            return null;
+        }
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.LINK_CATCH_EVENT) {
+                continue;
+            }
+            String name = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getEventDefinition)
+                .map(EventDefinitionExtensionModel::getName)
+                .orElse(null);
+            if (linkName.equals(name)) {
+                return element;
+            }
+        }
+        return null;
     }
 
     /**

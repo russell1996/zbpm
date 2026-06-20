@@ -458,6 +458,20 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseLinkEvents() throws IOException {
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-link-events.bpmn")));
+
+        BpmnElementModel linkThrow = bpmn.getElement("linkThrow");
+        assertThat(linkThrow.getType()).isEqualTo(BpmnElementType.LINK_THROW_EVENT);
+        assertThat(linkThrow.getExtensions().getEventDefinition().getName()).isEqualTo("L1");
+
+        BpmnElementModel linkCatch = bpmn.getElement("linkCatch");
+        assertThat(linkCatch.getType()).isEqualTo(BpmnElementType.LINK_CATCH_EVENT);
+        assertThat(linkCatch.getExtensions().getEventDefinition().getName()).isEqualTo("L1");
+    }
+
+    @Test
     void testParseInclusiveGateway() throws IOException {
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
             .parse(Files.readString(Path.of("src/test/files/test-inclusive-gateway.bpmn")));
