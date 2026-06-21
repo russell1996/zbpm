@@ -1000,6 +1000,15 @@ public class ActivityServiceImpl implements ActivityService {
      * dispatch in {@link #execute}, like any other element failure.
      */
     private void processScriptTask(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        // Camunda 8: a script task with a zeebe:taskDefinition runs as a job worker (like a service task)
+        boolean jobWorker = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .isPresent();
+        if (jobWorker) {
+            enterServiceTask(processInstanceId, tokenId, bpmnElement);
+            return;
+        }
+
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
 
         ScriptTaskExtensionModel ext = Optional.ofNullable(bpmnElement.getExtensions())

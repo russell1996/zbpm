@@ -130,13 +130,11 @@
 - **Приоритет:** **P2** · **Сложность:** **S**
 - **Примечание:** уточнили политику исключений движка — `EngineException` пробрасывается (abort), прочие → инцидент; рекомендация отчёта (Task 8, `EngineException`) скорректирована на `IllegalStateException`.
 
-#### C8-6 · Script task в форме job worker (`zeebe:taskDefinition`)
-- **Описание:** обрабатывается `zeebe:script` (FEEL); C8 8.2+ допускает script task через job worker (`zeebe:taskDefinition`), который сейчас не диспатчится.
+#### C8-6 · Script task в форме job worker (`zeebe:taskDefinition`) — ✅ ВЫПОЛНЕНО
+- **Описание:** обрабатывался только `zeebe:script` (FEEL); C8 8.2+ допускает script task через job worker (`zeebe:taskDefinition`).
 - **BPMN-элемент:** `scriptTask`.
-- **Влияние на совместимость:** C8 script task на воркере не исполняется (инцидент «нет скрипта»).
-- **Риск миграции:** **низкий** (редкий вариант — обычно FEEL).
-- **Приоритет:** **P2**
-- **Сложность:** **S** (по аналогии с `processSendTask`: ветка job-worker для script task).
+- **Сделано:** парсер при наличии `zeebe:taskDefinition` на scriptTask создаёт service-task job; `processScriptTask` ветвится — job worker → `enterServiceTask` (паркуется, завершается через API), иначе inline/zeebe FEEL. Тест: `Camunda8FormsIntegrationTests.scriptTaskWithZeebeTaskDefinitionRunsAsAJobWorker`.
+- **Приоритет:** **P2** · **Сложность:** **S**
 
 #### C8-7 · Надёжность графа: null-safe `proceedToOutgoing`/`execute`/`fireBoundary`/`finishBranch` + `BpmnService` race
 - **Описание:** NPE-цепочки при отсутствии `flow`/`target`/`element`/`boundary`; `getProcessDefinitionModelById` использует `containsKey`+`get` (гонка, NPE при `parse(null)`).
