@@ -49,6 +49,30 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 Условия вычисляются движком **Camunda FEEL**.
 
+## Camunda 8 Compatibility
+
+Движок использует BPMN 2.0 + Zeebe-расширения (`http://camunda.org/schema/zeebe/1.0`), поэтому большинство
+конструкций моделируется так же, как в **Camunda 8**. Полный аудит — в
+[docs/camunda8-compatibility.md](docs/camunda8-compatibility.md). Сводка:
+
+| Статус | Конструкции |
+|---|---|
+| ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User/Receive task, Business rule task (`zeebe:calledDecision`), Call activity, Embedded & Event subprocess, `zeebe:ioMapping`, correlation key (`zeebe:subscription`), FEEL-условия |
+| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Script task (inline `<bpmn:script>` вместо `zeebe:script`), Multi-instance (`loopCardinality` вместо `zeebe:loopCharacteristics`/`inputCollection`), Send task (`messageRef` vs job-worker), Business rule FEEL-режим (`zeebe:script`), Compensation (compensate-all; targeted — позже), IO-mappings (плоские переменные вместо scoped) |
+| ❌ **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | **Conditional** события (start/catch/boundary), **Transaction** subprocess, **Cancel** события (end/boundary) |
+
+**Рекомендации для переносимости в Camunda 8:**
+
+- Избегать ❌-конструкций (conditional / transaction / cancel) — это надстройка над C8, полезная вне него,
+  но в Camunda 8 модель не задеплоится.
+- Привести ⚠️-конструкции к C8-нотации: script task → `zeebe:script`; multi-instance →
+  `zeebe:loopCharacteristics` с `inputCollection`; send task → message intermediate throw / service task.
+- Приоритеты паритета с C8: чтение `zeebe:script` и `zeebe:loopCharacteristics`, scoped-переменные для
+  IO-mappings, остальные триггеры event subprocess, targeted-компенсация.
+
+DMN исполняется собственным движком решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL);
+для стандартных таблиц решений поведение эквивалентно.
+
 ## Архитектура
 
 Многомодульный Maven-проект:
