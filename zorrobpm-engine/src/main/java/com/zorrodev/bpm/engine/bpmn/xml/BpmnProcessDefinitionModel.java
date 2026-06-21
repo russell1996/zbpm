@@ -33,6 +33,8 @@ public class BpmnProcessDefinitionModel {
     private List<BpmnReceiveTaskModel> receiveTasks;
     @XmlElement(name = "scriptTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnScriptTaskModel> scriptTasks;
+    @XmlElement(name = "businessRuleTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnBusinessRuleTaskModel> businessRuleTasks;
     @XmlElement(name = "userTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnUserTaskModel> userTasks;
     @XmlElement(name = "exclusiveGateway", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")

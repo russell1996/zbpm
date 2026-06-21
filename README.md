@@ -22,7 +22,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Start / End / Terminate-end события | Multi-instance: input/output-коллекции / loopCounter |
 | **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional **start** событие (catch/boundary — поддержаны) |
 | Потоки управления (sequence flow) | Компенсация: targeted (по activityRef) / в подпроцессе |
-| Exclusive gateway (условия на FEEL + поток по умолчанию) | Business rule (DMN) задачи |
+| Exclusive gateway (условия на FEEL + поток по умолчанию) | |
 | Parallel gateway (split / join) | Event sub-process: не-message-триггеры (timer/error/signal) |
 | **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | Transaction: вложенные транзакции |
 | **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
@@ -32,6 +32,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Send / Receive task** (message throw / catch в форме задачи) | |
 | **Script task** (inline FEEL-выражение, результат в переменную) | |
 | **IO mappings** (`zeebe:ioMapping` input/output, FEEL-трансформации на service/user task) | |
+| **Business rule task** (DMN-решение через `zeebe:calledDecision` + DMN-движок; или inline FEEL) | |
 | Call activity, встроенный подпроцесс | |
 | **Event sub-process** (message-триггер, **прерывающий и непрерывающий**) | |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция по имени и по **ключу**), **timer** (дата/длительность) | |
@@ -218,7 +219,7 @@ public class ChargeHandler implements JobHandler {
 
 ## База данных и миграции
 
-Схема управляется **Liquibase** (`zorrobpm-engine/src/main/resources/db/changelog`), применяется автоматически при старте. Ключевые таблицы: `process_definitions`, `process_instances`, `activities`, `tokens`, `variables`, `user_tasks`, `service_tasks`, `incidents`, `timer_jobs`, `message_subscriptions`, `signal_subscriptions`, `signal_start_subscriptions`, `parallel_gateways`.
+Схема управляется **Liquibase** (`zorrobpm-engine/src/main/resources/db/changelog`), применяется автоматически при старте. Ключевые таблицы: `process_definitions`, `process_instances`, `activities`, `tokens`, `variables`, `user_tasks`, `service_tasks`, `incidents`, `timer_jobs`, `message_subscriptions`, `signal_subscriptions`, `signal_start_subscriptions`, `parallel_gateways`, `dmn_definitions`.
 
 ## Ограничения и замечания по проду
 

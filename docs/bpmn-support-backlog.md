@@ -21,7 +21,10 @@ BPMN-фикстурами в `zorrobpm-engine/src/test/files`.
 > BPMN-21 (event-based gateway — гонка catch-событий, первое отменяет остальные)
 > и BPMN-20 (inclusive gateway — split по всем истинным веткам + default, динамический join).
 >
-> **Прогресс (T3):** ✅ BPMN-33 (transaction sub-process + cancel — cancel-end компенсирует транзакцию и
+> **Прогресс (T3):** ✅ BPMN-31 (business rule task — DMN через `zeebe:calledDecision` + собственный
+> DMN-движок поверх текущего feel-engine, либо inline FEEL через `zeebe:script`; DMN-таблицы C8-формата
+> деплоятся по decisionId),
+> BPMN-33 (transaction sub-process + cancel — cancel-end компенсирует транзакцию и
 > уходит по cancel-boundary; вложенные транзакции отложены),
 > BPMN-32 (compensation — compensation boundary + intermediate throw, откат
 > завершённых compensation-bounded активностей в обратном порядке; targeted/в подпроцессе отложены),
@@ -230,9 +233,20 @@ Inline-скрипт на FEEL (`<bpmn:script>` + `scriptFormat="feel"`) вычи
 **Приёмка**: вычисление и запись переменных; тесты (числовой/булев/строковый результат + невалидный скрипт→инцидент).
 
 ### BPMN-31 — Business rule task (DMN)
-**T3 · L · TODO**
-Исполнение DMN-таблиц (например, через camunda-dmn-engine). Деплой DMN, привязка к задаче.
-**Приёмка**: задача исполняет DMN-решение и пишет результат в переменные; тесты.
+**T3 · L · DONE**
+`<businessRuleTask>` с двумя режимами: **DMN** (`zeebe:calledDecision decisionId resultVariable`) и **FEEL**
+(`zeebe:script expression resultVariable` — inline-выражение на expression-движке).
+DMN реализован **собственным движком решений поверх текущего feel-engine** (тот же feel-scala, что у
+Camunda 8 — без отдельной DMN-зависимости и без конфликта `org.camunda.feel`): DMN 1.3 XML парсится JAXB
+(`dmn/xml/*`), таблица вычисляется через `FeelEngineApi` — input-выражения и output-entries как FEEL,
+input-entries как FEEL unary-tests (`evaluateUnaryTests` с входным значением); hit policy UNIQUE/FIRST/ANY
+(берётся первое совпавшее правило). DMN-решения деплоятся по `decisionId` (`DmnService.deploy`/`evaluate`,
+таблица `dmn_definitions`); результат пишется в `resultVariable` (одна выходная колонка → значение,
+несколько → map по именам).
+Отложено: деплой DMN через REST (сейчас через сервис), COLLECT/RULE ORDER hit policy, decision
+requirements graph (вызов decision из decision).
+**Приёмка**: задача исполняет DMN-решение и пишет результат в переменную; тесты (DMN-таблица discount по
+category → 20; inline FEEL amount*2 → 10).
 
 ### BPMN-32 — Compensation
 **T3 · L · DONE (throw + boundary, обратный порядок) · зависит: BPMN-03**
@@ -324,7 +338,7 @@ message boundary; message-**start** с ключом отложен.
 | BPMN-26 | Event sub-process | T2 | L (DONE: msg interrupt+non-int) | 03 |
 | BPMN-27 | Escalation | T2 | M | 03 |
 | BPMN-30 | Script task | T3 | M (DONE) | — |
-| BPMN-31 | Business rule (DMN) | T3 | L | — |
+| BPMN-31 | Business rule (DMN) | T3 | L (DONE) | — |
 | BPMN-32 | Compensation | T3 | L (DONE: throw+boundary) | 03 |
 | BPMN-33 | Transaction + Cancel | T3 | M (DONE) | 32 |
 | BPMN-34 | Link events | T3 | S | 01 |
