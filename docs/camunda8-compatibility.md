@@ -80,7 +80,7 @@
 
 | Конструкция | Статус | Описание проблемы | Рекомендация |
 |---|---|---|---|
-| Типы переменных (`STRING`/`LONG`/**`DOUBLE`**/`BOOLEAN`/`UUID`) | ⚠️ Частично | **Десятичные (`DOUBLE`)** входят в FEEL/DMN как число (арифметика и сравнения работают). **Отложено**: JSON-объекты и списки (C8 JSON-payload) — см. план C8-1 | Добавить комплексные (JSON object/list) переменные — C8-1B |
+| Типы переменных (`STRING`/`LONG`/**`DOUBLE`**/`BOOLEAN`/`UUID`/**`JSON`**) | ⚠️ Частично | **Десятичные (`DOUBLE`)** и **JSON-объекты/списки** входят в FEEL/DMN как число / Map/List (доступ к `order.total`, итерация). Java-структурный результат (напр. DMN-выход) сохраняется как `JSON`. **Отложено** (1C): FEEL-выражение, *возвращающее* структуру через ScriptService, отдаёт Scala-коллекцию → нужна Scala→JSON-сериализация | Заход 1C: Scala→JSON для результатов script task |
 | IO mappings (`zeebe:ioMapping` input/output) | ✅ Совместимо | C8-нативно со **scoped-переменными**: input-маппинги локальны для активности (не протекают на экземпляр), output-маппинги пропагируются в родительский scope; локальные переменные удаляются по завершении задачи | — |
 | Message correlation key (`zeebe:subscription correlationKey` на `<message>`) | ✅ Совместимо | C8-нативно | — |
 | Sequence flow condition (`conditionExpression`, FEEL) | ✅ Совместимо | — | — |

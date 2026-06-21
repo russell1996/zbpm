@@ -63,6 +63,7 @@ public class ActivityServiceImpl implements ActivityService {
     private final ScriptService scriptService;
     private final DmnService dmnService;
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
     /**
      * Handler for a single BPMN element type. Method references capture {@code this} lazily,
@@ -1045,6 +1046,10 @@ public class ActivityServiceImpl implements ActivityService {
                 ? x : java.math.BigDecimal.valueOf(number.doubleValue());
             variable.setType(ProcessVariableType.DOUBLE);
             variable.setValue(bd.toPlainString());
+        } else if (result instanceof java.util.Map || result instanceof java.util.List) {
+            // structured result (e.g. a DMN object/list output via FeelEngineApi) -> JSON
+            variable.setType(ProcessVariableType.JSON);
+            variable.setValue(objectMapper.writeValueAsString(result));
         } else {
             variable.setType(ProcessVariableType.STRING);
             variable.setValue(result == null ? "" : result.toString());
