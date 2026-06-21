@@ -69,6 +69,22 @@ services:
     networks:
       - zorrobpm
 
+  # Vue SPA served by nginx; also reverse-proxies /api -> app:8080 inside the network.
+  # The external production proxy (https://zorro.i-smet.kz) forwards to this service.
+  frontend:
+    build:
+      context: ./zorrobpm-frontend
+      dockerfile: Dockerfile
+    image: zorrobpm-frontend:${FRONTEND_TAG:-latest}
+    container_name: zorrobpm-frontend
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+    networks:
+      - zorrobpm
+
 volumes:
   postgres-data:
   rabbitmq-data:
