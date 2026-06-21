@@ -1077,15 +1077,61 @@ public class ActivityServiceImpl implements ActivityService {
                 ? x : java.math.BigDecimal.valueOf(number.doubleValue());
             variable.setType(ProcessVariableType.DOUBLE);
             variable.setValue(bd.toPlainString());
-        } else if (result instanceof java.util.Map || result instanceof java.util.List) {
-            // structured result (e.g. a DMN object/list output via FeelEngineApi) -> JSON
+        } else if (isStructuredResult(result)) {
+            // structured result: a Java Map/List (DMN output via FeelEngineApi) or a Scala collection (a FEEL
+            // context/list returned by ScriptService) -> normalised to a Java structure and stored as JSON
             variable.setType(ProcessVariableType.JSON);
-            variable.setValue(objectMapper.writeValueAsString(result));
+            variable.setValue(objectMapper.writeValueAsString(toJavaStructure(result)));
         } else {
             variable.setType(ProcessVariableType.STRING);
             variable.setValue(result == null ? "" : result.toString());
         }
         return variable;
+    }
+
+    /** Whether a FEEL result is a structured value (object/list) — Java or Scala collection. */
+    private boolean isStructuredResult(Object v) {
+        return v instanceof java.util.Map || v instanceof java.util.List
+            || v instanceof scala.collection.Map || v instanceof scala.collection.Iterable;
+    }
+
+    /**
+     * Normalises a FEEL result into a JSON-serializable Java structure. FEEL contexts/lists come back from
+     * {@code ScriptService} as Scala collections (and from {@code FeelEngineApi} as Java collections); both
+     * are converted recursively to {@link java.util.LinkedHashMap}/{@link java.util.ArrayList} with scalar
+     * leaves (BigDecimal/Boolean/String) left as-is.
+     */
+    private Object toJavaStructure(Object v) {
+        if (v instanceof scala.collection.Map<?, ?> sm) {
+            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
+            scala.collection.Iterator<?> it = sm.iterator();
+            while (it.hasNext()) {
+                scala.Tuple2<?, ?> entry = (scala.Tuple2<?, ?>) it.next();
+                out.put(String.valueOf(entry._1()), toJavaStructure(entry._2()));
+            }
+            return out;
+        }
+        if (v instanceof scala.collection.Iterable<?> si) {
+            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
+            scala.collection.Iterator<?> it = si.iterator();
+            while (it.hasNext()) {
+                out.add(toJavaStructure(it.next()));
+            }
+            return out;
+        }
+        if (v instanceof java.util.Map<?, ?> jm) {
+            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
+            jm.forEach((k, val) -> out.put(String.valueOf(k), toJavaStructure(val)));
+            return out;
+        }
+        if (v instanceof java.util.List<?> jl) {
+            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
+            for (Object e : jl) {
+                out.add(toJavaStructure(e));
+            }
+            return out;
+        }
+        return v;
     }
 
     private boolean isIntegral(Number number) {
