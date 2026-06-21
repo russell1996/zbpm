@@ -106,8 +106,9 @@ public class ActivityServiceImpl implements ActivityService {
         // Business rule task = evaluate a DMN decision or an inline FEEL expression, store the result.
         map.put(BpmnElementType.BUSINESS_RULE_TASK, this::processBusinessRuleTask);
         map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
-        // Send task = message throw in task form; Receive task = message catch (wait state) in task form.
-        map.put(BpmnElementType.SEND_TASK, this::processMessageThrow);
+        // Send task: a zeebe:taskDefinition makes it a job worker (Camunda 8), otherwise it is a message
+        // throw in task form. Receive task = message catch (wait state) in task form.
+        map.put(BpmnElementType.SEND_TASK, this::processSendTask);
         map.put(BpmnElementType.RECEIVE_TASK, (pi, t, bpmn, el) -> enterMessageCatch(pi, t, el));
         map.put(BpmnElementType.EXCLUSIVE_GATEWAY, this::processExclusiveGateway);
         map.put(BpmnElementType.PARALLEL_GATEWAY, this::processParallelGateway);
@@ -211,9 +212,19 @@ public class ActivityServiceImpl implements ActivityService {
     private void processCompensationThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
         dbService.completeActivity(activityId);
-        log.info("{}/{}: Compensation throw {} at {}", processInstanceId, tokenId, bpmnElement.getId(), activityId);
 
-        runCompensation(processInstanceId, tokenId, bpmn, dbService.getCompletedActivities(processInstanceId));
+        // activityRef targets a single activity to compensate; null = compensate every completed activity
+        String activityRef = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getReference)
+            .orElse(null);
+        log.info("{}/{}: Compensation throw {} at {} (target {})", processInstanceId, tokenId, bpmnElement.getId(), activityId, activityRef == null ? "all" : activityRef);
+
+        List<Activity> targets = dbService.getCompletedActivities(processInstanceId);
+        if (activityRef != null) {
+            targets = targets.stream().filter(a -> activityRef.equals(a.getBpmnElementId())).toList();
+        }
+        runCompensation(processInstanceId, tokenId, bpmn, targets);
 
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
     }
@@ -339,6 +350,21 @@ public class ActivityServiceImpl implements ActivityService {
             }
         }
         return null;
+    }
+
+    /**
+     * Send task: a Camunda-8 send task carries a {@code zeebe:taskDefinition} and runs as a job worker
+     * (like a service task); a BPMN-standard send task ({@code messageRef}) is a message throw.
+     */
+    private void processSendTask(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        boolean jobWorker = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .isPresent();
+        if (jobWorker) {
+            enterServiceTask(processInstanceId, tokenId, bpmnElement);
+        } else {
+            processMessageThrow(processInstanceId, tokenId, bpmn, bpmnElement);
+        }
     }
 
     /**
