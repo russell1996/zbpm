@@ -80,6 +80,7 @@
 
 | Конструкция | Статус | Описание проблемы | Рекомендация |
 |---|---|---|---|
+| Типы переменных (`STRING`/`LONG`/**`DOUBLE`**/`BOOLEAN`/`UUID`) | ⚠️ Частично | **Десятичные (`DOUBLE`)** входят в FEEL/DMN как число (арифметика и сравнения работают). **Отложено**: JSON-объекты и списки (C8 JSON-payload) — см. план C8-1 | Добавить комплексные (JSON object/list) переменные — C8-1B |
 | IO mappings (`zeebe:ioMapping` input/output) | ✅ Совместимо | C8-нативно со **scoped-переменными**: input-маппинги локальны для активности (не протекают на экземпляр), output-маппинги пропагируются в родительский scope; локальные переменные удаляются по завершении задачи | — |
 | Message correlation key (`zeebe:subscription correlationKey` на `<message>`) | ✅ Совместимо | C8-нативно | — |
 | Sequence flow condition (`conditionExpression`, FEEL) | ✅ Совместимо | — | — |
