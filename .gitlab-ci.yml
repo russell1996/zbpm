@@ -71,7 +71,9 @@ build:
   script:
     - docker build -t "$IMAGE_BACKEND:$IMAGE_TAG" -t "$IMAGE_BACKEND:latest" -f Dockerfile .
     - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" zorrobpm-frontend
-    - docker image ls "$IMAGE_BACKEND" "$IMAGE_FRONTEND"
+    # `docker image ls` accepts at most one repository argument — list each separately
+    - docker image ls "$IMAGE_BACKEND"
+    - docker image ls "$IMAGE_FRONTEND"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_BRANCH'
