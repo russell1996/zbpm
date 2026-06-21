@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
 import org.camunda.feel.api.FeelEngineApi;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.StringReader;
 import java.time.Instant;
@@ -37,6 +38,7 @@ public class DmnServiceImpl implements DmnService {
 
     private final FeelEngineApi feelEngineApi;
     private final DmnDefinitionRepository dmnDefinitionRepository;
+    private final ObjectMapper objectMapper;
 
     @Override
     public void deploy(String dmnXml) {
@@ -161,6 +163,9 @@ public class DmnServiceImpl implements DmnService {
             } else if (type == ProcessVariableType.DOUBLE) {
                 // FEEL numbers are BigDecimal — decimals must enter the decision table as numbers
                 map.put(variable.getName(), new java.math.BigDecimal(variable.getValue()));
+            } else if (type == ProcessVariableType.JSON) {
+                // JSON object/list -> Java Map/List so FEEL can read nested properties and iterate
+                map.put(variable.getName(), objectMapper.readValue(variable.getValue(), Object.class));
             } else {
                 map.put(variable.getName(), variable.getValue());
             }

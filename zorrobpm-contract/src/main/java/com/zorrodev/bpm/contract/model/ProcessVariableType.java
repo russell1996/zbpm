@@ -1,5 +1,5 @@
 package com.zorrodev.bpm.contract.model;
 
 public enum ProcessVariableType {
-    STRING, UUID, LONG, BOOLEAN, DOUBLE;
+    STRING, UUID, LONG, BOOLEAN, DOUBLE, JSON;
 }

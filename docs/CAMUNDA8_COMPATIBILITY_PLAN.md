@@ -88,8 +88,9 @@
 - **Приоритет:** **P0**
 - **Сложность:** **L**
 - **Прогресс:**
-  - ✅ **1A — DOUBLE/десятичные** (`ProcessVariableType.DOUBLE`; `toProcessVariable` нецелое→DOUBLE; `ScriptServiceImpl`/`DmnServiceImpl` DOUBLE→`BigDecimal`). Десятичные входят в FEEL/DMN как число; миграция не требовалась (`variables.type` = varchar). Тест: `DoubleVariableIntegrationTests`. Обратная совместимость сохранена.
-  - ⏳ **1B — JSON-объекты и списки** (комплексные переменные, доступ к свойствам, коллекции-в-переменных для MI) — следующий заход.
+  - ✅ **1A — DOUBLE/десятичные** (`ProcessVariableType.DOUBLE`; `toProcessVariable` нецелое→DOUBLE; `ScriptServiceImpl`/`DmnServiceImpl` DOUBLE→`BigDecimal`). Тест: `DoubleVariableIntegrationTests`.
+  - ✅ **1B — JSON-объекты и списки на вход** (`ProcessVariableType.JSON`; `ScriptServiceImpl`/`DmnServiceImpl` JSON→Java `Map`/`List` через Jackson → FEEL читает `order.total` и итерирует; Java-структурный результат, напр. DMN-выход через `FeelEngineApi`, → JSON). Миграция не требовалась. Тест: `JsonVariableIntegrationTests`. JSON-список переменной уже годен для MI-count (`collectionSize` обрабатывает `java.util.Collection`).
+  - ⏳ **1C — FEEL-результат-структура** (script task, возвращающий объект/список через ScriptService = Scala-коллекция) → Scala→JSON-сериализация — следующий заход.
 
 #### C8-2 · Multi-instance: per-instance `inputElement` / `loopCounter` / `outputCollection`
 - **Описание:** при MI порождается N инстансов (count готов), но текущий элемент коллекции (`inputElement`), индекс (`loopCounter`) и агрегирование результатов (`outputCollection`/`outputElement`) не привязываются к инстансу.

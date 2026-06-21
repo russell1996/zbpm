@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_json" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-json-variable" name="test-json-variable" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="readOrder" />
+
+    <bpmn:scriptTask id="readOrder" name="readOrder" scriptFormat="feel" resultVariable="net">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:script>order.total - 50</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="readOrder" targetRef="gw" />
+
+    <bpmn:exclusiveGateway id="gw" name="gw" default="fLow">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>fHigh</bpmn:outgoing>
+      <bpmn:outgoing>fLow</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="fHigh" name="fHigh" sourceRef="gw" targetRef="endHigh">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=order.total &gt;= 100</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="fLow" name="fLow" sourceRef="gw" targetRef="endLow" />
+
+    <bpmn:endEvent id="endHigh" name="endHigh">
+      <bpmn:incoming>fHigh</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endLow" name="endLow">
+      <bpmn:incoming>fLow</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
