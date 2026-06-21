@@ -1,0 +1,38 @@
+import api from './api'
+import type {
+  ProcessDefinition,
+  PagedData,
+  ProcessDefinitionsQuery,
+  BpmnProcessStructure,
+} from '@/types/api'
+
+function toQueryString(params: Record<string, unknown>): string {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
+  return entries.length > 0 ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : ''
+}
+
+export async function getProcessDefinitions(query: ProcessDefinitionsQuery = {}): Promise<PagedData<ProcessDefinition>> {
+  const qs = toQueryString({ pageIndex: 0, pageSize: 20, ...query })
+  const { data } = await api.get<PagedData<ProcessDefinition>>(`/process-definitions${qs}`)
+  return data
+}
+
+export async function getProcessDefinition(id: string): Promise<ProcessDefinition> {
+  const { data } = await api.get<ProcessDefinition>(`/process-definitions/${id}`)
+  return data
+}
+
+export async function getProcessDefinitionXml(id: string): Promise<string> {
+  const { data } = await api.get<string>(`/process-definitions/${id}/xml`)
+  return data
+}
+
+export async function getProcessDefinitionStructure(id: string): Promise<BpmnProcessStructure> {
+  const { data } = await api.get<BpmnProcessStructure>(`/process-definitions/${id}/structure`)
+  return data
+}
+
+export async function deployProcessDefinition(bpmn: string): Promise<ProcessDefinition> {
+  const { data } = await api.post<ProcessDefinition>('/process-definitions', { bpmn })
+  return data
+}
