@@ -88,6 +88,30 @@ public class MultiInstanceIntegrationTests {
 
     @Transactional
     @Test
+    void parallelMultiInstanceFromZeebeInputCollection() throws Exception {
+        // Camunda 8 style: the instance count comes from <zeebe:loopCharacteristics inputCollection="=[1,2,3]">
+        // (the collection's size), not loopCardinality.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-multi-instance-zeebe.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        List<ActivityEntity> parked = miTasks(processInstanceId, ActivityStatus.CREATED);
+        assertThat(parked).hasSize(3);
+
+        for (ActivityEntity task : parked) {
+            runtimeService.completeUserTask(task.getId(), List.of());
+        }
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        assertThat(miTasks(processInstanceId, ActivityStatus.COMPLETED)).hasSize(3);
+    }
+
+    @Transactional
+    @Test
     void sequentialMultiInstanceRunsOneInstanceAtATime() throws Exception {
         // sequential loopCardinality 3: exactly one instance is active at any moment; the next is created
         // only when the current one completes.

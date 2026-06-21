@@ -8,6 +8,8 @@ import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.MappingModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeLoopCharacteristicsModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType;
 import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
@@ -608,12 +610,31 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setIncoming(scriptTask.getIncoming());
         element.setOutgoing(scriptTask.getOutgoing());
         ScriptTaskExtensionModel script = new ScriptTaskExtensionModel();
-        script.setScriptFormat(scriptTask.getScriptFormat());
-        script.setScript(scriptTask.getScript() != null ? scriptTask.getScript().strip() : null);
-        script.setResultVariable(scriptTask.getResultVariable());
+        ZeebeScriptModel zeebeScript = scriptTask.getExtensionElements() == null ? null
+            : scriptTask.getExtensionElements().getScript();
+        if (zeebeScript != null && zeebeScript.getExpression() != null) {
+            // Camunda 8 style: <zeebe:script expression="=…" resultVariable="…">; strip the leading '='
+            script.setScript(stripLeadingEquals(zeebeScript.getExpression()));
+            script.setResultVariable(zeebeScript.getResultVariable());
+            script.setScriptFormat("feel");
+        } else {
+            // BPMN-standard inline <script> child
+            script.setScriptFormat(scriptTask.getScriptFormat());
+            script.setScript(scriptTask.getScript() != null ? scriptTask.getScript().strip() : null);
+            script.setResultVariable(scriptTask.getResultVariable());
+        }
         element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setScriptTaskExtension(script);
         return element;
+    }
+
+    /** Strips a leading {@code =} (Zeebe FEEL expressions are written {@code "=expr"}). */
+    private String stripLeadingEquals(String expression) {
+        if (expression == null) {
+            return null;
+        }
+        String stripped = expression.strip();
+        return stripped.startsWith("=") ? stripped.substring(1).strip() : stripped;
     }
 
     private BpmnElementModel toElementModel(BpmnBusinessRuleTaskModel businessRuleTask) {
@@ -700,6 +721,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             ext.setSequential(Boolean.TRUE.equals(mi.getIsSequential()));
             ext.setCardinality(mi.getLoopCardinality() != null ? mi.getLoopCardinality().strip() : null);
             ext.setCompletionCondition(mi.getCompletionCondition() != null ? mi.getCompletionCondition().strip() : null);
+            ZeebeLoopCharacteristicsModel loop = mi.getExtensionElements() == null ? null
+                : mi.getExtensionElements().getLoopCharacteristics();
+            if (loop != null) {
+                ext.setInputCollection(stripLeadingEquals(loop.getInputCollection()));
+                ext.setInputElement(loop.getInputElement());
+                ext.setOutputCollection(loop.getOutputCollection());
+                ext.setOutputElement(stripLeadingEquals(loop.getOutputElement()));
+            }
             if (element.getExtensions() == null) {
                 element.setExtensions(new BpmnElementExtensionModel());
             }

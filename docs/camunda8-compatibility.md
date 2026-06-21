@@ -46,7 +46,7 @@
 | User task (`zeebe:assignmentDefinition`, `zeebe:formDefinition`) | ✅ Совместимо | Соответствует C8 (job-worker user task). *Гипотеза:* «Camunda user task» (8.5+) с `zeebe:userTask` здесь не моделируется | При таргете на новый C8 user task добавить чтение `zeebe:userTask` |
 | Receive task (`receiveTask` + `messageRef`) | ✅ Совместимо | — | — |
 | Business rule task — DMN (`zeebe:calledDecision decisionId/resultVariable`) | ✅ Совместимо (модель) | Модель C8-нативная. Исполнение — **собственным DMN-движком** (не Zeebe DMN), результат эквивалентен для стандартных таблиц | Для гарантий — сверять edge-кейсы DMN/FEEL с реальным C8 |
-| **Script task** (`<bpmn:script>` inline + `scriptFormat`) | ⚠️ Нестандартно для C8 | Camunda 8 моделирует script task через `<zeebe:script expression=… resultVariable=…>` в `extensionElements`, **а не** через стандартный дочерний `<bpmn:script>` | Добавить чтение `zeebe:script` на `scriptTask` для переносимости в C8 |
+| **Script task** (`<zeebe:script>` или inline `<bpmn:script>`) | ✅ Совместимо | Поддержаны оба способа: C8-нативный `<zeebe:script expression=… resultVariable=…>` в `extensionElements` (приоритет) и BPMN-стандартный inline `<bpmn:script>` (fallback) | — |
 | **Business rule task — FEEL** (`zeebe:script` на `businessRuleTask`) | ⚠️ Нестандартно | C8 на `businessRuleTask` использует `zeebe:calledDecision` или `zeebe:taskDefinition`, но **не** `zeebe:script`. Это собственное расширение проекта | Считать проектным расширением; в C8-моделях использовать DMN-режим |
 | **Send task** (`sendTask` + `messageRef`) | ⚠️ Частично | Здесь send task = message-throw по `messageRef`. *Гипотеза:* в C8 send task моделируется как job-worker (`zeebe:taskDefinition`), а не через `messageRef` | Для C8 заменять на message intermediate throw или service task |
 | Manual / Undefined task | — (не парсится) | Не используется движком | При необходимости трактовать как pass-through |
@@ -72,7 +72,7 @@
 | Embedded subprocess (`subProcess`) | ✅ Совместимо | — | — |
 | Event subprocess (`subProcess triggeredByEvent="true"`) | ✅ Совместимо (модель) | C8 поддерживает. Здесь исполняется только message-триггер (interrupting/non-interrupting); timer/error/signal-триггеры отложены | Дореализовать остальные триггеры для полного паритета с C8 |
 | **Transaction subprocess** (`<bpmn:transaction>`) | ❌ Не поддерживается в C8 | **Camunda 8 не поддерживает transaction-подпроцесс** | Заменять на embedded subprocess + явная компенсация/error-обработка |
-| **Multi-instance** (`multiInstanceLoopCharacteristics` + `loopCardinality` / `completionCondition`) | ⚠️ Нестандартно для C8 | C8 задаёт multi-instance через `<zeebe:loopCharacteristics inputCollection=… inputElement=… outputCollection=… outputElement=…>`; **`loopCardinality` в C8 не поддерживается** (требуется входная коллекция). Здесь — `loopCardinality` + `completionCondition` | Добавить чтение `zeebe:loopCharacteristics` (inputCollection) для переносимости в C8 |
+| **Multi-instance** (`zeebe:loopCharacteristics inputCollection` или `loopCardinality`) | ⚠️ Частично | Количество инстансов берётся из C8-нативного `<zeebe:loopCharacteristics inputCollection=…>` (размер коллекции) **или** из `loopCardinality`; `completionCondition` поддержан. **Отложено** (требует scoped-переменных, см. ниже): per-instance `inputElement`/`loopCounter` и агрегирование `outputCollection`/`outputElement` | Реализовать scoped-переменные → привязка `inputElement`/`outputCollection` (этап scoped vars) |
 
 ---
 
@@ -92,19 +92,18 @@
 
 | Категория | Конструкции | Статус |
 |---|---|---|
-| **Полностью совместимо** | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User/Receive task, Business rule task (DMN), Call activity, Embedded & Event subprocess, IO mappings, correlation key, FEEL-условия | ✅ |
-| **Частично / нестандартно** (поведение есть, модель расходится с C8) | Script task (`<bpmn:script>` вместо `zeebe:script`), Multi-instance (`loopCardinality` вместо `zeebe:loopCharacteristics`), Send task (`messageRef` vs job-worker), Business rule FEEL (`zeebe:script`), Compensation (compensate-all; targeted/в подпроцессе отложены), IO-mappings (плоские переменные вместо scoped) | ⚠️ |
+| **Полностью совместимо** | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User/Receive task, **Script task** (`zeebe:script` + inline), Business rule task (DMN), Call activity, Embedded & Event subprocess, IO mappings, correlation key, FEEL-условия | ✅ |
+| **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; `inputElement`/`outputCollection` — позже), Send task (`messageRef` vs job-worker), Business rule FEEL (`zeebe:script`), Compensation (compensate-all; targeted/в подпроцессе отложены), IO-mappings (плоские переменные вместо scoped) | ⚠️ |
 | **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | Conditional события (start/catch/boundary), Transaction subprocess, Cancel события (end/boundary) | ❌ |
 
 ### Сводные рекомендации
 
 1. **Для моделей, которые должны переноситься в Camunda 8 без правок** — избегать ❌-конструкций
-   (conditional, transaction, cancel) и привести ⚠️-конструкции к C8-нотации:
-   - script task → `zeebe:script`;
-   - multi-instance → `zeebe:loopCharacteristics` с `inputCollection`;
-   - send task → message intermediate throw или service task.
-2. **Дорожная карта паритета с C8** (по приоритету): чтение `zeebe:script`/`zeebe:loopCharacteristics`,
-   scoped-переменные для IO-mappings, остальные триггеры event subprocess, targeted-компенсация.
+   (conditional, transaction, cancel). ✅ `zeebe:script` (script task) и `zeebe:loopCharacteristics`
+   (multi-instance, count) уже поддержаны. Оставшиеся ⚠️: send task → message intermediate throw / service task.
+2. **Дорожная карта паритета с C8** (по приоритету): ~~чтение `zeebe:script`/`zeebe:loopCharacteristics`~~ ✅,
+   scoped-переменные (для IO-mappings и per-instance `inputElement`/`outputCollection`),
+   остальные триггеры event subprocess, targeted-компенсация.
 3. **Расхождения по дизайну оставить осознанно**: conditional/transaction/cancel — это надстройка над C8
    (полезна для процессов вне C8); поведение DMN — собственным движком на том же FEEL (поведенчески
    эквивалентно для стандартных таблиц).
