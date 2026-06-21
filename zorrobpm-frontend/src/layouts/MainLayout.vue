@@ -19,7 +19,7 @@ const sidebarOpen = ref(!isMobile.value)
       @click="sidebarOpen = false"
     />
     <div
-      class="z-50 transition-transform duration-200"
+      class="z-50 transition-transform duration-200 h-full"
       :class="[
         isMobile ? 'fixed inset-y-0 left-0' : 'relative',
         isMobile && !sidebarOpen ? '-translate-x-full' : 'translate-x-0',

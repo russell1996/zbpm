@@ -74,19 +74,16 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <aside class="w-64 bg-sidebar text-sidebar-foreground flex flex-col border-r border-border">
-    <div class="h-14 flex items-center px-4 border-b border-border">
-      <div class="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
-        <span class="text-[10px] font-black text-primary-foreground">BPM</span>
-      </div>
+  <aside class="w-64 h-full bg-sidebar text-sidebar-foreground flex flex-col border-r border-border">
+    <div class="h-14 flex items-center px-4 border-b border-border shrink-0">
       <span class="text-lg font-bold">ZBPM</span>
     </div>
-    <nav class="flex-1 py-2 overflow-y-auto">
+    <nav class="flex-1 py-2 overflow-y-auto min-h-0">
       <template v-for="item in navItems" :key="item.labelKey">
         <div v-if="item.children">
           <button
             class="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
-            :class="{ 'bg-sidebar-accent': isActiveGroup(item) }"
+            :class="{ 'bg-sidebar-accent font-medium': isActiveGroup(item) }"
             @click="toggle(item.labelKey)"
           >
             <span class="flex items-center gap-3">
@@ -100,7 +97,7 @@ function navigate(to: string) {
               v-for="child in item.children"
               :key="child.to"
               class="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-sidebar-accent transition-colors"
-              :class="{ 'bg-sidebar-accent text-primary-foreground': isActive(child.to) }"
+              :class="{ 'bg-sidebar-accent font-medium': isActive(child.to) }"
               @click="child.to && navigate(child.to)"
             >
               <component :is="child.icon" class="h-4 w-4" />
@@ -111,7 +108,7 @@ function navigate(to: string) {
         <button
           v-else
           class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
-          :class="{ 'bg-sidebar-accent': isActive(item.to) }"
+          :class="{ 'bg-sidebar-accent font-medium': isActive(item.to) }"
           @click="item.to && navigate(item.to)"
         >
           <component :is="item.icon" class="h-4 w-4" />
