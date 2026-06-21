@@ -72,7 +72,7 @@
 | Embedded subprocess (`subProcess`) | ✅ Совместимо | — | — |
 | Event subprocess (`subProcess triggeredByEvent="true"`) | ✅ Совместимо | Триггеры **message / signal / error / timer** (message — interrupting и non-interrupting; signal/error/timer — interrupting). Event-subprocess **внутри встроенного подпроцесса** (не top-level) — отдельный заход | — |
 | **Transaction subprocess** (`<bpmn:transaction>`) | ❌ Не поддерживается в C8 | **Camunda 8 не поддерживает transaction-подпроцесс** | Заменять на embedded subprocess + явная компенсация/error-обработка |
-| **Multi-instance** (`zeebe:loopCharacteristics inputCollection`/`inputElement` или `loopCardinality`) | ⚠️ Частично | Количество инстансов — из `inputCollection` (размер коллекции) или `loopCardinality`; `completionCondition` поддержан. **Per-instance `inputElement` и `loopCounter`** привязываются в scope каждого инстанса (scoped-переменные, не протекают, удаляются по завершении). **Отложено**: агрегирование `outputCollection`/`outputElement` | Реализовать `outputCollection` (сбор per-instance результатов в список) |
+| **Multi-instance** (`zeebe:loopCharacteristics inputCollection`/`inputElement`/`outputCollection`/`outputElement` или `loopCardinality`) | ✅ Совместимо | Count — из `inputCollection`/`loopCardinality`; `completionCondition`; per-instance `inputElement`+`loopCounter` (scoped, не протекают); **агрегирование `outputElement` → `outputCollection`** (JSON-список). Параллельный и последовательный | — |
 
 ---
 
