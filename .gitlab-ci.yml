@@ -1,28 +1,133 @@
+# ZorroBPM CI/CD
+#
+# Pipeline: test (backend + frontend)  ->  package (Docker images, versioned)  ->  deploy  ->  rollback
+#
+# Runs on the self-hosted shell runner (tag `zbpm`) which has Docker + Docker Compose. Images are built
+# and tagged with the commit SHA on the deploy host (no external registry required); the previous tag is
+# recorded so a deploy can be rolled back. The external nginx proxy (https://zorro.i-smet.kz) forwards to
+# the frontend container, which serves the SPA and proxies /api -> app:8080 inside the Docker network.
+
 stages:
+  - test
+  - package
   - deploy
+  - rollback
 
 variables:
   COMPOSE_PROJECT_NAME: zorrobpm
   DEPLOY_DIR: /opt/zorro-bpm
+  IMAGE_BACKEND: zorrobpm-app
+  IMAGE_FRONTEND: zorrobpm-frontend
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
 
-deploy:
-  stage: deploy
-  tags:
-    - zbpm
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Test — compile and run the full backend test suite, build/typecheck the SPA
+# ---------------------------------------------------------------------------
+
+test:backend:
+  stage: test
+  tags: [zbpm]
   script:
-    - docker compose version
-    - mkdir -p "$DEPLOY_DIR"
-    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
-    - cp -a ./ "$DEPLOY_DIR"/
-    - cd "$DEPLOY_DIR"
-    - docker compose build
-    - docker compose up -d --remove-orphans
-    - docker compose ps
-    - docker image prune -f
-  environment:
-    name: production
+    - >
+      docker run --rm
+      -v "$CI_PROJECT_DIR":/build -w /build
+      -v zorrobpm-m2:/root/.m2
+      maven:3.9.9-eclipse-temurin-21
+      mvn -B -ntp clean verify
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-ce/target/*.jar
+    reports:
+      junit:
+        - "**/target/surefire-reports/TEST-*.xml"
+        - "**/target/failsafe-reports/TEST-*.xml"
+    expire_in: 1 week
+
+test:frontend:
+  stage: test
+  tags: [zbpm]
+  script:
+    # `npm run build` runs `tsc && vite build` -> fails on any TypeScript error
+    - >
+      docker run --rm
+      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/app -w /app
+      node:22-alpine
+      sh -c "npm ci && npm run build"
+  artifacts:
+    paths:
+      - zorrobpm-frontend/dist
+    expire_in: 1 week
+
+# ---------------------------------------------------------------------------
+# Package — build versioned Docker images (commit SHA + latest)
+# ---------------------------------------------------------------------------
+
+package:
+  stage: package
+  tags: [zbpm]
+  script:
+    - docker build -t "$IMAGE_BACKEND:$IMAGE_TAG" -t "$IMAGE_BACKEND:latest" -f Dockerfile .
+    - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" ./zorrobpm-frontend
+    - docker image ls "$IMAGE_BACKEND" "$IMAGE_FRONTEND"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_BRANCH'
       when: manual
       allow_failure: false
+
+# ---------------------------------------------------------------------------
+# Deploy — sync sources, record rollback tag, bring the stack up on the new images
+# ---------------------------------------------------------------------------
+
+deploy:
+  stage: deploy
+  tags: [zbpm]
+  script:
+    - mkdir -p "$DEPLOY_DIR"
+    # remember the currently deployed tag so `rollback` can restore it
+    - if [ -f "$DEPLOY_DIR/.current_tag" ]; then cp "$DEPLOY_DIR/.current_tag" "$DEPLOY_DIR/.previous_tag"; fi
+    # sync sources, preserving host .env (DB/RabbitMQ secrets) and the rollback bookkeeping files
+    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
+    - cp -a ./ "$DEPLOY_DIR"/
+    - cd "$DEPLOY_DIR"
+    - export APP_TAG="$IMAGE_TAG" FRONTEND_TAG="$IMAGE_TAG"
+    - docker compose up -d --remove-orphans
+    - docker compose ps
+    - echo "$IMAGE_TAG" > "$DEPLOY_DIR/.current_tag"
+    - docker image prune -f
+  environment:
+    name: production
+    url: https://zorro.i-smet.kz
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: false
+
+# ---------------------------------------------------------------------------
+# Rollback — manual; redeploys the previously running image tag
+# ---------------------------------------------------------------------------
+
+rollback:
+  stage: rollback
+  tags: [zbpm]
+  script:
+    - cd "$DEPLOY_DIR"
+    - test -f .previous_tag || (echo "No .previous_tag recorded — nothing to roll back to" && exit 1)
+    - export APP_TAG="$(cat .previous_tag)" FRONTEND_TAG="$(cat .previous_tag)"
+    - echo "Rolling back to $APP_TAG"
+    - docker compose up -d --remove-orphans
+    - docker compose ps
+    - cp .previous_tag .current_tag
+  environment:
+    name: production
+    url: https://zorro.i-smet.kz
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

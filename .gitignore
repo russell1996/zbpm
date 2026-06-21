@@ -15,3 +15,7 @@ Thumbs.db
 
 # Local env
 .env
+
+# Frontend build artifacts (the frontend has its own .gitignore too)
+node_modules/
+zorrobpm-frontend/dist/
