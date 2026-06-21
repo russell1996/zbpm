@@ -1181,9 +1181,9 @@ public class ActivityServiceImpl implements ActivityService {
      * {@link #multiInstanceContinue}). N comes from {@code loopCardinality}; the join is told to expect N
      * (reusing the parallel/inclusive arrival mechanism).
      *
-     * <p>Scope: driven by {@code loopCardinality}, with an optional {@code completionCondition}.
-     * Input/output collections and per-instance variables (loopCounter) are not yet supported (the flat
-     * variable model can't isolate per-instance state).
+     * <p>Each instance gets its own scoped {@code inputElement} (the current {@code inputCollection} element)
+     * and {@code loopCounter} (1-based), isolated via scoped variables and dropped on completion. Output
+     * aggregation ({@code outputCollection}/{@code outputElement}) is not yet supported.
      */
     private void enterMultiInstanceUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         MultiInstanceExtensionModel mi = bpmnElement.getExtensions().getMultiInstanceExtension();
@@ -1194,10 +1194,12 @@ public class ActivityServiceImpl implements ActivityService {
             return;
         }
         dbService.recordInclusiveExpected(processInstanceId, bpmnElement.getId(), count);
+        Object collection = miInputCollection(processInstanceId, mi);
         int spawn = mi.isSequential() ? 1 : count;
         for (int i = 0; i < spawn; i++) {
             UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
             dbService.createUserTask(activityId);
+            bindMiInstanceVariables(processInstanceId, activityId, mi, collection, i);
         }
         log.info("{}/{}: Entering multi-instance {}: {} {} instance(s)", processInstanceId, token, bpmnElement.getId(), count, mi.isSequential() ? "sequential" : "parallel");
     }
@@ -1253,6 +1255,48 @@ public class ActivityServiceImpl implements ActivityService {
         throw new EngineException("Multi-instance " + elementId + " inputCollection did not evaluate to a list: " + collection);
     }
 
+    /** Evaluates the multi-instance {@code inputCollection} once for per-instance binding, or null when there
+     *  is no {@code inputElement} to bind (avoids an unnecessary evaluation). */
+    private Object miInputCollection(UUID processInstanceId, MultiInstanceExtensionModel mi) {
+        if (mi.getInputElement() == null || mi.getInputElement().isBlank()
+            || mi.getInputCollection() == null || mi.getInputCollection().isBlank()) {
+            return null;
+        }
+        return scriptService.evaluateExpression(mi.getInputCollection(), dbService.getVariables(processInstanceId));
+    }
+
+    /** Writes a multi-instance instance's per-instance variables into its own (activity) scope: the current
+     *  collection element under {@code inputElement} (if configured) and the 1-based {@code loopCounter}.
+     *  Scoped variables don't leak to the instance and are dropped when the task completes. */
+    private void bindMiInstanceVariables(UUID processInstanceId, UUID scopeId, MultiInstanceExtensionModel mi, Object collection, int index) {
+        List<ProcessVariable> locals = new ArrayList<>();
+        if (collection != null && mi.getInputElement() != null && !mi.getInputElement().isBlank()) {
+            locals.add(toProcessVariable(mi.getInputElement(), collectionElement(collection, index)));
+        }
+        ProcessVariable loopCounter = new ProcessVariable();
+        loopCounter.setName("loopCounter");
+        loopCounter.setType(ProcessVariableType.LONG);
+        loopCounter.setValue(Long.toString(index + 1L));
+        locals.add(loopCounter);
+        dbService.setVariables(processInstanceId, scopeId, locals);
+    }
+
+    /** Element at {@code index} of a FEEL collection: a {@link java.util.List} (from a JSON list variable) or,
+     *  for a Scala collection returned by the FEEL value mapper, its {@code apply(int)} reflectively. */
+    private Object collectionElement(Object collection, int index) {
+        if (collection instanceof java.util.List<?> list) {
+            return index < list.size() ? list.get(index) : null;
+        }
+        if (collection != null) {
+            try {
+                return collection.getClass().getMethod("apply", int.class).invoke(collection, index);
+            } catch (ReflectiveOperationException ignored) {
+                // not an indexable Scala collection
+            }
+        }
+        return null;
+    }
+
     /**
      * Records a multi-instance instance's completion and reports whether the whole multi-instance is done
      * (so the flow should continue). The multi-instance completes when every instance has finished or the
@@ -1272,9 +1316,10 @@ public class ActivityServiceImpl implements ActivityService {
             return true;
         }
         if (mi.isSequential()) {
-            // start the next sequential instance on the same token
+            // start the next sequential instance on the same token, bound to the next collection element
             UUID next = dbService.createActivity(processInstanceId, token, element);
             dbService.createUserTask(next);
+            bindMiInstanceVariables(processInstanceId, next, mi, miInputCollection(processInstanceId, mi), arrived);
             log.info("{}/{}: Multi-instance {} starting next sequential instance ({} of {} done)", processInstanceId, token, miId, arrived, expected);
         } else {
             log.info("{}: Multi-instance {} not ready: {} of {} instances done", processInstanceId, miId, arrived, expected);

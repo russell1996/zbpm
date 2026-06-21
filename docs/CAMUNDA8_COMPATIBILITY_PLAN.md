@@ -98,7 +98,10 @@
 - **Влияние на совместимость:** **доминирующий C8-паттерн MI** — «для каждого элемента коллекции». Без `inputElement` тело инстанса не видит свой элемент → задача/воркер получает неполные данные → неверное/падающее исполнение. Агрегация в `outputCollection` отсутствует.
 - **Риск миграции:** **высокий** — collection-driven MI повсеместен.
 - **Приоритет:** **P0**
-- **Сложность:** **M** (scoped-переменные уже есть из Этапа 2; писать `inputElement`=element[i] в scope инстанса; `outputCollection` зависит от C8-1 — списки).
+- **Сложность:** **M**
+- **Прогресс:**
+  - ✅ **per-instance `inputElement` + `loopCounter`** — каждый MI-инстанс (user task) получает scoped `inputElement`=`collection[i]` (через `toProcessVariable`, поддерживает scalar/decimal/JSON) и `loopCounter`=`i+1`; параллельный и последовательный. Миграция **038**: unique `(pi,name)`→`(pi,name,scope_id)` (иначе одноимённые scoped-переменные параллельных инстансов коллидируют). Тест: `MultiInstanceElementIntegrationTests`.
+  - ⏳ **`outputCollection`/`outputElement`** (сбор per-instance результатов в список) — следующий заход (нужна агрегация в root-список; для MI на service/script task — отдельно).
 
 ### P1 — выполняются с ограничениями / отличия поведения
 
