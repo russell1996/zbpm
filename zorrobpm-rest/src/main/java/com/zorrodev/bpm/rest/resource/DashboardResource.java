@@ -1,7 +1,6 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.rest.dto.DashboardDTO;
-import com.zorrodev.bpm.rest.service.DashboardService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
