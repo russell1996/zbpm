@@ -144,7 +144,7 @@
 - **Приоритет:** **P2** · **Сложность:** **S–M**
 - **Прогресс:**
   - ✅ **`BpmnService` race** — `getProcessDefinitionModelById` переведён на атомарный `computeIfAbsent` (две параллельные загрузки одной модели → одна загрузка; `null` от `getFileBytes` или ошибка парсинга → понятный `EngineException`, а не закэшированный `null`/NPE). Тест: `BpmnServiceImplTest.missingFileRaisesEngineExceptionInsteadOfCachingNull`.
-  - ⏳ **null-guards графа** (`proceedToOutgoing`/`execute`/`fireBoundary` — понятные сообщения вместо NPE при битом XML) — отдельный мелкий заход (сейчас NPE и так паркуется в инцидент, нужна лишь читаемость).
+  - ✅ **null-guards графа** — `processFlow`/`proceedToOutgoing` (висящий `flow`/`targetRef`), `execute` (null-элемент), `finishBranch` (отсутствует parent-элемент call activity) → понятный инцидент вместо `NullPointerException`. Тест: `GraphRobustnessIntegrationTests` (висящий `targetRef` → инцидент с именем недостающего элемента).
 
 ### P3 — техдолг / надёжность / безопасность (не меняет семантику исполнения C8-моделей)
 
