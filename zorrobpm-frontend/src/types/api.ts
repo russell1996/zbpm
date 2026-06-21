@@ -178,39 +178,3 @@ export interface ResolveIncidentDTO {
   id: string
   variables: ProcessVariable[]
 }
-
-// Dashboard UI Resource API
-export interface DashboardData {
-  activeProcessInstances: number
-  openUserTasks: number
-  openServiceTasks: number
-  openIncidents: number
-  completedToday: number
-  totalProcessDefinitions: number
-  recentDefinitions: DashboardProcessDefinition[]
-  recentInstances: DashboardProcessInstance[]
-  recentIncidents: DashboardIncident[]
-}
-
-export interface DashboardProcessDefinition {
-  id: string
-  key: string
-  name: string
-  version: number
-  createdAt: string
-}
-
-export interface DashboardProcessInstance {
-  id: string
-  processDefinitionId: string
-  processDefinitionName: string | null
-  startedAt: string
-  completedAt: string | null
-}
-
-export interface DashboardIncident {
-  id: string
-  message: string
-  createdAt: string
-  completedAt: string | null
-}
