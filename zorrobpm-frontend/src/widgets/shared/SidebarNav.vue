@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   LayoutDashboard,
   GitBranch,
@@ -10,15 +11,17 @@ import {
   ChevronDown,
   ChevronRight,
   BarChart3,
+  Cpu,
 } from 'lucide-vue-next'
 
 const emit = defineEmits<{ navigate: [] }>()
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
 interface NavItem {
-  label: string
+  labelKey: string
   icon: typeof LayoutDashboard
   to?: string
   children?: NavItem[]
@@ -28,25 +31,26 @@ const expanded = ref<Record<string, boolean>>({
   processes: true,
 })
 
-const navItems: NavItem[] = [
-  { label: 'Dashboard', icon: LayoutDashboard, to: '/' },
+const navItems = computed<NavItem[]>(() => [
+  { labelKey: 'dashboard', icon: LayoutDashboard, to: '/' },
   {
-    label: 'Processes',
+    labelKey: 'processes',
     icon: GitBranch,
     children: [
-      { label: 'Definitions', icon: GitBranch, to: '/processes/definitions' },
-      { label: 'Instances', icon: GitBranch, to: '/processes/instances' },
-      { label: 'Deploy', icon: GitBranch, to: '/processes/deploy' },
+      { labelKey: 'definitions', icon: GitBranch, to: '/processes/definitions' },
+      { labelKey: 'instances', icon: GitBranch, to: '/processes/instances' },
+      { labelKey: 'deploy', icon: GitBranch, to: '/processes/deploy' },
     ],
   },
-  { label: 'Tasks', icon: ListTodo, to: '/tasks' },
-  { label: 'Incidents', icon: AlertTriangle, to: '/incidents' },
-  { label: 'Timers', icon: GitBranch, to: '/timers' },
-  { label: 'Messages', icon: GitBranch, to: '/messages' },
-  { label: 'DMN', icon: GitBranch, to: '/dmn' },
-  { label: 'Analytics', icon: BarChart3, to: '/analytics' },
-  { label: 'Users', icon: Users, to: '/admin/users' },
-]
+  { labelKey: 'tasks', icon: ListTodo, to: '/tasks' },
+  { labelKey: 'serviceTasks', icon: Cpu, to: '/service-tasks' },
+  { labelKey: 'incidents', icon: AlertTriangle, to: '/incidents' },
+  { labelKey: 'timers', icon: GitBranch, to: '/timers' },
+  { labelKey: 'messages', icon: GitBranch, to: '/messages' },
+  { labelKey: 'dmn', icon: GitBranch, to: '/dmn' },
+  { labelKey: 'analytics', icon: BarChart3, to: '/analytics' },
+  { labelKey: 'users', icon: Users, to: '/admin/users' },
+])
 
 function toggle(key: string) {
   expanded.value[key] = !expanded.value[key]
@@ -72,23 +76,26 @@ function navigate(to: string) {
 <template>
   <aside class="w-64 bg-sidebar text-sidebar-foreground flex flex-col border-r border-border">
     <div class="h-14 flex items-center px-4 border-b border-border">
-      <span class="text-lg font-bold">ZorroBPM</span>
+      <div class="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
+        <span class="text-[10px] font-black text-primary-foreground">BPM</span>
+      </div>
+      <span class="text-lg font-bold">ZBPM</span>
     </div>
     <nav class="flex-1 py-2 overflow-y-auto">
-      <template v-for="item in navItems" :key="item.label">
+      <template v-for="item in navItems" :key="item.labelKey">
         <div v-if="item.children">
           <button
             class="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
             :class="{ 'bg-sidebar-accent': isActiveGroup(item) }"
-            @click="toggle(item.label)"
+            @click="toggle(item.labelKey)"
           >
             <span class="flex items-center gap-3">
               <component :is="item.icon" class="h-4 w-4" />
-              {{ item.label }}
+              {{ t(item.labelKey) }}
             </span>
-            <component :is="expanded[item.label] ? ChevronDown : ChevronRight" class="h-4 w-4" />
+            <component :is="expanded[item.labelKey] ? ChevronDown : ChevronRight" class="h-4 w-4" />
           </button>
-          <div v-if="expanded[item.label]" class="ml-4">
+          <div v-if="expanded[item.labelKey]" class="ml-4">
             <button
               v-for="child in item.children"
               :key="child.to"
@@ -97,7 +104,7 @@ function navigate(to: string) {
               @click="child.to && navigate(child.to)"
             >
               <component :is="child.icon" class="h-4 w-4" />
-              {{ child.label }}
+              {{ t(child.labelKey) }}
             </button>
           </div>
         </div>
@@ -108,7 +115,7 @@ function navigate(to: string) {
           @click="item.to && navigate(item.to)"
         >
           <component :is="item.icon" class="h-4 w-4" />
-          {{ item.label }}
+          {{ t(item.labelKey) }}
         </button>
       </template>
     </nav>

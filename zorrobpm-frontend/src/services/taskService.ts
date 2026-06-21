@@ -14,10 +14,14 @@ function toQueryString(params: Record<string, unknown>): string {
   return entries.length > 0 ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : ''
 }
 
+function desc<T>(result: PagedData<T>): PagedData<T> {
+  return { ...result, data: [...result.data].reverse() }
+}
+
 export async function getUserTasks(query: UserTaskQuery = {}): Promise<PagedData<UserTask>> {
   const qs = toQueryString({ pageIndex: 0, pageSize: 10, ...query })
   const { data } = await api.get<PagedData<UserTask>>(`/user-tasks${qs}`)
-  return data
+  return desc(data)
 }
 
 export async function completeUserTask(id: string, dto: CompleteTaskDTO): Promise<IdDTO> {
@@ -28,7 +32,7 @@ export async function completeUserTask(id: string, dto: CompleteTaskDTO): Promis
 export async function getServiceTasks(query: ServiceTaskQuery = {}): Promise<PagedData<ServiceTask>> {
   const qs = toQueryString({ pageIndex: 0, pageSize: 10, ...query })
   const { data } = await api.get<PagedData<ServiceTask>>(`/service-tasks${qs}`)
-  return data
+  return desc(data)
 }
 
 export async function completeServiceTask(id: string, dto: CompleteTaskDTO): Promise<IdDTO> {

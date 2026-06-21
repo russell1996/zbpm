@@ -73,6 +73,18 @@ const router = createRouter({
           meta: { title: 'Task' },
         },
         {
+          path: 'service-tasks',
+          name: 'service-tasks',
+          component: () => import('@/pages/tasks/ServiceTaskList.vue'),
+          meta: { title: 'Service Tasks' },
+        },
+        {
+          path: 'service-tasks/:id',
+          name: 'service-task-detail',
+          component: () => import('@/pages/tasks/ServiceTaskDetail.vue'),
+          meta: { title: 'Service Task' },
+        },
+        {
           path: 'incidents',
           name: 'incidents',
           component: () => import('@/pages/incidents/IncidentList.vue'),

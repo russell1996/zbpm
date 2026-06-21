@@ -19,17 +19,17 @@ async function complete() {
     type: v.type as ProcessVariable['type'],
     value: v.value,
   }))
-  await store.completeUserTask(route.params.id as string, variables)
+  await store.completeServiceTask(route.params.id as string, variables)
   if (!store.error) {
-    toast.success('Task completed')
-    router.push('/tasks')
+    toast.success('Service task completed')
+    router.push('/service-tasks')
   } else {
     toast.error(store.error)
   }
 }
 
 onMounted(async () => {
-  await store.fetchUserTask(route.params.id as string)
+  await store.fetchServiceTask(route.params.id as string)
   editableVars.value = store.currentTaskVariables.map((v) => ({
     name: v.name,
     type: v.type,
@@ -43,17 +43,17 @@ onMounted(async () => {
     <div v-if="store.loading" class="text-sm text-muted-foreground">Loading...</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
-    <template v-else-if="store.currentTask">
+    <template v-else-if="store.currentServiceTask">
       <div>
-        <h1 class="text-2xl font-bold">Task</h1>
-        <CopyableId :value="store.currentTask.id" />
+        <h1 class="text-2xl font-bold">Service Task</h1>
+        <CopyableId :value="store.currentServiceTask.id" />
       </div>
 
       <div class="grid grid-cols-2 gap-4 text-sm">
-        <div><span class="text-muted-foreground">Name:</span> {{ store.currentTask.name || store.currentTask.code || '—' }}</div>
-        <div><span class="text-muted-foreground">Process:</span> <span class="font-mono">{{ store.currentTask.processInstanceId.slice(0, 8) }}...</span></div>
-        <div><span class="text-muted-foreground">Form Key:</span> {{ store.currentTask.formKey || '—' }}</div>
-        <div><span class="text-muted-foreground">Created:</span> {{ new Date(store.currentTask.createdAt).toLocaleString() }}</div>
+        <div><span class="text-muted-foreground">Name:</span> {{ store.currentServiceTask.name || store.currentServiceTask.code || '—' }}</div>
+        <div><span class="text-muted-foreground">Job Type:</span> {{ store.currentServiceTask.job }}</div>
+        <div><span class="text-muted-foreground">Process:</span> <span class="font-mono">{{ store.currentServiceTask.processInstanceId.slice(0, 8) }}...</span></div>
+        <div><span class="text-muted-foreground">Created:</span> {{ new Date(store.currentServiceTask.createdAt).toLocaleString() }}</div>
       </div>
 
       <div class="border border-border rounded-lg p-4 bg-card">

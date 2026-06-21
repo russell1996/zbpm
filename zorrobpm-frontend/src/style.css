@@ -12,9 +12,9 @@
   --color-border: #e2e8f0;
   --color-input: #e2e8f0;
   --color-ring: #3b82f6;
-  --color-sidebar: #0f172a;
-  --color-sidebar-foreground: #f8fafc;
-  --color-sidebar-accent: #1e293b;
+  --color-sidebar: #f8fafc;
+  --color-sidebar-foreground: #0f172a;
+  --color-sidebar-accent: #e2e8f0;
   --color-destructive: #ef4444;
   --radius: 0.5rem;
 }
@@ -28,6 +28,9 @@
   --color-muted-foreground: #94a3b8;
   --color-border: #334155;
   --color-input: #334155;
+  --color-sidebar: #0f172a;
+  --color-sidebar-foreground: #f8fafc;
+  --color-sidebar-accent: #1e293b;
 }
 
 body {

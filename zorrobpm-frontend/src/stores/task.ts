@@ -15,6 +15,7 @@ export const useTaskStore = defineStore('task', () => {
   const userTasks = ref<PagedData<UserTask> | null>(null)
   const serviceTasks = ref<PagedData<ServiceTask> | null>(null)
   const currentTask = ref<UserTask | null>(null)
+  const currentServiceTask = ref<ServiceTask | null>(null)
   const currentTaskVariables = ref<ProcessVariable[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -84,8 +85,39 @@ export const useTaskStore = defineStore('task', () => {
     }
   }
 
+  async function fetchServiceTask(id: string) {
+    loading.value = true
+    error.value = null
+    try {
+      const all = await taskService.getServiceTasks({ pageIndex: 0, pageSize: 100 })
+      currentServiceTask.value = all.data.find((t) => t.id === id) || null
+      if (currentServiceTask.value) {
+        await fetchTaskVariables(currentServiceTask.value.processInstanceId)
+      }
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load service task'
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function completeServiceTask(id: string, variables: ProcessVariable[]) {
+    loading.value = true
+    error.value = null
+    try {
+      await taskService.completeServiceTask(id, { variables })
+      currentServiceTask.value = null
+      currentTaskVariables.value = []
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to complete service task'
+    } finally {
+      loading.value = false
+    }
+  }
+
   function clearCurrent() {
     currentTask.value = null
+    currentServiceTask.value = null
     currentTaskVariables.value = []
   }
 
@@ -93,6 +125,7 @@ export const useTaskStore = defineStore('task', () => {
     userTasks,
     serviceTasks,
     currentTask,
+    currentServiceTask,
     currentTaskVariables,
     loading,
     error,
@@ -101,6 +134,8 @@ export const useTaskStore = defineStore('task', () => {
     fetchTaskVariables,
     completeUserTask,
     fetchServiceTasks,
+    fetchServiceTask,
+    completeServiceTask,
     clearCurrent,
   }
 })

@@ -3,13 +3,13 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getDecisions } from '@/services/mock/dmnService'
 import type { DmnDecision } from '@/services/mock/dmnService'
-import { AlertCircle } from 'lucide-vue-next'
+import { AlertCircle, RefreshCw } from 'lucide-vue-next'
 
 const router = useRouter()
 const decisions = ref<DmnDecision[]>([])
 const loading = ref(false)
 
-onMounted(async () => {
+async function load() {
   loading.value = true
   try {
     decisions.value = await getDecisions()
@@ -18,12 +18,24 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})
+}
+
+onMounted(load)
 </script>
 
 <template>
   <div class="space-y-6">
-    <h1 class="text-2xl font-bold">DMN Decisions</h1>
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold">DMN Decisions</h1>
+      <button
+        class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+        :disabled="loading"
+        @click="load"
+      >
+        <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
+        Refresh
+      </button>
+    </div>
 
     <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
 

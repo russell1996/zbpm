@@ -1,35 +1,38 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { GitBranch, ListTodo, AlertTriangle, CheckCircle, FileText, Play } from 'lucide-vue-next'
+import { GitBranch, ListTodo, AlertTriangle, CheckCircle, FileText, Play, RefreshCw, Cpu } from 'lucide-vue-next'
 import { getProcessDefinitions } from '@/services/processService'
 import { getProcessInstances } from '@/services/instanceService'
-import { getUserTasks } from '@/services/taskService'
+import { getUserTasks, getServiceTasks } from '@/services/taskService'
 import { getIncidents } from '@/services/incidentService'
 
 const router = useRouter()
 
 const activeProcesses = ref(0)
 const openTasks = ref(0)
+const openServiceTasks = ref(0)
 const openIncidents = ref(0)
 const completedToday = ref(0)
 const loading = ref(true)
 
 const recentDefinitions = ref<{ id: string; name: string; key: string; version: number }[]>([])
 
-onMounted(async () => {
+async function load() {
   loading.value = true
   try {
-    const [defs, instances, tasks, incidents] = await Promise.all([
+    const [defs, instances, tasks, serviceTasks, incidents] = await Promise.all([
       getProcessDefinitions({ latestVersionOnly: true, pageSize: 5 }),
       getProcessInstances({ pageSize: 100 }),
       getUserTasks({ completed: false, pageSize: 100 }),
+      getServiceTasks({ completed: false, pageSize: 100 }),
       getIncidents({ pageSize: 100 }),
     ])
 
     recentDefinitions.value = defs.data
     activeProcesses.value = instances.data.filter((i) => !i.completedAt).length
     openTasks.value = tasks.totalElements
+    openServiceTasks.value = serviceTasks.totalElements
     openIncidents.value = incidents.data.filter((i) => !i.completedAt).length
 
     const today = new Date().toDateString()
@@ -37,19 +40,34 @@ onMounted(async () => {
       (i) => i.completedAt && new Date(i.completedAt).toDateString() === today,
     ).length
   } catch {
-    // API unavailable — show empty dashboard
+    // API unavailable
   } finally {
     loading.value = false
   }
-})
+}
+
+onMounted(load)
 </script>
 
 <template>
   <div class="space-y-6">
-    <h1 class="text-2xl font-bold">Dashboard</h1>
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold">Dashboard</h1>
+      <button
+        class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+        :disabled="loading"
+        @click="load"
+      >
+        <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
+        Refresh
+      </button>
+    </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div class="border border-border rounded-lg p-4 bg-card">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div
+        class="border border-border rounded-lg p-4 bg-card cursor-pointer hover:bg-muted/50 transition-colors"
+        @click="router.push('/processes/instances')"
+      >
         <div class="flex items-center justify-between mb-2">
           <span class="text-sm font-medium text-muted-foreground">Active Processes</span>
           <GitBranch class="h-4 w-4 text-muted-foreground" />
@@ -57,7 +75,10 @@ onMounted(async () => {
         <div class="text-2xl font-bold">{{ loading ? '—' : activeProcesses }}</div>
       </div>
 
-      <div class="border border-border rounded-lg p-4 bg-card">
+      <div
+        class="border border-border rounded-lg p-4 bg-card cursor-pointer hover:bg-muted/50 transition-colors"
+        @click="router.push('/tasks')"
+      >
         <div class="flex items-center justify-between mb-2">
           <span class="text-sm font-medium text-muted-foreground">Open Tasks</span>
           <ListTodo class="h-4 w-4 text-muted-foreground" />
@@ -65,7 +86,21 @@ onMounted(async () => {
         <div class="text-2xl font-bold">{{ loading ? '—' : openTasks }}</div>
       </div>
 
-      <div class="border border-border rounded-lg p-4 bg-card">
+      <div
+        class="border border-border rounded-lg p-4 bg-card cursor-pointer hover:bg-muted/50 transition-colors"
+        @click="router.push('/tasks?type=service')"
+      >
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-medium text-muted-foreground">Service Tasks</span>
+          <Cpu class="h-4 w-4 text-muted-foreground" />
+        </div>
+        <div class="text-2xl font-bold">{{ loading ? '—' : openServiceTasks }}</div>
+      </div>
+
+      <div
+        class="border border-border rounded-lg p-4 bg-card cursor-pointer hover:bg-muted/50 transition-colors"
+        @click="router.push('/incidents')"
+      >
         <div class="flex items-center justify-between mb-2">
           <span class="text-sm font-medium text-muted-foreground">Open Incidents</span>
           <AlertTriangle class="h-4 w-4 text-muted-foreground" />

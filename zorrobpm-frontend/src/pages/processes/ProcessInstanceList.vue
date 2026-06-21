@@ -3,16 +3,25 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProcessStore } from '@/stores/process'
 import { exportToCsv } from '@/shared/lib/export'
-import { Download } from 'lucide-vue-next'
+import { getProcessDefinitions } from '@/services/processService'
+import type { ProcessDefinition } from '@/types/api'
+import { Download, RefreshCw } from 'lucide-vue-next'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const router = useRouter()
 const store = useProcessStore()
+const definitions = ref<Record<string, ProcessDefinition>>({})
+
+function defName(defId: string) {
+  const d = definitions.value[defId]
+  return d ? (d.name || d.key) : defId.slice(0, 8)
+}
 
 function exportData() {
   if (!store.instances?.data) return
   exportToCsv(store.instances.data.map((i) => ({
     id: i.id,
-    processDefinitionId: i.processDefinitionId,
+    process: defName(i.processDefinitionId),
     status: i.completedAt ? 'Completed' : 'Running',
     startedAt: i.startedAt,
     completedAt: i.completedAt || '',
@@ -24,6 +33,14 @@ const page = ref(0)
 const pageSize = 10
 
 async function load() {
+  if (!Object.keys(definitions.value).length) {
+    try {
+      const defs = await getProcessDefinitions({ latestVersionOnly: true, pageSize: 100 })
+      for (const d of defs.data) {
+        definitions.value[d.id] = d
+      }
+    } catch { /* ignore */ }
+  }
   await store.fetchInstances({
     pageIndex: page.value,
     pageSize,
@@ -67,14 +84,24 @@ watch(filterDefId, () => { page.value = 0; load() })
   <div class="space-y-6">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Process Instances</h1>
-      <button
-        v-if="store.instances?.data?.length"
-        class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-        @click="exportData"
-      >
-        <Download class="h-4 w-4" />
-        Export CSV
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          :disabled="store.loading"
+          @click="load"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
+          Refresh
+        </button>
+        <button
+          v-if="store.instances?.data?.length"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          @click="exportData"
+        >
+          <Download class="h-4 w-4" />
+          Export CSV
+        </button>
+      </div>
     </div>
 
     <div class="flex items-center gap-4">
@@ -94,7 +121,7 @@ watch(filterDefId, () => { page.value = 0; load() })
         <thead class="bg-muted">
           <tr>
             <th class="px-4 py-3 text-left font-medium">ID</th>
-            <th class="px-4 py-3 text-left font-medium">Definition</th>
+            <th class="px-4 py-3 text-left font-medium">Process Name</th>
             <th class="px-4 py-3 text-left font-medium">Status</th>
             <th class="px-4 py-3 text-left font-medium">Started</th>
             <th class="px-4 py-3 text-left font-medium">Completed</th>
@@ -107,8 +134,8 @@ watch(filterDefId, () => { page.value = 0; load() })
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
             @click="viewDetail(pi.id)"
           >
-            <td class="px-4 py-3 font-mono text-xs">{{ pi.id.slice(0, 8) }}...</td>
-            <td class="px-4 py-3 font-mono text-xs">{{ pi.processDefinitionId.slice(0, 8) }}...</td>
+            <td class="px-4 py-3"><CopyableId :value="pi.id" /></td>
+            <td class="px-4 py-3 font-medium">{{ defName(pi.processDefinitionId) }}</td>
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', statusClass(pi)]">
                 {{ status(pi) }}

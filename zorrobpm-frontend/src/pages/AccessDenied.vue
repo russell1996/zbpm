@@ -9,7 +9,7 @@ const { login } = useAuth()
     <div class="text-center max-w-md">
       <h1 class="text-2xl font-bold mb-4">Access Denied</h1>
       <p class="text-muted-foreground mb-6">
-        You do not have access to ZorroBPM. Please contact your administrator
+        You do not have access to ZBPM. Please contact your administrator
         to be added to the user white list.
       </p>
       <button
