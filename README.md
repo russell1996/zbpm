@@ -202,7 +202,7 @@ curl -X POST http://localhost:8080/process-instances \
 curl "http://localhost:8080/process-instances?id=<INSTANCE_ID>&pageIndex=0&pageSize=10"
 ```
 
-`ProcessVariable` = `{ "name": ..., "type": "STRING|LONG|DOUBLE|BOOLEAN|UUID", "value": "..." }`. `DOUBLE` несёт десятичные значения как число в FEEL/DMN (например `19.99`).
+`ProcessVariable` = `{ "name": ..., "type": "STRING|LONG|DOUBLE|BOOLEAN|UUID|JSON", "value": "..." }`. `DOUBLE` несёт десятичные как число в FEEL/DMN (`19.99`); `JSON` — объект/список (`value` — JSON-строка), доступный в FEEL/DMN по свойствам (`order.total`) и итерируемый.
 
 ## Сервис-задачи: написание воркера
 

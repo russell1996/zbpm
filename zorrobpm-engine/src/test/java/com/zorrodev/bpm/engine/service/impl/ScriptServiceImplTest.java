@@ -17,7 +17,7 @@ public class ScriptServiceImplTest {
     private ScriptService service() {
         ScriptEngine unary = new FeelUnaryTestsScriptEngineFactory().getScriptEngine();
         ScriptEngine expression = new FeelScriptEngineFactory().getScriptEngine();
-        return new ScriptServiceImpl(unary, expression);
+        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper());
     }
 
     private ProcessVariable var(String name, ProcessVariableType type, String value) {
