@@ -95,5 +95,6 @@
   "darkMode": "Тёмная тема",
   "lightMode": "Светлая тема",
   "copied": "Скопировано",
-  "copyToClipboard": "Копировать"
+  "copyToClipboard": "Копировать",
+  "latestOnly": "Только последняя версия"
 }

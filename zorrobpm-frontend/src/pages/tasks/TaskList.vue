@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
@@ -10,6 +11,7 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 const router = useRouter()
 const store = useTaskStore()
 const toast = useToast()
+const { t } = useI18n()
 
 const filterCompleted = ref(false)
 const page = ref(0)
@@ -99,7 +101,7 @@ watch(filterCompleted, () => { page.value = 0; load() })
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">Tasks</h1>
+      <h1 class="text-2xl font-bold">User Tasks</h1>
       <div class="flex items-center gap-2">
         <button
           v-if="selectedIds.size > 0"
@@ -108,7 +110,7 @@ watch(filterCompleted, () => { page.value = 0; load() })
           @click="bulkComplete"
         >
           <CheckSquare class="h-4 w-4" />
-          Complete Selected ({{ selectedIds.size }})
+          {{ t('completeSelected') }} ({{ selectedIds.size }})
         </button>
         <button
           class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
@@ -116,7 +118,7 @@ watch(filterCompleted, () => { page.value = 0; load() })
           @click="load"
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
-          Refresh
+          {{ t('refresh') }}
         </button>
         <button
           v-if="store.userTasks?.data?.length"
@@ -124,7 +126,7 @@ watch(filterCompleted, () => { page.value = 0; load() })
           @click="exportData"
         >
           <Download class="h-4 w-4" />
-          Export CSV
+          {{ t('export') }}
         </button>
       </div>
     </div>
@@ -132,11 +134,11 @@ watch(filterCompleted, () => { page.value = 0; load() })
     <div class="flex items-center gap-4">
       <label class="flex items-center gap-2 text-sm">
         <input v-model="filterCompleted" type="checkbox" class="rounded" />
-        Show completed
+        {{ t('showCompleted') }}
       </label>
     </div>
 
-    <div v-if="store.loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
     <div v-else class="border border-border rounded-lg overflow-hidden">
@@ -152,11 +154,10 @@ watch(filterCompleted, () => { page.value = 0; load() })
               />
             </th>
             <th class="px-4 py-3 text-left font-medium">ID</th>
-            <th class="px-4 py-3 text-left font-medium">Name</th>
-            <th class="px-4 py-3 text-left font-medium">Process</th>
-            <th class="px-4 py-3 text-left font-medium">Status</th>
-            <th class="px-4 py-3 text-left font-medium">Created</th>
-            <th class="px-4 py-3 text-left font-medium">Actions</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('name') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
+            <th class="px-4 py-3 text-left font-medium"></th>
           </tr>
         </thead>
         <tbody>
@@ -176,10 +177,9 @@ watch(filterCompleted, () => { page.value = 0; load() })
             </td>
             <td class="px-4 py-3"><CopyableId :value="task.id" /></td>
             <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
-            <td class="px-4 py-3 font-mono text-xs">{{ task.processInstanceId.slice(0, 8) }}...</td>
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', task.completedAt ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
-                {{ task.completedAt ? 'Completed' : 'Active' }}
+                {{ task.completedAt ? t('completed') : t('active') }}
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ new Date(task.createdAt).toLocaleString() }}</td>
@@ -188,18 +188,18 @@ watch(filterCompleted, () => { page.value = 0; load() })
             </td>
           </tr>
           <tr v-if="!store.userTasks?.data?.length">
-            <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">No tasks found</td>
+            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noTasks') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <div v-if="store.userTasks" class="flex items-center justify-between text-sm text-muted-foreground">
-      <span>{{ store.userTasks.totalElements }} total</span>
+      <span>{{ store.userTasks.totalElements }} {{ t('total') }}</span>
       <div class="flex items-center gap-2">
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="page === 0" @click="prevPage">Previous</button>
-        <span>Page {{ page + 1 }}</span>
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="(page + 1) * pageSize >= store.userTasks.totalElements" @click="nextPage">Next</button>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="page === 0" @click="prevPage">{{ t('previous') }}</button>
+        <span>{{ t('page') }} {{ page + 1 }}</span>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="(page + 1) * pageSize >= store.userTasks.totalElements" @click="nextPage">{{ t('next') }}</button>
       </div>
     </div>
   </div>

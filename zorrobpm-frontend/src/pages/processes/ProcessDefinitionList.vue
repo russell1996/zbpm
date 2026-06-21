@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useProcessStore } from '@/stores/process'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
-import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const router = useRouter()
 const store = useProcessStore()
+const { t } = useI18n()
 
 const search = ref('')
 const latestOnly = ref(true)
@@ -67,7 +68,7 @@ watch([search, latestOnly], () => { page.value = 0; load() })
           @click="load"
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
-          Refresh
+          {{ t('refresh') }}
         </button>
         <button
           v-if="store.definitions?.data?.length"
@@ -75,7 +76,7 @@ watch([search, latestOnly], () => { page.value = 0; load() })
           @click="exportData"
         >
           <Download class="h-4 w-4" />
-          Export CSV
+          {{ t('export') }}
         </button>
       </div>
     </div>
@@ -84,27 +85,27 @@ watch([search, latestOnly], () => { page.value = 0; load() })
       <input
         v-model="search"
         type="text"
-        placeholder="Search by name..."
+        :placeholder="t('searchPlaceholder')"
         class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
       />
       <label class="flex items-center gap-2 text-sm">
         <input v-model="latestOnly" type="checkbox" class="rounded" />
-        Latest only
+        {{ t('latestOnly') }}
       </label>
     </div>
 
-    <div v-if="store.loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
     <div v-else class="border border-border rounded-lg overflow-hidden">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">Name</th>
-            <th class="px-4 py-3 text-left font-medium">Key</th>
-            <th class="px-4 py-3 text-left font-medium">Version</th>
-            <th class="px-4 py-3 text-left font-medium">Created</th>
-            <th class="px-4 py-3 text-left font-medium">Actions</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('name') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('key') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('version') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
+            <th class="px-4 py-3 text-left font-medium"></th>
           </tr>
         </thead>
         <tbody>
@@ -129,29 +130,29 @@ watch([search, latestOnly], () => { page.value = 0; load() })
             </td>
           </tr>
           <tr v-if="!store.definitions?.data?.length">
-            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">No definitions found</td>
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noDefinitions') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <div v-if="store.definitions" class="flex items-center justify-between text-sm text-muted-foreground">
-      <span>{{ store.definitions.totalElements }} total</span>
+      <span>{{ store.definitions.totalElements }} {{ t('total') }}</span>
       <div class="flex items-center gap-2">
         <button
           class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50"
           :disabled="page === 0"
           @click="prevPage"
         >
-          Previous
+          {{ t('previous') }}
         </button>
-        <span>Page {{ page + 1 }}</span>
+        <span>{{ t('page') }} {{ page + 1 }}</span>
         <button
           class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50"
           :disabled="(page + 1) * pageSize >= store.definitions.totalElements"
           @click="nextPage"
         >
-          Next
+          {{ t('next') }}
         </button>
       </div>
     </div>
