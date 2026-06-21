@@ -19,18 +19,18 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 | Поддерживается | Пока не поддерживается |
 |---|---|
-| Start / End / Terminate-end события | Multi-instance: input/output-коллекции / loopCounter |
+| Start / End / Terminate-end события | Multi-instance: per-instance `inputElement`/`outputCollection`/`loopCounter` (scoped-изоляция) |
 | **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional **start** событие (catch/boundary — поддержаны) |
-| Потоки управления (sequence flow) | Компенсация: targeted (по activityRef) / в подпроцессе |
+| Потоки управления (sequence flow) | Компенсация в scope встроенного подпроцесса |
 | Exclusive gateway (условия на FEEL + поток по умолчанию) | |
 | Parallel gateway (split / join) | Event sub-process внутри встроенного подпроцесса (не top-level) |
 | **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | Transaction: вложенные транзакции |
 | **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
 | Service task (внешние воркеры через RabbitMQ) | |
-| User task (assignee, кандидаты-пользователи/группы, form key) | |
-| **Multi-instance** (параллельный и **последовательный**, по `loopCardinality`; агрегирующий join; `completionCondition`) | |
+| User task (assignee, кандидаты-пользователи/группы, form key; `zeebe:userTask` маркер) | |
+| **Multi-instance** (параллельный и **последовательный**, по `loopCardinality` или `zeebe:loopCharacteristics inputCollection`; агрегирующий join; `completionCondition`) | |
 | **Send / Receive task** (send: `zeebe:taskDefinition` job-worker или message throw; receive: message catch) | |
-| **Script task** (inline FEEL-выражение, результат в переменную) | |
+| **Script task** (`zeebe:script expression` + inline FEEL-выражение, результат в переменную) | |
 | **IO mappings** (`zeebe:ioMapping` input/output на service/user task; **scoped**: input-локали не протекают) | |
 | **Business rule task** (DMN-решение через `zeebe:calledDecision` + DMN-движок; или inline FEEL) | |
 | Call activity, встроенный подпроцесс | |
@@ -58,18 +58,18 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Статус | Конструкции |
 |---|---|
 | ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User (вкл. `zeebe:userTask`)/Receive/**Send** task (`zeebe:taskDefinition`), **Script task** (`zeebe:script` + inline), Business rule task (`zeebe:calledDecision`), Call activity, Embedded & Event subprocess (message/signal/error/timer), `zeebe:ioMapping` (scoped), **Compensation** (compensate-all + targeted), correlation key (`zeebe:subscription`), FEEL-условия |
-| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — позже), Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса |
+| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — scoped-изоляция отложена), Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса |
 | ❌ **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | **Conditional** события (start/catch/boundary), **Transaction** subprocess, **Cancel** события (end/boundary) |
 
 **Рекомендации для переносимости в Camunda 8:**
 
-- Избегать только ❌-конструкций (conditional / transaction / cancel) — это надстройка над C8, полезная вне
-  него, но в Camunda 8 модель не задеплоится.
+- Избегать ❌-конструкций (conditional / transaction / cancel) — это надстройка над C8, полезная вне него,
+  но в Camunda 8 модель не задеплоится.
 - ✅ Все ⚠️-расхождения по нотации закрыты: `zeebe:script`, `zeebe:loopCharacteristics`,
   `zeebe:taskDefinition` (send task), `zeebe:userTask`, scoped IO-mappings, триггеры event subprocess
   (message/signal/error/timer), targeted-компенсация.
-- Осталось (отдельные заходы): per-instance `inputElement`/`outputCollection` для multi-instance,
-  остальные триггеры event subprocess, targeted-компенсация.
+- Осталось (отдельные заходы): per-instance `inputElement`/`outputCollection` для multi-instance (scoped-изоляция),
+  компенсация в scope подпроцесса, `timeCycle` для таймеров.
 
 DMN исполняется собственным движком решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL);
 для стандартных таблиц решений поведение эквивалентно.
@@ -89,6 +89,7 @@ DMN исполняется собственным движком решений 
 | `zorrobpm-job-handler-spring-boot-starter` | SDK для написания внешних воркеров |
 | `zorrobpm-ce` | Запускаемое Spring Boot приложение (собирает всё вместе) |
 | `zorrobpm-test` | Общие тестовые помощники |
+| `zorrobpm-frontend` | SPA (Vue 3 + Vite + TS): Operate/Tasklist/Cockpit в одном приложении; отдаётся nginx, ходит в API по относительному `/api` |
 
 **Поток исполнения:**
 
@@ -122,14 +123,19 @@ cp .env.example .env        # при необходимости поправьт
 docker compose up -d --build
 ```
 
-Поднимутся PostgreSQL, RabbitMQ и приложение. Затем:
+Поднимутся PostgreSQL, RabbitMQ, backend (`app`) и frontend (`frontend`, nginx). Затем:
 
+- UI (SPA): `http://localhost:8081` — отдаётся nginx, проксирует `/api` → `app:8080`
 - База API: `http://localhost:8080`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 - Management UI RabbitMQ: `http://localhost:9300` (по умолчанию `zorrodev`/`zorrodev`)
 
 Остановить: `docker compose down` (добавьте `-v`, чтобы удалить тома с данными).
+
+**Frontend** собирается отдельным образом (`zorrobpm-frontend/Dockerfile`, multi-stage `node:22` → `nginx`).
+В `src/` нет hardcoded `localhost`/IP: API-база — относительный `/api`, OIDC-redirect берётся из
+`window.location.origin`. Подробности — [docs/deployment.md](docs/deployment.md).
 
 ## Локальная разработка
 
@@ -250,13 +256,25 @@ public class ChargeHandler implements JobHandler {
 
 - **Нет аутентификации/авторизации** — все эндпоинты открыты. Размещайте сервис за аутентифицирующим шлюзом и в закрытой сети.
 - **Только один экземпляр** — таймеры опрашиваются без leader-election, версионирование определений использует JVM-лок; несколько реплик могут дублировать срабатывание таймеров и конфликтовать на версионировании.
-- **CORS полностью открыт**, размер тела запроса не ограничен — ужесточите перед публичным доступом.
+- **CORS полностью открыт** на backend — в проде доступ идёт через nginx (frontend-контейнер / внешний reverse proxy), ограничивайте на этом уровне.
 - **Сборка требует JDK 21**, хотя в POM движка указано `java.version=17`.
 - При апгрейде на существующем брокере очередь `zorrobpm.complete-service-task` получает dead-letter-аргументы — если она уже есть без них, удалите её один раз (`PRECONDITION_FAILED` при переобъявлении).
 
 ## CI/CD
 
-GitLab CI (`.gitlab-ci.yml`) деплоит через Docker Compose на ветке по умолчанию. Тесты в пайплайне пока **не** запускаются — прогоняйте `mvn verify` перед мержем.
+GitLab CI (`.gitlab-ci.yml`), self-hosted runner с Docker (tag `zbpm`). Стадии:
+
+```
+test  →  package  →  deploy  →  rollback
+```
+
+- **test** — backend `mvn clean verify` (полный reactor: unit + интеграционные) и frontend `npm ci && npm run build` (typecheck + сборка).
+- **package** — Docker-образы backend и frontend, версионируются тегом коммита (`$CI_COMMIT_SHORT_SHA`) + `latest`.
+- **deploy** — авто на ветке по умолчанию (вручную на прочих): `docker compose up -d` с версионными тегами; предыдущий тег сохраняется в `.previous_tag`.
+- **rollback** — ручная стадия: переразвёртывание предыдущего тега.
+
+Прод за внешним nginx reverse proxy: `https://zorro.i-smet.kz` → `frontend` (nginx) → `/api` → `app:8080`.
+Полный runbook (деплой, откат, переменные, топология) — [docs/deployment.md](docs/deployment.md).
 
 ## Лицензия
 
