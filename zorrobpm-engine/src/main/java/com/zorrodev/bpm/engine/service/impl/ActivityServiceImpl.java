@@ -593,22 +593,9 @@ public class ActivityServiceImpl implements ActivityService {
         return switch (timer.getType()) {
             case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
             case DATE -> Instant.parse(timer.getExpression());
-            case CYCLE -> Instant.now().plus(parseCycleDuration(timer.getExpression(), elementId));
+            // timeCycle: first occurrence of an ISO repeating interval (R[n]/<duration>) or a cron expression
+            case CYCLE -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
         };
-    }
-
-    /**
-     * First-occurrence duration of an ISO-8601 repeating-interval {@code timeCycle} ({@code R[n]/<duration>},
-     * e.g. {@code R3/PT1H} or {@code R/PT30M}; a bare duration is also accepted). The timer fires once after
-     * this duration. Repetition (re-scheduling subsequent occurrences) and cron expressions are not yet
-     * supported — a cron {@code timeCycle} raises an informative incident rather than firing.
-     */
-    private Duration parseCycleDuration(String cycle, String elementId) {
-        try {
-            return TimerEventExtensionModel.cycleFirstDuration(cycle);
-        } catch (RuntimeException e) {
-            throw new EngineException("Timer event " + elementId + " has an unsupported timeCycle (cron is not yet supported): " + cycle);
-        }
     }
 
     /**
