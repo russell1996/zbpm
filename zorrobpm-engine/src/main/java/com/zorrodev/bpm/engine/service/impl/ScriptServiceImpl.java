@@ -50,6 +50,9 @@ public class ScriptServiceImpl implements ScriptService {
                     ctx.setAttribute(variable.getName(), Long.valueOf(variable.getValue()), ScriptContext.ENGINE_SCOPE);
                 } else if (type == ProcessVariableType.BOOLEAN) {
                     ctx.setAttribute(variable.getName(), Boolean.valueOf(variable.getValue()), ScriptContext.ENGINE_SCOPE);
+                } else if (type == ProcessVariableType.DOUBLE) {
+                    // FEEL numbers are BigDecimal — pass decimals as such so arithmetic/comparison works
+                    ctx.setAttribute(variable.getName(), new java.math.BigDecimal(variable.getValue()), ScriptContext.ENGINE_SCOPE);
                 } else {
                     ctx.setAttribute(variable.getName(), variable.getValue(), ScriptContext.ENGINE_SCOPE);
                 }
