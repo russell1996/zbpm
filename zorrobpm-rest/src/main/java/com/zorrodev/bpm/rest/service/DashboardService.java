@@ -1,4 +1,4 @@
-package com.zorrodev.bpm.rest.resource;
+package com.zorrodev.bpm.rest.service;
 
 import com.zorrodev.bpm.rest.dto.DashboardDTO;
 import jakarta.persistence.EntityManager;
@@ -11,7 +11,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
