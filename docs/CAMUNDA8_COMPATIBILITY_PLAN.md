@@ -101,7 +101,7 @@
 - **Сложность:** **M**
 - **Прогресс:**
   - ✅ **per-instance `inputElement` + `loopCounter`** — каждый MI-инстанс (user task) получает scoped `inputElement`=`collection[i]` (через `toProcessVariable`, поддерживает scalar/decimal/JSON) и `loopCounter`=`i+1`; параллельный и последовательный. Миграция **038**: unique `(pi,name)`→`(pi,name,scope_id)` (иначе одноимённые scoped-переменные параллельных инстансов коллидируют). Тест: `MultiInstanceElementIntegrationTests`.
-  - ⏳ **`outputCollection`/`outputElement`** (сбор per-instance результатов в список) — следующий заход (нужна агрегация в root-список; для MI на service/script task — отдельно).
+  - ✅ **`outputCollection`/`outputElement`** — на завершении инстанса `outputElement` (FEEL в scope инстанса) добавляется в root JSON-список `outputCollection` (`aggregateMultiInstanceOutput`/`appendToJsonList`). Параллельный и последовательный (завершения последовательны → агрегация корректна). Тест: `MultiInstanceOutputIntegrationTests` (`items=[10,20,30]`, `item*2` → `doubled=[20,40,60]`). *(MI пока на user task; MI на service/script task — отдельно.)*
 
 ### P1 — выполняются с ограничениями / отличия поведения
 

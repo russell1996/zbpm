@@ -1358,6 +1358,41 @@ public class ActivityServiceImpl implements ActivityService {
         dbService.setVariables(processInstanceId, scopeId, locals);
     }
 
+    /** Appends a multi-instance instance's {@code outputElement} (a FEEL expression evaluated in the instance
+     *  scope) to the {@code outputCollection} (a root JSON list). No-op unless both are configured. */
+    private void aggregateMultiInstanceOutput(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
+        MultiInstanceExtensionModel mi = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
+            .orElse(null);
+        if (mi == null || mi.getOutputCollection() == null || mi.getOutputCollection().isBlank()
+            || mi.getOutputElement() == null || mi.getOutputElement().isBlank()) {
+            return;
+        }
+        Object value = scriptService.evaluateExpression(mi.getOutputElement(), dbService.getVariables(processInstanceId, scopeId));
+        appendToJsonList(processInstanceId, mi.getOutputCollection(), value);
+    }
+
+    /** Reads the named root variable as a JSON list (or starts a new one), appends {@code value} (normalised
+     *  to a Java structure), and writes it back as a JSON variable. */
+    private void appendToJsonList(UUID processInstanceId, String name, Object value) {
+        List<Object> list = new ArrayList<>();
+        ProcessVariable existing = dbService.getVariables(processInstanceId).stream()
+            .filter(v -> v.getName().equals(name))
+            .findFirst().orElse(null);
+        if (existing != null && existing.getType() == ProcessVariableType.JSON
+            && existing.getValue() != null && !existing.getValue().isBlank()
+            && objectMapper.readValue(existing.getValue(), Object.class) instanceof List<?> current) {
+            list.addAll(current);
+        }
+        list.add(toJavaStructure(value));
+
+        ProcessVariable out = new ProcessVariable();
+        out.setName(name);
+        out.setType(ProcessVariableType.JSON);
+        out.setValue(objectMapper.writeValueAsString(list));
+        dbService.setVariables(processInstanceId, List.of(out));
+    }
+
     /** Element at {@code index} of a FEEL collection: a {@link java.util.List} (from a JSON list variable) or,
      *  for a Scala collection returned by the FEEL value mapper, its {@code apply(int)} reflectively. */
     private Object collectionElement(Object collection, int index) {
@@ -1524,6 +1559,9 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
+        // multi-instance: append this instance's outputElement to the outputCollection before its scoped
+        // variables (inputElement/loopCounter) are dropped
+        aggregateMultiInstanceOutput(processInstanceId, userTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, userTaskId);
         if (isMultiInstance(bpmnElement) && !multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId)) {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
