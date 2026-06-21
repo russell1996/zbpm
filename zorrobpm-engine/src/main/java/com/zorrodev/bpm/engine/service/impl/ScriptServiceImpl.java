@@ -7,6 +7,7 @@ import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 import javax.script.ScriptContext;
 import javax.script.ScriptEngine;
@@ -19,11 +20,14 @@ public class ScriptServiceImpl implements ScriptService {
 
     private final ScriptEngine scriptEngine;
     private final ScriptEngine feelExpressionScriptEngine;
+    private final ObjectMapper objectMapper;
 
     public ScriptServiceImpl(@Qualifier("feelScriptEngine") ScriptEngine scriptEngine,
-                             @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine) {
+                             @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine,
+                             ObjectMapper objectMapper) {
         this.scriptEngine = scriptEngine;
         this.feelExpressionScriptEngine = feelExpressionScriptEngine;
+        this.objectMapper = objectMapper;
     }
 
     @SneakyThrows
@@ -53,6 +57,9 @@ public class ScriptServiceImpl implements ScriptService {
                 } else if (type == ProcessVariableType.DOUBLE) {
                     // FEEL numbers are BigDecimal — pass decimals as such so arithmetic/comparison works
                     ctx.setAttribute(variable.getName(), new java.math.BigDecimal(variable.getValue()), ScriptContext.ENGINE_SCOPE);
+                } else if (type == ProcessVariableType.JSON) {
+                    // JSON object/list -> Java Map/List so FEEL can read nested properties (order.total) and iterate
+                    ctx.setAttribute(variable.getName(), objectMapper.readValue(variable.getValue(), Object.class), ScriptContext.ENGINE_SCOPE);
                 } else {
                     ctx.setAttribute(variable.getName(), variable.getValue(), ScriptContext.ENGINE_SCOPE);
                 }
