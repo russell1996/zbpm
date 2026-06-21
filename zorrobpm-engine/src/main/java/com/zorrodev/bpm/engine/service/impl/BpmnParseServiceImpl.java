@@ -635,6 +635,17 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setType(BpmnElementType.SCRIPT_TASK);
         element.setIncoming(scriptTask.getIncoming());
         element.setOutgoing(scriptTask.getOutgoing());
+        element.setExtensions(new BpmnElementExtensionModel());
+
+        // Camunda 8: a zeebe:taskDefinition makes the script task a job worker (executed like a service
+        // task) instead of an inline FEEL script.
+        if (scriptTask.getExtensionElements() != null && scriptTask.getExtensionElements().getTaskDefinition() != null) {
+            ServiceTaskExtensionModel job = new ServiceTaskExtensionModel();
+            job.setJob(scriptTask.getExtensionElements().getTaskDefinition().getType());
+            element.getExtensions().setServiceTaskExtension(job);
+            return element;
+        }
+
         ScriptTaskExtensionModel script = new ScriptTaskExtensionModel();
         ZeebeScriptModel zeebeScript = scriptTask.getExtensionElements() == null ? null
             : scriptTask.getExtensionElements().getScript();
@@ -649,7 +660,6 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             script.setScript(scriptTask.getScript() != null ? scriptTask.getScript().strip() : null);
             script.setResultVariable(scriptTask.getResultVariable());
         }
-        element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setScriptTaskExtension(script);
         return element;
     }
