@@ -156,7 +156,13 @@ public class ActivityServiceImpl implements ActivityService {
         for (String outgoing : element.getOutgoing()) {
             processFlow(processInstanceId, tokenId, outgoing, false, null);
             BpmnFlowModel flow = bpmn.getFlow(outgoing);
+            if (flow == null) {
+                throw new IllegalStateException("Sequence flow '" + outgoing + "' not found in the process definition");
+            }
             BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
+            if (target == null) {
+                throw new IllegalStateException("Target element '" + flow.getTargetRef() + "' of sequence flow '" + outgoing + "' not found in the process definition");
+            }
             execute(processInstanceId, tokenId, bpmn, target);
         }
     }
@@ -638,6 +644,9 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     private void execute(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
+        if (element == null) {
+            throw new IllegalStateException("Cannot execute a null element — a referenced element was not found in the process definition");
+        }
         int depth = executionDepth.get() + 1;
         if (depth > maxExecutionDepth) {
             // Thrown before incrementing the counter: parent frames restore depth via their
@@ -1826,10 +1835,16 @@ public class ActivityServiceImpl implements ActivityService {
 
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
         BpmnFlowModel flow = bpmn.getFlow(flowId);
+        if (flow == null) {
+            throw new IllegalStateException("Sequence flow '" + flowId + "' not found in the process definition");
+        }
         String targetRef = flow.getTargetRef();
         String sourceRef = flow.getSourceRef();
         BpmnElementModel target = bpmn.getElement(targetRef);
         BpmnElementModel source = bpmn.getElement(sourceRef);
+        if (target == null) {
+            throw new IllegalStateException("Target element '" + targetRef + "' of sequence flow '" + flowId + "' not found in the process definition");
+        }
 
         UUID flowActivityId = null;
 
@@ -1914,6 +1929,9 @@ public class ActivityServiceImpl implements ActivityService {
             UUID parentToken = parentActivity.getToken();
             BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentProcessDefinitionId);
             BpmnElementModel parentBpmnElement = parentBpmn.getElement(parentActivity.getBpmnElementId());
+            if (parentBpmnElement == null) {
+                throw new IllegalStateException("Call activity element '" + parentActivity.getBpmnElementId() + "' not found in the parent process definition");
+            }
 
             // Camunda 8: propagateAllChildVariables (default true) copies the child's variables up to the
             // parent; when explicitly false, the child's variables are not propagated.
