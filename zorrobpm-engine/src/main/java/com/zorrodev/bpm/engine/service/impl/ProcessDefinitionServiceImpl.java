@@ -165,7 +165,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             Instant dueAt = switch (timer.getType()) {
                 case DURATION -> Instant.now().plus(java.time.Duration.parse(timer.getExpression()));
                 case DATE -> Instant.parse(timer.getExpression());
-                case CYCLE -> Instant.now().plus(com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel.cycleFirstDuration(timer.getExpression()));
+                case CYCLE -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
             };
             dbService.createTimerStartJob(key, processDefinitionId, start.getId(), dueAt);
         }
