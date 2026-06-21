@@ -112,6 +112,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     } else if (startEvent.getTimerEventDefinition().getTimeDuration() != null) {
                         timer.setType(TimerEventType.DURATION);
                         timer.setExpression(startEvent.getTimerEventDefinition().getTimeDuration());
+                    } else if (startEvent.getTimerEventDefinition().getTimeCycle() != null) {
+                        timer.setType(TimerEventType.CYCLE);
+                        timer.setExpression(startEvent.getTimerEventDefinition().getTimeCycle());
                     }
                     element.getExtensions().setTimerEventExtension(timer);
                 }
@@ -400,6 +403,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             } else if (boundaryEvent.getTimerEventDefinition().getTimeDuration() != null) {
                 timer.setType(TimerEventType.DURATION);
                 timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeDuration());
+            } else if (boundaryEvent.getTimerEventDefinition().getTimeCycle() != null) {
+                timer.setType(TimerEventType.CYCLE);
+                timer.setExpression(boundaryEvent.getTimerEventDefinition().getTimeCycle());
             }
             element.getExtensions().setTimerEventExtension(timer);
         } else if (boundaryEvent.getErrorEventDefinition() != null) {
@@ -475,6 +481,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         } else if (start.getTimerEventDefinition().getTimeDuration() != null) {
                             timer.setType(TimerEventType.DURATION);
                             timer.setExpression(start.getTimerEventDefinition().getTimeDuration());
+                        } else if (start.getTimerEventDefinition().getTimeCycle() != null) {
+                            timer.setType(TimerEventType.CYCLE);
+                            timer.setExpression(start.getTimerEventDefinition().getTimeCycle());
                         }
                         ext.setTriggerTimer(timer);
                     }
@@ -861,6 +870,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             } else if (catchEvent.getTimerEventDefinition().getTimeDuration() != null) {
                 timer.setType(TimerEventType.DURATION);
                 timer.setExpression(catchEvent.getTimerEventDefinition().getTimeDuration());
+            } else if (catchEvent.getTimerEventDefinition().getTimeCycle() != null) {
+                timer.setType(TimerEventType.CYCLE);
+                timer.setExpression(catchEvent.getTimerEventDefinition().getTimeCycle());
             }
 
             element.getExtensions().setTimerEventExtension(timer);
