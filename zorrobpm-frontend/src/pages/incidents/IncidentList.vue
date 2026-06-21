@@ -1,0 +1,118 @@
+<script setup lang="ts">
+import { ref, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useIncidentStore } from '@/stores/incident'
+import { exportToCsv } from '@/shared/lib/export'
+import { Download } from 'lucide-vue-next'
+
+const router = useRouter()
+const store = useIncidentStore()
+
+const page = ref(0)
+const pageSize = 10
+
+async function load() {
+  await store.fetchIncidents({
+    pageIndex: page.value,
+    pageSize,
+  })
+}
+
+function nextPage() {
+  if (store.incidents && (page.value + 1) * pageSize < store.incidents.totalElements) {
+    page.value++
+    load()
+  }
+}
+
+function prevPage() {
+  if (page.value > 0) {
+    page.value--
+    load()
+  }
+}
+
+function viewDetail(id: string) {
+  router.push(`/incidents/${id}`)
+}
+
+onMounted(load)
+
+function exportData() {
+  if (!store.incidents?.data) return
+  exportToCsv(store.incidents.data.map((i) => ({
+    id: i.id,
+    activityId: i.activityId,
+    message: i.message,
+    status: i.completedAt ? 'Resolved' : 'Open',
+    createdAt: i.createdAt,
+    completedAt: i.completedAt || '',
+  })), 'incidents.csv')
+}
+</script>
+
+<template>
+  <div class="space-y-6">
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold">Incidents</h1>
+      <button
+        v-if="store.incidents?.data?.length"
+        class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+        @click="exportData"
+      >
+        <Download class="h-4 w-4" />
+        Export CSV
+      </button>
+    </div>
+
+    <div v-if="store.loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
+
+    <div v-else class="border border-border rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-muted">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">ID</th>
+            <th class="px-4 py-3 text-left font-medium">Message</th>
+            <th class="px-4 py-3 text-left font-medium">Activity</th>
+            <th class="px-4 py-3 text-left font-medium">Status</th>
+            <th class="px-4 py-3 text-left font-medium">Created</th>
+            <th class="px-4 py-3 text-left font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="inc in (store.incidents?.data || [])"
+            :key="inc.id"
+            class="border-t border-border hover:bg-muted/50"
+          >
+            <td class="px-4 py-3 font-mono text-xs">{{ inc.id.slice(0, 8) }}...</td>
+            <td class="px-4 py-3 text-sm max-w-xs truncate">{{ inc.message }}</td>
+            <td class="px-4 py-3 font-mono text-xs">{{ inc.activityId.slice(0, 8) }}...</td>
+            <td class="px-4 py-3">
+              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', inc.completedAt ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
+                {{ inc.completedAt ? 'Resolved' : 'Open' }}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-muted-foreground">{{ new Date(inc.createdAt).toLocaleString() }}</td>
+            <td class="px-4 py-3">
+              <button class="text-sm text-primary hover:underline" @click="viewDetail(inc.id)">View</button>
+            </td>
+          </tr>
+          <tr v-if="!store.incidents?.data?.length">
+            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">No incidents found</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div v-if="store.incidents" class="flex items-center justify-between text-sm text-muted-foreground">
+      <span>{{ store.incidents.totalElements }} total</span>
+      <div class="flex items-center gap-2">
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="page === 0" @click="prevPage">Previous</button>
+        <span>Page {{ page + 1 }}</span>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="(page + 1) * pageSize >= store.incidents.totalElements" @click="nextPage">Next</button>
+      </div>
+    </div>
+  </div>
+</template>
