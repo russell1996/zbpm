@@ -8,9 +8,10 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * {@code <scriptTask>}: an inline script evaluated synchronously while the token flows through. The
- * {@code <script>} child holds the expression (FEEL); {@code resultVariable} names the process variable
- * the script's result is written to.
+ * {@code <scriptTask>}: a FEEL script evaluated synchronously while the token flows through. Two ways to
+ * carry it: the BPMN-standard inline {@code <script>} child (with {@code scriptFormat}/{@code resultVariable}
+ * attributes), or — the Camunda 8 way — {@code <zeebe:script expression=… resultVariable=…>} in
+ * {@code extensionElements}. {@code resultVariable} names the process variable the result is written to.
  */
 @Getter
 @Setter
@@ -22,4 +23,6 @@ public class BpmnScriptTaskModel extends BpmnBaseElementModel {
     private String resultVariable;
     @XmlElement(name = "script", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private String script;
+    @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private ExtensionElements extensionElements;
 }
