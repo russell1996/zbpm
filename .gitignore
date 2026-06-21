@@ -19,3 +19,6 @@ Thumbs.db
 # Frontend build artifacts (the frontend has its own .gitignore too)
 node_modules/
 zorrobpm-frontend/dist/
+
+# Local tooling (kept out of the repo)
+.mimocode/
