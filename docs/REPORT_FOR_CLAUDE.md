@@ -1,3 +1,20 @@
+> **Status update (2026-06-21).** Этот отчёт — исходный аудит по более раннему снимку; часть пунктов уже
+> закрыта. Сводка актуальности и приоритизация под C8 — в [CAMUNDA8_COMPATIBILITY_PLAN.md](CAMUNDA8_COMPATIBILITY_PLAN.md).
+> Закрыто к этой дате:
+> - **Camunda 8 нотация** — targeted compensation (`activityRef`), send task job-worker
+>   (`zeebe:taskDefinition`), `zeebe:userTask`, `zeebe:script`, `zeebe:loopCharacteristics` (count),
+>   scoped IO-mapping переменные, триггеры event subprocess (message/signal/error/timer). См. README §Camunda 8.
+> - **Публикация/инфраструктура** — добавлен `zorrobpm-frontend` (SPA, контейнеризован за nginx, относительный
+>   `/api`, без hardcoded хостов); CI/CD переписан в `test → package → deploy → rollback` с версионированием
+>   образов и откатом — поэтому пункт техдолга «тесты в пайплайне не запускаются» **снят** (стадия `test`
+>   гоняет `mvn verify` + frontend build). Runbook: [deployment.md](deployment.md).
+> - **Ложные срабатывания** (по сверке с кодом): `ProcessVariable type "LONG"` (поле type корректно),
+>   «Variable scope leak» (это новое корректное scoped-поведение).
+>
+> **Актуальные блокеры C8** (не реализованы; см. план): модель переменных JSON/list/DOUBLE (P0),
+> MI per-instance `inputElement`/`loopCounter`/`outputCollection` (P0), `timeCycle` (P1),
+> `propagateAllChildVariables=false` (P1), call-activity null-safety (P2). Ниже — исходный текст аудита.
+
 # Executive Summary
 
 ZorroBPM CE — лёгкий BPMN 2.0 движок на Spring Boot 4.0.5 / Java 21 / PostgreSQL. Многомодульный Maven-проект (v0.7.17-SNAPSHOT), реализующий парсинг BPMN XML через JAXB, исполнение графа токенами, интеграцию с RabbitMQ для внешних воркеров, DMN-движок на FEEL.
