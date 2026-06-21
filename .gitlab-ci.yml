@@ -1,15 +1,17 @@
 # ZorroBPM CI/CD
 #
-# Pipeline: test (backend + frontend)  ->  package (Docker images, versioned)  ->  deploy  ->  rollback
+# Pipeline: test (backend + frontend)  ->  build (versioned images)  ->  deploy  ->  rollback
 #
-# Runs on the self-hosted shell runner (tag `zbpm`) which has Docker + Docker Compose. Images are built
-# and tagged with the commit SHA on the deploy host (no external registry required); the previous tag is
-# recorded so a deploy can be rolled back. The external nginx proxy (https://zorro.i-smet.kz) forwards to
-# the frontend container, which serves the SPA and proxies /api -> app:8080 inside the Docker network.
+# Runs on the self-hosted shell runner (tag `zbpm`) which has Docker + Docker Compose. Everything goes
+# through `docker build` / `docker compose` (the proven primitive) — no host Maven/Node and no workspace
+# bind mounts, so there are no file-ownership/cleanup issues on the runner. Images are built and tagged with
+# the commit SHA on the deploy host (no external registry); the previous tag is recorded for rollback. The
+# external nginx proxy (https://zorro.i-smet.kz) forwards to the frontend container, which serves the SPA
+# and proxies /api -> app:8080 inside the Docker network.
 
 stages:
   - test
-  - package
+  - build
   - deploy
   - rollback
 
@@ -25,55 +27,44 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
+default:
+  # Self-heal: an earlier CI revision ran Maven in a root container with the workspace bind-mounted,
+  # leaving root-owned target/ dirs that the gitlab-runner user can't clean (Permission denied on fetch).
+  # This pipeline no longer bind-mounts the workspace (everything goes through `docker build`), so once
+  # these leftovers are removed the workspace stays owned by the runner user.
+  before_script:
+    - docker run --rm -v "$CI_PROJECT_DIR":/w -w /w busybox sh -c 'rm -rf ./target ./*/target' || true
+
 # ---------------------------------------------------------------------------
-# Test — compile and run the full backend test suite, build/typecheck the SPA
+# Test — runs inside docker build, so a test failure fails the job. No bind mounts.
 # ---------------------------------------------------------------------------
 
 test:backend:
   stage: test
   tags: [zbpm]
   script:
-    - >
-      docker run --rm
-      -v "$CI_PROJECT_DIR":/build -w /build
-      -v zorrobpm-m2:/root/.m2
-      maven:3.9.9-eclipse-temurin-21
-      mvn -B -ntp clean verify
-  artifacts:
-    when: always
-    paths:
-      - zorrobpm-ce/target/*.jar
-    reports:
-      junit:
-        - "**/target/surefire-reports/TEST-*.xml"
-        - "**/target/failsafe-reports/TEST-*.xml"
-    expire_in: 1 week
+    # `--target test` runs `mvn -B clean verify` (full reactor: unit + integration) inside the build
+    - docker build --target test -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
+    - docker image rm zorrobpm-app-test:$IMAGE_TAG || true
 
 test:frontend:
   stage: test
   tags: [zbpm]
   script:
-    # `npm run build` runs `tsc && vite build` -> fails on any TypeScript error
-    - >
-      docker run --rm
-      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/app -w /app
-      node:22-alpine
-      sh -c "npm ci && npm run build"
-  artifacts:
-    paths:
-      - zorrobpm-frontend/dist
-    expire_in: 1 week
+    # `--target builder` runs `npm ci && npm run build` (tsc typecheck + Vite build), stops before nginx
+    - docker build --target builder -f zorrobpm-frontend/Dockerfile -t zorrobpm-frontend-build:$IMAGE_TAG zorrobpm-frontend
+    - docker image rm zorrobpm-frontend-build:$IMAGE_TAG || true
 
 # ---------------------------------------------------------------------------
-# Package — build versioned Docker images (commit SHA + latest)
+# Build — versioned runtime images (commit SHA + latest)
 # ---------------------------------------------------------------------------
 
-package:
-  stage: package
+build:
+  stage: build
   tags: [zbpm]
   script:
     - docker build -t "$IMAGE_BACKEND:$IMAGE_TAG" -t "$IMAGE_BACKEND:latest" -f Dockerfile .
-    - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" ./zorrobpm-frontend
+    - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" zorrobpm-frontend
     - docker image ls "$IMAGE_BACKEND" "$IMAGE_FRONTEND"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -92,7 +83,7 @@ deploy:
     - mkdir -p "$DEPLOY_DIR"
     # remember the currently deployed tag so `rollback` can restore it
     - if [ -f "$DEPLOY_DIR/.current_tag" ]; then cp "$DEPLOY_DIR/.current_tag" "$DEPLOY_DIR/.previous_tag"; fi
-    # sync sources, preserving host .env (DB/RabbitMQ secrets) and the rollback bookkeeping files
+    # sync sources, preserving host .env (DB/RabbitMQ secrets) and rollback bookkeeping
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
     - cp -a ./ "$DEPLOY_DIR"/
     - cd "$DEPLOY_DIR"
@@ -111,7 +102,8 @@ deploy:
       allow_failure: false
 
 # ---------------------------------------------------------------------------
-# Rollback — manual; redeploys the previously running image tag
+# Rollback — manual only; redeploys the previously running image tag.
+# `when: manual` lives inside `rules` (a top-level `when` is ignored when `rules` is present).
 # ---------------------------------------------------------------------------
 
 rollback:
@@ -119,7 +111,7 @@ rollback:
   tags: [zbpm]
   script:
     - cd "$DEPLOY_DIR"
-    - test -f .previous_tag || (echo "No .previous_tag recorded — nothing to roll back to" && exit 1)
+    - test -f .previous_tag || { echo "No .previous_tag recorded — nothing to roll back to"; exit 1; }
     - export APP_TAG="$(cat .previous_tag)" FRONTEND_TAG="$(cat .previous_tag)"
     - echo "Rolling back to $APP_TAG"
     - docker compose up -d --remove-orphans
@@ -128,6 +120,7 @@ rollback:
   environment:
     name: production
     url: https://zorro.i-smet.kz
-  when: manual
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: true
