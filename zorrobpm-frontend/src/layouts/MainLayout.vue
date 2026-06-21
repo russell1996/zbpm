@@ -9,6 +9,7 @@ import BreadcrumbNav from '@/widgets/shared/BreadcrumbNav.vue'
 const route = useRoute()
 const isMobile = useIsMobile()
 const sidebarOpen = ref(!isMobile.value)
+const sidebarCollapsed = ref(false)
 </script>
 
 <template>
@@ -19,13 +20,17 @@ const sidebarOpen = ref(!isMobile.value)
       @click="sidebarOpen = false"
     />
     <div
-      class="z-50 transition-transform duration-200 h-full"
+      class="z-50 transition-transform duration-200 h-full shrink-0"
       :class="[
         isMobile ? 'fixed inset-y-0 left-0' : 'relative',
         isMobile && !sidebarOpen ? '-translate-x-full' : 'translate-x-0',
       ]"
     >
-      <SidebarNav @navigate="sidebarOpen = false" />
+      <SidebarNav
+        :collapsed="sidebarCollapsed"
+        @navigate="sidebarOpen = false"
+        @toggle-collapse="sidebarCollapsed = !sidebarCollapsed"
+      />
     </div>
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <HeaderBar @toggle-sidebar="sidebarOpen = !sidebarOpen" :show-menu-button="isMobile" />

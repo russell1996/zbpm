@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import type { ProcessVariable } from '@/types/api'
@@ -10,6 +11,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useTaskStore()
 const toast = useToast()
+const { t } = useI18n()
 
 const editableVars = ref<{ name: string; type: string; value: string }[]>([])
 
@@ -40,24 +42,39 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-6">
-    <div v-if="store.loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
     <template v-else-if="store.currentTask">
       <div>
-        <h1 class="text-2xl font-bold">Task</h1>
+        <h1 class="text-2xl font-bold">User Task</h1>
         <CopyableId :value="store.currentTask.id" />
       </div>
 
+      <div class="flex items-center gap-4 text-sm">
+        <span
+          :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+            store.currentTask.completedAt ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']"
+        >
+          {{ store.currentTask.completedAt ? t('completed') : t('active') }}
+        </span>
+      </div>
+
       <div class="grid grid-cols-2 gap-4 text-sm">
-        <div><span class="text-muted-foreground">Name:</span> {{ store.currentTask.name || store.currentTask.code || '—' }}</div>
-        <div><span class="text-muted-foreground">Process:</span> <span class="font-mono">{{ store.currentTask.processInstanceId.slice(0, 8) }}...</span></div>
-        <div><span class="text-muted-foreground">Form Key:</span> {{ store.currentTask.formKey || '—' }}</div>
-        <div><span class="text-muted-foreground">Created:</span> {{ new Date(store.currentTask.createdAt).toLocaleString() }}</div>
+        <div><span class="text-muted-foreground">{{ t('name') }}:</span> {{ store.currentTask.name || store.currentTask.code || '—' }}</div>
+        <div>
+          <span class="text-muted-foreground">{{ t('process') }}:</span>
+          <CopyableId :value="store.currentTask.processInstanceId" />
+        </div>
+        <div><span class="text-muted-foreground">{{ t('formKey') }}:</span> {{ store.currentTask.formKey || '—' }}</div>
+        <div><span class="text-muted-foreground">{{ t('created') }}:</span> {{ new Date(store.currentTask.createdAt).toLocaleString() }}</div>
+        <div v-if="store.currentTask.completedAt" class="col-span-2">
+          <span class="text-muted-foreground">{{ t('completedAtLabel') }}:</span> {{ new Date(store.currentTask.completedAt).toLocaleString() }}
+        </div>
       </div>
 
       <div class="border border-border rounded-lg p-4 bg-card">
-        <h2 class="text-lg font-bold mb-4">Variables</h2>
+        <h2 class="text-lg font-bold mb-4">{{ t('variables') }}</h2>
         <div class="space-y-3">
           <div v-for="(v, i) in editableVars" :key="v.name" class="flex items-center gap-3">
             <label class="text-sm font-mono w-32">{{ v.name }}</label>
@@ -67,16 +84,16 @@ onMounted(async () => {
               class="flex-1 px-2 py-1 border border-input rounded text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          <div v-if="!editableVars.length" class="text-sm text-muted-foreground">No variables</div>
+          <div v-if="!editableVars.length" class="text-sm text-muted-foreground">{{ t('noVariables') }}</div>
         </div>
       </div>
 
-      <div class="flex justify-end">
+      <div v-if="!store.currentTask.completedAt" class="flex justify-end">
         <button
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
           @click="complete"
         >
-          Complete Task
+          {{ t('completeTask') }}
         </button>
       </div>
     </template>
