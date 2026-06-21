@@ -285,7 +285,7 @@ class DBServiceImplTest {
         e2.setTextValue("x");
         e2.setType(ProcessVariableType.STRING);
 
-        when(variableRepository.findByProcessInstanceId(processInstanceId)).thenReturn(List.of(e1, e2));
+        when(variableRepository.findByProcessInstanceIdAndScopeIdIsNull(processInstanceId)).thenReturn(List.of(e1, e2));
 
         List<ProcessVariable> result = dbService.getVariables(processInstanceId);
 

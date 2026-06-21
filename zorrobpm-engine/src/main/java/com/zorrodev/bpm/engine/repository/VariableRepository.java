@@ -41,4 +41,16 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
     @Modifying
     @Query("UPDATE ProcessVariableEntity pve SET pve.type = :type, pve.textValue = :textValue WHERE pve.processInstanceId = :processInstanceId AND pve.name = :name")
     void updateVariableTextValueAndType(UUID processInstanceId, String name, ProcessVariableType type, String textValue);
+
+    // --- scoped access (scopeId == null is the process-instance root scope) ---
+
+    List<ProcessVariableEntity> findByProcessInstanceIdAndScopeIdIsNull(UUID processInstanceId);
+
+    List<ProcessVariableEntity> findByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
+
+    Optional<ProcessVariableEntity> findByNameAndProcessInstanceIdAndScopeIdIsNull(String name, UUID processInstanceId);
+
+    Optional<ProcessVariableEntity> findByNameAndProcessInstanceIdAndScopeId(String name, UUID processInstanceId, UUID scopeId);
+
+    void deleteByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 }

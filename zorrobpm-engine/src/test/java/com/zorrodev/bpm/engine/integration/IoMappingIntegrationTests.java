@@ -88,4 +88,31 @@ public class IoMappingIntegrationTests {
         assertThat(decision.getType()).isEqualTo(ProcessVariableType.BOOLEAN);
         assertThat(decision.getTextValue()).isEqualTo("true");
     }
+
+    @Transactional
+    @Test
+    void inputMappingLocalVariableDoesNotLeakToTheInstance() throws Exception {
+        // Camunda 8 scoping: the input-mapped "taskOrder" is local to the task; after the task completes it
+        // is dropped, while the output-mapped "decision" propagates to the instance.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-io-mapping.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        dto.setVariables(List.of(var("orderId", ProcessVariableType.STRING, "A-1")));
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        ActivityEntity review = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals("review") && a.getStatus() == ActivityStatus.CREATED)
+            .findFirst().orElseThrow();
+        runtimeService.completeUserTask(review.getId(), List.of(var("approved", ProcessVariableType.BOOLEAN, "true")));
+
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNotNull();
+
+        // the input-local variable is gone (it never became an instance variable)...
+        assertThat(variableRepository.findByNameAndProcessInstanceId("taskOrder", processInstanceId)).isEmpty();
+        // ...while the output-mapped variable did propagate to the instance
+        assertThat(variableRepository.findByNameAndProcessInstanceId("decision", processInstanceId)).isPresent();
+    }
 }

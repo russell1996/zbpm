@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_evsub_err" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="err_boom" name="boom" errorCode="E-1" />
+  <bpmn:process id="test-event-subprocess-error" name="test-event-subprocess-error" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="errEnd" />
+    <bpmn:endEvent id="errEnd" name="errEnd">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:errorEventDefinition id="eed1" errorRef="err_boom" />
+    </bpmn:endEvent>
+
+    <bpmn:subProcess id="errorHandler" name="errorHandler" triggeredByEvent="true">
+      <bpmn:startEvent id="evStart" name="evStart" isInterrupting="true">
+        <bpmn:outgoing>flowE1</bpmn:outgoing>
+        <bpmn:errorEventDefinition id="eed2" errorRef="err_boom" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowE1" name="flowE1" sourceRef="evStart" targetRef="evEnd" />
+      <bpmn:endEvent id="evEnd" name="evEnd">
+        <bpmn:incoming>flowE1</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>

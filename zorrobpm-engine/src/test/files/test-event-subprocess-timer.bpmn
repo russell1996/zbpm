@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_evsub_timer" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-event-subprocess-timer" name="test-event-subprocess-timer" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="mainTask" />
+    <bpmn:userTask id="mainTask" name="mainTask">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="mainTask" targetRef="mainEnd" />
+    <bpmn:endEvent id="mainEnd" name="mainEnd">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:subProcess id="timeoutHandler" name="timeoutHandler" triggeredByEvent="true">
+      <bpmn:startEvent id="evStart" name="evStart" isInterrupting="true">
+        <bpmn:outgoing>flowE1</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="ted1">
+          <bpmn:timeDuration>PT0S</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowE1" name="flowE1" sourceRef="evStart" targetRef="evEnd" />
+      <bpmn:endEvent id="evEnd" name="evEnd">
+        <bpmn:incoming>flowE1</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>
