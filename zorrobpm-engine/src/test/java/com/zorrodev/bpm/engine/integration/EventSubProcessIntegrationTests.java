@@ -7,6 +7,7 @@ import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.scheduler.TimerScheduler;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -42,6 +43,9 @@ public class EventSubProcessIntegrationTests {
 
     @Autowired
     private ActivityRepository activityRepository;
+
+    @Autowired
+    private TimerScheduler timerScheduler;
 
     private List<ActivityEntity> activitiesOf(UUID processInstanceId) {
         return activityRepository.findAll().stream()
@@ -127,5 +131,59 @@ public class EventSubProcessIntegrationTests {
         List<ActivityEntity> activities = activitiesOf(processInstanceId);
         assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("mainEnd") && a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(activities).noneMatch(a -> a.getBpmnElementId().equals("evEnd"));
+    }
+
+    @Transactional
+    @Test
+    void signalTriggeredEventSubProcessFiresOnSignalBroadcast() throws Exception {
+        // a parallel branch throws "cancelSig" while the main task is parked; the signal-started event
+        // sub-process interrupts the main flow and runs the handler.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-event-subprocess-signal.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        UUID processInstanceId = start(model.getId());
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        List<ActivityEntity> activities = activitiesOf(processInstanceId);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("mainTask") && a.getStatus() == ActivityStatus.CANCELLED);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("evEnd") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).noneMatch(a -> a.getBpmnElementId().equals("mainEnd"));
+    }
+
+    @Transactional
+    @Test
+    void errorTriggeredEventSubProcessHandlesAThrownError() throws Exception {
+        // the main flow throws error "E-1"; the error-started event sub-process catches it and runs to its
+        // end (instead of the error becoming an unhandled incident).
+        String bpmn = Files.readString(Paths.get("src/test/files/test-event-subprocess-error.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        UUID processInstanceId = start(model.getId());
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        List<ActivityEntity> activities = activitiesOf(processInstanceId);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("evEnd") && a.getStatus() == ActivityStatus.COMPLETED);
+    }
+
+    @Transactional
+    @Test
+    void timerTriggeredEventSubProcessFiresWhenTheTimerIsDue() throws Exception {
+        // the event sub-process has a PT0S timer (immediately due); the main task parks, then firing the
+        // due timers interrupts the main flow and runs the handler.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-event-subprocess-timer.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        UUID processInstanceId = start(model.getId());
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
+
+        timerScheduler.fireDueTimers();
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        List<ActivityEntity> activities = activitiesOf(processInstanceId);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("mainTask") && a.getStatus() == ActivityStatus.CANCELLED);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("evEnd") && a.getStatus() == ActivityStatus.COMPLETED);
     }
 }

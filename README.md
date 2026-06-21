@@ -23,7 +23,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional **start** событие (catch/boundary — поддержаны) |
 | Потоки управления (sequence flow) | Компенсация: targeted (по activityRef) / в подпроцессе |
 | Exclusive gateway (условия на FEEL + поток по умолчанию) | |
-| Parallel gateway (split / join) | Event sub-process: не-message-триггеры (timer/error/signal) |
+| Parallel gateway (split / join) | Event sub-process внутри встроенного подпроцесса (не top-level) |
 | **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | Transaction: вложенные транзакции |
 | **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
 | Service task (внешние воркеры через RabbitMQ) | |
@@ -31,10 +31,10 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Multi-instance** (параллельный и **последовательный**, по `loopCardinality`; агрегирующий join; `completionCondition`) | |
 | **Send / Receive task** (message throw / catch в форме задачи) | |
 | **Script task** (inline FEEL-выражение, результат в переменную) | |
-| **IO mappings** (`zeebe:ioMapping` input/output, FEEL-трансформации на service/user task) | |
+| **IO mappings** (`zeebe:ioMapping` input/output на service/user task; **scoped**: input-локали не протекают) | |
 | **Business rule task** (DMN-решение через `zeebe:calledDecision` + DMN-движок; или inline FEEL) | |
 | Call activity, встроенный подпроцесс | |
-| **Event sub-process** (message-триггер, **прерывающий и непрерывающий**) | |
+| **Event sub-process** (триггеры message / signal / error / timer; message — прерывающий и непрерывающий) | |
 | Промежуточные **catch**: обычное ожидание, **message** (+корреляция по имени и по **ключу**), **timer** (дата/длительность) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
 | **Signal catch / throw** (broadcast всем подписчикам, 1:N) | |
@@ -58,16 +58,17 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Статус | Конструкции |
 |---|---|
 | ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User/Receive task, **Script task** (`zeebe:script` + inline), Business rule task (`zeebe:calledDecision`), Call activity, Embedded & Event subprocess, `zeebe:ioMapping`, correlation key (`zeebe:subscription`), FEEL-условия |
-| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — позже), Send task (`messageRef` vs job-worker), Business rule FEEL-режим (`zeebe:script`), Compensation (compensate-all; targeted — позже), IO-mappings (плоские переменные вместо scoped) |
+| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — позже), Send task (`messageRef` vs job-worker), Business rule FEEL-режим (`zeebe:script`), Compensation (compensate-all; targeted — позже) |
 | ❌ **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | **Conditional** события (start/catch/boundary), **Transaction** subprocess, **Cancel** события (end/boundary) |
 
 **Рекомендации для переносимости в Camunda 8:**
 
 - Избегать ❌-конструкций (conditional / transaction / cancel) — это надстройка над C8, полезная вне него,
   но в Camunda 8 модель не задеплоится.
-- ✅ Script task (`zeebe:script`) и multi-instance (`zeebe:loopCharacteristics` `inputCollection`) уже
-  поддержаны в C8-нотации. Оставшееся ⚠️: send task → message intermediate throw / service task.
-- Приоритеты паритета с C8: scoped-переменные (IO-mappings + per-instance `inputElement`/`outputCollection`),
+- ✅ Script task (`zeebe:script`), multi-instance (`zeebe:loopCharacteristics`), scoped IO-mappings и все
+  триггеры event subprocess (message/signal/error/timer) уже в C8-нотации. Оставшееся ⚠️: send task →
+  message intermediate throw / service task.
+- Приоритеты паритета с C8: per-instance `inputElement`/`outputCollection` для multi-instance,
   остальные триггеры event subprocess, targeted-компенсация.
 
 DMN исполняется собственным движком решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL);

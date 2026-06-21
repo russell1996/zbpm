@@ -45,7 +45,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
                 BpmnElementModel element = bpmn.getElement(bpmnElementId);
                 String job = element.getExtensions().getServiceTaskExtension().getJob();
 
-                Map<String, ProcessVariable> variables = dbService.getVariables(processInstanceId).stream()
+                // scoped view: the job sees the instance variables plus this task's IO-mapping input locals
+                Map<String, ProcessVariable> variables = dbService.getVariables(processInstanceId, serviceTaskId).stream()
                     .collect(Collectors.toMap(com.zorrodev.bpm.contract.model.ProcessVariable::getName, pv -> {
                         ProcessVariable v = new ProcessVariable();
                         v.setName(pv.getName());

@@ -29,4 +29,8 @@ public class TimerJobEntity {
      * host activity and continues from this boundary element's outgoing flows. Null = catch timer.
      */
     private String boundaryElementId;
+    /** For an event-subprocess timer trigger: the instance and the event sub-process to start when due
+     *  (no host {@code activityId}). */
+    private UUID processInstanceId;
+    private String eventSubprocessId;
 }

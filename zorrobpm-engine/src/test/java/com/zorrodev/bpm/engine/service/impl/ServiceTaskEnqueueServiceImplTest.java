@@ -89,7 +89,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId)).thenReturn(List.of(v1, v2));
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of(v1, v2));
 
         service.enqueueAfterCommit(serviceTaskId);
 
