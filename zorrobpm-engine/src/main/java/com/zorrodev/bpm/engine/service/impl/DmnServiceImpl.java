@@ -158,6 +158,9 @@ public class DmnServiceImpl implements DmnService {
                 map.put(variable.getName(), Long.valueOf(variable.getValue()));
             } else if (type == ProcessVariableType.BOOLEAN) {
                 map.put(variable.getName(), Boolean.valueOf(variable.getValue()));
+            } else if (type == ProcessVariableType.DOUBLE) {
+                // FEEL numbers are BigDecimal — decimals must enter the decision table as numbers
+                map.put(variable.getName(), new java.math.BigDecimal(variable.getValue()));
             } else {
                 map.put(variable.getName(), variable.getValue());
             }
