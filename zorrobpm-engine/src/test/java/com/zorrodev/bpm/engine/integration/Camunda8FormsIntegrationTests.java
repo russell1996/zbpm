@@ -74,6 +74,30 @@ public class Camunda8FormsIntegrationTests {
 
     @Transactional
     @Test
+    void scriptTaskWithZeebeTaskDefinitionRunsAsAJobWorker() throws Exception {
+        // a Camunda 8 script task can carry a zeebe:taskDefinition (job worker) instead of an inline FEEL
+        // script: it parks as a job until completed, like a service task.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-script-task-job.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
+        ActivityEntity scriptJob = active(processInstanceId, "scriptJob");
+
+        runtimeService.completeServiceTask(scriptJob.getId(), List.of());
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        assertThat(activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .anyMatch(a -> a.getBpmnElementId().equals("endEvent") && a.getStatus() == ActivityStatus.COMPLETED)).isTrue();
+    }
+
+    @Transactional
+    @Test
     void userTaskWithZeebeUserTaskMarkerParksAndCompletes() throws Exception {
         // a Camunda 8 native user task (zeebe:userTask marker) parses and runs like a user task.
         String bpmn = Files.readString(Paths.get("src/test/files/test-user-task-zeebe.bpmn"));
