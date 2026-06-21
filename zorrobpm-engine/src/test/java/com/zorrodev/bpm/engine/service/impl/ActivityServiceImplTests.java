@@ -426,6 +426,7 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(bpmnService.getProcessDefinitionModelById(dummyProcessDefinitionId)).thenReturn(dummyBpmn);
+        when(dbService.getMaxProcessDefinitionVersionByKey("dummy-process")).thenReturn(1);
         when(dbService.getProcessDefinition(eq("dummy-process"), any())).thenReturn(dummyProcessDefinition);
         when(dbService.createProcessInstance(any(UUID.class), eq(dummyProcessDefinitionId), any())).thenReturn(dummyProcessInstanceId);
         when(dbService.getProcessInstance(eq(dummyProcessInstanceId))).thenReturn(dummyPi);

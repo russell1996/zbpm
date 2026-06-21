@@ -123,13 +123,12 @@
 
 ### P2 — частичная несовместимость / редкие сценарии / надёжность исполнения
 
-#### C8-5 · Call activity: null-safety и понятные ошибки
-- **Описание:** `processCallActivity` обращается к `extensions().getCallActivityExtension().getProcessId()` без null-проверок; несуществующий целевой процесс → `NoSuchElementException`.
+#### C8-5 · Call activity: null-safety и понятные ошибки — ✅ ВЫПОЛНЕНО
+- **Описание:** `processCallActivity` обращался к `extensions().getCallActivityExtension().getProcessId()` без null-проверок; несуществующий целевой процесс → `NoSuchElementException`.
 - **BPMN-элемент:** `callActivity`.
-- **Влияние на совместимость:** корректный C8 call-activity при задеплоенном таргете **работает**; но при инкрементальном деплое (родитель раньше ребёнка — частый сценарий миграции) — невнятный NPE/NoSuchElement-инцидент вместо «process X не задеплоен».
-- **Риск миграции:** **средний** (migration DX; не блокирует корректные модели).
-- **Приоритет:** **P2**
-- **Сложность:** **S** (Optional-цепочка + информативные `EngineException`; см. Task 1/8 отчёта).
+- **Сделано:** null-safe извлечение `processId` (Optional-цепочка) и проверка наличия задеплоенной версии; при ошибке — **информативный инцидент** (через non-`EngineException`, который `execute()` паркует, а не abort) с сообщением «no zeebe:calledElement processId» / «references process 'X' which has no deployed definition». Оператор деплоит child и переисполняет. Тест: `CallActivityNullSafetyIntegrationTests`.
+- **Приоритет:** **P2** · **Сложность:** **S**
+- **Примечание:** уточнили политику исключений движка — `EngineException` пробрасывается (abort), прочие → инцидент; рекомендация отчёта (Task 8, `EngineException`) скорректирована на `IllegalStateException`.
 
 #### C8-6 · Script task в форме job worker (`zeebe:taskDefinition`)
 - **Описание:** обрабатывается `zeebe:script` (FEEL); C8 8.2+ допускает script task через job worker (`zeebe:taskDefinition`), который сейчас не диспатчится.
