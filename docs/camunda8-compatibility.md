@@ -68,7 +68,7 @@
 
 | Конструкция | Статус | Описание проблемы | Рекомендация |
 |---|---|---|---|
-| Call activity (`zeebe:calledElement processId/bindingType/propagateAllChildVariables`) | ✅ Совместимо | C8-нативная модель | — |
+| Call activity (`zeebe:calledElement processId/bindingType/propagateAllChildVariables`) | ✅ Совместимо | C8-нативная модель; `propagateAllChildVariables` учитывается (default `true` копирует переменные ребёнка в родителя, `false` — нет) | — |
 | Embedded subprocess (`subProcess`) | ✅ Совместимо | — | — |
 | Event subprocess (`subProcess triggeredByEvent="true"`) | ✅ Совместимо | Триггеры **message / signal / error / timer** (message — interrupting и non-interrupting; signal/error/timer — interrupting). Event-subprocess **внутри встроенного подпроцесса** (не top-level) — отдельный заход | — |
 | **Transaction subprocess** (`<bpmn:transaction>`) | ❌ Не поддерживается в C8 | **Camunda 8 не поддерживает transaction-подпроцесс** | Заменять на embedded subprocess + явная компенсация/error-обработка |
