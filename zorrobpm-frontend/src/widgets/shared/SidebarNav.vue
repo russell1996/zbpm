@@ -12,9 +12,12 @@ import {
   ChevronRight,
   BarChart3,
   Cpu,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-vue-next'
 
-const emit = defineEmits<{ navigate: [] }>()
+const props = defineProps<{ collapsed?: boolean }>()
+const emit = defineEmits<{ navigate: []; toggleCollapse: [] }>()
 
 const route = useRoute()
 const router = useRouter()
@@ -74,13 +77,24 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <aside class="w-64 h-full bg-sidebar text-sidebar-foreground flex flex-col border-r border-border">
-    <div class="h-14 flex items-center px-4 border-b border-border shrink-0">
-      <span class="text-lg font-bold">ZBPM</span>
+  <aside
+    class="h-full bg-sidebar text-sidebar-foreground flex flex-col border-r border-border transition-all duration-200"
+    :class="collapsed ? 'w-14' : 'w-64'"
+  >
+    <div class="h-14 flex items-center justify-between px-3 border-b border-border shrink-0">
+      <span v-if="!collapsed" class="text-lg font-bold">ZBPM</span>
+      <button
+        class="p-1.5 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded-md transition-colors"
+        :title="collapsed ? t('expandSidebar') : t('collapseSidebar')"
+        @click="emit('toggleCollapse')"
+      >
+        <PanelLeftClose v-if="!collapsed" class="h-4 w-4" />
+        <PanelLeftOpen v-else class="h-4 w-4" />
+      </button>
     </div>
     <nav class="flex-1 py-2 overflow-y-auto min-h-0">
       <template v-for="item in navItems" :key="item.labelKey">
-        <div v-if="item.children">
+        <div v-if="item.children && !collapsed">
           <button
             class="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
             :class="{ 'bg-sidebar-accent font-medium': isActiveGroup(item) }"
@@ -108,11 +122,15 @@ function navigate(to: string) {
         <button
           v-else
           class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
-          :class="{ 'bg-sidebar-accent font-medium': isActive(item.to) }"
-          @click="item.to && navigate(item.to)"
+          :class="[
+            { 'bg-sidebar-accent font-medium': isActive(item.to) },
+            collapsed ? 'justify-center px-2' : '',
+          ]"
+          :title="collapsed ? t(item.labelKey) : undefined"
+          @click="item.children ? (collapsed ? null : toggle(item.labelKey)) : item.to && navigate(item.to)"
         >
-          <component :is="item.icon" class="h-4 w-4" />
-          {{ t(item.labelKey) }}
+          <component :is="item.icon" class="h-4 w-4 shrink-0" />
+          <span v-if="!collapsed">{{ t(item.labelKey) }}</span>
         </button>
       </template>
     </nav>
