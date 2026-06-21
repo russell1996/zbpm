@@ -72,7 +72,7 @@
 | Embedded subprocess (`subProcess`) | ✅ Совместимо | — | — |
 | Event subprocess (`subProcess triggeredByEvent="true"`) | ✅ Совместимо | Триггеры **message / signal / error / timer** (message — interrupting и non-interrupting; signal/error/timer — interrupting). Event-subprocess **внутри встроенного подпроцесса** (не top-level) — отдельный заход | — |
 | **Transaction subprocess** (`<bpmn:transaction>`) | ❌ Не поддерживается в C8 | **Camunda 8 не поддерживает transaction-подпроцесс** | Заменять на embedded subprocess + явная компенсация/error-обработка |
-| **Multi-instance** (`zeebe:loopCharacteristics inputCollection` или `loopCardinality`) | ⚠️ Частично | Количество инстансов берётся из C8-нативного `<zeebe:loopCharacteristics inputCollection=…>` (размер коллекции) **или** из `loopCardinality`; `completionCondition` поддержан. **Отложено** (требует scoped-переменных, см. ниже): per-instance `inputElement`/`loopCounter` и агрегирование `outputCollection`/`outputElement` | Реализовать scoped-переменные → привязка `inputElement`/`outputCollection` (этап scoped vars) |
+| **Multi-instance** (`zeebe:loopCharacteristics inputCollection`/`inputElement` или `loopCardinality`) | ⚠️ Частично | Количество инстансов — из `inputCollection` (размер коллекции) или `loopCardinality`; `completionCondition` поддержан. **Per-instance `inputElement` и `loopCounter`** привязываются в scope каждого инстанса (scoped-переменные, не протекают, удаляются по завершении). **Отложено**: агрегирование `outputCollection`/`outputElement` | Реализовать `outputCollection` (сбор per-instance результатов в список) |
 
 ---
 
@@ -94,7 +94,7 @@
 | Категория | Конструкции | Статус |
 |---|---|---|
 | **Полностью совместимо** | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User (вкл. `zeebe:userTask`)/Receive/**Send** task (`zeebe:taskDefinition`), **Script task** (`zeebe:script` + inline), Business rule task (DMN), Call activity, Embedded & Event subprocess (message/signal/error/timer), IO mappings (scoped), **Compensation** (compensate-all + targeted), correlation key, FEEL-условия | ✅ |
-| **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — позже), Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса (отдельный заход) | ⚠️ |
+| **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count + per-instance `inputElement`/`loopCounter`; агрегирование `outputCollection` — позже), Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса (отдельный заход) | ⚠️ |
 | **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | Conditional события (start/catch/boundary), Transaction subprocess, Cancel события (end/boundary) | ❌ |
 
 ### Сводные рекомендации
