@@ -29,7 +29,7 @@ class TimerSchedulerTest {
         UUID jobId = UUID.randomUUID();
         UUID activityId = UUID.randomUUID();
 
-        executor.fire(jobId, activityId, null);
+        executor.fire(job(jobId, activityId, null));
 
         verify(dbService).markTimerJobFired(jobId);
         verify(activityService).signal(eq(activityId), any());
@@ -40,7 +40,7 @@ class TimerSchedulerTest {
         UUID jobId = UUID.randomUUID();
         UUID activityId = UUID.randomUUID();
 
-        executor.fire(jobId, activityId, "boundary1");
+        executor.fire(job(jobId, activityId, "boundary1"));
 
         verify(dbService).markTimerJobFired(jobId);
         verify(activityService).fireBoundaryTimer(activityId, "boundary1");
@@ -56,13 +56,21 @@ class TimerSchedulerTest {
         TimerJob good = job();
         when(dbService.findDueTimerJobs(any())).thenReturn(List.of(bad, good));
         when(dbService.findDueTimerStartJobs(any())).thenReturn(List.of());
-        org.mockito.Mockito.doThrow(new RuntimeException("boom")).when(executorMock).fire(eq(bad.getId()), any(), any());
+        org.mockito.Mockito.doThrow(new RuntimeException("boom")).when(executorMock).fire(eq(bad));
 
         scheduler.fireDueTimers();
 
         // the failing job must not stop the next one from firing
-        verify(executorMock).fire(eq(bad.getId()), any(), any());
-        verify(executorMock).fire(eq(good.getId()), any(), any());
+        verify(executorMock).fire(eq(bad));
+        verify(executorMock).fire(eq(good));
+    }
+
+    private static TimerJob job(UUID id, UUID activityId, String boundaryElementId) {
+        TimerJob j = new TimerJob();
+        j.setId(id);
+        j.setActivityId(activityId);
+        j.setBoundaryElementId(boundaryElementId);
+        return j;
     }
 
     private static TimerJob job() {

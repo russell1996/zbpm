@@ -27,7 +27,7 @@ public class TimerScheduler {
     public void fireDueTimers() {
         for (TimerJob job : dbService.findDueTimerJobs(Instant.now())) {
             try {
-                executor.fire(job.getId(), job.getActivityId(), job.getBoundaryElementId());
+                executor.fire(job);
             } catch (Exception e) {
                 log.error("Failed to fire timer job {} (activity {})", job.getId(), job.getActivityId(), e);
             }

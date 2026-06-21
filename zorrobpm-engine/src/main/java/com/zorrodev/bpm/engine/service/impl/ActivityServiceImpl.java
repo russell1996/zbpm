@@ -548,11 +548,14 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     private Instant computeDueAt(BpmnElementModel element) {
-        TimerEventExtensionModel timer = Optional.ofNullable(element.getExtensions())
+        return computeDueAt(Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getTimerEventExtension)
-            .orElse(null);
+            .orElse(null), element.getId());
+    }
+
+    private Instant computeDueAt(TimerEventExtensionModel timer, String elementId) {
         if (timer == null || timer.getType() == null || timer.getExpression() == null) {
-            throw new EngineException("Timer event " + element.getId() + " has no timer definition");
+            throw new EngineException("Timer event " + elementId + " has no timer definition");
         }
         return switch (timer.getType()) {
             case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
@@ -1029,9 +1032,9 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     private void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
-        applyIoMappings(processInstanceId, bpmnElement, true);
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         dbService.createServiceTask(activityId);
+        applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
@@ -1039,12 +1042,13 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     /**
-     * Applies a task's {@code zeebe:ioMapping}: each input ({@code inputs=true}) or output mapping evaluates
-     * its source FEEL expression against the current variables and writes the result to its target. Inputs
-     * run on activation, outputs on completion. Variables are flat (process-instance scoped) — true local
-     * scope isolation is not yet implemented, so mapped variables persist on the instance.
+     * Applies a task's {@code zeebe:ioMapping} with scoped variables (Camunda 8 semantics). Inputs run on
+     * activation and write to the task's **local** scope ({@code activityId}); outputs run on completion and
+     * write to the **parent** (process-instance root). Both evaluate against the merged view (root + local),
+     * so the local input variables don't leak to the instance — they are dropped when the task completes
+     * (see the {@code deleteVariables} call in the complete* methods).
      */
-    private void applyIoMappings(UUID processInstanceId, BpmnElementModel element, boolean inputs) {
+    private void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {
         IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getIoMappingExtension)
             .orElse(null);
@@ -1055,7 +1059,7 @@ public class ActivityServiceImpl implements ActivityService {
         if (mappings == null || mappings.isEmpty()) {
             return;
         }
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+        List<ProcessVariable> variables = dbService.getVariables(processInstanceId, activityId);
         List<ProcessVariable> results = new ArrayList<>();
         for (IoMappingExtensionModel.Mapping mapping : mappings) {
             if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
@@ -1066,8 +1070,9 @@ public class ActivityServiceImpl implements ActivityService {
             results.add(toProcessVariable(mapping.getTarget(), value));
         }
         if (!results.isEmpty()) {
-            dbService.setVariables(processInstanceId, results);
-            log.info("{}: Applied {} {} mapping(s) at {}", processInstanceId, results.size(), inputs ? "input" : "output", element.getId());
+            // inputs -> local scope (activityId); outputs -> root scope (null)
+            dbService.setVariables(processInstanceId, inputs ? activityId : null, results);
+            log.info("{}: Applied {} {} mapping(s) at {} (scope {})", processInstanceId, results.size(), inputs ? "input" : "output", element.getId(), inputs ? activityId : "root");
         }
     }
 
@@ -1105,7 +1110,8 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        applyIoMappings(processInstanceId, bpmnElement, false);
+        applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
+        dbService.deleteVariables(processInstanceId, serviceTaskId);
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
         triggerConditionalEvents(processInstanceId);
     }
@@ -1115,9 +1121,9 @@ public class ActivityServiceImpl implements ActivityService {
             enterMultiInstanceUserTask(processInstanceId, token, bpmnElement);
             return;
         }
-        applyIoMappings(processInstanceId, bpmnElement, true);
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         dbService.createUserTask(activityId);
+        applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
@@ -1358,7 +1364,8 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        applyIoMappings(processInstanceId, bpmnElement, false);
+        applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
+        dbService.deleteVariables(processInstanceId, userTaskId);
         if (isMultiInstance(bpmnElement) && !multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId)) {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
@@ -1405,6 +1412,12 @@ public class ActivityServiceImpl implements ActivityService {
     @Override
     public void fireBoundaryTimer(UUID hostActivityId, String boundaryElementId) {
         fireBoundary(hostActivityId, boundaryElementId, List.of());
+    }
+
+    @Override
+    public void fireEventSubprocessTimer(UUID processInstanceId, String eventSubprocessId) {
+        // the timer job is already marked fired (one-shot), so it never re-fires regardless of interrupting
+        triggerEventSubprocess(processInstanceId, eventSubprocessId, List.of());
     }
 
     /**
@@ -1495,7 +1508,10 @@ public class ActivityServiceImpl implements ActivityService {
                 // subscription is consumed only for interrupting handlers (a non-interrupting one keeps
                 // listening and can fire again) — triggerEventSubprocess decides.
                 log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
-                triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, subscription.getId());
+                boolean interrupting = triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables);
+                if (interrupting) {
+                    dbService.consumeMessageSubscription(subscription.getId());
+                }
                 continue;
             }
             dbService.consumeMessageSubscription(subscription.getId());
@@ -1521,12 +1537,12 @@ public class ActivityServiceImpl implements ActivityService {
      * <p>Scope: top-level, message-triggered event sub-processes. Non-message triggers and event
      * sub-processes nested inside an embedded subprocess are not yet supported.
      */
-    private void triggerEventSubprocess(UUID processInstanceId, String eventSubprocessId, List<ProcessVariable> variables, UUID subscriptionId) {
+    private boolean triggerEventSubprocess(UUID processInstanceId, String eventSubprocessId, List<ProcessVariable> variables) {
         dbService.lockProcessInstance(processInstanceId);
         ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
         if (pi.getCompletedAt() != null) {
             log.info("{}: Event sub-process {} trigger ignored, instance already completed", processInstanceId, eventSubprocessId);
-            return;
+            return false;
         }
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
         BpmnElementModel eventSubProcess = bpmn.getElement(eventSubprocessId);
@@ -1539,23 +1555,23 @@ public class ActivityServiceImpl implements ActivityService {
         }
 
         if (ext.isInterrupting()) {
-            // interrupting: consume the subscription, cancel the main flow, then run the handler on a fresh
-            // (non-scope) token so its end event completes the whole instance
-            dbService.consumeMessageSubscription(subscriptionId);
+            // interrupting: cancel the main flow, then run the handler on a fresh (non-scope) token so its
+            // end event completes the whole instance. The caller consumes the triggering subscription.
             dbService.cancelActiveActivities(processInstanceId);
             Token token = dbService.createToken(null);
             log.info("{}/{}: Interrupting event sub-process {} starting at {}", processInstanceId, token.getId(), eventSubprocessId, ext.getStartEventId());
             execute(processInstanceId, token.getId(), ext.getStartEventId());
-        } else {
-            // non-interrupting: leave the subscription (it can fire again) and the main flow alone; run the
-            // handler in its own subprocess scope so its end completes only the scope (see finishBranch),
-            // not the instance
-            Token branchToken = dbService.createToken(null);
-            UUID containerActivityId = dbService.createActivity(processInstanceId, branchToken.getId(), eventSubProcess);
-            Token scopeToken = dbService.createToken(branchToken.getId(), containerActivityId);
-            log.info("{}/{}: Non-interrupting event sub-process {} starting at {} (scope {})", processInstanceId, scopeToken.getId(), eventSubprocessId, ext.getStartEventId(), containerActivityId);
-            execute(processInstanceId, scopeToken.getId(), ext.getStartEventId());
+            return true;
         }
+        // non-interrupting: leave the subscription (it can fire again) and the main flow alone; run the
+        // handler in its own subprocess scope so its end completes only the scope (see finishBranch),
+        // not the instance
+        Token branchToken = dbService.createToken(null);
+        UUID containerActivityId = dbService.createActivity(processInstanceId, branchToken.getId(), eventSubProcess);
+        Token scopeToken = dbService.createToken(branchToken.getId(), containerActivityId);
+        log.info("{}/{}: Non-interrupting event sub-process {} starting at {} (scope {})", processInstanceId, scopeToken.getId(), eventSubprocessId, ext.getStartEventId(), containerActivityId);
+        execute(processInstanceId, scopeToken.getId(), ext.getStartEventId());
+        return false;
     }
 
     /**
@@ -1580,6 +1596,15 @@ public class ActivityServiceImpl implements ActivityService {
         }
 
         for (SignalSubscription subscription : subscriptions) {
+            if (subscription.getEventSubprocessId() != null) {
+                // signal-started event sub-process: consume only for interrupting handlers (it can re-fire otherwise)
+                log.info("Broadcasting signal '{}' to event sub-process {} on instance {}", signalName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
+                boolean interrupting = triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables);
+                if (interrupting) {
+                    dbService.consumeSignalSubscription(subscription.getId());
+                }
+                continue;
+            }
             dbService.consumeSignalSubscription(subscription.getId());
             if (subscription.getBoundaryElementId() != null) {
                 // signal boundary: fire the boundary (interrupt/non-interrupt the host)
@@ -1657,15 +1682,24 @@ public class ActivityServiceImpl implements ActivityService {
     private void subscribeEventSubprocesses(UUID processInstanceId, UUID processDefinitionId) {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
         for (BpmnElementModel element : bpmn.getEventSubProcesses()) {
-            String messageName = Optional.ofNullable(element.getExtensions())
+            SubProcessExtensionModel ext = Optional.ofNullable(element.getExtensions())
                 .map(BpmnElementExtensionModel::getSubProcessExtension)
-                .map(SubProcessExtensionModel::getTriggerMessageName)
                 .orElse(null);
-            if (messageName == null) {
-                continue; // only message-triggered event sub-processes are executable today
+            if (ext == null) {
+                continue;
             }
-            dbService.createEventSubprocessMessageSubscription(processInstanceId, messageName, element.getId());
-            log.info("{}: Event sub-process {} subscribed to message '{}'", processInstanceId, element.getId(), messageName);
+            if (ext.getTriggerMessageName() != null) {
+                dbService.createEventSubprocessMessageSubscription(processInstanceId, ext.getTriggerMessageName(), element.getId());
+                log.info("{}: Event sub-process {} subscribed to message '{}'", processInstanceId, element.getId(), ext.getTriggerMessageName());
+            } else if (ext.getTriggerSignalName() != null) {
+                dbService.createEventSubprocessSignalSubscription(processInstanceId, ext.getTriggerSignalName(), element.getId());
+                log.info("{}: Event sub-process {} subscribed to signal '{}'", processInstanceId, element.getId(), ext.getTriggerSignalName());
+            } else if (ext.getTriggerTimer() != null) {
+                Instant dueAt = computeDueAt(ext.getTriggerTimer(), element.getId());
+                dbService.createEventSubprocessTimerJob(processInstanceId, dueAt, element.getId());
+                log.info("{}: Event sub-process {} scheduled timer for {}", processInstanceId, element.getId(), dueAt);
+            }
+            // error-triggered event sub-processes need no subscription: they fire via throwError propagation
         }
     }
 
@@ -1839,6 +1873,14 @@ public class ActivityServiceImpl implements ActivityService {
             tok = tok.getParentId() != null ? dbService.getToken(tok.getParentId()) : null;
         }
 
+        // a top-level error-triggered event sub-process handles the error here (interrupting the main flow)
+        BpmnElementModel errorHandler = findEventSubprocessErrorHandler(bpmn, errorCode);
+        if (errorHandler != null) {
+            log.info("{}: error '{}' caught by event sub-process {}", processInstanceId, errorCode, errorHandler.getId());
+            triggerEventSubprocess(processInstanceId, errorHandler.getId(), List.of());
+            return true;
+        }
+
         // reached the top of this instance: propagate to the parent instance via the call activity
         if (pi.getParentActivityId() != null) {
             Activity callActivity = dbService.getActivity(pi.getParentActivityId());
@@ -1886,6 +1928,22 @@ public class ActivityServiceImpl implements ActivityService {
                 .map(EventDefinitionExtensionModel::getCode)
                 .orElse(null);
             if (boundaryCode == null || boundaryCode.equals(errorCode)) {
+                return element;
+            }
+        }
+        return null;
+    }
+
+    /** Finds a top-level error-triggered event sub-process matching {@code errorCode} (null code = catch-all). */
+    private BpmnElementModel findEventSubprocessErrorHandler(BpmnProcessDefinitionModel bpmn, String errorCode) {
+        for (BpmnElementModel element : bpmn.getEventSubProcesses()) {
+            SubProcessExtensionModel ext = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getSubProcessExtension)
+                .orElse(null);
+            if (ext == null || !ext.isErrorTriggered()) {
+                continue;
+            }
+            if (ext.getTriggerErrorCode() == null || ext.getTriggerErrorCode().equals(errorCode)) {
                 return element;
             }
         }

@@ -40,6 +40,9 @@ public interface ActivityService {
      */
     void fireBoundaryTimer(UUID hostActivityId, String boundaryElementId);
 
+    /** Fires a timer-started event sub-process (the due timer registered at instance start). */
+    void fireEventSubprocessTimer(UUID processInstanceId, String eventSubprocessId);
+
     void resolveIncident(UUID incidentId, List<ProcessVariable> variables);
 
     UUID startProcessInstance(UUID parentProcessInstanceId, UUID processDefinitionId, List<ProcessVariable> variables);
