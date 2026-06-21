@@ -78,4 +78,34 @@ public class CompensationIntegrationTests {
         assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("handlerB") && a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("endEvent") && a.getStatus() == ActivityStatus.COMPLETED);
     }
+
+    @Transactional
+    @Test
+    void targetedCompensationRunsOnlyTheReferencedActivitysHandler() throws Exception {
+        // the compensation throw has activityRef="taskA", so only handlerA runs (log 0 -> 1); handlerB is
+        // not invoked (which would make log 12 or 21).
+        String bpmn = Files.readString(Paths.get("src/test/files/test-compensation-targeted.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        ProcessVariable log = new ProcessVariable();
+        log.setName("log");
+        log.setType(ProcessVariableType.LONG);
+        log.setValue("0");
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        dto.setVariables(List.of(log));
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNotNull();
+
+        ProcessVariableEntity result = variableRepository.findByNameAndProcessInstanceId("log", processInstanceId).orElseThrow();
+        assertThat(result.getTextValue()).isEqualTo("1");
+
+        List<ActivityEntity> activities = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .toList();
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("handlerA") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).noneMatch(a -> a.getBpmnElementId().equals("handlerB"));
+    }
 }

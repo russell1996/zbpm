@@ -29,7 +29,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | Service task (внешние воркеры через RabbitMQ) | |
 | User task (assignee, кандидаты-пользователи/группы, form key) | |
 | **Multi-instance** (параллельный и **последовательный**, по `loopCardinality`; агрегирующий join; `completionCondition`) | |
-| **Send / Receive task** (message throw / catch в форме задачи) | |
+| **Send / Receive task** (send: `zeebe:taskDefinition` job-worker или message throw; receive: message catch) | |
 | **Script task** (inline FEEL-выражение, результат в переменную) | |
 | **IO mappings** (`zeebe:ioMapping` input/output на service/user task; **scoped**: input-локали не протекают) | |
 | **Business rule task** (DMN-решение через `zeebe:calledDecision` + DMN-движок; или inline FEEL) | |
@@ -40,7 +40,7 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Signal catch / throw** (broadcast всем подписчикам, 1:N) | |
 | **Link catch / throw** (внутрипроцессный «goto» по имени link) | |
 | **Conditional** catch / boundary (FEEL-условие на данных; реоценка при изменении переменных) | |
-| **Compensation** boundary + throw (откат завершённых активностей в обратном порядке) | |
+| **Compensation** boundary + throw (compensate-all и targeted по `activityRef`; обратный порядок) | |
 | **Transaction** sub-process + **cancel** end / cancel boundary (компенсация + отмена scope) | |
 | **Escalation** throw / end + **escalation boundary** (прерывающий и непрерывающий) | |
 | **Error end** + **Error boundary** (с распространением по scope и в родительский процесс) | |
@@ -57,18 +57,18 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 | Статус | Конструкции |
 |---|---|
-| ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User/Receive task, **Script task** (`zeebe:script` + inline), Business rule task (`zeebe:calledDecision`), Call activity, Embedded & Event subprocess, `zeebe:ioMapping`, correlation key (`zeebe:subscription`), FEEL-условия |
-| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — позже), Send task (`messageRef` vs job-worker), Business rule FEEL-режим (`zeebe:script`), Compensation (compensate-all; targeted — позже) |
+| ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User (вкл. `zeebe:userTask`)/Receive/**Send** task (`zeebe:taskDefinition`), **Script task** (`zeebe:script` + inline), Business rule task (`zeebe:calledDecision`), Call activity, Embedded & Event subprocess (message/signal/error/timer), `zeebe:ioMapping` (scoped), **Compensation** (compensate-all + targeted), correlation key (`zeebe:subscription`), FEEL-условия |
+| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — позже), Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса |
 | ❌ **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | **Conditional** события (start/catch/boundary), **Transaction** subprocess, **Cancel** события (end/boundary) |
 
 **Рекомендации для переносимости в Camunda 8:**
 
-- Избегать ❌-конструкций (conditional / transaction / cancel) — это надстройка над C8, полезная вне него,
-  но в Camunda 8 модель не задеплоится.
-- ✅ Script task (`zeebe:script`), multi-instance (`zeebe:loopCharacteristics`), scoped IO-mappings и все
-  триггеры event subprocess (message/signal/error/timer) уже в C8-нотации. Оставшееся ⚠️: send task →
-  message intermediate throw / service task.
-- Приоритеты паритета с C8: per-instance `inputElement`/`outputCollection` для multi-instance,
+- Избегать только ❌-конструкций (conditional / transaction / cancel) — это надстройка над C8, полезная вне
+  него, но в Camunda 8 модель не задеплоится.
+- ✅ Все ⚠️-расхождения по нотации закрыты: `zeebe:script`, `zeebe:loopCharacteristics`,
+  `zeebe:taskDefinition` (send task), `zeebe:userTask`, scoped IO-mappings, триггеры event subprocess
+  (message/signal/error/timer), targeted-компенсация.
+- Осталось (отдельные заходы): per-instance `inputElement`/`outputCollection` для multi-instance,
   остальные триггеры event subprocess, targeted-компенсация.
 
 DMN исполняется собственным движком решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL);

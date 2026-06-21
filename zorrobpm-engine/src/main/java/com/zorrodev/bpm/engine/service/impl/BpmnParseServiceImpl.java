@@ -682,10 +682,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setType(BpmnElementType.SEND_TASK);
         element.setIncoming(sendTask.getIncoming());
         element.setOutgoing(sendTask.getOutgoing());
-        if (sendTask.getMessageRef() != null) {
+        element.setExtensions(new BpmnElementExtensionModel());
+        // Camunda 8 form: a zeebe:taskDefinition makes the send task a job worker (like a service task)
+        if (sendTask.getExtensionElements() != null && sendTask.getExtensionElements().getTaskDefinition() != null) {
+            ServiceTaskExtensionModel job = new ServiceTaskExtensionModel();
+            job.setJob(sendTask.getExtensionElements().getTaskDefinition().getType());
+            element.getExtensions().setServiceTaskExtension(job);
+        } else if (sendTask.getMessageRef() != null) {
             MessageEventExtensionModel message = new MessageEventExtensionModel();
             message.setMessageName(messageNames.getOrDefault(sendTask.getMessageRef(), sendTask.getMessageRef()));
-            element.setExtensions(new BpmnElementExtensionModel());
             element.getExtensions().setMessageEventExtension(message);
         }
         return element;
@@ -897,6 +902,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.LINK_THROW_EVENT);
         } else if (throwEvent.getCompensateEventDefinition() != null) {
             element.setType(BpmnElementType.COMPENSATION_THROW_EVENT);
+            // activityRef (if any) targets a single activity to compensate; null = compensate everything
+            String activityRef = throwEvent.getCompensateEventDefinition().getActivityRef();
+            if (activityRef != null) {
+                EventDefinitionExtensionModel def = new EventDefinitionExtensionModel();
+                def.setType(EventDefinitionType.COMPENSATE);
+                def.setReference(activityRef);
+                element.setExtensions(new BpmnElementExtensionModel());
+                element.getExtensions().setEventDefinition(def);
+            }
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_THROW_EVENT);
         }
