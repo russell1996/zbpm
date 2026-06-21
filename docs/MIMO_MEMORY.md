@@ -1,79 +1,70 @@
-# MiMo Memory - ZorroBPM Frontend
+# MiMo Memory — ZorroBPM Project
 
 ## Project Purpose
-ZorroBPM CE - lightweight BPMN 2.0 engine on Spring Boot. Frontend is a Vue 3 + Vite + TypeScript SPA combining Operate, Tasklist, and Cockpit functionality.
+ZorroBPM CE — lightweight BPMN 2.0 engine on Spring Boot 4.0.5 / Java 21 / PostgreSQL. Multi-module Maven project executing BPMN processes via token-based graph traversal.
 
 ## Architecture
-- **Frontend**: Vue 3 + Vite + TypeScript + Tailwind CSS 4
-- **State Management**: Pinia
-- **Routing**: Vue Router
-- **UI Components**: Radix Vue + Lucide Icons
-- **Internationalization**: vue-i18n (RU/EN/KZ)
-- **BPMN Viewer**: bpmn-js
-- **Build**: `npm run build` (tsc + vite build)
 
-## Main Modules
-- Dashboard
-- Processes (Definitions, Instances, Deploy)
-- Tasks (User Tasks, Service Tasks)
-- Incidents
-- Timers
-- Messages
-- DMN
-- Analytics
-- Admin (Users)
+### Backend (10 Maven modules)
+- **zorrobpm-contract** — REST API interfaces + DTOs (CRITICAL — breaking changes ripple everywhere)
+- **zorrobpm-engine** — Core: BPMN parsing (JAXB), token execution, persistence (JPA), timers, DMN (CRITICAL)
+- **zorrobpm-rest** — REST controllers implementing contracts
+- **zorrobpm-rabbitmq** — RabbitMQ integration (service task routing)
+- **zorrobpm-event** — Domain events (14 Spring ApplicationEvent classes)
+- **zorrobpm-exchange** — MQ message models (6 DTO classes)
+- **zorrobpm-client** — Java REST client SDK
+- **zorrobpm-job-handler-spring-boot-starter** — Worker SDK (JobHandler interface)
+- **zorrobpm-ce** — Bootstrap app (scans engine, rest, rabbitmq)
+- **zorrobpm-test** — Test helpers
 
-## Found Skills
-- `.mimocode/` directory exists but no skills found in subdirectories
+### Frontend (Vue 3 SPA)
+- **Stack**: Vue 3 + Vite 8 + TypeScript 6 + Tailwind CSS 4 + Pinia + Vue Router + vue-i18n
+- **Auth**: Keycloak OIDC (currently mocked)
+- **API**: Axios with `/api` base (nginx-proxied)
+- **i18n**: RU (default) / EN / KZ
+- **Theme**: Light/Dark via CSS variables
+- **Build**: `npm run build` = `tsc && vite build`
 
-## Found Commands
-- None found in `.mimocode/commands/`
+## Key Services
+- **ActivityService** — core execution (execute, complete tasks, signal, correlate messages, fire timers)
+- **RuntimeService** — public entry point
+- **DBService** — persistence abstraction (186 lines interface, scoped variables, gateway tracking)
+- **BpmnService** — BPMN model cache
+- **ScriptService** — FEEL expression evaluation (Camunda feel-engine 1.19.3)
 
-## Current Frontend State
-- ✅ Dashboard with clickable cards (Processes, Tasks, Service Tasks, Incidents)
-- ✅ Service Tasks pages (ServiceTaskList, ServiceTaskDetail)
-- ✅ CopyableId component for full ID display with tooltip/copy
-- ✅ i18n setup (RU/EN/KZ) with language switcher in HeaderBar
-- ✅ Light/Dark theme support in style.css
-- ✅ Refresh buttons on lists
-- ✅ Process Instance Detail with tabs (User Tasks, Service Tasks)
-- ✅ DESC sorting (new records on top)
+## Database
+PostgreSQL 16, 38 Liquibase migrations. Key tables: process_definitions, process_instances, activities, tokens, variables (scoped), user_tasks, service_tasks, incidents, timer_jobs, message/signal subscriptions, parallel_gateways, dmn_definitions.
 
-## Current Backend State
-- Backend API exists at `/api`
-- Endpoints available: process-definitions, process-instances, user-tasks, service-tasks, incidents, variables
+## REST API
+3 controllers: ProcessDefinitionResource, RuntimeResource (@Transactional), QueryResource. Endpoints: process-definitions (CRUD+XML+structure), process-instances (start), user-tasks/service-tasks (complete), incidents (resolve), queries (paginated).
 
-## Accepted Architecture Decisions
-1. Single SPA with unified navigation
-2. No hardcoded URLs - relative `/api` path
-3. Light/Dark theme via CSS variables
-4. i18n with vue-i18n
-5. CopyableId component for all IDs
+## RabbitMQ
+Queues: `zorrobpm.jobs.<jobType>` (per-type, auto-declared), `zorrobpm.complete-service-task` (completion with DLQ).
 
-## Open Tasks
-- [x] Service Tasks pages
-- [x] Full ID display with tooltip/copy
-- [x] Process Name display
-- [x] DESC sorting
-- [x] Light theme sidebar fix
-- [x] Process Instance Detail tabs
-- [x] Refresh functionality
-- [x] Dashboard navigation
-- [x] i18n setup (RU/EN/KZ)
-- [x] Variable forms in ProcessInstanceDetail modal
-- [x] New logo (BPM) - favicon, sidebar, login page
+## CI/CD
+GitLab CI: test → build → deploy → rollback. Docker builds, SHA-tagged images. Production: `https://zorro.i-smet.kz`.
 
-## Git Status (Current Session)
-- Modified files: 30 frontend files
-- New files: 6 (i18n, locales, ServiceTaskList, ServiceTaskDetail, CopyableId, test-routes.mjs)
-- All changes in zorrobpm-frontend/** only
+## Frontend State
+- All core pages functional (Dashboard, Processes, Tasks, Service Tasks, Incidents)
+- CopyableId component for all IDs
+- i18n (RU/EN/KZ) with language switcher
+- Light/Dark theme, collapsible sidebar
+- Lazy loading in ProcessInstanceDetail
+- Auth mocked, some pages use mock data (timers, messages, dmn, users)
 
-## Build Status
-- `npm run build` passes successfully
-- No TypeScript errors
-- No build errors
+## Rules
+- Frontend-only sessions: only modify `zorrobpm-frontend/**`, `docs/**`, `README.md`
+- Never modify backend modules, CI/CD, Docker, infrastructure
+- Backend API gaps → document in `docs/BACKEND_REQUIRED.md`
+- Build verification: `npm run build` after every task
+- Entity names in English, actions/buttons use i18n
 
-## Known Limitations
-- Backend API gaps documented in `docs/frontend-api-gaps.md`
-- No WebSocket/SSE for real-time updates
-- No BPMN designer (only viewer)
+## Memory Files
+Local persistent memory at `.mimocode/memory/`:
+- `project-memory.md` — full architecture reference
+- `project-rules.md` — all rules and constraints
+- `project-workflow.md` — development workflows
+- `project-history.md` — project timeline
+- `project-map.md` — complete file structure
+- `backend-gaps.md` — API gaps for frontend
+- `current-focus.md` — current status and next steps
