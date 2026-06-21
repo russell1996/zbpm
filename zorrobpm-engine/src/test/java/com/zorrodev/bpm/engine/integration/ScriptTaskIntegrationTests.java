@@ -107,6 +107,29 @@ public class ScriptTaskIntegrationTests {
 
     @Transactional
     @Test
+    void scriptTaskEvaluatesCamunda8ZeebeScriptExpression() throws Exception {
+        // Camunda 8 style: the script is carried by <zeebe:script expression="=a + b" resultVariable="sum">
+        // in extensionElements (instead of an inline <bpmn:script> child).
+        String bpmn = Files.readString(Paths.get("src/test/files/test-script-task-zeebe.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        dto.setVariables(List.of(
+            var("a", ProcessVariableType.LONG, "2"),
+            var("b", ProcessVariableType.LONG, "3")));
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+
+        ProcessVariableEntity sum = variable(processInstanceId, "sum");
+        assertThat(sum.getType()).isEqualTo(ProcessVariableType.LONG);
+        assertThat(sum.getTextValue()).isEqualTo("5");
+    }
+
+    @Transactional
+    @Test
     void invalidScriptRaisesIncidentInsteadOfStallingSilently() throws Exception {
         // a syntactically invalid FEEL script must not crash the engine: the activity is left
         // un-completed and an incident is recorded on the script task.

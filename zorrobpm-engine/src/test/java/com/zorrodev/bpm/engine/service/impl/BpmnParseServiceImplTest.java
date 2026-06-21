@@ -486,6 +486,18 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseScriptTaskZeebeScript() throws IOException {
+        // Camunda 8 style: <zeebe:script expression="=a + b" resultVariable="sum"> — the leading '=' is stripped
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-script-task-zeebe.bpmn")));
+
+        BpmnElementModel scriptSum = bpmn.getElement("scriptSum");
+        assertThat(scriptSum.getType()).isEqualTo(BpmnElementType.SCRIPT_TASK);
+        assertThat(scriptSum.getExtensions().getScriptTaskExtension().getScript()).isEqualTo("a + b");
+        assertThat(scriptSum.getExtensions().getScriptTaskExtension().getResultVariable()).isEqualTo("sum");
+    }
+
+    @Test
     void testParseEventSubProcess() throws IOException {
         // a <subProcess triggeredByEvent="true"> with a message start becomes an EVENT_SUB_PROCESS; its
         // start event is marked (so it is not a process-level start) and the trigger message is resolved
@@ -537,6 +549,14 @@ class BpmnParseServiceImplTest {
         assertThat(miTask.getType()).isEqualTo(BpmnElementType.USER_TASK);
         assertThat(miTask.getExtensions().getMultiInstanceExtension().isSequential()).isFalse();
         assertThat(miTask.getExtensions().getMultiInstanceExtension().getCardinality()).isEqualTo("3");
+
+        // Camunda 8 variant: zeebe:loopCharacteristics inputCollection (leading '=' stripped)
+        BpmnProcessDefinitionModel zeebe = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-multi-instance-zeebe.bpmn")));
+        var miZeebe = zeebe.getElement("miTask").getExtensions().getMultiInstanceExtension();
+        assertThat(miZeebe.getInputCollection()).isEqualTo("[1, 2, 3]");
+        assertThat(miZeebe.getInputElement()).isEqualTo("item");
+        assertThat(miZeebe.getCardinality()).isNull();
 
         // sequential variant with a completion condition
         BpmnProcessDefinitionModel seq = new BpmnParseServiceImpl()

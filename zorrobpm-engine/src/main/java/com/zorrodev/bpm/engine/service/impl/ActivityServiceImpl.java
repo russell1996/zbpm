@@ -1159,21 +1159,55 @@ public class ActivityServiceImpl implements ActivityService {
         log.info("{}/{}: Entering multi-instance {}: {} {} instance(s)", processInstanceId, token, bpmnElement.getId(), count, mi.isSequential() ? "sequential" : "parallel");
     }
 
-    /** Resolves a multi-instance activity's instance count from its (literal or FEEL) loop cardinality. */
+    /**
+     * Resolves a multi-instance activity's instance count: from the Camunda 8 {@code zeebe:loopCharacteristics
+     * inputCollection} (the collection's size) if present, otherwise from the BPMN {@code loopCardinality}
+     * (a literal or FEEL number).
+     */
     private int resolveCardinality(UUID processInstanceId, BpmnElementModel element) {
-        String expression = Optional.ofNullable(element.getExtensions())
+        MultiInstanceExtensionModel mi = Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
-            .map(MultiInstanceExtensionModel::getCardinality)
-            .filter(s -> !s.isBlank())
-            .orElseThrow(() -> new EngineException("Multi-instance " + element.getId() + " has no loop cardinality"));
+            .orElseThrow(() -> new EngineException("Multi-instance " + element.getId() + " has no loop characteristics"));
+        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+
+        if (mi.getInputCollection() != null && !mi.getInputCollection().isBlank()) {
+            Object collection = scriptService.evaluateExpression(mi.getInputCollection(), variables);
+            return collectionSize(collection, element.getId());
+        }
+
+        String expression = mi.getCardinality();
+        if (expression == null || expression.isBlank()) {
+            throw new EngineException("Multi-instance " + element.getId() + " has neither inputCollection nor loopCardinality");
+        }
         if (expression.startsWith("=")) {
             expression = expression.substring(1);
         }
-        Object value = scriptService.evaluateExpression(expression, dbService.getVariables(processInstanceId));
+        Object value = scriptService.evaluateExpression(expression, variables);
         if (!(value instanceof Number number)) {
             throw new EngineException("Multi-instance " + element.getId() + " cardinality did not evaluate to a number: " + value);
         }
         return number.intValue();
+    }
+
+    /**
+     * Size of a FEEL collection. Handles a {@link java.util.Collection} and, since the FEEL value mapper may
+     * return a Scala collection, falls back to its {@code size()} method reflectively (engine-agnostic).
+     */
+    private int collectionSize(Object collection, String elementId) {
+        if (collection instanceof java.util.Collection<?> c) {
+            return c.size();
+        }
+        if (collection != null) {
+            try {
+                Object n = collection.getClass().getMethod("size").invoke(collection);
+                if (n instanceof Integer size) {
+                    return size;
+                }
+            } catch (ReflectiveOperationException ignored) {
+                // not a collection-like value
+            }
+        }
+        throw new EngineException("Multi-instance " + elementId + " inputCollection did not evaluate to a list: " + collection);
     }
 
     /**
