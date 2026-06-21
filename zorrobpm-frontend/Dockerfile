@@ -22,6 +22,9 @@ FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /build/dist /usr/share/nginx/html
 
+# Fail the image build (in CI) if the nginx config is syntactically invalid
+RUN nginx -t
+
 EXPOSE 80
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
