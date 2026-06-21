@@ -112,8 +112,9 @@
 - **Риск миграции:** **средний** — частый паттерн для запланированных процессов.
 - **Приоритет:** **P1** · **Сложность:** **M**
 - **Прогресс:**
-  - ✅ **Парсинг + первое срабатывание** — `<timeCycle>` читается во всех 4 местах (start/boundary/event-subprocess/catch), `TimerEventType.CYCLE`, `computeDueAt`/timer-start считают first-occurrence из ISO `R[n]/<duration>` (хелпер `TimerEventExtensionModel.cycleFirstDuration`). Cycle-таймеры больше не падают в инцидент и срабатывают (для boundary/catch-таймаута — корректно). Тест: `TimerCycleIntegrationTests`.
-  - ⏳ **Повтор + cron** — перепланирование последующих срабатываний (миграция: счётчик повторов в `timer_jobs`; rescheduling в `TimerJobExecutor`) и cron-выражения — отдельный заход.
+  - ✅ **Парсинг + первое срабатывание (ISO `R[n]/<duration>`)** — `<timeCycle>` читается во всех 4 местах (start/boundary/event-subprocess/catch), `TimerEventType.CYCLE`, first-occurrence в `computeDueAt`/timer-start. Тест: `TimerCycleIntegrationTests`.
+  - ✅ **Cron** — `timeCycle` с cron-выражением (Spring 6-field) вычисляет следующее срабатывание через `TimerExpressions.firstOccurrence` (общая утилита для ISO/duration/cron). Тест: `TimerExpressionsTest`.
+  - ⏳ **Повтор** — перепланирование последующих срабатываний (миграция: счётчик повторов в `timer_jobs`; rescheduling в `TimerJobExecutor`) — отдельный заход.
 
 #### C8-4 · `propagateAllChildVariables = false` — ✅ ВЫПОЛНЕНО
 - **Описание:** флаг парсился, но `finishBranch` всегда копировал все переменные child→parent.
