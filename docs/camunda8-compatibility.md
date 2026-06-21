@@ -27,7 +27,7 @@
 | Start / End (none) | ✅ Совместимо | — | — |
 | Terminate end (`terminateEventDefinition`) | ✅ Совместимо | — | — |
 | Message start / catch / throw / boundary (`messageEventDefinition`, `message`, `messageRef`) | ✅ Совместимо | Camunda 8 поддерживает message-события | — |
-| Timer start / catch / boundary (`timerEventDefinition`, `timeDate`, `timeDuration`, `timeCycle`) | ✅ Совместимо | date/duration; **`timeCycle`** (ISO `R[n]/<duration>`) парсится и срабатывает (первое срабатывание) — инцидента больше нет. **Отложено**: повтор (перепланирование следующих срабатываний) и cron-выражения | Повтор/cron timeCycle — отдельный заход (миграция + счётчик повторов в timer_jobs) |
+| Timer start / catch / boundary (`timerEventDefinition`, `timeDate`, `timeDuration`, `timeCycle`) | ✅ Совместимо | date/duration; **`timeCycle`** — ISO `R[n]/<duration>` и **cron** (Spring 6-field) — парсится и срабатывает (первое срабатывание), инцидента больше нет. **Отложено**: повтор (перепланирование последующих срабатываний) | Повтор timeCycle — отдельный заход (миграция + счётчик повторов в timer_jobs) |
 | Error end / boundary (`errorEventDefinition`, `error`, `errorCode`) | ✅ Совместимо | — | — |
 | Signal start / catch / throw / boundary (`signalEventDefinition`, `signal`) | ✅ Совместимо | C8 поддерживает signal (8.3+) | — |
 | Escalation throw / end / boundary (`escalationEventDefinition`, `escalation`) | ✅ Совместимо | C8 поддерживает escalation (8.2+) | — |
