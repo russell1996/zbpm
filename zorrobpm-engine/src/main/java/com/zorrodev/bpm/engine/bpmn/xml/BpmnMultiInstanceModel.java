@@ -9,7 +9,9 @@ import lombok.Setter;
 
 /**
  * {@code <bpmn:multiInstanceLoopCharacteristics>}: marks an activity as multi-instance. {@code isSequential}
- * selects sequential vs parallel; {@code loopCardinality} is the (literal or FEEL) number of instances.
+ * selects sequential vs parallel. The instance count comes either from the BPMN-standard
+ * {@code loopCardinality}, or — the Camunda 8 way — from a {@code <zeebe:loopCharacteristics inputCollection=…>}
+ * in {@code extensionElements} (the collection's size).
  */
 @Getter
 @Setter
@@ -23,4 +25,7 @@ public class BpmnMultiInstanceModel {
 
     @XmlElement(name = "completionCondition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private String completionCondition;
+
+    @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private ExtensionElements extensionElements;
 }
