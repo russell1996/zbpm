@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
+import com.zorrodev.bpm.engine.bpmn.model.BusinessRuleExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.CallActivityExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
@@ -160,6 +161,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             if (Optional.ofNullable(process.getScriptTasks()).isPresent()) {
                 for (BpmnScriptTaskModel scriptTask : process.getScriptTasks()) {
                     BpmnElementModel element = toElementModel(scriptTask);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
+            if (Optional.ofNullable(process.getBusinessRuleTasks()).isPresent()) {
+                for (BpmnBusinessRuleTaskModel businessRuleTask : process.getBusinessRuleTasks()) {
+                    BpmnElementModel element = toElementModel(businessRuleTask);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -605,6 +613,27 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         script.setResultVariable(scriptTask.getResultVariable());
         element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setScriptTaskExtension(script);
+        return element;
+    }
+
+    private BpmnElementModel toElementModel(BpmnBusinessRuleTaskModel businessRuleTask) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(businessRuleTask.getId());
+        element.setName(businessRuleTask.getName());
+        element.setType(BpmnElementType.BUSINESS_RULE_TASK);
+        element.setIncoming(businessRuleTask.getIncoming());
+        element.setOutgoing(businessRuleTask.getOutgoing());
+        ExtensionElements ee = businessRuleTask.getExtensionElements();
+        BusinessRuleExtensionModel ext = new BusinessRuleExtensionModel();
+        if (ee != null && ee.getCalledDecision() != null) {
+            ext.setDecisionId(ee.getCalledDecision().getDecisionId());
+            ext.setResultVariable(ee.getCalledDecision().getResultVariable());
+        } else if (ee != null && ee.getScript() != null) {
+            ext.setExpression(ee.getScript().getExpression() != null ? ee.getScript().getExpression().strip() : null);
+            ext.setResultVariable(ee.getScript().getResultVariable());
+        }
+        element.setExtensions(new BpmnElementExtensionModel());
+        element.getExtensions().setBusinessRuleExtension(ext);
         return element;
     }
 
