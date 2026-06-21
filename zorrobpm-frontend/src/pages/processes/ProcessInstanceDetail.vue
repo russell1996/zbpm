@@ -4,23 +4,85 @@ import { useRoute } from 'vue-router'
 import { useProcessStore } from '@/stores/process'
 import { useTaskStore } from '@/stores/task'
 import { useIncidentStore } from '@/stores/incident'
+import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
 import { getVariables } from '@/services/variableService'
+import type { ProcessVariable } from '@/types/api'
+import { RefreshCw } from 'lucide-vue-next'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
 const processStore = useProcessStore()
 const taskStore = useTaskStore()
 const incidentStore = useIncidentStore()
+const toast = useToast()
 
-const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'incidents'>('bpmn')
+const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents'>('bpmn')
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
 const elementVariables = ref<{ name: string; type: string; value: string }[]>([])
 
+const showCompleteModal = ref(false)
+const completingTaskId = ref('')
+const completingTaskType = ref<'user' | 'service'>('user')
+const completeVars = ref<{ name: string; type: string; value: string }[]>([])
+const newVarName = ref('')
+const newVarType = ref('STRING')
+const newVarValue = ref('')
+
+function addVariable() {
+  if (newVarName.value) {
+    completeVars.value.push({ name: newVarName.value, type: newVarType.value, value: newVarValue.value })
+    newVarName.value = ''
+    newVarValue.value = ''
+  }
+}
+
+function removeVariable(index: number) {
+  completeVars.value.splice(index, 1)
+}
+
+function openCompleteModal(taskId: string, type: 'user' | 'service') {
+  completingTaskId.value = taskId
+  completingTaskType.value = type
+  completeVars.value = []
+  showCompleteModal.value = true
+}
+
+async function confirmComplete() {
+  const variables: ProcessVariable[] = completeVars.value.map((v) => ({
+    name: v.name,
+    type: v.type as ProcessVariable['type'],
+    value: v.value,
+  }))
+  if (completingTaskType.value === 'user') {
+    await taskStore.completeUserTask(completingTaskId.value, variables)
+  } else {
+    await taskStore.completeServiceTask(completingTaskId.value, variables)
+  }
+  if (!taskStore.error) {
+    toast.success('Task completed')
+    showCompleteModal.value = false
+    await reloadTasks()
+  } else {
+    toast.error(taskStore.error)
+  }
+}
+
+async function reloadTasks() {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await Promise.all([
+    taskStore.fetchUserTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
+    taskStore.fetchServiceTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
+    incidentStore.fetchIncidents({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
+    processStore.fetchVariables({ processInstanceId: pi.id }),
+  ])
+}
+
 const activeElementIds = computed(() => {
   const ids: string[] = []
-  // Active tasks are currently parked — their bpmnElementId is the active element
   for (const task of taskStore.userTasks?.data || []) {
     if (!task.completedAt) ids.push(task.id)
   }
@@ -43,7 +105,6 @@ const incidentElementIds = computed(() => {
 
 async function onElementClick(elementId: string) {
   selectedElement.value = elementId
-  // Load variables for the instance (all of them for now)
   if (processStore.currentInstance) {
     try {
       const result = await getVariables({ processInstanceId: processStore.currentInstance.id })
@@ -62,9 +123,9 @@ onMounted(async () => {
     await Promise.all([
       processStore.fetchVariables({ processInstanceId: pi.id }),
       taskStore.fetchUserTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
+      taskStore.fetchServiceTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
       incidentStore.fetchIncidents({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
     ])
-    // Load BPMN XML from the definition
     try {
       bpmnXml.value = await processService.getProcessDefinitionXml(pi.processDefinitionId)
     } catch {
@@ -80,8 +141,20 @@ onMounted(async () => {
     <div v-else-if="processStore.error" class="text-sm text-red-500">{{ processStore.error }}</div>
 
     <template v-else-if="processStore.currentInstance">
-      <h1 class="text-2xl font-bold">Process Instance</h1>
-      <p class="text-sm text-muted-foreground font-mono">{{ processStore.currentInstance.id }}</p>
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold">Process Instance</h1>
+          <CopyableId :value="processStore.currentInstance.id" />
+        </div>
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          :disabled="processStore.loading"
+          @click="reloadTasks"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading }" />
+          Refresh
+        </button>
+      </div>
 
       <div class="flex items-center gap-4 text-sm">
         <span
@@ -98,15 +171,15 @@ onMounted(async () => {
         </span>
       </div>
 
-      <div class="flex gap-1 border-b border-border">
+      <div class="flex gap-1 border-b border-border overflow-x-auto">
         <button
-          v-for="tab in (['bpmn', 'variables', 'tasks', 'incidents'] as const)"
+          v-for="tab in (['bpmn', 'variables', 'tasks', 'serviceTasks', 'incidents'] as const)"
           :key="tab"
-          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
           :class="activeTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = tab"
         >
-          {{ tab === 'bpmn' ? 'BPMN Flow' : tab.charAt(0).toUpperCase() + tab.slice(1) }}
+          {{ tab === 'bpmn' ? 'BPMN Flow' : tab === 'serviceTasks' ? 'Service Tasks' : tab.charAt(0).toUpperCase() + tab.slice(1) }}
         </button>
       </div>
 
@@ -173,6 +246,7 @@ onMounted(async () => {
               <th class="px-4 py-3 text-left font-medium">Name</th>
               <th class="px-4 py-3 text-left font-medium">Status</th>
               <th class="px-4 py-3 text-left font-medium">Created</th>
+              <th class="px-4 py-3 text-left font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -185,9 +259,56 @@ onMounted(async () => {
                 </span>
               </td>
               <td class="px-4 py-3 text-muted-foreground">{{ new Date(t.createdAt).toLocaleString() }}</td>
+              <td class="px-4 py-3">
+                <button
+                  v-if="!t.completedAt"
+                  class="text-sm text-primary hover:underline"
+                  @click.stop="openCompleteModal(t.id, 'user')"
+                >
+                  Complete
+                </button>
+              </td>
             </tr>
             <tr v-if="!taskStore.userTasks?.data?.length">
-              <td colspan="4" class="px-4 py-6 text-center text-muted-foreground">No tasks</td>
+              <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">No user tasks</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="activeTab === 'serviceTasks'" class="border border-border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-muted">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium">ID</th>
+              <th class="px-4 py-3 text-left font-medium">Name</th>
+              <th class="px-4 py-3 text-left font-medium">Job Type</th>
+              <th class="px-4 py-3 text-left font-medium">Status</th>
+              <th class="px-4 py-3 text-left font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in (taskStore.serviceTasks?.data || [])" :key="t.id" class="border-t border-border">
+              <td class="px-4 py-3 font-mono text-xs">{{ t.id.slice(0, 8) }}...</td>
+              <td class="px-4 py-3">{{ t.name || t.code || '—' }}</td>
+              <td class="px-4 py-3 font-mono text-xs">{{ t.job }}</td>
+              <td class="px-4 py-3">
+                <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', t.completedAt ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
+                  {{ t.completedAt ? 'Completed' : 'Active' }}
+                </span>
+              </td>
+              <td class="px-4 py-3">
+                <button
+                  v-if="!t.completedAt"
+                  class="text-sm text-primary hover:underline"
+                  @click.stop="openCompleteModal(t.id, 'service')"
+                >
+                  Complete
+                </button>
+              </td>
+            </tr>
+            <tr v-if="!taskStore.serviceTasks?.data?.length">
+              <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">No service tasks</td>
             </tr>
           </tbody>
         </table>
@@ -221,5 +342,37 @@ onMounted(async () => {
         </table>
       </div>
     </template>
+
+    <div
+      v-if="showCompleteModal"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      @click.self="showCompleteModal = false"
+    >
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
+        <h2 class="text-lg font-bold">Complete Task</h2>
+        <div class="space-y-3">
+          <div v-for="(v, i) in completeVars" :key="i" class="flex items-center gap-2 text-sm">
+            <span class="font-mono">{{ v.name }}</span>
+            <span class="text-muted-foreground">({{ v.type }})</span>
+            <span>= {{ v.value }}</span>
+            <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">Remove</button>
+          </div>
+          <div class="flex items-center gap-2">
+            <input v-model="newVarName" placeholder="name" class="px-2 py-1 border border-input rounded text-sm w-24" />
+            <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
+              <option>STRING</option>
+              <option>LONG</option>
+              <option>BOOLEAN</option>
+            </select>
+            <input v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm flex-1" />
+            <button class="text-sm text-primary hover:underline" @click="addVariable">Add</button>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showCompleteModal = false">Cancel</button>
+          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="confirmComplete">Complete</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

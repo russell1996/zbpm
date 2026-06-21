@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import type { ProcessVariable } from '@/types/api'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,7 +46,7 @@ onMounted(async () => {
     <template v-else-if="store.currentTask">
       <div>
         <h1 class="text-2xl font-bold">Task</h1>
-        <p class="text-sm text-muted-foreground font-mono">{{ store.currentTask.id }}</p>
+        <CopyableId :value="store.currentTask.id" />
       </div>
 
       <div class="grid grid-cols-2 gap-4 text-sm">

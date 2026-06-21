@@ -2,14 +2,14 @@
 import { ref, onMounted } from 'vue'
 import { getTimers } from '@/services/mock/timerService'
 import type { TimerJob } from '@/types/api'
-import { Clock, CheckCircle, AlertCircle } from 'lucide-vue-next'
+import { Clock, CheckCircle, AlertCircle, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 
 const timers = ref<TimerJob[]>([])
 const loading = ref(false)
 
-onMounted(async () => {
+async function load() {
   loading.value = true
   try {
     timers.value = await getTimers()
@@ -18,7 +18,9 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})
+}
+
+onMounted(load)
 
 function exportData() {
   exportToCsv(timers.value.map((t) => ({
@@ -35,14 +37,24 @@ function exportData() {
   <div class="space-y-6">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Timers</h1>
-      <button
-        v-if="timers.length"
-        class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-        @click="exportData"
-      >
-        <Download class="h-4 w-4" />
-        Export CSV
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          :disabled="loading"
+          @click="load"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
+          Refresh
+        </button>
+        <button
+          v-if="timers.length"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          @click="exportData"
+        >
+          <Download class="h-4 w-4" />
+          Export CSV
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>

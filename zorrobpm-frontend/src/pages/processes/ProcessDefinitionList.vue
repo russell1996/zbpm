@@ -3,7 +3,8 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProcessStore } from '@/stores/process'
 import { exportToCsv } from '@/shared/lib/export'
-import { Download } from 'lucide-vue-next'
+import { Download, RefreshCw } from 'lucide-vue-next'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const router = useRouter()
 const store = useProcessStore()
@@ -59,14 +60,24 @@ watch([search, latestOnly], () => { page.value = 0; load() })
   <div class="space-y-6">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Process Definitions</h1>
-      <button
-        v-if="store.definitions?.data?.length"
-        class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-        @click="exportData"
-      >
-        <Download class="h-4 w-4" />
-        Export CSV
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          :disabled="store.loading"
+          @click="load"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
+          Refresh
+        </button>
+        <button
+          v-if="store.definitions?.data?.length"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          @click="exportData"
+        >
+          <Download class="h-4 w-4" />
+          Export CSV
+        </button>
+      </div>
     </div>
 
     <div class="flex items-center gap-4">

@@ -3,7 +3,8 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useIncidentStore } from '@/stores/incident'
 import { exportToCsv } from '@/shared/lib/export'
-import { Download } from 'lucide-vue-next'
+import { Download, RefreshCw } from 'lucide-vue-next'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const router = useRouter()
 const store = useIncidentStore()
@@ -55,14 +56,24 @@ function exportData() {
   <div class="space-y-6">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Incidents</h1>
-      <button
-        v-if="store.incidents?.data?.length"
-        class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-        @click="exportData"
-      >
-        <Download class="h-4 w-4" />
-        Export CSV
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          :disabled="store.loading"
+          @click="load"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
+          Refresh
+        </button>
+        <button
+          v-if="store.incidents?.data?.length"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          @click="exportData"
+        >
+          <Download class="h-4 w-4" />
+          Export CSV
+        </button>
+      </div>
     </div>
 
     <div v-if="store.loading" class="text-sm text-muted-foreground">Loading...</div>
@@ -86,7 +97,7 @@ function exportData() {
             :key="inc.id"
             class="border-t border-border hover:bg-muted/50"
           >
-            <td class="px-4 py-3 font-mono text-xs">{{ inc.id.slice(0, 8) }}...</td>
+            <td class="px-4 py-3"><CopyableId :value="inc.id" /></td>
             <td class="px-4 py-3 text-sm max-w-xs truncate">{{ inc.message }}</td>
             <td class="px-4 py-3 font-mono text-xs">{{ inc.activityId.slice(0, 8) }}...</td>
             <td class="px-4 py-3">

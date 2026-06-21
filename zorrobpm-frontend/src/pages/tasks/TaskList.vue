@@ -4,7 +4,8 @@ import { useRouter } from 'vue-router'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
-import { Download, CheckSquare } from 'lucide-vue-next'
+import { Download, CheckSquare, RefreshCw } from 'lucide-vue-next'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const router = useRouter()
 const store = useTaskStore()
@@ -110,6 +111,14 @@ watch(filterCompleted, () => { page.value = 0; load() })
           Complete Selected ({{ selectedIds.size }})
         </button>
         <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          :disabled="store.loading"
+          @click="load"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
+          Refresh
+        </button>
+        <button
           v-if="store.userTasks?.data?.length"
           class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
           @click="exportData"
@@ -165,7 +174,7 @@ watch(filterCompleted, () => { page.value = 0; load() })
                 @change="toggleSelect(task.id)"
               />
             </td>
-            <td class="px-4 py-3 font-mono text-xs">{{ task.id.slice(0, 8) }}...</td>
+            <td class="px-4 py-3"><CopyableId :value="task.id" /></td>
             <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
             <td class="px-4 py-3 font-mono text-xs">{{ task.processInstanceId.slice(0, 8) }}...</td>
             <td class="px-4 py-3">
