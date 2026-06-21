@@ -1039,6 +1039,12 @@ public class ActivityServiceImpl implements ActivityService {
         } else if (result instanceof Number number && isIntegral(number)) {
             variable.setType(ProcessVariableType.LONG);
             variable.setValue(Long.toString(number.longValue()));
+        } else if (result instanceof Number number) {
+            // non-integral number (FEEL returns BigDecimal) -> DOUBLE, stored as a plain decimal string
+            java.math.BigDecimal bd = (number instanceof java.math.BigDecimal x)
+                ? x : java.math.BigDecimal.valueOf(number.doubleValue());
+            variable.setType(ProcessVariableType.DOUBLE);
+            variable.setValue(bd.toPlainString());
         } else {
             variable.setType(ProcessVariableType.STRING);
             variable.setValue(result == null ? "" : result.toString());
