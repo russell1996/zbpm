@@ -21,6 +21,10 @@ variables:
   IMAGE_BACKEND: zorrobpm-app
   IMAGE_FRONTEND: zorrobpm-frontend
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  # An earlier CI revision left root-owned target/ dirs on the shell runner that the gitlab-runner user
+  # can't remove — `git clean` then fails the fetch *before* any script runs. Disable git clean so checkout
+  # succeeds; before_script then reclaims ownership of the workspace (one-time, self-healing).
+  GIT_CLEAN_FLAGS: none
 
 workflow:
   rules:
@@ -29,10 +33,12 @@ workflow:
 
 default:
   # Self-heal: an earlier CI revision ran Maven in a root container with the workspace bind-mounted,
-  # leaving root-owned target/ dirs that the gitlab-runner user can't clean (Permission denied on fetch).
-  # This pipeline no longer bind-mounts the workspace (everything goes through `docker build`), so once
-  # these leftovers are removed the workspace stays owned by the runner user.
+  # leaving root-owned target/ dirs the gitlab-runner user can't touch. With git clean disabled (above)
+  # checkout now succeeds; here we reclaim ownership of the whole workspace via a root container so future
+  # fetches work normally. This pipeline no longer bind-mounts the workspace (all builds go through
+  # `docker build`), so nothing root-owned is created again.
   before_script:
+    - docker run --rm -v "$CI_PROJECT_DIR":/w busybox chown -R "$(id -u):$(id -g)" /w || true
     - docker run --rm -v "$CI_PROJECT_DIR":/w -w /w busybox sh -c 'rm -rf ./target ./*/target' || true
 
 # ---------------------------------------------------------------------------
