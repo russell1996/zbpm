@@ -2,43 +2,18 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { GitBranch, ListTodo, AlertTriangle, CheckCircle, FileText, Play, RefreshCw, Cpu } from 'lucide-vue-next'
-import { getProcessDefinitions } from '@/services/processService'
-import { getProcessInstances } from '@/services/instanceService'
-import { getUserTasks, getServiceTasks } from '@/services/taskService'
-import { getIncidents } from '@/services/incidentService'
+import { getDashboard } from '@/services/dashboardService'
+import type { DashboardData } from '@/types/api'
 
 const router = useRouter()
 
-const activeProcesses = ref(0)
-const openTasks = ref(0)
-const openServiceTasks = ref(0)
-const openIncidents = ref(0)
-const completedToday = ref(0)
+const dashboard = ref<DashboardData | null>(null)
 const loading = ref(true)
-
-const recentDefinitions = ref<{ id: string; name: string; key: string; version: number }[]>([])
 
 async function load() {
   loading.value = true
   try {
-    const [defs, instances, tasks, serviceTasks, incidents] = await Promise.all([
-      getProcessDefinitions({ latestVersionOnly: true, pageSize: 5 }),
-      getProcessInstances({ pageSize: 100 }),
-      getUserTasks({ completed: false, pageSize: 100 }),
-      getServiceTasks({ completed: false, pageSize: 100 }),
-      getIncidents({ pageSize: 100 }),
-    ])
-
-    recentDefinitions.value = defs.data
-    activeProcesses.value = instances.data.filter((i) => !i.completedAt).length
-    openTasks.value = tasks.totalElements
-    openServiceTasks.value = serviceTasks.totalElements
-    openIncidents.value = incidents.data.filter((i) => !i.completedAt).length
-
-    const today = new Date().toDateString()
-    completedToday.value = instances.data.filter(
-      (i) => i.completedAt && new Date(i.completedAt).toDateString() === today,
-    ).length
+    dashboard.value = await getDashboard()
   } catch {
     // API unavailable
   } finally {
@@ -72,7 +47,7 @@ onMounted(load)
           <span class="text-sm font-medium text-muted-foreground">Active Processes</span>
           <GitBranch class="h-4 w-4 text-muted-foreground" />
         </div>
-        <div class="text-2xl font-bold">{{ loading ? '—' : activeProcesses }}</div>
+        <div class="text-2xl font-bold">{{ loading ? '—' : dashboard?.activeProcessInstances ?? 0 }}</div>
       </div>
 
       <div
@@ -83,18 +58,18 @@ onMounted(load)
           <span class="text-sm font-medium text-muted-foreground">Open Tasks</span>
           <ListTodo class="h-4 w-4 text-muted-foreground" />
         </div>
-        <div class="text-2xl font-bold">{{ loading ? '—' : openTasks }}</div>
+        <div class="text-2xl font-bold">{{ loading ? '—' : dashboard?.openUserTasks ?? 0 }}</div>
       </div>
 
       <div
         class="border border-border rounded-lg p-4 bg-card cursor-pointer hover:bg-muted/50 transition-colors"
-        @click="router.push('/tasks?type=service')"
+        @click="router.push('/service-tasks')"
       >
         <div class="flex items-center justify-between mb-2">
           <span class="text-sm font-medium text-muted-foreground">Service Tasks</span>
           <Cpu class="h-4 w-4 text-muted-foreground" />
         </div>
-        <div class="text-2xl font-bold">{{ loading ? '—' : openServiceTasks }}</div>
+        <div class="text-2xl font-bold">{{ loading ? '—' : dashboard?.openServiceTasks ?? 0 }}</div>
       </div>
 
       <div
@@ -105,7 +80,7 @@ onMounted(load)
           <span class="text-sm font-medium text-muted-foreground">Open Incidents</span>
           <AlertTriangle class="h-4 w-4 text-muted-foreground" />
         </div>
-        <div class="text-2xl font-bold">{{ loading ? '—' : openIncidents }}</div>
+        <div class="text-2xl font-bold">{{ loading ? '—' : dashboard?.openIncidents ?? 0 }}</div>
       </div>
 
       <div class="border border-border rounded-lg p-4 bg-card">
@@ -113,7 +88,7 @@ onMounted(load)
           <span class="text-sm font-medium text-muted-foreground">Completed Today</span>
           <CheckCircle class="h-4 w-4 text-muted-foreground" />
         </div>
-        <div class="text-2xl font-bold">{{ loading ? '—' : completedToday }}</div>
+        <div class="text-2xl font-bold">{{ loading ? '—' : dashboard?.completedToday ?? 0 }}</div>
       </div>
     </div>
 
@@ -129,9 +104,9 @@ onMounted(load)
           </button>
         </div>
         <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
-        <div v-else-if="recentDefinitions.length" class="space-y-3">
+        <div v-else-if="dashboard?.recentDefinitions?.length" class="space-y-3">
           <div
-            v-for="def in recentDefinitions"
+            v-for="def in dashboard.recentDefinitions"
             :key="def.id"
             class="flex items-center justify-between text-sm cursor-pointer hover:bg-muted/50 p-2 rounded"
             @click="router.push(`/processes/definitions/${def.id}`)"
