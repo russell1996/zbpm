@@ -95,5 +95,6 @@
   "darkMode": "Dark mode",
   "lightMode": "Light mode",
   "copied": "Copied",
-  "copyToClipboard": "Copy to clipboard"
+  "copyToClipboard": "Copy to clipboard",
+  "latestOnly": "Latest only"
 }

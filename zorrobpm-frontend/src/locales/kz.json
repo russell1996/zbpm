@@ -95,5 +95,6 @@
   "darkMode": "Қараңғы тақырып",
   "lightMode": "Жарық тақырып",
   "copied": "Көшірілді",
-  "copyToClipboard": "Буферге көшіру"
+  "copyToClipboard": "Буферге көшіру",
+  "latestOnly": "Тек соңғы нұсқа"
 }
