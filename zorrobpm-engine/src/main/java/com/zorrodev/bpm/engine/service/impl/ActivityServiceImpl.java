@@ -1878,13 +1878,20 @@ public class ActivityServiceImpl implements ActivityService {
             UUID parentProcessDefinitionId = parentProcessInstance.getProcessDefinitionId();
             UUID parentToken = parentActivity.getToken();
             BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentProcessDefinitionId);
+            BpmnElementModel parentBpmnElement = parentBpmn.getElement(parentActivity.getBpmnElementId());
 
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-            dbService.setVariables(parentProcessInstanceId, variables);
+            // Camunda 8: propagateAllChildVariables (default true) copies the child's variables up to the
+            // parent; when explicitly false, the child's variables are not propagated.
+            boolean propagate = Optional.ofNullable(parentBpmnElement)
+                .map(BpmnElementModel::getExtensions)
+                .map(BpmnElementExtensionModel::getCallActivityExtension)
+                .map(ext -> ext.getPropagateAllChildVariables())
+                .orElse(Boolean.TRUE);
+            if (propagate) {
+                dbService.setVariables(parentProcessInstanceId, dbService.getVariables(processInstanceId));
+            }
 
             log.info("{}/{}: Completing {}: {}/{}", parentProcessInstanceId, parentToken, parentActivity.getType(), parentActivityId, parentActivity.getBpmnElementId());
-
-            BpmnElementModel parentBpmnElement = parentBpmn.getElement(parentActivity.getBpmnElementId());
 
             proceedToOutgoing(parentProcessInstanceId, parentToken, parentBpmn, parentBpmnElement);
         }
