@@ -460,6 +460,23 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     if (start.getMessageEventDefinition() != null) {
                         String ref = start.getMessageEventDefinition().getMessageRef();
                         ext.setTriggerMessageName(messageNames.getOrDefault(ref, ref));
+                    } else if (start.getSignalEventDefinition() != null) {
+                        String ref = start.getSignalEventDefinition().getSignalRef();
+                        ext.setTriggerSignalName(registry.signalNames().getOrDefault(ref, ref));
+                    } else if (start.getErrorEventDefinition() != null) {
+                        String ref = start.getErrorEventDefinition().getErrorRef();
+                        ext.setErrorTriggered(true);
+                        ext.setTriggerErrorCode(ref == null ? null : registry.errorCodes().getOrDefault(ref, ref));
+                    } else if (start.getTimerEventDefinition() != null) {
+                        TimerEventExtensionModel timer = new TimerEventExtensionModel();
+                        if (start.getTimerEventDefinition().getTimeDate() != null) {
+                            timer.setType(TimerEventType.DATE);
+                            timer.setExpression(start.getTimerEventDefinition().getTimeDate());
+                        } else if (start.getTimerEventDefinition().getTimeDuration() != null) {
+                            timer.setType(TimerEventType.DURATION);
+                            timer.setExpression(start.getTimerEventDefinition().getTimeDuration());
+                        }
+                        ext.setTriggerTimer(timer);
                     }
                 }
                 pd.addElement(child);

@@ -13,4 +13,5 @@ public class SignalSubscription {
     private UUID activityId;
     private String signalName;
     private String boundaryElementId;
+    private String eventSubprocessId;
 }

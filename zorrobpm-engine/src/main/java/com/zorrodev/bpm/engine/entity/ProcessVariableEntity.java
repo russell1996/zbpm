@@ -23,4 +23,7 @@ public class ProcessVariableEntity {
     private String textValue;
     @Enumerated(EnumType.STRING)
     private ProcessVariableType type;
+    /** Variable scope: {@code null} = process-instance root; a non-null activity id = a local scope whose
+     *  variables (IO-mapping inputs / multi-instance element) must not leak to the instance. */
+    private UUID scopeId;
 }

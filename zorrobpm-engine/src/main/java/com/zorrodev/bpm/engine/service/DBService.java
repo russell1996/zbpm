@@ -59,7 +59,16 @@ public interface DBService {
 
     List<ProcessVariable> getVariables(@NonNull UUID processInstanceId);
 
+    /** Merged view of the process-instance root scope and a local {@code scopeId} (local shadows root). */
+    List<ProcessVariable> getVariables(@NonNull UUID processInstanceId, UUID scopeId);
+
     void setVariables(@NonNull UUID processInstanceId, List<ProcessVariable> variables);
+
+    /** Writes variables into a local scope ({@code scopeId == null} writes the process-instance root). */
+    void setVariables(@NonNull UUID processInstanceId, UUID scopeId, List<ProcessVariable> variables);
+
+    /** Drops all variables of a local scope (e.g. an activity's IO-mapping inputs after it completes). */
+    void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId);
 
     List<Activity> getActivitiesByTokenAndBpmnElementId(UUID tokenId, String incoming);
 
@@ -84,6 +93,9 @@ public interface DBService {
     UUID createTimerJob(UUID activityId, java.time.Instant dueAt);
 
     UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId);
+
+    /** Creates a timer job that triggers a timer-started event sub-process when due (no host activity). */
+    UUID createEventSubprocessTimerJob(UUID processInstanceId, java.time.Instant dueAt, String eventSubprocessId);
 
     List<com.zorrodev.bpm.engine.dto.TimerJob> findDueTimerJobs(java.time.Instant now);
 
@@ -111,6 +123,9 @@ public interface DBService {
 
     /** Creates a signal subscription for a signal boundary event attached to {@code activityId}. */
     UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName, String boundaryElementId);
+
+    /** Creates an instance-scoped signal subscription that triggers a signal-started event sub-process. */
+    UUID createEventSubprocessSignalSubscription(UUID processInstanceId, String signalName, String eventSubprocessId);
 
     /** All active (unconsumed) subscriptions for {@code signalName}; a signal throw wakes them all. */
     List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName);

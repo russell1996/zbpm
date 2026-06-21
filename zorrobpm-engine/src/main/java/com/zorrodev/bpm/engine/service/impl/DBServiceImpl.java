@@ -51,8 +51,10 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -240,29 +242,51 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public List<ProcessVariable> getVariables(@NonNull UUID processInstanceId) {
-        List<ProcessVariableEntity> variables = variableRepository.findByProcessInstanceId(processInstanceId);
-        return variables.stream()
-            .map(variable -> {
-                ProcessVariable result = new ProcessVariable();
-                result.setName(variable.getName());
-                result.setType(variable.getType());
-                result.setValue(variable.getTextValue());
-                return result;
-            })
+        // the process-instance root scope (scope_id IS NULL) — the instance-level view used everywhere
+        return variableRepository.findByProcessInstanceIdAndScopeIdIsNull(processInstanceId).stream()
+            .map(this::toProcessVariable)
             .toList();
     }
 
     @Override
+    public List<ProcessVariable> getVariables(@NonNull UUID processInstanceId, UUID scopeId) {
+        // merged view: root scope plus the local scope, with the local scope shadowing the root by name
+        Map<String, ProcessVariable> merged = new LinkedHashMap<>();
+        for (ProcessVariableEntity e : variableRepository.findByProcessInstanceIdAndScopeIdIsNull(processInstanceId)) {
+            merged.put(e.getName(), toProcessVariable(e));
+        }
+        for (ProcessVariableEntity e : variableRepository.findByProcessInstanceIdAndScopeId(processInstanceId, scopeId)) {
+            merged.put(e.getName(), toProcessVariable(e));
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private ProcessVariable toProcessVariable(ProcessVariableEntity variable) {
+        ProcessVariable result = new ProcessVariable();
+        result.setName(variable.getName());
+        result.setType(variable.getType());
+        result.setValue(variable.getTextValue());
+        return result;
+    }
+
+    @Override
     public void setVariables(@NonNull UUID processInstanceId, List<ProcessVariable> variables) {
+        setVariables(processInstanceId, null, variables);
+    }
+
+    @Override
+    public void setVariables(@NonNull UUID processInstanceId, UUID scopeId, List<ProcessVariable> variables) {
         List<ProcessVariableEntity> entities = new ArrayList<>();
         for (ProcessVariable variable : variables) {
-            ProcessVariableEntity entity = variableRepository
-                .findByNameAndProcessInstanceId(variable.getName(), processInstanceId)
+            ProcessVariableEntity entity = (scopeId == null
+                ? variableRepository.findByNameAndProcessInstanceIdAndScopeIdIsNull(variable.getName(), processInstanceId)
+                : variableRepository.findByNameAndProcessInstanceIdAndScopeId(variable.getName(), processInstanceId, scopeId))
                 .orElseGet(() -> {
                     ProcessVariableEntity e = new ProcessVariableEntity();
                     e.setId(UUID.randomUUID());
                     e.setProcessInstanceId(processInstanceId);
                     e.setName(variable.getName());
+                    e.setScopeId(scopeId);
                     return e;
                 });
             entity.setType(variable.getType());
@@ -270,6 +294,11 @@ public class DBServiceImpl implements DBService {
             entities.add(entity);
         }
         variableRepository.saveAll(entities);
+    }
+
+    @Override
+    public void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId) {
+        variableRepository.deleteByProcessInstanceIdAndScopeId(processInstanceId, scopeId);
     }
 
     @Override
@@ -388,6 +417,21 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public UUID createEventSubprocessTimerJob(UUID processInstanceId, Instant dueAt, String eventSubprocessId) {
+        UUID id = UUID.randomUUID();
+        TimerJobEntity entity = new TimerJobEntity();
+        entity.setId(id);
+        entity.setActivityId(null);
+        entity.setDueAt(dueAt);
+        entity.setFired(false);
+        entity.setCreatedAt(Instant.now());
+        entity.setProcessInstanceId(processInstanceId);
+        entity.setEventSubprocessId(eventSubprocessId);
+        timerJobRepository.save(entity);
+        return id;
+    }
+
+    @Override
     public List<TimerJob> findDueTimerJobs(Instant now) {
         return timerJobRepository.findByFiredFalseAndDueAtLessThanEqual(now).stream()
             .map(e -> {
@@ -396,6 +440,8 @@ public class DBServiceImpl implements DBService {
                 job.setActivityId(e.getActivityId());
                 job.setDueAt(e.getDueAt());
                 job.setBoundaryElementId(e.getBoundaryElementId());
+                job.setProcessInstanceId(e.getProcessInstanceId());
+                job.setEventSubprocessId(e.getEventSubprocessId());
                 return job;
             })
             .toList();
@@ -506,6 +552,21 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public UUID createEventSubprocessSignalSubscription(UUID processInstanceId, String signalName, String eventSubprocessId) {
+        UUID id = UUID.randomUUID();
+        SignalSubscriptionEntity entity = new SignalSubscriptionEntity();
+        entity.setId(id);
+        entity.setProcessInstanceId(processInstanceId);
+        entity.setActivityId(null);
+        entity.setSignalName(signalName);
+        entity.setConsumed(false);
+        entity.setCreatedAt(Instant.now());
+        entity.setEventSubprocessId(eventSubprocessId);
+        signalSubscriptionRepository.save(entity);
+        return id;
+    }
+
+    @Override
     public List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName) {
         return signalSubscriptionRepository.findByConsumedFalseAndSignalName(signalName).stream()
             .map(e -> {
@@ -515,6 +576,7 @@ public class DBServiceImpl implements DBService {
                 sub.setActivityId(e.getActivityId());
                 sub.setSignalName(e.getSignalName());
                 sub.setBoundaryElementId(e.getBoundaryElementId());
+                sub.setEventSubprocessId(e.getEventSubprocessId());
                 return sub;
             })
             .toList();
