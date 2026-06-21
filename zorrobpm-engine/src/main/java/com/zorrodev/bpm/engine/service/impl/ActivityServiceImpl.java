@@ -688,8 +688,19 @@ public class ActivityServiceImpl implements ActivityService {
 
         List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
 
-        String key = bpmnElement.getExtensions().getCallActivityExtension().getProcessId();
+        // null-safe: a malformed call activity (no zeebe:calledElement / processId) or an undeployed target
+        // becomes an informative incident (a non-EngineException is parked by execute()'s handler) instead of
+        // an NPE / NoSuchElementException — the operator can fix the model / deploy the child and retry.
+        String key = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getCallActivityExtension)
+            .map(ext -> ext.getProcessId())
+            .filter(s -> !s.isBlank())
+            .orElseThrow(() -> new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has no zeebe:calledElement processId"));
+
         Integer version = dbService.getMaxProcessDefinitionVersionByKey(key);
+        if (version == null || version == 0) {
+            throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no deployed definition");
+        }
         ProcessDefinition pd = dbService.getProcessDefinition(key, version);
         UUID processDefinitionId = pd.getId();
 
