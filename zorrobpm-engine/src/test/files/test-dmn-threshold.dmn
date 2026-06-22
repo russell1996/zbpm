@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_threshold" name="threshold" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="gradeDecision" name="Grade Decision">
+    <!-- UNIQUE, single output, partial coverage: a score below 700 matches no rule -> null -->
+    <decisionTable id="DT_grade" hitPolicy="UNIQUE">
+      <input id="In_grade_score" label="Score">
+        <inputExpression id="InExpr_grade_score" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Out_grade" label="Grade" name="grade" typeRef="string" />
+      <rule id="R_grade_high">
+        <inputEntry id="IE_grade_high"><text>&gt;= 700</text></inputEntry>
+        <outputEntry id="OE_grade_high"><text>"A"</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>
