@@ -1,6 +1,6 @@
 # ZorroBPM CE
 
-Лёгкий движок бизнес-процессов BPMN 2.0 на Spring Boot. Деплой BPMN-процессов, запуск экземпляров, выполнение внешней работы через брокер сообщений и управление пользовательскими задачами — всё через простой REST API.
+Лёгкий движок бизнес-процессов BPMN 2.0 на Spring Boot с **высокой совместимостью с Camunda 8** (реальные C8-BPMN-модели исполняются без правок файлов). Деплой BPMN-процессов, запуск экземпляров, выполнение внешней работы через брокер сообщений и управление пользовательскими задачами — через REST API и единый **SPA** (Operate/Tasklist/Cockpit в одном приложении, `zorrobpm-frontend`).
 
 > ⚠️ **Статус — Community Edition, ранняя стадия.**
 > Рабочий одноузловой движок с хорошим покрытием happy-path тестами. **Ещё не готов к промышленной эксплуатации:** нет встроенной аутентификации/авторизации, рассчитан на запуск в **одном экземпляре** (таймеры и версионирование определений пока небезопасны при нескольких репликах). Запускайте в доверённой сети / за аутентифицирующим шлюзом. См. [Ограничения](#ограничения-и-замечания-по-проду).
@@ -13,29 +13,31 @@ ZorroBPM исполняет определения BPMN-процессов:
 - **Запуск** экземпляров; движок обходит граф процесса токенами.
 - **Сервис-задачи** отправляются внешним **воркерам** через RabbitMQ и завершаются асинхронно.
 - **Пользовательские задачи** ждут завершения через API.
-- Поддержаны **таймеры, сообщения, шлюзы, подпроцессы, call activity, инциденты** (см. матрицу ниже).
+- Поддержаны **таймеры (date/duration/cron), сообщения, шлюзы, multi-instance, подпроцессы, call activity, компенсация, DMN, инциденты** (см. матрицу ниже).
+- **Переменные** — скаляры и **JSON-объекты/списки**; FEEL/DMN читают вложенные свойства и итерируют коллекции.
 
 ## Поддержка BPMN
 
-| Поддерживается | Пока не поддерживается |
+| Поддерживается | Точечные edge'ы (отдельный заход) |
 |---|---|
-| Start / End / Terminate-end события | Multi-instance: per-instance `inputElement`/`outputCollection`/`loopCounter` (scoped-изоляция) |
-| **Message start**, **Timer start** и **Signal start** (старт по сообщению / расписанию / сигналу) | Conditional **start** событие (catch/boundary — поддержаны) |
+| Start / End / Terminate-end события | Ограниченный повтор таймера `R<n>` (бесконечный `R/`/cron — есть) |
+| **Message start**, **Timer start** (date/duration/**cycle**) и **Signal start** | MI на send/script job-worker форме (на user/service task — есть) |
 | Потоки управления (sequence flow) | Компенсация в scope встроенного подпроцесса |
-| Exclusive gateway (условия на FEEL + поток по умолчанию) | |
-| Parallel gateway (split / join) | Event sub-process внутри встроенного подпроцесса (не top-level) |
-| **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | Transaction: вложенные транзакции |
+| Exclusive gateway (условия на FEEL + поток по умолчанию) | Event sub-process внутри встроенного подпроцесса (не top-level) |
+| Parallel gateway (split / join) | Вложенные транзакции |
+| **Inclusive gateway** (split по всем истинным веткам + default; динамический join) | |
 | **Event-based gateway** (гонка catch-событий: message / timer / signal) | |
 | Service task (внешние воркеры через RabbitMQ) | |
 | User task (assignee, кандидаты-пользователи/группы, form key; `zeebe:userTask` маркер) | |
-| **Multi-instance** (параллельный и **последовательный**, по `loopCardinality` или `zeebe:loopCharacteristics inputCollection`; агрегирующий join; `completionCondition`) | |
+| **Multi-instance** (на **user и service task**, параллельный/последовательный; count по `loopCardinality`/`inputCollection`; **per-instance `inputElement`+`loopCounter`**, агрегация **`outputCollection`**; `completionCondition`) | |
 | **Send / Receive task** (send: `zeebe:taskDefinition` job-worker или message throw; receive: message catch) | |
-| **Script task** (`zeebe:script expression` + inline FEEL-выражение, результат в переменную) | |
-| **IO mappings** (`zeebe:ioMapping` input/output на service/user task; **scoped**: input-локали не протекают) | |
-| **Business rule task** (DMN-решение через `zeebe:calledDecision` + DMN-движок; или inline FEEL) | |
-| Call activity, встроенный подпроцесс | |
+| **Script task** (`zeebe:script` FEEL, **`zeebe:taskDefinition` job-worker**, inline) | |
+| **Переменные** `STRING/LONG/DOUBLE/BOOLEAN/UUID/JSON` (JSON-объекты/списки, доступ к свойствам и итерация в FEEL/DMN; структурный FEEL-результат → JSON) | |
+| **IO mappings** (`zeebe:ioMapping` input/output; **scoped**: input-локали не протекают) | |
+| **Business rule task** (DMN через `zeebe:calledDecision`, **версионирование**; или inline FEEL) | |
+| Call activity (`propagateAllChildVariables`), встроенный подпроцесс | |
 | **Event sub-process** (триггеры message / signal / error / timer; message — прерывающий и непрерывающий) | |
-| Промежуточные **catch**: обычное ожидание, **message** (+корреляция по имени и по **ключу**), **timer** (дата/длительность) | |
+| Промежуточные **catch**: ожидание, **message** (+корреляция по имени и по **ключу**), **timer** (дата/длительность/**cycle**) | |
 | Промежуточный **throw**, **message throw** (корреляция внутри движка) | |
 | **Signal catch / throw** (broadcast всем подписчикам, 1:N) | |
 | **Link catch / throw** (внутрипроцессный «goto» по имени link) | |
@@ -44,10 +46,10 @@ ZorroBPM исполняет определения BPMN-процессов:
 | **Transaction** sub-process + **cancel** end / cancel boundary (компенсация + отмена scope) | |
 | **Escalation** throw / end + **escalation boundary** (прерывающий и непрерывающий) | |
 | **Error end** + **Error boundary** (с распространением по scope и в родительский процесс) | |
-| **Boundary**: timer, message, **signal** и **escalation**, **прерывающие и непрерывающие** | |
+| **Boundary**: timer (вкл. повторяющийся **cycle**), message, **signal** и **escalation**, **прерывающие и непрерывающие** | |
 | Инциденты (создаются автоматически при ошибке) + ручное разрешение | |
 
-Условия вычисляются движком **Camunda FEEL**.
+Условия и выражения вычисляются движком **Camunda FEEL**; десятичные и JSON-объекты/списки доступны как числа и Map/List.
 
 ## Camunda 8 Compatibility
 
@@ -57,22 +59,14 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 | Статус | Конструкции |
 |---|---|
-| ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User (вкл. `zeebe:userTask`)/Receive/**Send** task (`zeebe:taskDefinition`), **Script task** (`zeebe:script` + inline), Business rule task (`zeebe:calledDecision`), Call activity, Embedded & Event subprocess (message/signal/error/timer), `zeebe:ioMapping` (scoped), **Compensation** (compensate-all + targeted), correlation key (`zeebe:subscription`), FEEL-условия |
-| ⚠️ **Частично / нестандартно** (поведение есть, модель расходится с C8) | Multi-instance (count из `zeebe:loopCharacteristics`/`loopCardinality`; per-instance `inputElement`/`outputCollection` — scoped-изоляция отложена), Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса |
-| ❌ **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | **Conditional** события (start/catch/boundary), **Transaction** subprocess, **Cancel** события (end/boundary) |
+| ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User (вкл. `zeebe:userTask`)/Receive/**Send** task (`zeebe:taskDefinition`), **Script task** (`zeebe:script`, `zeebe:taskDefinition` job-worker, inline), Business rule task (`zeebe:calledDecision`, DMN versioning), Call activity (`propagateAllChildVariables`), Embedded & Event subprocess (message/signal/error/timer), **Multi-instance** (per-instance `inputElement`/`loopCounter` + `outputCollection`, на user **и** service task), **переменные** `STRING/LONG/DOUBLE/BOOLEAN/UUID/JSON` (объекты/списки, доступ к свойствам в FEEL/DMN), **`timeCycle`** (ISO `R[n]/<duration>` + cron + повтор), `zeebe:ioMapping` (scoped), **Compensation** (compensate-all + targeted), correlation key (`zeebe:subscription`), FEEL-условия |
+| ⚠️ **Точечные edge'ы** | Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса, ограниченный повтор таймера `R<n>` (бесконечный `R/`/cron — есть), MI на send/script job-worker форме (на user/service — есть) |
+| ❌ **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | **Conditional** события (start/catch/boundary), **Transaction** subprocess, **Cancel** события (end/boundary) — надстройка движка, полезная вне C8 |
 
-**Рекомендации для переносимости в Camunda 8:**
-
-- Избегать ❌-конструкций (conditional / transaction / cancel) — это надстройка над C8, полезная вне него,
-  но в Camunda 8 модель не задеплоится.
-- ✅ Все ⚠️-расхождения по нотации закрыты: `zeebe:script`, `zeebe:loopCharacteristics`,
-  `zeebe:taskDefinition` (send task), `zeebe:userTask`, scoped IO-mappings, триггеры event subprocess
-  (message/signal/error/timer), targeted-компенсация.
-- Осталось (отдельные заходы): per-instance `inputElement`/`outputCollection` для multi-instance (scoped-изоляция),
-  компенсация в scope подпроцесса, `timeCycle` для таймеров.
-
-DMN исполняется собственным движком решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL);
-для стандартных таблиц решений поведение эквивалентно.
+Реальные C8-BPMN-модели исполняются **без правок файлов** (главная цель проекта): JSON-payload, десятичные,
+collection-driven multi-instance, cron-таймеры, DMN с версионированием. Полный аудит и оставшиеся edge'ы —
+в [docs/camunda8-compatibility.md](docs/camunda8-compatibility.md). DMN исполняется собственным движком
+решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL).
 
 ## Архитектура
 
