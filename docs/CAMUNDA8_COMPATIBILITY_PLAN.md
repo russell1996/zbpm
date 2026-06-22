@@ -114,7 +114,8 @@
 - **Прогресс:**
   - ✅ **Парсинг + первое срабатывание (ISO `R[n]/<duration>`)** — `<timeCycle>` читается во всех 4 местах (start/boundary/event-subprocess/catch), `TimerEventType.CYCLE`, first-occurrence в `computeDueAt`/timer-start. Тест: `TimerCycleIntegrationTests`.
   - ✅ **Cron** — `timeCycle` с cron-выражением (Spring 6-field) вычисляет следующее срабатывание через `TimerExpressions.firstOccurrence` (общая утилита для ISO/duration/cron). Тест: `TimerExpressionsTest`.
-  - ⏳ **Повтор** — перепланирование последующих срабатываний (миграция: счётчик повторов в `timer_jobs`; rescheduling в `TimerJobExecutor`) — отдельный заход.
+  - ✅ **Повтор (бесконечный) для timer-start** — `R/<duration>` или cron: `TimerStartJobExecutor` после старта инстанса перепланирует следующее срабатывание (`TimerExpressions.isInfiniteCycle`), без миграции. Recurring scheduled process. Тест: `TimerStartCycleIntegrationTests`.
+  - ⏳ **Ограниченный повтор `R<n>`** (нужен счётчик в `timer_jobs`/`timer_start_jobs`) и **повтор non-interrupting boundary** — отдельный заход.
 
 #### C8-4 · `propagateAllChildVariables = false` — ✅ ВЫПОЛНЕНО
 - **Описание:** флаг парсился, но `finishBranch` всегда копировал все переменные child→parent.
