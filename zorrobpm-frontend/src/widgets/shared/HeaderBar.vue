@@ -81,7 +81,7 @@ const currentLang = () => languages.find((l) => l.code === locale.value)?.label 
       </button>
       <div v-if="auth.user" class="hidden md:flex items-center gap-2 text-sm">
         <User class="h-4 w-4 text-muted-foreground" />
-        <span>{{ auth.user.fullName || auth.user.login }}</span>
+        <span>{{ auth.user.fullName || auth.user.username }}</span>
       </div>
       <button
         class="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"

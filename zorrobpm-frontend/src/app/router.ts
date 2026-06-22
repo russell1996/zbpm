@@ -143,9 +143,13 @@ router.beforeEach(async (to) => {
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     await auth.init()
     if (!auth.isAuthenticated) {
-      auth.login()
-      return false
+      return { name: 'login', query: { redirect: to.fullPath } }
     }
+  }
+
+  // already signed in -> keep the login page out of reach
+  if (to.name === 'login' && auth.isAuthenticated) {
+    return { name: 'dashboard' }
   }
 })
 

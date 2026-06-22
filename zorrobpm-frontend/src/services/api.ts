@@ -17,9 +17,12 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error.response?.status === 401) {
+    const url: string = error.config?.url || ''
+    const isLoginCall = url.includes('/auth/login')
+    // session expired / token rejected -> sign out (but not for the login attempt itself)
+    if (error.response?.status === 401 && !isLoginCall) {
       const auth = useAuthStore()
-      auth.logout()
+      if (auth.accessToken) auth.logout()
     }
     return Promise.reject(error)
   },

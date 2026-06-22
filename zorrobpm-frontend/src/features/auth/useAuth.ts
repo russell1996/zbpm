@@ -5,19 +5,17 @@ export function useAuth() {
   const store = useAuthStore()
 
   const isAuthenticated = computed(() => store.isAuthenticated)
+  const isAdmin = computed(() => store.isAdmin)
   const user = computed(() => store.user)
   const isLoading = computed(() => store.isLoading)
+  const error = computed(() => store.error)
 
-  function login() {
-    store.login()
+  async function login(username: string, password: string) {
+    return store.login(username, password)
   }
 
   function logout() {
     store.logout()
-  }
-
-  async function handleCallback() {
-    await store.handleCallback()
   }
 
   async function init() {
@@ -26,11 +24,12 @@ export function useAuth() {
 
   return {
     isAuthenticated,
+    isAdmin,
     user,
     isLoading,
+    error,
     login,
     logout,
-    handleCallback,
     init,
   }
 }
