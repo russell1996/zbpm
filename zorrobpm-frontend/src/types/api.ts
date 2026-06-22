@@ -93,7 +93,7 @@ export interface MessageSubscription {
   createdAt: string
 }
 
-export type ProcessVariableType = 'STRING' | 'UUID' | 'LONG' | 'BOOLEAN'
+export type ProcessVariableType = 'STRING' | 'UUID' | 'LONG' | 'DOUBLE' | 'BOOLEAN'
 
 export interface ProcessVariable {
   name: string
