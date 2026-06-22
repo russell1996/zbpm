@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import type {
   ProcessDefinition,
   ProcessInstance,
+  ActivityInstance,
   ProcessVariable,
   BpmnProcessStructure,
   PagedData,
@@ -21,6 +22,8 @@ export const useProcessStore = defineStore('process', () => {
   const currentInstance = ref<ProcessInstance | null>(null)
   const currentStructure = ref<BpmnProcessStructure | null>(null)
   const currentVariables = ref<ProcessVariable[]>([])
+  const currentActivities = ref<ActivityInstance[]>([])
+  const currentVersions = ref<ProcessDefinition[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -56,6 +59,14 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
+  async function fetchVersions(key: string) {
+    try {
+      currentVersions.value = await processService.getProcessDefinitionVersions(key)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load versions'
+    }
+  }
+
   async function fetchInstances(query: ProcessInstanceQuery = {}) {
     loading.value = true
     error.value = null
@@ -72,15 +83,19 @@ export const useProcessStore = defineStore('process', () => {
     loading.value = true
     error.value = null
     try {
-      const result = await instanceService.getProcessInstances({ pageIndex: 0, pageSize: 1 })
-      // Backend doesn't have GET /process-instances/{id}, fetch by filtering
-      // TODO: Backend needs GET /process-instances/{id}
-      const all = await instanceService.getProcessInstances({ pageIndex: 0, pageSize: 100 })
-      currentInstance.value = all.data.find((i) => i.id === id) || null
+      currentInstance.value = await instanceService.getProcessInstance(id)
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to load instance'
     } finally {
       loading.value = false
+    }
+  }
+
+  async function fetchActivities(id: string) {
+    try {
+      currentActivities.value = await instanceService.getProcessInstanceActivities(id)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load activities'
     }
   }
 
@@ -112,6 +127,8 @@ export const useProcessStore = defineStore('process', () => {
     currentInstance.value = null
     currentStructure.value = null
     currentVariables.value = []
+    currentActivities.value = []
+    currentVersions.value = []
   }
 
   return {
@@ -121,13 +138,17 @@ export const useProcessStore = defineStore('process', () => {
     currentInstance,
     currentStructure,
     currentVariables,
+    currentActivities,
+    currentVersions,
     loading,
     error,
     fetchDefinitions,
     fetchDefinition,
     fetchStructure,
+    fetchVersions,
     fetchInstances,
     fetchInstance,
+    fetchActivities,
     fetchVariables,
     startInstance,
     clearCurrent,

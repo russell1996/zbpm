@@ -72,6 +72,6 @@ class QueryResourceTest {
         PagedDataDTO<Incident> expected = new PagedDataDTO<>();
         when(queryService.findIncidents(query)).thenReturn(expected);
 
-        assertThat(resource.getProcessInstances(query)).isSameAs(expected);
+        assertThat(resource.getIncidents(query)).isSameAs(expected);
     }
 }

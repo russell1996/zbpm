@@ -36,10 +36,7 @@ export const useTaskStore = defineStore('task', () => {
     loading.value = true
     error.value = null
     try {
-      // Backend doesn't have GET /user-tasks/{id}, search through list
-      // TODO: Backend needs GET /user-tasks/{id}
-      const all = await taskService.getUserTasks({ pageIndex: 0, pageSize: 100 })
-      currentTask.value = all.data.find((t) => t.id === id) || null
+      currentTask.value = await taskService.getUserTask(id)
       if (currentTask.value) {
         await fetchTaskVariables(currentTask.value.processInstanceId)
       }
@@ -89,8 +86,7 @@ export const useTaskStore = defineStore('task', () => {
     loading.value = true
     error.value = null
     try {
-      const all = await taskService.getServiceTasks({ pageIndex: 0, pageSize: 100 })
-      currentServiceTask.value = all.data.find((t) => t.id === id) || null
+      currentServiceTask.value = await taskService.getServiceTask(id)
       if (currentServiceTask.value) {
         await fetchTaskVariables(currentServiceTask.value.processInstanceId)
       }

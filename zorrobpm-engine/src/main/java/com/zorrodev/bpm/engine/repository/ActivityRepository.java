@@ -21,5 +21,7 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
 
     List<ActivityEntity> findByProcessInstanceIdAndStatusIn(UUID processInstanceId, Collection<ActivityStatus> statuses);
 
+    List<ActivityEntity> findByProcessInstanceIdOrderByCreatedAtAsc(UUID processInstanceId);
+
     List<ActivityEntity> findByTokenAndStatusIn(UUID token, Collection<ActivityStatus> statuses);
 }

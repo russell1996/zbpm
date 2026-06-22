@@ -26,6 +26,11 @@ public interface ServiceTaskRepository extends JpaRepository<ServiceTaskEntity, 
         return (root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("id"), id);
     }
 
+    /** completed == true -> completedAt is set; false -> still active (completedAt is null). */
+    static Specification<ServiceTaskEntity> byCompleted(boolean completed) {
+        return (root, query, cb) -> completed ? cb.isNotNull(root.get("completedAt")) : cb.isNull(root.get("completedAt"));
+    }
+
     List<ServiceTaskEntity> findByProcessInstanceId(UUID processInstanceId);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)

@@ -12,14 +12,16 @@ function toQueryString(params: Record<string, unknown>): string {
   return entries.length > 0 ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : ''
 }
 
-function desc<T>(result: PagedData<T>): PagedData<T> {
-  return { ...result, data: [...result.data].reverse() }
-}
-
+// Backend returns newest-first (sorted by createdAt desc); no client-side reordering needed.
 export async function getIncidents(query: IncidentQuery = {}): Promise<PagedData<Incident>> {
   const qs = toQueryString({ pageIndex: 0, pageSize: 10, ...query })
   const { data } = await api.get<PagedData<Incident>>(`/incidents${qs}`)
-  return desc(data)
+  return data
+}
+
+export async function getIncident(id: string): Promise<Incident> {
+  const { data } = await api.get<Incident>(`/incidents/${id}`)
+  return data
 }
 
 export async function resolveIncident(id: string, dto: ResolveIncidentDTO): Promise<IdDTO> {

@@ -57,6 +57,16 @@ export interface Incident {
   completedAt: string | null
 }
 
+export interface ActivityInstance {
+  id: string
+  processInstanceId: string
+  bpmnElementId: string
+  type: string | null
+  status: string | null
+  createdAt: string
+  completedAt: string | null
+}
+
 export interface TimerJob {
   id: string
   activityId: string | null
@@ -151,6 +161,7 @@ export interface IncidentQuery {
   processDefinitionKey?: string
   processDefinitionVersion?: number
   bpmnElementId?: string
+  resolved?: boolean
 }
 
 export interface VariableQuery {
@@ -175,6 +186,5 @@ export interface CompleteTaskDTO {
 }
 
 export interface ResolveIncidentDTO {
-  id: string
   variables: ProcessVariable[]
 }

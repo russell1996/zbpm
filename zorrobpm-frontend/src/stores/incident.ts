@@ -30,10 +30,7 @@ export const useIncidentStore = defineStore('incident', () => {
     loading.value = true
     error.value = null
     try {
-      // Backend doesn't have GET /incidents/{id}, search through list
-      // TODO: Backend needs GET /incidents/{id}
-      const all = await incidentService.getIncidents({ pageIndex: 0, pageSize: 100 })
-      currentIncident.value = all.data.find((i) => i.id === id) || null
+      currentIncident.value = await incidentService.getIncident(id)
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to load incident'
     } finally {
@@ -45,7 +42,7 @@ export const useIncidentStore = defineStore('incident', () => {
     loading.value = true
     error.value = null
     try {
-      await incidentService.resolveIncident(id, { id, variables })
+      await incidentService.resolveIncident(id, { variables })
       currentIncident.value = null
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to resolve incident'
