@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
+import com.zorrodev.bpm.contract.model.ActivityInstance;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
@@ -11,6 +12,7 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.mapper.ActivityInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.IncidentMapper;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.ServiceTaskMapper;
@@ -21,6 +23,7 @@ import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
+import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
@@ -31,6 +34,7 @@ import com.zorrodev.bpm.engine.service.QueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
@@ -51,12 +55,21 @@ public class QueryServiceImpl implements QueryService {
     private final ProcessInstanceMapper processInstanceMapper;
     private final IncidentMapper incidentMapper;
     private final VariableMapper variableMapper;
+    private final ActivityInstanceMapper activityInstanceMapper;
 
     private final UserTaskRepository userTaskRepository;
     private final ServiceTaskRepository serviceTaskRepository;
     private final IncidentRepository incidentRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final VariableRepository variableRepository;
+    private final ActivityRepository activityRepository;
+
+    @Override
+    public List<ActivityInstance> getActivities(UUID processInstanceId) {
+        return activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(processInstanceId).stream()
+            .map(activityInstanceMapper::toDTO)
+            .toList();
+    }
 
     @Override
     public PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query) {
@@ -67,8 +80,12 @@ public class QueryServiceImpl implements QueryService {
         if (query.getId() != null) {
             specifications.add(ServiceTaskRepository.byId(query.getId()));
         }
+        if (query.getCompleted() != null) {
+            specifications.add(ServiceTaskRepository.byCompleted(query.getCompleted()));
+        }
         Specification<ServiceTaskEntity> all = Specification.allOf(specifications);
-        return toDTO(serviceTaskRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), serviceTaskMapper::toDTO);
+        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        return toDTO(serviceTaskRepository.findAll(all, page), serviceTaskMapper::toDTO);
     }
 
     @Override
@@ -85,8 +102,18 @@ public class QueryServiceImpl implements QueryService {
         if (query.getId() != null) {
             specifications.add(UserTaskRepository.byId(query.getId()));
         }
+        if (query.getCompleted() != null) {
+            specifications.add(UserTaskRepository.byCompleted(query.getCompleted()));
+        }
+        if (query.getAssigned() != null) {
+            specifications.add(UserTaskRepository.byAssigned(query.getAssigned()));
+        }
+        if (query.getAssignee() != null) {
+            specifications.add(UserTaskRepository.byAssignee(query.getAssignee()));
+        }
         Specification<UserTaskEntity> all = Specification.allOf(specifications);
-        return toDTO(userTaskRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), userTaskMapper::toDTO);
+        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        return toDTO(userTaskRepository.findAll(all, page), userTaskMapper::toDTO);
     }
 
     @Override
@@ -108,8 +135,18 @@ public class QueryServiceImpl implements QueryService {
         if (query.getParentProcessInstanceId() != null) {
             specifications.add(ProcessInstanceRepository.byParentProcessInstanceId(query.getParentProcessInstanceId()));
         }
+        if (query.getProcessDefinitionId() != null) {
+            specifications.add(ProcessInstanceRepository.byProcessDefinitionId(query.getProcessDefinitionId()));
+        }
+        if (query.getProcessDefinitionKey() != null) {
+            specifications.add(ProcessInstanceRepository.byProcessDefinitionKey(query.getProcessDefinitionKey()));
+        }
+        if (query.getProcessDefinitionVersion() != null) {
+            specifications.add(ProcessInstanceRepository.byProcessDefinitionVersion(query.getProcessDefinitionVersion()));
+        }
         Specification<ProcessInstanceEntity> all = Specification.allOf(specifications);
-        return toDTO(processInstanceRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), processInstanceMapper::toDTO);
+        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("startedAt").descending());
+        return toDTO(processInstanceRepository.findAll(all, page), processInstanceMapper::toDTO);
     }
 
     @Override
@@ -129,8 +166,21 @@ public class QueryServiceImpl implements QueryService {
         if (query.getBpmnElementId() != null) {
             specifications.add(IncidentRepository.byBpmnElementId(query.getBpmnElementId()));
         }
+        if (query.getProcessDefinitionId() != null) {
+            specifications.add(IncidentRepository.byProcessDefinitionId(query.getProcessDefinitionId()));
+        }
+        if (query.getProcessDefinitionKey() != null) {
+            specifications.add(IncidentRepository.byProcessDefinitionKey(query.getProcessDefinitionKey()));
+        }
+        if (query.getProcessDefinitionVersion() != null) {
+            specifications.add(IncidentRepository.byProcessDefinitionVersion(query.getProcessDefinitionVersion()));
+        }
+        if (query.getResolved() != null) {
+            specifications.add(IncidentRepository.byResolved(query.getResolved()));
+        }
         Specification<IncidentEntity> all = Specification.allOf(specifications);
-        return toDTO(incidentRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), incidentMapper::toDTO);
+        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        return toDTO(incidentRepository.findAll(all, page), incidentMapper::toDTO);
     }
 
     @Override

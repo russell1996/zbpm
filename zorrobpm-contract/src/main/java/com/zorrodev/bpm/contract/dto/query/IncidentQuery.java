@@ -13,4 +13,6 @@ public class IncidentQuery extends BaseQuery {
     private String processDefinitionKey;
     private Integer processDefinitionVersion;
     private String bpmnElementId;
+    /** true -> only resolved (closed) incidents; false -> only open; null -> both. */
+    private Boolean resolved;
 }
