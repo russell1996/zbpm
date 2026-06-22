@@ -47,18 +47,23 @@ public class DmnServiceImpl implements DmnService {
             throw new EngineException("DMN resource has no decisions");
         }
         for (DmnDecisionModel decision : model.getDecisions()) {
+            int version = dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decision.getId())
+                .map(e -> e.getVersion() + 1)
+                .orElse(1);
             DmnDefinitionEntity entity = new DmnDefinitionEntity();
+            entity.setId(java.util.UUID.randomUUID());
             entity.setDecisionId(decision.getId());
+            entity.setVersion(version);
             entity.setDmn(dmnXml);
             entity.setCreatedAt(Instant.now());
             dmnDefinitionRepository.save(entity);
-            log.info("Deployed DMN decision '{}'", decision.getId());
+            log.info("Deployed DMN decision '{}' version {}", decision.getId(), version);
         }
     }
 
     @Override
     public Object evaluate(String decisionId, List<ProcessVariable> variables) {
-        DmnDefinitionEntity entity = dmnDefinitionRepository.findById(decisionId)
+        DmnDefinitionEntity entity = dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decisionId)
             .orElseThrow(() -> new EngineException("No deployed DMN decision '" + decisionId + "'"));
         DmnDefinitionsModel model = JAXB.unmarshal(new StringReader(entity.getDmn()), DmnDefinitionsModel.class);
         DmnDecisionModel decision = model.getDecisions().stream()
