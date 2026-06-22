@@ -16,8 +16,9 @@ public interface RuntimeService {
 
     IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables);
 
-    /** Reports a service-task failure (retries → incident); see {@link ActivityService#failServiceTask}. */
-    IdDTO failServiceTask(UUID id, String errorMessage);
+    /** Reports a service-task failure (retries → incident); see {@link ActivityService#failServiceTask}.
+     *  {@code retries} is optional (Camunda {@code failJob} semantics): null decrements by one. */
+    IdDTO failServiceTask(UUID id, String errorMessage, Integer retries);
 
     IdDTO completeUserTask(UUID id, List<ProcessVariable> variables);
 

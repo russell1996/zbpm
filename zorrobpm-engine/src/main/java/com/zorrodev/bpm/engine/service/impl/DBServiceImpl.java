@@ -225,6 +225,13 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void setServiceTaskRetries(UUID serviceTaskId, int retries) {
+        ServiceTaskEntity entity = serviceTaskRepository.findById(serviceTaskId).orElseThrow();
+        entity.setRetriesRemaining(retries);
+        serviceTaskRepository.save(entity);
+    }
+
+    @Override
     public void createUserTask(UUID activityId) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         UserTaskEntity entity = new UserTaskEntity();
