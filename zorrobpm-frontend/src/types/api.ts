@@ -23,6 +23,9 @@ export interface ProcessInstance {
   id: string
   parentActivityId: string | null
   processDefinitionId: string
+  processName: string | null
+  processKey: string | null
+  processVersion: number | null
   startedAt: string
   completedAt: string | null
 }
