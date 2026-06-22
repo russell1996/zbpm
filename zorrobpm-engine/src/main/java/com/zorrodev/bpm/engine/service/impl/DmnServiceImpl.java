@@ -1,11 +1,17 @@
 package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.exception.EngineException;
+import com.zorrodev.bpm.contract.model.DmnDecision;
+import com.zorrodev.bpm.contract.model.DmnInput;
+import com.zorrodev.bpm.contract.model.DmnOutput;
+import com.zorrodev.bpm.contract.model.DmnRule;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionTableModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDefinitionsModel;
+import com.zorrodev.bpm.engine.dmn.xml.DmnInputModel;
+import com.zorrodev.bpm.engine.dmn.xml.DmnOutputModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnRuleModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnTextModel;
 import com.zorrodev.bpm.engine.entity.DmnDefinitionEntity;
@@ -113,6 +119,92 @@ public class DmnServiceImpl implements DmnService {
         }
         log.info("DMN decision '{}' ({}) evaluated to {}", decisionId, hitPolicy, result);
         return result;
+    }
+
+    @Override
+    public List<DmnDecision> listDecisions() {
+        // keep the latest version of each decisionId
+        Map<String, DmnDefinitionEntity> latest = new LinkedHashMap<>();
+        for (DmnDefinitionEntity e : dmnDefinitionRepository.findAll()) {
+            DmnDefinitionEntity current = latest.get(e.getDecisionId());
+            if (current == null || e.getVersion() > current.getVersion()) {
+                latest.put(e.getDecisionId(), e);
+            }
+        }
+        List<DmnDecision> result = new ArrayList<>();
+        for (DmnDefinitionEntity e : latest.values()) {
+            result.add(toDecisionDTO(e));
+        }
+        return result;
+    }
+
+    @Override
+    public DmnDecision getDecision(String decisionId) {
+        DmnDefinitionEntity entity = dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decisionId)
+            .orElseThrow(() -> new EngineException("No deployed DMN decision '" + decisionId + "'"));
+        return toDecisionDTO(entity);
+    }
+
+    private DmnDecision toDecisionDTO(DmnDefinitionEntity entity) {
+        DmnDefinitionsModel model = JAXB.unmarshal(new StringReader(entity.getDmn()), DmnDefinitionsModel.class);
+        DmnDecisionModel decision = model.getDecisions().stream()
+            .filter(d -> entity.getDecisionId().equals(d.getId()))
+            .findFirst()
+            .orElseThrow(() -> new EngineException("DMN resource has no decision '" + entity.getDecisionId() + "'"));
+
+        DmnDecision dto = new DmnDecision();
+        dto.setId(decision.getId());
+        dto.setName(decision.getName());
+        dto.setVersion(entity.getVersion());
+        dto.setCreatedAt(entity.getCreatedAt());
+
+        List<DmnInput> inputs = new ArrayList<>();
+        List<DmnOutput> outputs = new ArrayList<>();
+        List<DmnRule> rules = new ArrayList<>();
+        DmnDecisionTableModel table = decision.getDecisionTable();
+        if (table != null) {
+            dto.setHitPolicy(table.getHitPolicy() == null ? "UNIQUE" : table.getHitPolicy().toUpperCase());
+            if (table.getInputs() != null) {
+                for (DmnInputModel in : table.getInputs()) {
+                    DmnInput i = new DmnInput();
+                    i.setId(in.getId());
+                    i.setLabel(in.getLabel());
+                    i.setExpression(text(in.getInputExpression()));
+                    inputs.add(i);
+                }
+            }
+            if (table.getOutputs() != null) {
+                for (DmnOutputModel out : table.getOutputs()) {
+                    DmnOutput o = new DmnOutput();
+                    o.setId(out.getId());
+                    o.setLabel(out.getLabel());
+                    o.setName(out.getName());
+                    outputs.add(o);
+                }
+            }
+            if (table.getRules() != null) {
+                int idx = 0;
+                for (DmnRuleModel r : table.getRules()) {
+                    DmnRule rule = new DmnRule();
+                    rule.setId("rule-" + (idx++));
+                    rule.setInputEntries(textList(r.getInputEntries()));
+                    rule.setOutputEntries(textList(r.getOutputEntries()));
+                    rules.add(rule);
+                }
+            }
+        }
+        dto.setInputs(inputs);
+        dto.setOutputs(outputs);
+        dto.setRules(rules);
+        return dto;
+    }
+
+    private List<String> textList(List<DmnTextModel> entries) {
+        List<String> out = new ArrayList<>();
+        if (entries != null) {
+            for (DmnTextModel t : entries) out.add(text(t));
+        }
+        return out;
     }
 
     private boolean ruleMatches(DmnRuleModel rule, List<Object> inputValues, Map<String, Object> vars) {

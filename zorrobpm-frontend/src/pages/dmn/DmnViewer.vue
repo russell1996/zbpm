@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getDecision } from '@/services/mock/dmnService'
-import type { DmnDecision } from '@/services/mock/dmnService'
+import { getDecision, evaluateDecision, inferVariable, type DmnDecision } from '@/services/dmnService'
 import { Play } from 'lucide-vue-next'
 
 const route = useRoute()
 const decision = ref<DmnDecision | null>(null)
 const loading = ref(false)
 const showTestModal = ref(false)
+const evaluating = ref(false)
+const testError = ref<string | null>(null)
 
-// Test inputs
+// Test inputs keyed by the input's FEEL expression (the variable name)
 const testInputs = ref<Record<string, string>>({})
-const testResult = ref<Record<string, string> | null>(null)
+const testResult = ref<Record<string, unknown> | null>(null)
 
 onMounted(async () => {
   loading.value = true
@@ -30,12 +31,20 @@ onMounted(async () => {
   }
 })
 
-function runTest() {
-  // Simple mock evaluation
+async function runTest() {
   if (!decision.value) return
-  testResult.value = {}
-  for (const output of decision.value.outputs) {
-    testResult.value[output.name] = 'Mock result'
+  evaluating.value = true
+  testError.value = null
+  testResult.value = null
+  try {
+    const variables = decision.value.inputs
+      .filter((input) => (testInputs.value[input.expression] ?? '') !== '')
+      .map((input) => inferVariable(input.expression, testInputs.value[input.expression]))
+    testResult.value = await evaluateDecision(decision.value.id, variables)
+  } catch (e: unknown) {
+    testError.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Evaluation failed'
+  } finally {
+    evaluating.value = false
   }
 }
 </script>
@@ -101,15 +110,17 @@ function runTest() {
             </div>
           </div>
           <button
-            class="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
+            class="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm disabled:opacity-50"
+            :disabled="evaluating"
             @click="runTest"
           >
-            Evaluate
+            {{ evaluating ? 'Evaluating…' : 'Evaluate' }}
           </button>
+          <p v-if="testError" class="text-sm text-red-500">{{ testError }}</p>
           <div v-if="testResult" class="border border-border rounded p-3 bg-muted/50">
             <h3 class="text-sm font-bold mb-2">Result</h3>
             <div v-for="(val, key) in testResult" :key="key" class="text-sm">
-              <span class="font-mono">{{ key }}</span>: {{ val }}
+              <span class="font-mono">{{ key }}</span>: {{ typeof val === 'object' ? JSON.stringify(val) : val }}
             </div>
           </div>
           <button class="text-sm text-muted-foreground hover:text-foreground" @click="showTestModal = false">Close</button>
