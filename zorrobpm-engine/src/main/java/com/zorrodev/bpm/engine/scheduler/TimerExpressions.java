@@ -50,4 +50,24 @@ public final class TimerExpressions {
         }
         return next.toInstant();
     }
+
+    /**
+     * Whether a {@code timeCycle} repeats indefinitely: an unbounded ISO interval ({@code R/<duration>}) or a
+     * cron expression. A bounded interval ({@code R<n>/<duration>}) or a bare duration is not (it fires once
+     * here — bounded repetition is a separate enhancement).
+     */
+    public static boolean isInfiniteCycle(String cycle) {
+        if (cycle == null || cycle.isBlank()) {
+            return false;
+        }
+        String spec = cycle.trim();
+        if (spec.startsWith("R")) {
+            int slash = spec.indexOf('/');
+            return slash > 0 && spec.substring(1, slash).isBlank(); // "R/..." = unbounded; "R3/..." = bounded
+        }
+        if (spec.startsWith("P")) {
+            return false; // bare duration = one-shot
+        }
+        return true; // cron = repeats
+    }
 }
