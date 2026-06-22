@@ -12,4 +12,7 @@ import lombok.Setter;
 public class BpmnServiceTaskModel extends BpmnBaseElementModel {
     @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private ExtensionElements extensionElements;
+
+    @XmlElement(name = "multiInstanceLoopCharacteristics", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private BpmnMultiInstanceModel multiInstanceLoopCharacteristics;
 }

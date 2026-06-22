@@ -101,7 +101,8 @@
 - **Сложность:** **M**
 - **Прогресс:**
   - ✅ **per-instance `inputElement` + `loopCounter`** — каждый MI-инстанс (user task) получает scoped `inputElement`=`collection[i]` (через `toProcessVariable`, поддерживает scalar/decimal/JSON) и `loopCounter`=`i+1`; параллельный и последовательный. Миграция **038**: unique `(pi,name)`→`(pi,name,scope_id)` (иначе одноимённые scoped-переменные параллельных инстансов коллидируют). Тест: `MultiInstanceElementIntegrationTests`.
-  - ✅ **`outputCollection`/`outputElement`** — на завершении инстанса `outputElement` (FEEL в scope инстанса) добавляется в root JSON-список `outputCollection` (`aggregateMultiInstanceOutput`/`appendToJsonList`). Параллельный и последовательный (завершения последовательны → агрегация корректна). Тест: `MultiInstanceOutputIntegrationTests` (`items=[10,20,30]`, `item*2` → `doubled=[20,40,60]`). *(MI пока на user task; MI на service/script task — отдельно.)*
+  - ✅ **`outputCollection`/`outputElement`** — на завершении инстанса `outputElement` (FEEL в scope инстанса) добавляется в root JSON-список `outputCollection` (`aggregateMultiInstanceOutput`/`appendToJsonList`). Тест: `MultiInstanceOutputIntegrationTests`.
+  - ✅ **MI на service task** — `multiInstanceLoopCharacteristics` парсится на serviceTask (общий хелпер `attachMultiInstance`); `enterServiceTask`/`completeServiceTask` MI-aware; `spawnMiInstance` создаёт нужный тип (user-task паркуется; service-task создаёт job + input-mappings + enqueue). Доминирующий C8-паттерн «для каждого элемента — вызвать сервис». Тест: `MultiInstanceServiceTaskIntegrationTests` (3 job, per-instance `item`, `doubled=[20,40,60]`).
 
 ### P1 — выполняются с ограничениями / отличия поведения
 
