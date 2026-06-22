@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_credit" name="credit" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="creditDecision" name="Credit Decision">
+    <decisionTable id="DT_credit" hitPolicy="UNIQUE">
+      <input id="In_score" label="Credit Score">
+        <inputExpression id="InExpr_score" typeRef="number" expressionLanguage="feel">
+          <text>creditScore</text>
+        </inputExpression>
+      </input>
+      <output id="Out_decision" label="Decision" name="decision" typeRef="string" />
+      <output id="Out_limit" label="Limit" name="limit" typeRef="number" />
+      <rule id="R_approved">
+        <inputEntry id="IE_approved"><text>&gt;= 700</text></inputEntry>
+        <outputEntry id="OD_approved"><text>"APPROVED"</text></outputEntry>
+        <outputEntry id="OL_approved"><text>25000</text></outputEntry>
+      </rule>
+      <rule id="R_review">
+        <inputEntry id="IE_review"><text>[600..700)</text></inputEntry>
+        <outputEntry id="OD_review"><text>"REVIEW"</text></outputEntry>
+        <outputEntry id="OL_review"><text>10000</text></outputEntry>
+      </rule>
+      <rule id="R_rejected">
+        <inputEntry id="IE_rejected"><text>&lt; 600</text></inputEntry>
+        <outputEntry id="OD_rejected"><text>"REJECTED"</text></outputEntry>
+        <outputEntry id="OL_rejected"><text>0</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>
