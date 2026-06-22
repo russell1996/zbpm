@@ -3,6 +3,8 @@ package com.zorrodev.bpm.engine.repository;
 import com.zorrodev.bpm.contract.model.BpmnElementStatistics;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
+import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -35,6 +37,53 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID>,
             subquery.select(activity.get("id"))
                 .where(cb.equal(activity.get("bpmnElementId"), bpmnElementId));
             return root.get("activityId").in(subquery);
+        };
+    }
+
+    /** resolved == true -> incident is closed (completedAt set); false -> still open. */
+    static Specification<IncidentEntity> byResolved(boolean resolved) {
+        return (root, query, cb) -> resolved ? cb.isNotNull(root.get("completedAt")) : cb.isNull(root.get("completedAt"));
+    }
+
+    static Specification<IncidentEntity> byProcessDefinitionId(UUID processDefinitionId) {
+        return (root, query, cb) -> {
+            var actSub = query.subquery(UUID.class);
+            var act = actSub.from(ActivityEntity.class);
+            var piSub = query.subquery(UUID.class);
+            var pi = piSub.from(ProcessInstanceEntity.class);
+            piSub.select(pi.get("id")).where(cb.equal(pi.get("processDefinitionId"), processDefinitionId));
+            actSub.select(act.get("id")).where(act.get("processInstanceId").in(piSub));
+            return root.get("activityId").in(actSub);
+        };
+    }
+
+    static Specification<IncidentEntity> byProcessDefinitionKey(String key) {
+        return (root, query, cb) -> {
+            var pdSub = query.subquery(UUID.class);
+            var pd = pdSub.from(ProcessDefinitionEntity.class);
+            pdSub.select(pd.get("id")).where(cb.equal(pd.get("key"), key));
+            var piSub = query.subquery(UUID.class);
+            var pi = piSub.from(ProcessInstanceEntity.class);
+            piSub.select(pi.get("id")).where(pi.get("processDefinitionId").in(pdSub));
+            var actSub = query.subquery(UUID.class);
+            var act = actSub.from(ActivityEntity.class);
+            actSub.select(act.get("id")).where(act.get("processInstanceId").in(piSub));
+            return root.get("activityId").in(actSub);
+        };
+    }
+
+    static Specification<IncidentEntity> byProcessDefinitionVersion(Integer version) {
+        return (root, query, cb) -> {
+            var pdSub = query.subquery(UUID.class);
+            var pd = pdSub.from(ProcessDefinitionEntity.class);
+            pdSub.select(pd.get("id")).where(cb.equal(pd.get("version"), version));
+            var piSub = query.subquery(UUID.class);
+            var pi = piSub.from(ProcessInstanceEntity.class);
+            piSub.select(pi.get("id")).where(pi.get("processDefinitionId").in(pdSub));
+            var actSub = query.subquery(UUID.class);
+            var act = actSub.from(ActivityEntity.class);
+            actSub.select(act.get("id")).where(act.get("processInstanceId").in(piSub));
+            return root.get("activityId").in(actSub);
         };
     }
 

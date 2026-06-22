@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.repository;
 
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.domain.Specification;
@@ -37,6 +38,25 @@ public interface ProcessInstanceRepository extends JpaRepository<ProcessInstance
 
     static Specification<ProcessInstanceEntity> byProcessDefinitionId(UUID processDefinitionId) {
         return (root, query, criteriaBuilder) ->  criteriaBuilder.equal(root.get("processDefinitionId"), processDefinitionId);
+    }
+
+    /** Matches instances whose definition has the given key (join via a process-definition subquery). */
+    static Specification<ProcessInstanceEntity> byProcessDefinitionKey(String key) {
+        return (root, query, cb) -> {
+            var subquery = query.subquery(UUID.class);
+            var pd = subquery.from(ProcessDefinitionEntity.class);
+            subquery.select(pd.get("id")).where(cb.equal(pd.get("key"), key));
+            return root.get("processDefinitionId").in(subquery);
+        };
+    }
+
+    static Specification<ProcessInstanceEntity> byProcessDefinitionVersion(Integer version) {
+        return (root, query, cb) -> {
+            var subquery = query.subquery(UUID.class);
+            var pd = subquery.from(ProcessDefinitionEntity.class);
+            subquery.select(pd.get("id")).where(cb.equal(pd.get("version"), version));
+            return root.get("processDefinitionId").in(subquery);
+        };
     }
 
     static Specification<ProcessInstanceEntity> byIds(List<UUID> ids) {

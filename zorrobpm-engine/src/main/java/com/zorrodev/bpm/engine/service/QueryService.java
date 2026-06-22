@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
+import com.zorrodev.bpm.contract.model.ActivityInstance;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
@@ -12,9 +13,13 @@ import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 
+import java.util.List;
 import java.util.UUID;
 
 public interface QueryService {
+
+    /** Activity history of an instance (ascending by creation), for execution history + BPMN highlight. */
+    List<ActivityInstance> getActivities(UUID processInstanceId);
 
     PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query);
 

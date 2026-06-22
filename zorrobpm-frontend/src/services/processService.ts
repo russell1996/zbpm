@@ -26,6 +26,13 @@ export async function getProcessDefinition(id: string): Promise<ProcessDefinitio
   return data
 }
 
+/** All versions of a process key (newest first), for the definition's version history. */
+export async function getProcessDefinitionVersions(key: string): Promise<ProcessDefinition[]> {
+  const qs = toQueryString({ pageIndex: 0, pageSize: 100, processDefinitionKey: key })
+  const { data } = await api.get<PagedData<ProcessDefinition>>(`/process-definitions${qs}`)
+  return [...data.data].sort((a, b) => b.version - a.version)
+}
+
 export async function getProcessDefinitionXml(id: string): Promise<string> {
   const { data } = await api.get<string>(`/process-definitions/${id}/xml`)
   return data

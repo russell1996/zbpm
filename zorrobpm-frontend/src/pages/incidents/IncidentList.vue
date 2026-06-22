@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useIncidentStore } from '@/stores/incident'
@@ -11,7 +11,8 @@ const router = useRouter()
 const store = useIncidentStore()
 const { t } = useI18n()
 
-const filterResolved = ref(false)
+// unchecked -> only open incidents (server-side resolved=false); checked -> all
+const showResolved = ref(false)
 const page = ref(0)
 const pageSize = 10
 
@@ -19,6 +20,7 @@ async function load() {
   await store.fetchIncidents({
     pageIndex: page.value,
     pageSize,
+    resolved: showResolved.value ? undefined : false,
   })
 }
 
@@ -40,13 +42,8 @@ function viewDetail(id: string) {
   router.push(`/incidents/${id}`)
 }
 
-const filteredIncidents = computed(() => {
-  if (!store.incidents?.data) return []
-  if (!filterResolved.value) return store.incidents.data
-  return store.incidents.data.filter((i) => !i.completedAt)
-})
-
 onMounted(load)
+watch(showResolved, () => { page.value = 0; load() })
 
 function exportData() {
   if (!store.incidents?.data) return
@@ -87,7 +84,7 @@ function exportData() {
 
     <div class="flex items-center gap-4">
       <label class="flex items-center gap-2 text-sm">
-        <input v-model="filterResolved" type="checkbox" class="rounded" />
+        <input v-model="showResolved" type="checkbox" class="rounded" />
         {{ t('showCompleted') }}
       </label>
     </div>
@@ -110,7 +107,7 @@ function exportData() {
         </thead>
         <tbody>
           <tr
-            v-for="inc in filteredIncidents"
+            v-for="inc in (store.incidents?.data || [])"
             :key="inc.id"
             class="border-t border-border hover:bg-muted/50"
           >
@@ -128,7 +125,7 @@ function exportData() {
               <button class="text-sm text-primary hover:underline" @click="viewDetail(inc.id)">{{ t('view') }}</button>
             </td>
           </tr>
-          <tr v-if="!filteredIncidents.length">
+          <tr v-if="!store.incidents?.data?.length">
             <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">{{ t('noIncidents') }}</td>
           </tr>
         </tbody>

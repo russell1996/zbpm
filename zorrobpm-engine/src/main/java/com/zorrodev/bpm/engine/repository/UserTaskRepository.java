@@ -26,6 +26,20 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
         return (root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("id"), id);
     }
 
+    /** completed == true -> completedAt is set; false -> still active. */
+    static Specification<UserTaskEntity> byCompleted(boolean completed) {
+        return (root, query, cb) -> completed ? cb.isNotNull(root.get("completedAt")) : cb.isNull(root.get("completedAt"));
+    }
+
+    /** assigned == true -> assignee is set; false -> unassigned (claimable). */
+    static Specification<UserTaskEntity> byAssigned(boolean assigned) {
+        return (root, query, cb) -> assigned ? cb.isNotNull(root.get("assignee")) : cb.isNull(root.get("assignee"));
+    }
+
+    static Specification<UserTaskEntity> byAssignee(String assignee) {
+        return (root, query, cb) -> cb.equal(root.get("assignee"), assignee);
+    }
+
     @Modifying
     @Query("UPDATE UserTaskEntity e SET e.completedAt = :completedAt WHERE e.id = :taskId")
     void setCompletedAt(UUID taskId, Instant completedAt);
