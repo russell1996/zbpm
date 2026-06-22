@@ -37,7 +37,7 @@ public class RuntimeResource implements RuntimeContract {
     @Transactional
     @Override
     public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody FailServiceTaskDTO dto) {
-        return Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage())).map(this::toDTO).orElseThrow();
+        return Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage(), dto.getRetries())).map(this::toDTO).orElseThrow();
     }
 
     @Transactional
