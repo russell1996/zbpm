@@ -1151,12 +1151,44 @@ public class ActivityServiceImpl implements ActivityService {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createServiceTask(activityId);
+        dbService.createServiceTask(activityId, serviceTaskRetries(bpmnElement));
         applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         serviceTaskEnqueueService.enqueueAfterCommit(activityId);
+    }
+
+    /** Retry budget for a service task from {@code zeebe:taskDefinition retries}; default 3 when unset. */
+    private int serviceTaskRetries(BpmnElementModel element) {
+        return Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .map(ext -> ext.getRetries())
+            .orElse(3);
+    }
+
+    @Override
+    public void failServiceTask(UUID serviceTaskId, String errorMessage) {
+        Activity activity = lockAndReload(serviceTaskId);
+        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
+            // already finished (redelivered failure, or interrupted by a boundary) — ignore
+            log.info("Ignoring failure of service task {} in status {}", serviceTaskId, activity.getStatus());
+            return;
+        }
+        String message = (errorMessage == null || errorMessage.isBlank()) ? "Service task failed" : errorMessage;
+        int remaining = dbService.decrementServiceTaskRetries(serviceTaskId);
+        if (remaining > 0) {
+            // retries left: re-dispatch the same job to a worker (the activity stays CREATED)
+            log.info("{}/{}: Service task {} failed ({} retries left), re-dispatching: {}",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
+            serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+            return;
+        }
+        // retries exhausted: park the token and raise an incident carrying the worker's error message
+        log.info("{}/{}: Service task {} failed, retries exhausted — raising incident: {}",
+            activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
+        dbService.errorActivity(serviceTaskId);
+        dbService.createIncident(serviceTaskId, message);
     }
 
     /**
@@ -1300,7 +1332,7 @@ public class ActivityServiceImpl implements ActivityService {
         if (element.getType() == BpmnElementType.USER_TASK) {
             dbService.createUserTask(activityId);
         } else {
-            dbService.createServiceTask(activityId);
+            dbService.createServiceTask(activityId, serviceTaskRetries(element));
             applyIoMappings(processInstanceId, activityId, element, true);
             serviceTaskEnqueueService.enqueueAfterCommit(activityId);
         }

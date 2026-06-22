@@ -21,4 +21,6 @@ public class ServiceTaskEntity {
     private String bpmnElementId;
     private Instant createdAt;
     private Instant completedAt;
+    /** Engine-owned retry budget; a worker failure decrements it, an incident is raised at 0. */
+    private Integer retriesRemaining;
 }

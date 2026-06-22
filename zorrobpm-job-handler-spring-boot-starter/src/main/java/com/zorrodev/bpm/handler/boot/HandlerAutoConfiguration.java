@@ -51,18 +51,26 @@ public class HandlerAutoConfiguration {
                 ObjectMapper mapper = new ObjectMapper();
                 JobDetailModel model = mapper.readValue(message.getBody(), JobDetailModel.class);
 
-                List<ProcessVariable> result = handler.handleJob(model).stream().map(x -> {
-                    ProcessVariable v = new ProcessVariable();
-                    v.setName(x.getName());
-                    v.setValue(x.getValue());
-                    v.setType(x.getType().toString());
-                    return v;
-                }).toList();
-
                 ServiceTaskCompleteData completeData = new ServiceTaskCompleteData();
                 completeData.setServiceTaskId(model.getServiceTaskId());
-                completeData.setStatus("SUCCESS");
-                completeData.setVariables(result);
+                try {
+                    List<ProcessVariable> result = handler.handleJob(model).stream().map(x -> {
+                        ProcessVariable v = new ProcessVariable();
+                        v.setName(x.getName());
+                        v.setValue(x.getValue());
+                        v.setType(x.getType().toString());
+                        return v;
+                    }).toList();
+                    completeData.setStatus("SUCCESS");
+                    completeData.setVariables(result);
+                } catch (Exception e) {
+                    // the worker's logic failed: report the error back so the engine applies retries and,
+                    // once they are exhausted, raises an incident carrying this message
+                    completeData.setStatus("FAILED");
+                    completeData.setErrorMessage(e.getClass().getSimpleName()
+                        + (e.getMessage() != null ? ": " + e.getMessage() : ""));
+                    log.warn("Job '{}' handler failed: {}", handler.getJob(), completeData.getErrorMessage());
+                }
                 rabbitTemplate.setMessageConverter(new JacksonJsonMessageConverter());
                 rabbitTemplate.convertAndSend("zorrobpm.complete-service-task", completeData);
             });
