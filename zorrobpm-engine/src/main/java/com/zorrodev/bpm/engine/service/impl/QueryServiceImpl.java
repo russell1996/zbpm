@@ -2,19 +2,25 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.model.ActivityInstance;
+import com.zorrodev.bpm.contract.model.MessageSubscription;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
+import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
+import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ActivityInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.IncidentMapper;
+import com.zorrodev.bpm.engine.mapper.MessageSubscriptionMapper;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
+import com.zorrodev.bpm.engine.mapper.TimerJobMapper;
 import com.zorrodev.bpm.engine.mapper.ServiceTaskMapper;
 import com.zorrodev.bpm.engine.mapper.UserTaskMapper;
 import com.zorrodev.bpm.engine.mapper.VariableMapper;
@@ -23,10 +29,14 @@ import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
+import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
+import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -56,6 +66,8 @@ public class QueryServiceImpl implements QueryService {
     private final IncidentMapper incidentMapper;
     private final VariableMapper variableMapper;
     private final ActivityInstanceMapper activityInstanceMapper;
+    private final TimerJobMapper timerJobMapper;
+    private final MessageSubscriptionMapper messageSubscriptionMapper;
 
     private final UserTaskRepository userTaskRepository;
     private final ServiceTaskRepository serviceTaskRepository;
@@ -63,6 +75,40 @@ public class QueryServiceImpl implements QueryService {
     private final ProcessInstanceRepository processInstanceRepository;
     private final VariableRepository variableRepository;
     private final ActivityRepository activityRepository;
+    private final TimerJobRepository timerJobRepository;
+    private final MessageSubscriptionRepository messageSubscriptionRepository;
+
+    @Override
+    public PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query) {
+        List<Specification<TimerJobEntity>> specifications = new LinkedList<>();
+        if (query.getId() != null) {
+            specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
+        }
+        if (query.getProcessInstanceId() != null) {
+            specifications.add(TimerJobRepository.byProcessInstanceId(query.getProcessInstanceId()));
+        }
+        if (query.getFired() != null) {
+            specifications.add(TimerJobRepository.byFired(query.getFired()));
+        }
+        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("dueAt").ascending());
+        return toDTO(timerJobRepository.findAll(Specification.allOf(specifications), page), timerJobMapper::toDTO);
+    }
+
+    @Override
+    public PagedDataDTO<MessageSubscription> findMessageSubscriptions(MessageSubscriptionQuery query) {
+        List<Specification<MessageSubscriptionEntity>> specifications = new LinkedList<>();
+        if (query.getId() != null) {
+            specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
+        }
+        if (query.getProcessInstanceId() != null) {
+            specifications.add(MessageSubscriptionRepository.byProcessInstanceId(query.getProcessInstanceId()));
+        }
+        if (query.getConsumed() != null) {
+            specifications.add(MessageSubscriptionRepository.byConsumed(query.getConsumed()));
+        }
+        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        return toDTO(messageSubscriptionRepository.findAll(Specification.allOf(specifications), page), messageSubscriptionMapper::toDTO);
+    }
 
     @Override
     public List<ActivityInstance> getActivities(UUID processInstanceId) {

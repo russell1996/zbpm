@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProcessStore } from '@/stores/process'
 import { useTaskStore } from '@/stores/task'
@@ -14,13 +14,14 @@ import { RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
+const router = useRouter()
 const processStore = useProcessStore()
 const taskStore = useTaskStore()
 const incidentStore = useIncidentStore()
 const toast = useToast()
 const { t } = useI18n()
 
-const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history'>('bpmn')
+const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses'>('bpmn')
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
 
@@ -92,6 +93,7 @@ async function loadTabData() {
       incidentStore.fetchIncidents({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
       processStore.fetchVariables({ processInstanceId: pi.id }),
       processStore.fetchActivities(pi.id),
+      processStore.fetchSubprocesses(pi.id),
     ])
   } finally {
     tabLoading.value = false
@@ -184,13 +186,13 @@ watch(activeTab, onTabChange)
 
       <div class="flex gap-1 border-b border-border overflow-x-auto">
         <button
-          v-for="tab in (['bpmn', 'variables', 'tasks', 'serviceTasks', 'incidents', 'history'] as const)"
+          v-for="tab in (['bpmn', 'variables', 'tasks', 'serviceTasks', 'incidents', 'history', 'subprocesses'] as const)"
           :key="tab"
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
           :class="activeTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = tab"
         >
-          {{ tab === 'bpmn' ? t('bpmnFlow') : tab === 'serviceTasks' ? t('serviceTasks') : tab === 'tasks' ? t('tasks') : tab === 'variables' ? t('variables') : tab === 'incidents' ? t('incidentsTab') : t('history') }}
+          {{ tab === 'bpmn' ? t('bpmnFlow') : tab === 'serviceTasks' ? t('serviceTasks') : tab === 'tasks' ? t('tasks') : tab === 'variables' ? t('variables') : tab === 'incidents' ? t('incidentsTab') : tab === 'history' ? t('history') : t('subprocesses') }}
         </button>
       </div>
 
@@ -386,6 +388,38 @@ watch(activeTab, onTabChange)
               </tr>
               <tr v-if="!processStore.currentActivities.length">
                 <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noHistory') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="activeTab === 'subprocesses'" class="border border-border rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-muted">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium">ID</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('started') }}</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('completed') }}</th>
+                <th class="px-4 py-3 text-left font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="sp in processStore.currentSubprocesses" :key="sp.id" class="border-t border-border hover:bg-muted/50">
+                <td class="px-4 py-3"><CopyableId :value="sp.id" /></td>
+                <td class="px-4 py-3">
+                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', sp.completedAt ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800']">
+                    {{ sp.completedAt ? t('completed') : t('running') }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-muted-foreground">{{ new Date(sp.startedAt).toLocaleString() }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ sp.completedAt ? new Date(sp.completedAt).toLocaleString() : '—' }}</td>
+                <td class="px-4 py-3">
+                  <button class="text-sm text-primary hover:underline" @click="router.push(`/processes/instances/${sp.id}`)">{{ t('view') }}</button>
+                </td>
+              </tr>
+              <tr v-if="!processStore.currentSubprocesses.length">
+                <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noSubprocesses') }}</td>
               </tr>
             </tbody>
           </table>

@@ -110,6 +110,8 @@
   "history": "Тарих",
   "noHistory": "Әрекеттер жоқ",
   "versions": "Нұсқалар",
+  "subprocesses": "Ішкі процестер",
+  "noSubprocesses": "Шақырылған ішкі процестер жоқ",
   "bpmnNotAvailable": "BPMN XML бұл анықтама үшін қол жетімді емес",
   "elementId": "Элемент ID",
   "close": "Жабу",
