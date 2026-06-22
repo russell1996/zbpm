@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/" id="Definitions_discount_v2" name="discount" namespace="http://camunda.org/schema/1.0/dmn" exporter="Camunda Modeler" exporterVersion="5.0.0">
+  <decision id="discount" name="Discount">
+    <decisionTable id="DecisionTable_1" hitPolicy="FIRST">
+      <input id="Input_1" label="Category">
+        <inputExpression id="InputExpression_1" typeRef="string" expressionLanguage="feel">
+          <text>category</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Discount" name="discount" typeRef="number" />
+      <rule id="Rule_gold">
+        <inputEntry id="In_gold"><text>"gold"</text></inputEntry>
+        <outputEntry id="Out_gold"><text>50</text></outputEntry>
+      </rule>
+      <rule id="Rule_default">
+        <inputEntry id="In_default"><text></text></inputEntry>
+        <outputEntry id="Out_default"><text>0</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>
