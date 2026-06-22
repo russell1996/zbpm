@@ -153,7 +153,7 @@
 
 | ID | Описание | BPMN-элемент | Влияние на C8 | Риск | Приоритет | Сложность |
 |---|---|---|---|---|---|---|
-| C8-8 | DMN versioning (перезапись при повторном деплое) | Business rule task / DMN | Не блокирует исполнение задеплоенной модели; влияет на историю/откат | низкий | P3 | S |
+| C8-8 | DMN versioning — **✅ ВЫПОЛНЕНО** (суррогатный `id` + `version`, миграция 039; повторный деплой → новая версия, evaluate latest, история сохраняется; тест `DmnVersioningIntegrationTests`) | Business rule task / DMN | — | — | P3 | S |
 | C8-9 | `@Transactional` на entry points `ActivityService` | — | Сейчас транзакцию даёт REST-слой; вне него — риск частичных коммитов | низкий | P3 | S |
 | C8-10 | Кластеризация таймеров (leader-election / `SKIP LOCKED`) | timer events | В single-instance ОК; в кластере — двойное срабатывание таймеров | средний (кластер) | P3 | M |
 | C8-11 | Optimistic locking (`@Version`) / timeout на `SELECT FOR UPDATE` | — | Надёжность под конкуренцией; не семантика модели | низкий | P3 | M |
