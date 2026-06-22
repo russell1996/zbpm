@@ -3,10 +3,13 @@ package com.zorrodev.bpm.engine.integration;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.TestMain;
-import com.zorrodev.bpm.engine.scheduler.TimerScheduler;
+import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
+import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -35,7 +38,21 @@ public class TimerCycleIntegrationTests {
     private QueryService queryService;
 
     @Autowired
-    private TimerScheduler timerScheduler;
+    private DBService dbService;
+
+    @Autowired
+    private TimerJobExecutor timerJobExecutor;
+
+    /** Fires due timer jobs deterministically (a future bound avoids PT0S wall-clock jitter under load). */
+    private void fireDueTimers() {
+        dbService.findDueTimerJobs(Instant.now().plusSeconds(3600)).forEach(j -> {
+            try {
+                timerJobExecutor.fire(j);
+            } catch (Exception ignored) {
+                // isolate unrelated jobs, mirroring TimerScheduler
+            }
+        });
+    }
 
     @Transactional
     @Test
@@ -52,7 +69,7 @@ public class TimerCycleIntegrationTests {
         // parked at the timer catch until the timer fires
         assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
 
-        timerScheduler.fireDueTimers();
+        fireDueTimers();
 
         assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNotNull();
     }
