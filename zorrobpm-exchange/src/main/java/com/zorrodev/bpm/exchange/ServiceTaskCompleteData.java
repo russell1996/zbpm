@@ -10,6 +10,9 @@ import java.util.UUID;
 @Setter
 public class ServiceTaskCompleteData {
     private UUID serviceTaskId;
+    /** "SUCCESS" or "FAILED" — set by the worker/SDK. */
     private String status;
+    /** Error text from the worker when {@code status == "FAILED"} (goes into the incident). */
+    private String errorMessage;
     private List<ProcessVariable> variables;
 }

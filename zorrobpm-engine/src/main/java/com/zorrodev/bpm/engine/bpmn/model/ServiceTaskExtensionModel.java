@@ -7,4 +7,6 @@ import lombok.Setter;
 @Setter
 public class ServiceTaskExtensionModel {
     private String job;
+    /** Retry budget from {@code zeebe:taskDefinition retries} (default applied by the engine if null). */
+    private Integer retries;
 }
