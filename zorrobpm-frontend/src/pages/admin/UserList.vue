@@ -1,24 +1,30 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import type { User } from '@/entities/user/User'
-import { getUsers, createUser, updateUser } from '@/services/mock/userService'
+import type { User, UserRole } from '@/entities/user/User'
+import { getUsers, createUser, updateUser } from '@/services/userService'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 
 const users = ref<User[]>([])
 const totalCount = ref(0)
 const loading = ref(false)
 const search = ref('')
 const showForm = ref(false)
+const saving = ref(false)
 const editingUser = ref<User | null>(null)
 
-const formLogin = ref('')
+const formUsername = ref('')
+const formPassword = ref('')
 const formFullName = ref('')
 const formEmail = ref('')
+const formRole = ref<UserRole>('USER')
 const formActive = ref(true)
 
 async function loadUsers() {
   loading.value = true
   try {
-    const result = await getUsers({ login: search.value || undefined })
+    const result = await getUsers({ username: search.value || undefined })
     users.value = result.data
     totalCount.value = result.totalElements
   } finally {
@@ -28,43 +34,65 @@ async function loadUsers() {
 
 function openCreate() {
   editingUser.value = null
-  formLogin.value = ''
+  formUsername.value = ''
+  formPassword.value = ''
   formFullName.value = ''
   formEmail.value = ''
+  formRole.value = 'USER'
   formActive.value = true
   showForm.value = true
 }
 
 function openEdit(user: User) {
   editingUser.value = user
-  formLogin.value = user.login
+  formUsername.value = user.username
+  formPassword.value = ''
   formFullName.value = user.fullName || ''
   formEmail.value = user.email || ''
+  formRole.value = user.role
   formActive.value = user.active
   showForm.value = true
 }
 
 async function save() {
-  if (editingUser.value) {
-    await updateUser(editingUser.value.id, {
-      fullName: formFullName.value || null,
-      email: formEmail.value || null,
-      active: formActive.value,
-    })
-  } else {
-    await createUser({
-      login: formLogin.value,
-      fullName: formFullName.value || null,
-      email: formEmail.value || null,
-      active: formActive.value,
-    })
+  saving.value = true
+  try {
+    if (editingUser.value) {
+      await updateUser(editingUser.value.id, {
+        fullName: formFullName.value || null,
+        email: formEmail.value || null,
+        role: formRole.value,
+        active: formActive.value,
+        password: formPassword.value || undefined,
+      })
+    } else {
+      await createUser({
+        username: formUsername.value,
+        password: formPassword.value,
+        fullName: formFullName.value || null,
+        email: formEmail.value || null,
+        role: formRole.value,
+        active: formActive.value,
+      })
+    }
+    showForm.value = false
+    await loadUsers()
+    toast.success('Saved')
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    toast.error(msg || 'Failed to save user')
+  } finally {
+    saving.value = false
   }
-  showForm.value = false
-  await loadUsers()
 }
 
 async function toggleActive(user: User) {
-  await updateUser(user.id, { ...user, active: !user.active })
+  await updateUser(user.id, {
+    fullName: user.fullName,
+    email: user.email,
+    role: user.role,
+    active: !user.active,
+  })
   await loadUsers()
 }
 
@@ -87,7 +115,7 @@ onMounted(loadUsers)
       <input
         v-model="search"
         type="text"
-        placeholder="Search by login..."
+        placeholder="Search by username..."
         class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
         @input="loadUsers"
       />
@@ -100,19 +128,22 @@ onMounted(loadUsers)
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">Login</th>
+            <th class="px-4 py-3 text-left font-medium">Username</th>
             <th class="px-4 py-3 text-left font-medium">Full Name</th>
             <th class="px-4 py-3 text-left font-medium">Email</th>
+            <th class="px-4 py-3 text-left font-medium">Role</th>
             <th class="px-4 py-3 text-left font-medium">Status</th>
-            <th class="px-4 py-3 text-left font-medium">Created</th>
             <th class="px-4 py-3 text-left font-medium">Actions</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="user in users" :key="user.id" class="border-t border-border hover:bg-muted/50">
-            <td class="px-4 py-3 font-mono">{{ user.login }}</td>
+            <td class="px-4 py-3 font-mono">{{ user.username }}</td>
             <td class="px-4 py-3">{{ user.fullName || '—' }}</td>
             <td class="px-4 py-3">{{ user.email || '—' }}</td>
+            <td class="px-4 py-3">
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span>
+            </td>
             <td class="px-4 py-3">
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
@@ -121,15 +152,9 @@ onMounted(loadUsers)
                 {{ user.active ? 'Active' : 'Inactive' }}
               </span>
             </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ new Date(user.createdAt).toLocaleDateString() }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">
-                <button
-                  class="text-sm text-primary hover:underline"
-                  @click="openEdit(user)"
-                >
-                  Edit
-                </button>
+                <button class="text-sm text-primary hover:underline" @click="openEdit(user)">Edit</button>
                 <button
                   class="text-sm hover:underline"
                   :class="user.active ? 'text-red-600' : 'text-green-600'"
@@ -156,12 +181,21 @@ onMounted(loadUsers)
         <h2 class="text-lg font-bold">{{ editingUser ? 'Edit User' : 'Create User' }}</h2>
         <div class="space-y-3">
           <div>
-            <label class="block text-sm font-medium mb-1">Login</label>
+            <label class="block text-sm font-medium mb-1">Username</label>
             <input
-              v-model="formLogin"
+              v-model="formUsername"
               type="text"
               :disabled="!!editingUser"
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">{{ editingUser ? 'New password (optional)' : 'Password' }}</label>
+            <input
+              v-model="formPassword"
+              type="password"
+              autocomplete="new-password"
+              class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <div>
@@ -180,13 +214,15 @@ onMounted(loadUsers)
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Role</label>
+            <select v-model="formRole" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+              <option value="USER">USER</option>
+              <option value="ADMIN">ADMIN</option>
+            </select>
+          </div>
           <div class="flex items-center gap-2">
-            <input
-              id="active"
-              v-model="formActive"
-              type="checkbox"
-              class="rounded"
-            />
+            <input id="active" v-model="formActive" type="checkbox" class="rounded" />
             <label for="active" class="text-sm">Active</label>
           </div>
         </div>
@@ -198,7 +234,8 @@ onMounted(loadUsers)
             Cancel
           </button>
           <button
-            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity"
+            :disabled="saving"
+            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
             @click="save"
           >
             {{ editingUser ? 'Save' : 'Create' }}
