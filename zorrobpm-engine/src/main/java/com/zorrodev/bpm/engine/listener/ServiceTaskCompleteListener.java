@@ -25,7 +25,7 @@ public class ServiceTaskCompleteListener {
 
         // a worker reports failure via status="FAILED" -> retries/incident, otherwise it completes the task
         if ("FAILED".equalsIgnoreCase(serviceTaskCompleted.getStatus())) {
-            runtimeService.failServiceTask(serviceTaskId, serviceTaskCompleted.getErrorMessage());
+            runtimeService.failServiceTask(serviceTaskId, serviceTaskCompleted.getErrorMessage(), null);
             return;
         }
 

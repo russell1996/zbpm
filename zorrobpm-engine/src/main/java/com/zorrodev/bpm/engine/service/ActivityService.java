@@ -12,11 +12,12 @@ public interface ActivityService {
     void completeServiceTask(UUID activityId, List<ProcessVariable> variables);
 
     /**
-     * Reports a service-task (job) failure from a worker: decrements the task's retry budget and
-     * re-dispatches the job while retries remain; when they are exhausted the activity is marked ERROR
-     * and an incident is raised carrying {@code errorMessage}. The token stays parked.
+     * Reports a service-task (job) failure from a worker. {@code retries} follows Camunda {@code failJob}:
+     * when non-null the retry budget is set to it ({@code 0} raises the incident immediately); when null the
+     * budget is decremented by one. While retries remain the job is re-dispatched; when exhausted the activity
+     * is marked ERROR and an incident carrying {@code errorMessage} is raised. The token stays parked.
      */
-    void failServiceTask(UUID serviceTaskId, String errorMessage);
+    void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries);
 
     void completeUserTask(UUID activityId, List<ProcessVariable> variables);
 

@@ -1168,7 +1168,7 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     @Override
-    public void failServiceTask(UUID serviceTaskId, String errorMessage) {
+    public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries) {
         Activity activity = lockAndReload(serviceTaskId);
         if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
             // already finished (redelivered failure, or interrupted by a boundary) — ignore
@@ -1176,7 +1176,14 @@ public class ActivityServiceImpl implements ActivityService {
             return;
         }
         String message = (errorMessage == null || errorMessage.isBlank()) ? "Service task failed" : errorMessage;
-        int remaining = dbService.decrementServiceTaskRetries(serviceTaskId);
+        // Camunda failJob semantics: an explicit retries value sets the budget (0 -> incident now); otherwise -1
+        int remaining;
+        if (retries != null) {
+            dbService.setServiceTaskRetries(serviceTaskId, retries);
+            remaining = retries;
+        } else {
+            remaining = dbService.decrementServiceTaskRetries(serviceTaskId);
+        }
         if (remaining > 0) {
             // retries left: re-dispatch the same job to a worker (the activity stays CREATED)
             log.info("{}/{}: Service task {} failed ({} retries left), re-dispatching: {}",

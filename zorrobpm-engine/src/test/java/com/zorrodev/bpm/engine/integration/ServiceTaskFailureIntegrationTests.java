@@ -71,11 +71,11 @@ public class ServiceTaskFailureIntegrationTests {
         UUID svc1 = activeServiceTask(pi).getId();
 
         // attempt 1 fails -> retries 2->1, no incident yet
-        runtimeService.failServiceTask(svc1, "connect timed out");
+        runtimeService.failServiceTask(svc1, "connect timed out", null);
         assertThat(incidentsFor(svc1)).isEmpty();
 
         // attempt 2 fails -> retries 1->0 -> incident carrying the worker's message; instance stays parked
-        runtimeService.failServiceTask(svc1, "downstream 503");
+        runtimeService.failServiceTask(svc1, "downstream 503", null);
         List<IncidentEntity> incidents = incidentsFor(svc1);
         assertThat(incidents).hasSize(1);
         assertThat(incidents.get(0).getMessage()).isEqualTo("downstream 503");
@@ -94,5 +94,25 @@ public class ServiceTaskFailureIntegrationTests {
         assertThat(activityRepository.findAll().stream()
             .filter(a -> a.getProcessInstanceId().equals(pi))
             .anyMatch(a -> a.getBpmnElementId().equals("endEvent") && a.getStatus() == ActivityStatus.COMPLETED)).isTrue();
+    }
+
+    @Transactional
+    @Test
+    void failWithRetriesZeroRaisesIncidentOnFirstCall() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-service-task-fail.bpmn")); // retries=2
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID pi = runtimeService.startProcessInstance(dto).getId();
+        UUID svc = activeServiceTask(pi).getId();
+
+        // explicit retries=0 (Camunda failJob) -> incident immediately, regardless of the 2-retry budget
+        runtimeService.failServiceTask(svc, "fatal: bad config", 0);
+
+        List<IncidentEntity> incidents = incidentsFor(svc);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage()).isEqualTo("fatal: bad config");
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNull();
     }
 }
