@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_boundary_cycle" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-boundary-cycle" name="test-boundary-cycle" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="host" />
+    <bpmn:userTask id="host" name="host">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="host" targetRef="endMain" />
+    <bpmn:endEvent id="endMain" name="endMain">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:boundaryEvent id="boundary1" name="boundary1" attachedToRef="host" cancelActivity="false">
+      <bpmn:outgoing>flowB</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerDef_b">
+        <bpmn:timeCycle xsi:type="bpmn:tFormalExpression">R/PT0S</bpmn:timeCycle>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="boundary1" targetRef="remind" />
+    <bpmn:endEvent id="remind" name="remind">
+      <bpmn:incoming>flowB</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
