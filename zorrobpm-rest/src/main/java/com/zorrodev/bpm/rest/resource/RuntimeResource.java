@@ -2,7 +2,7 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.RuntimeContract;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
-import com.zorrodev.bpm.contract.dto.CreateServiceTaskIncidentDTO;
+import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
@@ -36,7 +36,7 @@ public class RuntimeResource implements RuntimeContract {
 
     @Transactional
     @Override
-    public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody CreateServiceTaskIncidentDTO dto) {
+    public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody FailServiceTaskDTO dto) {
         return Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage())).map(this::toDTO).orElseThrow();
     }
 
