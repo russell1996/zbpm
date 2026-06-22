@@ -179,8 +179,9 @@
 - **Нишевые под-слайсы:** C8-1C (Scala→JSON результат), C8-2 `outputCollection`, C8-3 повтор/cron timeCycle — требуют отдельного дизайна (схема/data-model), невысокая частота в реальных моделях.
 
 ### 3. Текущий уровень совместимости с Camunda 8 (в процентах)
-- **По покрытию конструкций/нотации BPMN+Zeebe: ~93%** (было ~88%). Закрыты типы переменных (DOUBLE/JSON), MI per-instance, timeCycle, job-worker script/send task.
-- **По доле реальных C8-моделей, выполняемых без правок: ~85%** (было ~70%). Главный блокер (скалярная модель переменных) снят: JSON-payload, десятичные, collection-driven MI исполняются.
+- **По покрытию конструкций/нотации BPMN+Zeebe: ~97%** (было ~88%). Закрыты: типы переменных (DOUBLE/JSON in/out/structured), multi-instance полностью (per-instance vars + outputCollection, на user **и** service task), timeCycle (ISO + cron + повтор timer-start), job-worker script/send task, DMN versioning.
+- **По доле реальных C8-моделей, выполняемых без правок: ~93%** (было ~70%). Остаточные ограничения нишевые (ограниченный повтор `R<n>`, non-interrupting boundary cycle, MI на send/script-форме job-worker).
+- **Остаётся (операционное, не семантика исполнения):** аутентификация/CORS, транзакционный контур, кластеризация таймеров (leader-election), optimistic locking — production-hardening, отдельный трек.
 
 *(Оценки экспертные, взвешенные по частоте паттернов; точные цифры зависят от выборки моделей.)*
 
