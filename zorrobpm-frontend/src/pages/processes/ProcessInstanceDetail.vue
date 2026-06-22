@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProcessStore } from '@/stores/process'
@@ -20,9 +20,17 @@ const incidentStore = useIncidentStore()
 const toast = useToast()
 const { t } = useI18n()
 
-const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents'>('bpmn')
+const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history'>('bpmn')
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
+
+// BPMN element highlighting derived from the instance activity history
+const activeElementIds = computed(() =>
+  processStore.currentActivities.filter((a) => a.status === 'CREATED' || a.status === 'IN_PROGRESS').map((a) => a.bpmnElementId))
+const completedElementIds = computed(() =>
+  processStore.currentActivities.filter((a) => a.status === 'COMPLETED').map((a) => a.bpmnElementId))
+const incidentElementIds = computed(() =>
+  processStore.currentActivities.filter((a) => a.status === 'ERROR').map((a) => a.bpmnElementId))
 const elementVariables = ref<{ name: string; type: string; value: string }[]>([])
 const tabLoading = ref(false)
 
@@ -83,6 +91,7 @@ async function loadTabData() {
       taskStore.fetchServiceTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
       incidentStore.fetchIncidents({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
       processStore.fetchVariables({ processInstanceId: pi.id }),
+      processStore.fetchActivities(pi.id),
     ])
   } finally {
     tabLoading.value = false
@@ -127,6 +136,8 @@ async function reloadAll() {
 onMounted(async () => {
   const id = route.params.id as string
   await processStore.fetchInstance(id)
+  // activities drive both the BPMN highlighting and the history tab — load them up-front
+  await processStore.fetchActivities(id)
   if (activeTab.value === 'bpmn') {
     await loadBpmnXml()
   }
@@ -173,13 +184,13 @@ watch(activeTab, onTabChange)
 
       <div class="flex gap-1 border-b border-border overflow-x-auto">
         <button
-          v-for="tab in (['bpmn', 'variables', 'tasks', 'serviceTasks', 'incidents'] as const)"
+          v-for="tab in (['bpmn', 'variables', 'tasks', 'serviceTasks', 'incidents', 'history'] as const)"
           :key="tab"
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
           :class="activeTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = tab"
         >
-          {{ tab === 'bpmn' ? t('bpmnFlow') : tab === 'serviceTasks' ? t('serviceTasks') : tab === 'tasks' ? t('tasks') : tab === 'variables' ? t('variables') : t('incidentsTab') }}
+          {{ tab === 'bpmn' ? t('bpmnFlow') : tab === 'serviceTasks' ? t('serviceTasks') : tab === 'tasks' ? t('tasks') : tab === 'variables' ? t('variables') : tab === 'incidents' ? t('incidentsTab') : t('history') }}
         </button>
       </div>
 
@@ -191,9 +202,9 @@ watch(activeTab, onTabChange)
             <div class="flex-1">
               <BpmnViewer
                 :xml="bpmnXml"
-                :active-element-ids="[]"
-                :incident-element-ids="[]"
-                :completed-element-ids="[]"
+                :active-element-ids="activeElementIds"
+                :incident-element-ids="incidentElementIds"
+                :completed-element-ids="completedElementIds"
                 style="height: 500px;"
                 @element-click="selectedElement = $event"
               />
@@ -341,6 +352,40 @@ watch(activeTab, onTabChange)
               </tr>
               <tr v-if="!incidentStore.incidents?.data?.length">
                 <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noIncidentsInTab') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="activeTab === 'history'" class="border border-border rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-muted">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium">{{ t('elementId') }}</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('type') }}</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('completedAt') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="act in processStore.currentActivities" :key="act.id" class="border-t border-border">
+                <td class="px-4 py-3 font-mono text-xs">{{ act.bpmnElementId }}</td>
+                <td class="px-4 py-3 text-muted-foreground text-xs">{{ act.type }}</td>
+                <td class="px-4 py-3">
+                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+                    act.status === 'ERROR' ? 'bg-red-100 text-red-800'
+                    : act.status === 'COMPLETED' ? 'bg-green-100 text-green-800'
+                    : act.status === 'CANCELLED' ? 'bg-gray-100 text-gray-800'
+                    : 'bg-yellow-100 text-yellow-800']">
+                    {{ act.status }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-muted-foreground">{{ new Date(act.createdAt).toLocaleString() }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ act.completedAt ? new Date(act.completedAt).toLocaleString() : '—' }}</td>
+              </tr>
+              <tr v-if="!processStore.currentActivities.length">
+                <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noHistory') }}</td>
               </tr>
             </tbody>
           </table>

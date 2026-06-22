@@ -50,12 +50,21 @@ onMounted(async () => {
     store.fetchDefinition(id),
     store.fetchStructure(id),
   ])
+  if (store.currentDefinition) {
+    await store.fetchVersions(store.currentDefinition.key)
+  }
   try {
     bpmnXml.value = await processService.getProcessDefinitionXml(id)
   } catch {
     // XML not available, structure-only view
   }
 })
+
+function openVersion(id: string) {
+  if (id !== (route.params.id as string)) {
+    router.push(`/processes/definitions/${id}`)
+  }
+}
 </script>
 
 <template>
@@ -99,6 +108,36 @@ onMounted(async () => {
             <span v-if="node.name" class="text-muted-foreground">— {{ node.name }}</span>
           </div>
         </div>
+      </div>
+
+      <div v-if="store.currentVersions.length > 1" class="border border-border rounded-lg overflow-hidden bg-card">
+        <div class="px-4 py-3 border-b border-border">
+          <h2 class="text-lg font-bold">Versions</h2>
+        </div>
+        <table class="w-full text-sm">
+          <thead class="bg-muted">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium">Version</th>
+              <th class="px-4 py-3 text-left font-medium">Created</th>
+              <th class="px-4 py-3 text-left font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="v in store.currentVersions"
+              :key="v.id"
+              class="border-t border-border hover:bg-muted/50 cursor-pointer"
+              @click="openVersion(v.id)"
+            >
+              <td class="px-4 py-3">
+                v{{ v.version }}
+                <span v-if="v.id === (route.params.id as string)" class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">current</span>
+              </td>
+              <td class="px-4 py-3 text-muted-foreground">{{ new Date(v.createdAt).toLocaleString() }}</td>
+              <td class="px-4 py-3 text-right text-primary text-xs">{{ v.id === (route.params.id as string) ? '' : 'Open →' }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </template>
 

@@ -7,11 +7,16 @@ import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
+import com.zorrodev.bpm.contract.model.ActivityInstance;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.UserTask;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.service.annotation.GetExchange;
+
+import java.util.List;
+import java.util.UUID;
 
 public interface QueryContract {
 
@@ -21,13 +26,29 @@ public interface QueryContract {
     @GetExchange("/service-tasks")
     PagedDataDTO<ServiceTask> getServiceTasks(ServiceTaskQuery query);
 
+    @GetExchange("/service-tasks/{id}")
+    ServiceTask getServiceTask(@PathVariable UUID id);
+
     @GetExchange("/user-tasks")
     PagedDataDTO<UserTask> getUserTasks(UserTaskQuery query);
+
+    @GetExchange("/user-tasks/{id}")
+    UserTask getUserTask(@PathVariable UUID id);
 
     @GetExchange("/process-instances")
     PagedDataDTO<ProcessInstance> getProcessInstances(ProcessInstanceQuery query);
 
+    @GetExchange("/process-instances/{id}")
+    ProcessInstance getProcessInstance(@PathVariable UUID id);
+
+    /** Activity history of an instance (used for execution history and BPMN element highlighting). */
+    @GetExchange("/process-instances/{id}/activities")
+    List<ActivityInstance> getProcessInstanceActivities(@PathVariable UUID id);
+
     @GetExchange("/incidents")
-    PagedDataDTO<Incident> getProcessInstances(IncidentQuery query);
+    PagedDataDTO<Incident> getIncidents(IncidentQuery query);
+
+    @GetExchange("/incidents/{id}")
+    Incident getIncident(@PathVariable UUID id);
 
 }
