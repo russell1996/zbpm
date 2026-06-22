@@ -12,9 +12,10 @@ public class ProcessInstance {
     private UUID id;
     private UUID parentActivityId;
     private UUID processDefinitionId;
-//    private String processDefinitionKey;
-//    private Integer processDefinitionVersion;
+    /** Definition name/key/version of this instance's process (resolved for display). */
+    private String processName;
+    private String processKey;
+    private Integer processVersion;
     private Instant startedAt;
     private Instant completedAt;
-//    private List<ProcessVariable> variables;
 }
