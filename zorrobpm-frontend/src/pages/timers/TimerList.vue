@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getTimers } from '@/services/mock/timerService'
+import { getTimerJobs } from '@/services/timerService'
 import type { TimerJob } from '@/types/api'
-import { Clock, CheckCircle, AlertCircle, RefreshCw } from 'lucide-vue-next'
+import { Clock, CheckCircle, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 
 const timers = ref<TimerJob[]>([])
+const total = ref(0)
 const loading = ref(false)
 
 async function load() {
   loading.value = true
   try {
-    timers.value = await getTimers()
+    const result = await getTimerJobs({ pageIndex: 0, pageSize: 100 })
+    timers.value = result.data
+    total.value = result.totalElements
   } catch {
     // ignore
   } finally {
@@ -25,7 +28,8 @@ onMounted(load)
 function exportData() {
   exportToCsv(timers.value.map((t) => ({
     id: t.id,
-    processInstanceId: t.processInstanceId,
+    processInstanceId: t.processInstanceId || '',
+    activityId: t.activityId || '',
     dueAt: t.dueAt,
     status: t.fired ? 'Fired' : 'Pending',
     createdAt: t.createdAt,
@@ -72,8 +76,8 @@ function exportData() {
         </thead>
         <tbody>
           <tr v-for="timer in timers" :key="timer.id" class="border-t border-border">
-            <td class="px-4 py-3 font-mono text-xs">{{ timer.id }}</td>
-            <td class="px-4 py-3 font-mono text-xs">{{ timer.processInstanceId.slice(0, 8) }}...</td>
+            <td class="px-4 py-3 font-mono text-xs">{{ timer.id.slice(0, 8) }}...</td>
+            <td class="px-4 py-3 font-mono text-xs">{{ (timer.processInstanceId || timer.activityId || '—').slice(0, 8) }}{{ (timer.processInstanceId || timer.activityId) ? '...' : '' }}</td>
             <td class="px-4 py-3 text-sm">{{ new Date(timer.dueAt).toLocaleString() }}</td>
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', timer.fired ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
@@ -91,11 +95,6 @@ function exportData() {
       </table>
     </div>
 
-    <div class="border border-border rounded-lg p-4 bg-card">
-      <div class="flex items-center gap-2 text-sm text-muted-foreground">
-        <AlertCircle class="h-4 w-4" />
-        <span>Timer data is mocked. Backend API <code>GET /timer-jobs</code> not yet available.</span>
-      </div>
-    </div>
+    <div v-if="total" class="text-sm text-muted-foreground">{{ total }} total</div>
   </div>
 </template>

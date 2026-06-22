@@ -70,11 +70,23 @@ export interface ActivityInstance {
 export interface TimerJob {
   id: string
   activityId: string | null
-  processInstanceId: string
+  processInstanceId: string | null
   dueAt: string
   fired: boolean
   boundaryElementId: string | null
   eventSubprocessId: string | null
+  createdAt: string
+}
+
+export interface MessageSubscription {
+  id: string
+  processInstanceId: string | null
+  activityId: string | null
+  messageName: string
+  consumed: boolean
+  boundaryElementId: string | null
+  eventSubprocessId: string | null
+  correlationKey: string | null
   createdAt: string
 }
 
@@ -171,6 +183,20 @@ export interface VariableQuery {
   name?: string
   type?: ProcessVariableType
   value?: string
+}
+
+export interface TimerJobQuery {
+  pageIndex?: number
+  pageSize?: number
+  processInstanceId?: string
+  fired?: boolean
+}
+
+export interface MessageSubscriptionQuery {
+  pageIndex?: number
+  pageSize?: number
+  processInstanceId?: string
+  consumed?: boolean
 }
 
 // Action DTOs

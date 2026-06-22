@@ -110,6 +110,8 @@
   "history": "История",
   "noHistory": "Нет активностей",
   "versions": "Версии",
+  "subprocesses": "Подпроцессы",
+  "noSubprocesses": "Нет вызванных подпроцессов",
   "bpmnNotAvailable": "BPMN XML недоступен для этого определения",
   "elementId": "ID элемента",
   "close": "Закрыть",

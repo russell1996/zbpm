@@ -7,10 +7,14 @@ import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
+import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
+import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
 import com.zorrodev.bpm.contract.model.ActivityInstance;
+import com.zorrodev.bpm.contract.model.MessageSubscription;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
+import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.service.annotation.GetExchange;
@@ -50,5 +54,11 @@ public interface QueryContract {
 
     @GetExchange("/incidents/{id}")
     Incident getIncident(@PathVariable UUID id);
+
+    @GetExchange("/timer-jobs")
+    PagedDataDTO<TimerJob> getTimerJobs(TimerJobQuery query);
+
+    @GetExchange("/message-subscriptions")
+    PagedDataDTO<MessageSubscription> getMessageSubscriptions(MessageSubscriptionQuery query);
 
 }
