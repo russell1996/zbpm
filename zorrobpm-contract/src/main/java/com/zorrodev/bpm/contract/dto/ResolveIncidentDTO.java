@@ -5,11 +5,11 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.util.List;
-import java.util.UUID;
 
+/** Body of {@code POST /incidents/{id}/resolve}: optional variables to apply before re-execution
+ *  (the incident id is the path). */
 @Getter
 @Setter
 public class ResolveIncidentDTO {
-    private UUID id;
     private List<ProcessVariable> variables;
 }
