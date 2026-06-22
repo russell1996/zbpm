@@ -55,6 +55,9 @@ public interface DBService {
     /** Decrements the service task's retry budget and returns the remaining value. */
     int decrementServiceTaskRetries(UUID serviceTaskId);
 
+    /** Sets the service task's retry budget to an explicit value (Camunda {@code failJob(retries)}). */
+    void setServiceTaskRetries(UUID serviceTaskId, int retries);
+
     void completeServiceTask(UUID serviceTaskId);
 
     void createUserTask(UUID activityId);
