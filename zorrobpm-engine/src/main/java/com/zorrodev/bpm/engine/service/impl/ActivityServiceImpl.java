@@ -1679,8 +1679,28 @@ public class ActivityServiceImpl implements ActivityService {
             Token branch = dbService.createToken(tokenId);
             log.info("{}/{}: Boundary {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
             proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary);
+            rearmRepeatingBoundaryTimer(hostActivityId, boundary);
         }
         triggerConditionalEvents(processInstanceId);
+    }
+
+    /**
+     * A repeating ({@code timeCycle} unbounded {@code R/<duration>} or cron) non-interrupting boundary timer
+     * re-arms its next occurrence after firing, so it keeps firing while the host activity is active (a
+     * "remind every N" pattern). When the host completes, the next firing finds it finished and is ignored.
+     */
+    private void rearmRepeatingBoundaryTimer(UUID hostActivityId, BpmnElementModel boundary) {
+        if (boundary.getType() != BpmnElementType.BOUNDARY_TIMER_EVENT) {
+            return;
+        }
+        TimerEventExtensionModel timer = Optional.ofNullable(boundary.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .orElse(null);
+        if (timer == null || timer.getType() != com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE
+            || !com.zorrodev.bpm.engine.scheduler.TimerExpressions.isInfiniteCycle(timer.getExpression())) {
+            return;
+        }
+        dbService.createTimerJob(hostActivityId, computeDueAt(boundary), boundary.getId());
     }
 
     @Override
