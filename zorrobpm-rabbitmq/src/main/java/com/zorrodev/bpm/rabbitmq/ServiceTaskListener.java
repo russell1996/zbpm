@@ -44,6 +44,8 @@ public class ServiceTaskListener {
         log.info("Service task to complete message received - {}", data.getServiceTaskId());
         ServiceTaskCompleted serviceTaskCompleted = new ServiceTaskCompleted();
         serviceTaskCompleted.setServiceTaskId(data.getServiceTaskId());
+        serviceTaskCompleted.setStatus(data.getStatus());
+        serviceTaskCompleted.setErrorMessage(data.getErrorMessage());
         serviceTaskCompleted.setVariables(data.getVariables());
         publisher.publishEvent(serviceTaskCompleted);
     }

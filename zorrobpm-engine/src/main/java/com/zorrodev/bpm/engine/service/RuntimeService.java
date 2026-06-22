@@ -16,6 +16,9 @@ public interface RuntimeService {
 
     IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables);
 
+    /** Reports a service-task failure (retries → incident); see {@link ActivityService#failServiceTask}. */
+    IdDTO failServiceTask(UUID id, String errorMessage);
+
     IdDTO completeUserTask(UUID id, List<ProcessVariable> variables);
 
     IdDTO resolveIncident(UUID id, List<ProcessVariable> variables);

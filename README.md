@@ -230,6 +230,47 @@ public class ChargeHandler implements JobHandler {
 
 Стартер автоматически подписывается на `zorrobpm.jobs.<job>` и публикует завершение в `zorrobpm.complete-service-task`. Воркер должен смотреть на тот же брокер RabbitMQ, что и движок.
 
+### Ошибки воркера и инциденты
+
+Движок и воркер развязаны через RabbitMQ — об ошибке воркер сообщает **обратным событием** (тем же каналом `zorrobpm.complete-service-task`), просто с `status="FAILED"` и текстом ошибки. Движок сам ведёт счётчик попыток и решает: повторить или создать инцидент. Модель — как в Camunda («fail job» с retries → инцидент).
+
+**Откуда движок знает, что за ошибка:** только воркер видел исключение — поэтому он кладёт его в сообщение. Текст ошибки (`errorMessage`) пишется воркером из пойманного исключения; движок добавляет контекст («где»: service-task, инстанс) и сохраняет всё в инцидент.
+
+**Кол-во повторов** задаётся на задаче (`zeebe:taskDefinition retries="3"`, по умолчанию **3**):
+
+```xml
+<bpmn:serviceTask id="charge">
+  <bpmn:extensionElements>
+    <zeebe:taskDefinition type="charge-card" retries="3" />
+  </bpmn:extensionElements>
+</bpmn:serviceTask>
+```
+
+**Через SDK** (рекомендуется) — просто бросьте исключение из `handleJob`; стартер сам отправит `FAILED` с текстом исключения:
+
+```java
+@Override public List<ProcessVariable> handleJob(JobDetailModel job) {
+    throw new IllegalStateException("downstream 503");   // → движок применит retries → при 0 создаст инцидент
+}
+```
+
+**Через REST** (для не-RabbitMQ интеграций) — сообщить о сбое напрямую:
+
+```bash
+curl -X POST http://localhost:8080/service-tasks/<SERVICE_TASK_ID>/fail \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"downstream 503"}'
+```
+
+**Что происходит:**
+1. На каждый `FAILED` движок уменьшает `retries_remaining` сервис-задачи.
+2. Пока `> 0` — задача **переотправляется** воркеру (тот же job-эвент); инцидент НЕ создаётся.
+3. При `0` — активность помечается `ERROR` и создаётся **инцидент** с текстом ошибки воркера; токен остаётся припаркованным.
+4. Оператор смотрит инцидент через `GET /incidents` (поля: `activityId`, `message`, `createdAt`).
+5. **Resolve** — `POST /incidents/{id}/resolve` (можно передать переменные) → задача исполняется заново (свежий бюджет retries) и при успехе процесс идёт дальше.
+
+> Бизнес-ошибки (ожидаемые исходы) — это **не** инцидент: их моделируют через **error boundary / event-subprocess** по `errorCode`, а не через `FAILED`.
+
 ## Java-клиент
 
 ```xml
