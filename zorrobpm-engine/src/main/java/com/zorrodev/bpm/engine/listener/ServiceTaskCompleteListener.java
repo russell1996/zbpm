@@ -22,15 +22,23 @@ public class ServiceTaskCompleteListener {
     @EventListener
     public void on(ServiceTaskCompleted serviceTaskCompleted) {
         UUID serviceTaskId = serviceTaskCompleted.getServiceTaskId();
-        List<ProcessVariable> variables = serviceTaskCompleted.getVariables().stream()
-            .map(v -> {
-                ProcessVariable pv = new ProcessVariable();
-                pv.setName(v.getName());
-                pv.setValue(v.getValue());
-                pv.setType(ProcessVariableType.valueOf(v.getType()));
-                return pv;
-            })
-            .toList();
+
+        // a worker reports failure via status="FAILED" -> retries/incident, otherwise it completes the task
+        if ("FAILED".equalsIgnoreCase(serviceTaskCompleted.getStatus())) {
+            runtimeService.failServiceTask(serviceTaskId, serviceTaskCompleted.getErrorMessage());
+            return;
+        }
+
+        List<ProcessVariable> variables = serviceTaskCompleted.getVariables() == null ? List.of()
+            : serviceTaskCompleted.getVariables().stream()
+                .map(v -> {
+                    ProcessVariable pv = new ProcessVariable();
+                    pv.setName(v.getName());
+                    pv.setValue(v.getValue());
+                    pv.setType(ProcessVariableType.valueOf(v.getType()));
+                    return pv;
+                })
+                .toList();
         runtimeService.completeServiceTask(serviceTaskId, variables);
     }
 }

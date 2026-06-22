@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.contract;
 
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
+import com.zorrodev.bpm.contract.dto.CreateServiceTaskIncidentDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
@@ -17,6 +18,10 @@ public interface RuntimeContract {
 
     @PostExchange("/service-tasks/{id}/complete")
     IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto);
+
+    /** Reports a service-task failure: decrements retries; raises an incident with {@code message} at 0. */
+    @PostExchange("/service-tasks/{id}/fail")
+    IdDTO failServiceTask(@PathVariable UUID id, @RequestBody CreateServiceTaskIncidentDTO dto);
 
     @PostExchange("/user-tasks/{id}/complete")
     IdDTO completeUserTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto);

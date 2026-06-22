@@ -196,17 +196,32 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void createServiceTask(UUID activityId) {
+        createServiceTask(activityId, 3);
+    }
+
+    @Override
+    public void createServiceTask(UUID activityId, int retriesRemaining) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         ServiceTaskEntity entity = new ServiceTaskEntity();
         entity.setId(activity.getId());
         entity.setBpmnElementId(activity.getBpmnElementId());
         entity.setProcessInstanceId(activity.getProcessInstanceId());
         entity.setCreatedAt(activity.getCreatedAt());
+        entity.setRetriesRemaining(retriesRemaining);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
 
         serviceTaskRepository.save(entity);
+    }
+
+    @Override
+    public int decrementServiceTaskRetries(UUID serviceTaskId) {
+        ServiceTaskEntity entity = serviceTaskRepository.findById(serviceTaskId).orElseThrow();
+        int remaining = (entity.getRetriesRemaining() == null ? 1 : entity.getRetriesRemaining()) - 1;
+        entity.setRetriesRemaining(remaining);
+        serviceTaskRepository.save(entity);
+        return remaining;
     }
 
     @Override

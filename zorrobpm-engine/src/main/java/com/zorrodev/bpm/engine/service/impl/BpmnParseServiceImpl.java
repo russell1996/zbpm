@@ -591,6 +591,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setExtensions(new BpmnElementExtensionModel());
             element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
             element.getExtensions().getServiceTaskExtension().setJob(serviceTask.getExtensionElements().getTaskDefinition().getType());
+            element.getExtensions().getServiceTaskExtension().setRetries(serviceTask.getExtensionElements().getTaskDefinition().getRetries());
         }
         attachIoMapping(element, serviceTask.getExtensionElements());
         attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
@@ -643,6 +644,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (scriptTask.getExtensionElements() != null && scriptTask.getExtensionElements().getTaskDefinition() != null) {
             ServiceTaskExtensionModel job = new ServiceTaskExtensionModel();
             job.setJob(scriptTask.getExtensionElements().getTaskDefinition().getType());
+            job.setRetries(scriptTask.getExtensionElements().getTaskDefinition().getRetries());
             element.getExtensions().setServiceTaskExtension(job);
             return element;
         }
@@ -707,6 +709,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (sendTask.getExtensionElements() != null && sendTask.getExtensionElements().getTaskDefinition() != null) {
             ServiceTaskExtensionModel job = new ServiceTaskExtensionModel();
             job.setJob(sendTask.getExtensionElements().getTaskDefinition().getType());
+            job.setRetries(sendTask.getExtensionElements().getTaskDefinition().getRetries());
             element.getExtensions().setServiceTaskExtension(job);
         } else if (sendTask.getMessageRef() != null) {
             MessageEventExtensionModel message = new MessageEventExtensionModel();
