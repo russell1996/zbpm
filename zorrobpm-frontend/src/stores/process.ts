@@ -24,6 +24,7 @@ export const useProcessStore = defineStore('process', () => {
   const currentVariables = ref<ProcessVariable[]>([])
   const currentActivities = ref<ActivityInstance[]>([])
   const currentVersions = ref<ProcessDefinition[]>([])
+  const currentSubprocesses = ref<ProcessInstance[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -99,6 +100,15 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
+  async function fetchSubprocesses(id: string) {
+    try {
+      const result = await instanceService.getProcessInstances({ parentProcessInstanceId: id, pageIndex: 0, pageSize: 100 })
+      currentSubprocesses.value = result.data
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load subprocesses'
+    }
+  }
+
   async function fetchVariables(query: VariableQuery) {
     try {
       const result = await variableService.getVariables(query)
@@ -129,6 +139,7 @@ export const useProcessStore = defineStore('process', () => {
     currentVariables.value = []
     currentActivities.value = []
     currentVersions.value = []
+    currentSubprocesses.value = []
   }
 
   return {
@@ -140,6 +151,7 @@ export const useProcessStore = defineStore('process', () => {
     currentVariables,
     currentActivities,
     currentVersions,
+    currentSubprocesses,
     loading,
     error,
     fetchDefinitions,
@@ -149,6 +161,7 @@ export const useProcessStore = defineStore('process', () => {
     fetchInstances,
     fetchInstance,
     fetchActivities,
+    fetchSubprocesses,
     fetchVariables,
     startInstance,
     clearCurrent,

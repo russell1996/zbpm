@@ -3,14 +3,18 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.QueryContract;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.model.ActivityInstance;
+import com.zorrodev.bpm.contract.model.MessageSubscription;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
+import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
+import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
 import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
+import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -66,5 +70,13 @@ public class QueryResource implements QueryContract {
 
     public Incident getIncident(@PathVariable UUID id) {
         return queryService.getIncident(id);
+    }
+
+    public PagedDataDTO<TimerJob> getTimerJobs(@ParameterObject TimerJobQuery query) {
+        return queryService.findTimerJobs(query);
+    }
+
+    public PagedDataDTO<MessageSubscription> getMessageSubscriptions(@ParameterObject MessageSubscriptionQuery query) {
+        return queryService.findMessageSubscriptions(query);
     }
 }

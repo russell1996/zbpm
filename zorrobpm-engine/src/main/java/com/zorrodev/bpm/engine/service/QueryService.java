@@ -2,14 +2,18 @@ package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.model.ActivityInstance;
+import com.zorrodev.bpm.contract.model.MessageSubscription;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
+import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
+import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
 import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
+import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 
@@ -38,4 +42,8 @@ public interface QueryService {
     PagedDataDTO<Incident> findIncidents(IncidentQuery query);
 
     PagedDataDTO<ProcessVariable> findVariables(VariableQuery query);
+
+    PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query);
+
+    PagedDataDTO<MessageSubscription> findMessageSubscriptions(MessageSubscriptionQuery query);
 }
