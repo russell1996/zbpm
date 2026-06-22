@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getDecisions } from '@/services/mock/dmnService'
-import type { DmnDecision } from '@/services/mock/dmnService'
-import { AlertCircle, RefreshCw } from 'lucide-vue-next'
+import { getDecisions } from '@/services/dmnService'
+import type { DmnDecision } from '@/services/dmnService'
+import { RefreshCw } from 'lucide-vue-next'
 
 const router = useRouter()
 const decisions = ref<DmnDecision[]>([])
@@ -72,13 +72,6 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
-    </div>
-
-    <div class="border border-border rounded-lg p-4 bg-card">
-      <div class="flex items-center gap-2 text-sm text-muted-foreground">
-        <AlertCircle class="h-4 w-4" />
-        <span>DMN data is mocked. Backend API <code>GET /dmn/decisions</code> not yet available.</span>
-      </div>
     </div>
   </div>
 </template>
