@@ -1146,6 +1146,10 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     private void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
+        if (isMultiInstance(bpmnElement)) {
+            enterMultiInstance(processInstanceId, token, bpmnElement);
+            return;
+        }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         dbService.createServiceTask(activityId);
         applyIoMappings(processInstanceId, activityId, bpmnElement, true);
@@ -1225,14 +1229,19 @@ public class ActivityServiceImpl implements ActivityService {
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
+        aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, serviceTaskId);
+        if (isMultiInstance(bpmnElement) && !multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId)) {
+            // more instances are outstanding (parallel) or the next one was just started (sequential)
+            return;
+        }
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
         triggerConditionalEvents(processInstanceId);
     }
 
     private void enterUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         if (isMultiInstance(bpmnElement)) {
-            enterMultiInstanceUserTask(processInstanceId, token, bpmnElement);
+            enterMultiInstance(processInstanceId, token, bpmnElement);
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
@@ -1262,7 +1271,7 @@ public class ActivityServiceImpl implements ActivityService {
      * and {@code loopCounter} (1-based), isolated via scoped variables and dropped on completion. Output
      * aggregation ({@code outputCollection}/{@code outputElement}) is not yet supported.
      */
-    private void enterMultiInstanceUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
+    private void enterMultiInstance(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         MultiInstanceExtensionModel mi = bpmnElement.getExtensions().getMultiInstanceExtension();
         int count = resolveCardinality(processInstanceId, bpmnElement);
         if (count <= 0) {
@@ -1274,11 +1283,27 @@ public class ActivityServiceImpl implements ActivityService {
         Object collection = miInputCollection(processInstanceId, mi);
         int spawn = mi.isSequential() ? 1 : count;
         for (int i = 0; i < spawn; i++) {
-            UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-            dbService.createUserTask(activityId);
-            bindMiInstanceVariables(processInstanceId, activityId, mi, collection, i);
+            spawnMiInstance(processInstanceId, token, bpmnElement, mi, collection, i);
         }
         log.info("{}/{}: Entering multi-instance {}: {} {} instance(s)", processInstanceId, token, bpmnElement.getId(), count, mi.isSequential() ? "sequential" : "parallel");
+    }
+
+    /**
+     * Creates one multi-instance instance: a user-task instance parks for completion; any other (service /
+     * job-worker) task creates a service-task job, applies its input mappings (which may reference the
+     * per-instance {@code inputElement}) and enqueues it. Per-instance {@code inputElement}/{@code loopCounter}
+     * are bound into the instance scope first.
+     */
+    private void spawnMiInstance(UUID processInstanceId, UUID token, BpmnElementModel element, MultiInstanceExtensionModel mi, Object collection, int index) {
+        UUID activityId = dbService.createActivity(processInstanceId, token, element);
+        bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
+        if (element.getType() == BpmnElementType.USER_TASK) {
+            dbService.createUserTask(activityId);
+        } else {
+            dbService.createServiceTask(activityId);
+            applyIoMappings(processInstanceId, activityId, element, true);
+            serviceTaskEnqueueService.enqueueAfterCommit(activityId);
+        }
     }
 
     /**
@@ -1429,9 +1454,7 @@ public class ActivityServiceImpl implements ActivityService {
         }
         if (mi.isSequential()) {
             // start the next sequential instance on the same token, bound to the next collection element
-            UUID next = dbService.createActivity(processInstanceId, token, element);
-            dbService.createUserTask(next);
-            bindMiInstanceVariables(processInstanceId, next, mi, miInputCollection(processInstanceId, mi), arrived);
+            spawnMiInstance(processInstanceId, token, element, mi, miInputCollection(processInstanceId, mi), arrived);
             log.info("{}/{}: Multi-instance {} starting next sequential instance ({} of {} done)", processInstanceId, token, miId, arrived, expected);
         } else {
             log.info("{}: Multi-instance {} not ready: {} of {} instances done", processInstanceId, miId, arrived, expected);

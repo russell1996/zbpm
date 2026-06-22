@@ -593,6 +593,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.getExtensions().getServiceTaskExtension().setJob(serviceTask.getExtensionElements().getTaskDefinition().getType());
         }
         attachIoMapping(element, serviceTask.getExtensionElements());
+        attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
         return element;
     }
 
@@ -756,26 +757,33 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
         }
         attachIoMapping(element, userTask.getExtensionElements());
-        if (userTask.getMultiInstanceLoopCharacteristics() != null) {
-            BpmnMultiInstanceModel mi = userTask.getMultiInstanceLoopCharacteristics();
-            MultiInstanceExtensionModel ext = new MultiInstanceExtensionModel();
-            ext.setSequential(Boolean.TRUE.equals(mi.getIsSequential()));
-            ext.setCardinality(mi.getLoopCardinality() != null ? mi.getLoopCardinality().strip() : null);
-            ext.setCompletionCondition(mi.getCompletionCondition() != null ? mi.getCompletionCondition().strip() : null);
-            ZeebeLoopCharacteristicsModel loop = mi.getExtensionElements() == null ? null
-                : mi.getExtensionElements().getLoopCharacteristics();
-            if (loop != null) {
-                ext.setInputCollection(stripLeadingEquals(loop.getInputCollection()));
-                ext.setInputElement(loop.getInputElement());
-                ext.setOutputCollection(loop.getOutputCollection());
-                ext.setOutputElement(stripLeadingEquals(loop.getOutputElement()));
-            }
-            if (element.getExtensions() == null) {
-                element.setExtensions(new BpmnElementExtensionModel());
-            }
-            element.getExtensions().setMultiInstanceExtension(ext);
-        }
+        attachMultiInstance(element, userTask.getMultiInstanceLoopCharacteristics());
         return element;
+    }
+
+    /** Parses a {@code multiInstanceLoopCharacteristics} (sequential/cardinality/completionCondition and the
+     *  Camunda 8 {@code zeebe:loopCharacteristics} collection/element attributes) onto the element. No-op if
+     *  the element is not multi-instance. Shared by user and service tasks. */
+    private void attachMultiInstance(BpmnElementModel element, BpmnMultiInstanceModel mi) {
+        if (mi == null) {
+            return;
+        }
+        MultiInstanceExtensionModel ext = new MultiInstanceExtensionModel();
+        ext.setSequential(Boolean.TRUE.equals(mi.getIsSequential()));
+        ext.setCardinality(mi.getLoopCardinality() != null ? mi.getLoopCardinality().strip() : null);
+        ext.setCompletionCondition(mi.getCompletionCondition() != null ? mi.getCompletionCondition().strip() : null);
+        ZeebeLoopCharacteristicsModel loop = mi.getExtensionElements() == null ? null
+            : mi.getExtensionElements().getLoopCharacteristics();
+        if (loop != null) {
+            ext.setInputCollection(stripLeadingEquals(loop.getInputCollection()));
+            ext.setInputElement(loop.getInputElement());
+            ext.setOutputCollection(loop.getOutputCollection());
+            ext.setOutputElement(stripLeadingEquals(loop.getOutputElement()));
+        }
+        if (element.getExtensions() == null) {
+            element.setExtensions(new BpmnElementExtensionModel());
+        }
+        element.getExtensions().setMultiInstanceExtension(ext);
     }
 
     private BpmnElementModel toElementModel(BpmnEndEventModel endEvent) {
