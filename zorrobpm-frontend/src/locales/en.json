@@ -110,6 +110,8 @@
   "history": "History",
   "noHistory": "No activities",
   "versions": "Versions",
+  "subprocesses": "Subprocesses",
+  "noSubprocesses": "No called subprocesses",
   "bpmnNotAvailable": "BPMN XML not available for this definition",
   "elementId": "Element ID",
   "close": "Close",

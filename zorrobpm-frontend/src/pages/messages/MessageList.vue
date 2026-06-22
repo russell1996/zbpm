@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getMessageSubscriptions } from '@/services/mock/messageService'
-import type { MessageSubscription } from '@/services/mock/messageService'
-import { AlertCircle, Mail, CheckCircle, RefreshCw } from 'lucide-vue-next'
+import { getMessageSubscriptions } from '@/services/messageService'
+import type { MessageSubscription } from '@/types/api'
+import { Mail, CheckCircle, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 
 const messages = ref<MessageSubscription[]>([])
+const total = ref(0)
 const loading = ref(false)
 
 async function load() {
   loading.value = true
   try {
-    messages.value = await getMessageSubscriptions()
+    const result = await getMessageSubscriptions({ pageIndex: 0, pageSize: 100 })
+    messages.value = result.data
+    total.value = result.totalElements
   } catch {
     // ignore
   } finally {
@@ -25,8 +28,9 @@ onMounted(load)
 function exportData() {
   exportToCsv(messages.value.map((m) => ({
     id: m.id,
-    processInstanceId: m.processInstanceId,
+    processInstanceId: m.processInstanceId || '',
     messageName: m.messageName,
+    correlationKey: m.correlationKey || '',
     status: m.consumed ? 'Consumed' : 'Pending',
     createdAt: m.createdAt,
   })), 'message-subscriptions.csv')
@@ -79,7 +83,7 @@ function exportData() {
                 {{ msg.messageName }}
               </span>
             </td>
-            <td class="px-4 py-3 font-mono text-xs">{{ msg.processInstanceId.slice(0, 8) }}...</td>
+            <td class="px-4 py-3 font-mono text-xs">{{ msg.processInstanceId ? msg.processInstanceId.slice(0, 8) + '...' : '—' }}</td>
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', msg.consumed ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
                 <CheckCircle v-if="msg.consumed" class="h-3 w-3" />
@@ -95,11 +99,6 @@ function exportData() {
       </table>
     </div>
 
-    <div class="border border-border rounded-lg p-4 bg-card">
-      <div class="flex items-center gap-2 text-sm text-muted-foreground">
-        <AlertCircle class="h-4 w-4" />
-        <span>Message data is mocked. Backend API <code>GET /message-subscriptions</code> not yet available.</span>
-      </div>
-    </div>
+    <div v-if="total" class="text-sm text-muted-foreground">{{ total }} total</div>
   </div>
 </template>
