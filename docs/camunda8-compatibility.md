@@ -27,7 +27,7 @@
 | Start / End (none) | ✅ Совместимо | — | — |
 | Terminate end (`terminateEventDefinition`) | ✅ Совместимо | — | — |
 | Message start / catch / throw / boundary (`messageEventDefinition`, `message`, `messageRef`) | ✅ Совместимо | Camunda 8 поддерживает message-события | — |
-| Timer start / catch / boundary (`timerEventDefinition`, `timeDate`, `timeDuration`, `timeCycle`) | ✅ Совместимо | date/duration; **`timeCycle`** — ISO `R[n]/<duration>` и **cron** (Spring 6-field). **Повторяющийся timer-start** (`R/<duration>` или cron) перепланирует следующее срабатывание (recurring scheduled process). **Отложено**: ограниченный повтор `R<n>` (нужен счётчик) и повтор non-interrupting boundary | Счётчик повторов в timer_jobs — отдельный заход |
+| Timer start / catch / boundary (`timerEventDefinition`, `timeDate`, `timeDuration`, `timeCycle`) | ✅ Совместимо | date/duration; **`timeCycle`** — ISO `R[n]/<duration>` и **cron** (Spring 6-field). **Повтор** (`R/<duration>` или cron): timer-start перепланирует следующий запуск; **non-interrupting boundary** перевзводится и срабатывает каждый цикл пока хост активен («напоминание каждые N»). **Отложено**: ограниченный повтор `R<n>` (нужен счётчик) | Счётчик повторов в timer_jobs — отдельный заход |
 | Error end / boundary (`errorEventDefinition`, `error`, `errorCode`) | ✅ Совместимо | — | — |
 | Signal start / catch / throw / boundary (`signalEventDefinition`, `signal`) | ✅ Совместимо | C8 поддерживает signal (8.3+) | — |
 | Escalation throw / end / boundary (`escalationEventDefinition`, `escalation`) | ✅ Совместимо | C8 поддерживает escalation (8.2+) | — |

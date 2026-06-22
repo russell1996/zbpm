@@ -3,10 +3,12 @@ package com.zorrodev.bpm.engine.integration;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.TestMain;
+import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
-import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 
 import java.time.Instant;
@@ -22,11 +24,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** C8-3: an ISO repeating-interval timeCycle timer is parsed and fires (first occurrence) instead of raising
- *  an incident. */
+/** C8-3: a repeating (timeCycle) non-interrupting boundary timer re-arms and fires again while the host runs. */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-public class TimerCycleIntegrationTests {
+public class BoundaryCycleIntegrationTests {
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;
@@ -35,7 +36,7 @@ public class TimerCycleIntegrationTests {
     private RuntimeService runtimeService;
 
     @Autowired
-    private QueryService queryService;
+    private ActivityRepository activityRepository;
 
     @Autowired
     private DBService dbService;
@@ -54,23 +55,36 @@ public class TimerCycleIntegrationTests {
         });
     }
 
+    private long remindCount(UUID processInstanceId) {
+        return activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals("remind") && a.getStatus() == ActivityStatus.COMPLETED)
+            .count();
+    }
+
     @Transactional
     @Test
-    void timeCycleTimerFiresFirstOccurrence() throws Exception {
-        // intermediate catch timer with timeCycle R/PT0S (immediately due). Previously a timeCycle had no
-        // expression -> the timer raised an incident; now it parses and fires after the first interval.
-        String bpmn = Files.readString(Paths.get("src/test/files/test-timer-cycle.bpmn"));
+    void repeatingNonInterruptingBoundaryTimerFiresEachCycle() throws Exception {
+        // host (user task) with a non-interrupting timeCycle R/PT0S boundary -> remind. Each poll fires the
+        // boundary (a remind) and re-arms the next; the host keeps running.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-boundary-cycle.bpmn"));
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
 
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(model.getId());
         UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
 
-        // parked at the timer catch until the timer fires
-        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
-
         fireDueTimers();
+        assertThat(remindCount(processInstanceId)).isEqualTo(1);
 
-        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNotNull();
+        // re-armed: the next poll fires it again
+        fireDueTimers();
+        assertThat(remindCount(processInstanceId)).isEqualTo(2);
+
+        // host is still active (non-interrupting) and another occurrence is queued
+        ActivityEntity host = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId) && a.getBpmnElementId().equals("host"))
+            .findFirst().orElseThrow();
+        assertThat(host.getStatus()).isEqualTo(ActivityStatus.CREATED);
     }
 }
