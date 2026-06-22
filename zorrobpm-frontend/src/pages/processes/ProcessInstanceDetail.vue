@@ -8,9 +8,8 @@ import { useIncidentStore } from '@/stores/incident'
 import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
-import { getVariables } from '@/services/variableService'
-import type { ProcessVariable } from '@/types/api'
-import { RefreshCw } from 'lucide-vue-next'
+import type { ProcessVariable, BpmnNode } from '@/types/api'
+import { RefreshCw, ArrowRight } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
@@ -32,8 +31,39 @@ const completedElementIds = computed(() =>
   processStore.currentActivities.filter((a) => a.status === 'COMPLETED').map((a) => a.bpmnElementId))
 const incidentElementIds = computed(() =>
   processStore.currentActivities.filter((a) => a.status === 'ERROR').map((a) => a.bpmnElementId))
-const elementVariables = ref<{ name: string; type: string; value: string }[]>([])
 const tabLoading = ref(false)
+
+// --- selected BPMN element: properties + cross-links to the relevant tab ---
+function findNode(nodes: BpmnNode[], id: string): BpmnNode | null {
+  for (const n of nodes) {
+    if (n.id === id) return n
+    for (const b of n.boundaryEvents || []) if (b.id === id) return b
+    if (n.children) {
+      const found = findNode(n.children.nodes, id)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+const selectedNode = computed<BpmnNode | null>(() => {
+  if (!selectedElement.value || !processStore.currentStructure) return null
+  return findNode(processStore.currentStructure.nodes, selectedElement.value)
+})
+
+const selectedNodeProps = computed(() =>
+  selectedNode.value ? Object.entries(selectedNode.value.properties || {}) : [])
+
+const selectedHasUserTask = computed(() =>
+  !!selectedElement.value && (taskStore.userTasks?.data || []).some((tk) => tk.code === selectedElement.value))
+const selectedHasServiceTask = computed(() =>
+  !!selectedElement.value && (taskStore.serviceTasks?.data || []).some((tk) => tk.code === selectedElement.value))
+const selectedHasIncident = computed(() =>
+  !!selectedElement.value && incidentElementIds.value.includes(selectedElement.value))
+
+function goToElementTab(tab: typeof activeTab.value) {
+  activeTab.value = tab
+}
 
 const showCompleteModal = ref(false)
 const completingTaskId = ref('')
@@ -135,15 +165,25 @@ async function reloadAll() {
   await loadBpmnXml()
 }
 
-onMounted(async () => {
-  const id = route.params.id as string
+async function init(id: string) {
+  bpmnXml.value = ''
+  selectedElement.value = null
   await processStore.fetchInstance(id)
-  // activities drive both the BPMN highlighting and the history tab — load them up-front
-  await processStore.fetchActivities(id)
-  if (activeTab.value === 'bpmn') {
-    await loadBpmnXml()
+  // load tasks/service-tasks/incidents/activities/subprocesses up-front so the BPMN element
+  // panel can offer cross-links and highlighting immediately
+  await loadTabData()
+  const pi = processStore.currentInstance
+  if (pi) {
+    await processStore.fetchStructure(pi.processDefinitionId)
   }
-})
+  await loadBpmnXml()
+}
+
+onMounted(() => init(route.params.id as string))
+
+// navigating to another instance (e.g. a subprocess via "view") reuses this component —
+// reload everything when the route id changes
+watch(() => route.params.id, (id) => { if (id) init(id as string) })
 
 watch(activeTab, onTabChange)
 </script>
@@ -156,7 +196,11 @@ watch(activeTab, onTabChange)
     <template v-else-if="processStore.currentInstance">
       <div class="flex items-center justify-between">
         <div>
-          <h1 class="text-2xl font-bold">Process Instance</h1>
+          <h1 class="text-2xl font-bold">
+            {{ processStore.currentInstance.processName || processStore.currentInstance.processKey || 'Process Instance' }}
+            <span v-if="processStore.currentInstance.processVersion" class="text-base font-normal text-muted-foreground">v{{ processStore.currentInstance.processVersion }}</span>
+          </h1>
+          <p v-if="processStore.currentInstance.processKey" class="text-xs text-muted-foreground font-mono">{{ processStore.currentInstance.processKey }}</p>
           <CopyableId :value="processStore.currentInstance.id" />
         </div>
         <button
@@ -211,13 +255,43 @@ watch(activeTab, onTabChange)
                 @element-click="selectedElement = $event"
               />
             </div>
-            <div v-if="selectedElement" class="w-72 border-l border-border p-4 space-y-3 bg-muted/30">
-              <h3 class="text-sm font-bold">{{ t('elementDetails') }}</h3>
-              <div class="text-sm">
-                <span class="text-muted-foreground">{{ t('elementId') }}:</span>
-                <CopyableId :value="selectedElement" />
+            <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto" style="max-height: 500px;">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-bold">{{ t('elementDetails') }}</h3>
+                <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">{{ t('close') }}</button>
               </div>
-              <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">{{ t('close') }}</button>
+
+              <div class="text-sm space-y-1">
+                <div v-if="selectedNode?.name"><span class="text-muted-foreground">{{ t('name') }}:</span> {{ selectedNode.name }}</div>
+                <div v-if="selectedNode?.type">
+                  <span class="text-muted-foreground">{{ t('elementType') }}:</span>
+                  <span class="ml-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ selectedNode.type }}<template v-if="selectedNode.eventDefinition">/{{ selectedNode.eventDefinition }}</template></span>
+                </div>
+                <div><span class="text-muted-foreground">{{ t('elementId') }}:</span> <CopyableId :value="selectedElement" /></div>
+              </div>
+
+              <!-- cross-links: jump to the tab that holds this element's runtime data -->
+              <div v-if="selectedHasUserTask || selectedHasServiceTask || selectedHasIncident" class="space-y-2 pt-2 border-t border-border">
+                <button v-if="selectedHasUserTask" class="flex items-center gap-1.5 w-full text-left text-sm text-primary hover:underline" @click="goToElementTab('tasks')">
+                  <ArrowRight class="h-3.5 w-3.5" /> {{ t('openUserTask') }}
+                </button>
+                <button v-if="selectedHasServiceTask" class="flex items-center gap-1.5 w-full text-left text-sm text-primary hover:underline" @click="goToElementTab('serviceTasks')">
+                  <ArrowRight class="h-3.5 w-3.5" /> {{ t('openServiceTask') }}
+                </button>
+                <button v-if="selectedHasIncident" class="flex items-center gap-1.5 w-full text-left text-sm text-red-600 hover:underline" @click="goToElementTab('incidents')">
+                  <ArrowRight class="h-3.5 w-3.5" /> {{ t('openIncident') }}
+                </button>
+              </div>
+
+              <!-- element configuration breakdown (BPMN settings) -->
+              <div v-if="selectedNodeProps.length" class="pt-2 border-t border-border space-y-1.5">
+                <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('properties') }}</h4>
+                <div v-for="[k, v] in selectedNodeProps" :key="k" class="text-xs">
+                  <span class="text-muted-foreground font-mono">{{ k }}:</span>
+                  <span class="ml-1 font-mono break-all">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
+                </div>
+              </div>
+              <div v-else class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('properties') }}: —</div>
             </div>
           </div>
           <div v-else class="p-6 text-sm text-muted-foreground">{{ t('bpmnNotAvailable') }}</div>
@@ -398,6 +472,7 @@ watch(activeTab, onTabChange)
             <thead class="bg-muted">
               <tr>
                 <th class="px-4 py-3 text-left font-medium">ID</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('process') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('started') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('completed') }}</th>
@@ -407,6 +482,10 @@ watch(activeTab, onTabChange)
             <tbody>
               <tr v-for="sp in processStore.currentSubprocesses" :key="sp.id" class="border-t border-border hover:bg-muted/50">
                 <td class="px-4 py-3"><CopyableId :value="sp.id" /></td>
+                <td class="px-4 py-3">
+                  {{ sp.processName || sp.processKey || '—' }}
+                  <span v-if="sp.processVersion" class="ml-1 text-xs text-muted-foreground">v{{ sp.processVersion }}</span>
+                </td>
                 <td class="px-4 py-3">
                   <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', sp.completedAt ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800']">
                     {{ sp.completedAt ? t('completed') : t('running') }}
@@ -419,7 +498,7 @@ watch(activeTab, onTabChange)
                 </td>
               </tr>
               <tr v-if="!processStore.currentSubprocesses.length">
-                <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noSubprocesses') }}</td>
+                <td colspan="6" class="px-4 py-6 text-center text-muted-foreground">{{ t('noSubprocesses') }}</td>
               </tr>
             </tbody>
           </table>
