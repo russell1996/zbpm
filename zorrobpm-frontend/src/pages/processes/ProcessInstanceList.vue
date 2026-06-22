@@ -106,6 +106,7 @@ watch(filterDefId, () => { page.value = 0; load() })
         <thead class="bg-muted">
           <tr>
             <th class="px-4 py-3 text-left font-medium">ID</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('process') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('started') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('completed') }}</th>
@@ -120,6 +121,10 @@ watch(filterDefId, () => { page.value = 0; load() })
           >
             <td class="px-4 py-3"><CopyableId :value="pi.id" /></td>
             <td class="px-4 py-3">
+              <span>{{ pi.processName || pi.processKey || '—' }}</span>
+              <span v-if="pi.processVersion" class="ml-1 text-xs text-muted-foreground">v{{ pi.processVersion }}</span>
+            </td>
+            <td class="px-4 py-3">
               <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', statusClass(pi)]">
                 {{ status(pi) }}
               </span>
@@ -128,7 +133,7 @@ watch(filterDefId, () => { page.value = 0; load() })
             <td class="px-4 py-3 text-muted-foreground">{{ pi.completedAt ? new Date(pi.completedAt).toLocaleString() : '—' }}</td>
           </tr>
           <tr v-if="!store.instances?.data?.length">
-            <td colspan="4" class="px-4 py-8 text-center text-muted-foreground">{{ t('noInstances') }}</td>
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noInstances') }}</td>
           </tr>
         </tbody>
       </table>
