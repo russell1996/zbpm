@@ -150,6 +150,7 @@ public class ActivityServiceImplTests {
         activity.setProcessInstanceId(processInstanceId);
         activity.setBpmnElementId("serviceTask1");
         activity.setToken(token);
+        activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
@@ -194,6 +195,7 @@ public class ActivityServiceImplTests {
         activity.setProcessInstanceId(processInstanceId);
         activity.setBpmnElementId("userTask1");
         activity.setToken(token);
+        activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
@@ -517,6 +519,7 @@ public class ActivityServiceImplTests {
         msgActivity.setProcessInstanceId(processInstanceId);
         msgActivity.setBpmnElementId("msgCatch");
         msgActivity.setToken(token);
+        msgActivity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
         msgActivity.setType(BpmnElementType.MESSAGE_CATCH_EVENT);
 
         com.zorrodev.bpm.engine.dto.MessageSubscription subscription = new com.zorrodev.bpm.engine.dto.MessageSubscription();
@@ -778,6 +781,7 @@ public class ActivityServiceImplTests {
         catchActivity.setProcessInstanceId(processInstanceId);
         catchActivity.setBpmnElementId("catch1");
         catchActivity.setToken(token);
+        catchActivity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
