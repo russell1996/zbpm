@@ -15,6 +15,8 @@ public class ServiceTask {
     private UUID processInstanceId;
     private UUID processDefinitionId;
     private String job;
+    /** Activity lifecycle status: CREATED / IN_PROGRESS / COMPLETED / CANCELLED / ERROR. */
+    private String status;
     private Instant createdAt;
     private Instant completedAt;
 }

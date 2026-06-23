@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
+import { taskStatusBadge } from '@/shared/lib/utils'
 import { Download, CheckSquare, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
@@ -178,8 +179,8 @@ watch(filterCompleted, () => { page.value = 0; load() })
             <td class="px-4 py-3"><CopyableId :value="task.id" /></td>
             <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', task.completedAt ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
-                {{ task.completedAt ? t('completed') : t('active') }}
+              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
+                {{ taskStatusBadge(task.status, task.completedAt).label }}
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ new Date(task.createdAt).toLocaleString() }}</td>
