@@ -1,6 +1,8 @@
 package com.zorrodev.bpm.engine.repository;
 
 import com.zorrodev.bpm.contract.model.BpmnElementStatistics;
+import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -26,9 +28,20 @@ public interface ServiceTaskRepository extends JpaRepository<ServiceTaskEntity, 
         return (root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("id"), id);
     }
 
-    /** completed == true -> completedAt is set; false -> still active (completedAt is null). */
+    /**
+     * Filters by the authoritative activity lifecycle (task id == activity id):
+     * completed == true -> activity COMPLETED; false -> active (CREATED/IN_PROGRESS).
+     * CANCELLED/ERROR tasks are excluded from both (a cancelled task is neither active nor completed).
+     */
     static Specification<ServiceTaskEntity> byCompleted(boolean completed) {
-        return (root, query, cb) -> completed ? cb.isNotNull(root.get("completedAt")) : cb.isNull(root.get("completedAt"));
+        return (root, query, cb) -> {
+            var sub = query.subquery(UUID.class);
+            var act = sub.from(ActivityEntity.class);
+            sub.select(act.get("id")).where(act.get("status").in(completed
+                ? List.of(ActivityStatus.COMPLETED)
+                : List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS)));
+            return root.get("id").in(sub);
+        };
     }
 
     List<ServiceTaskEntity> findByProcessInstanceId(UUID processInstanceId);
