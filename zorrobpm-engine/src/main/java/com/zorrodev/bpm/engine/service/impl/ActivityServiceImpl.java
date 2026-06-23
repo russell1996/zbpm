@@ -1248,9 +1248,11 @@ public class ActivityServiceImpl implements ActivityService {
     @Override
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables) {
         Activity activity = lockAndReload(serviceTaskId);
-        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
-            // already finished, e.g. a redelivered RabbitMQ completion or a boundary-timer
-            // interruption — avoid double execution (the message broker is at-least-once)
+        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
+            // only an active task may complete. Ignore anything else to avoid advancing the token twice:
+            // a redelivered/late RabbitMQ completion (broker is at-least-once), a boundary-timer
+            // interruption (CANCELLED), an already-COMPLETED task, or a task parked on an incident
+            // (ERROR) that was superseded by incident-resolve re-execution.
             log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
             return;
         }
@@ -1602,8 +1604,9 @@ public class ActivityServiceImpl implements ActivityService {
     @Override
     public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables) {
         Activity activity = lockAndReload(userTaskId);
-        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
-            // already finished, e.g. interrupted by a boundary timer — avoid double execution
+        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
+            // only an active task may complete — ignore a duplicate/late completion, a boundary-timer
+            // interruption (CANCELLED) or a task superseded by incident-resolve (ERROR) to avoid double execution
             log.info("Ignoring completion of user task {} in status {}", userTaskId, activity.getStatus());
             return;
         }
@@ -1636,9 +1639,9 @@ public class ActivityServiceImpl implements ActivityService {
     @Override
     public void signal(UUID activityId, List<ProcessVariable> variables) {
         Activity activity = lockAndReload(activityId);
-        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
-            // already resumed, e.g. a timer that fired twice or a message correlated concurrently —
-            // avoid double execution of the waiting element's outgoing flows
+        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
+            // only an active waiting element may be resumed — ignore a timer that fired twice, a
+            // concurrently-correlated message, or an element superseded by incident-resolve (ERROR)
             log.info("Ignoring signal of {} in status {}", activityId, activity.getStatus());
             return;
         }
@@ -1907,6 +1910,11 @@ public class ActivityServiceImpl implements ActivityService {
             dbService.setVariables(activity.getProcessInstanceId(), variables);
         }
         dbService.completeIncident(incidentId);
+
+        // Cancel the parked (ERROR) activity before re-executing: re-execution creates a fresh active
+        // activity, and cancelling the old one ensures a late/duplicate worker completion of its in-flight
+        // job is ignored (completeServiceTask only acts on active tasks) instead of advancing the token again.
+        dbService.cancelActivity(incident.getActivityId());
 
         log.info("{}/{}: Resolving incident {} at {}: re-executing", activity.getProcessInstanceId(), activity.getToken(), incidentId, activity.getBpmnElementId());
         execute(activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId());
