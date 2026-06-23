@@ -30,6 +30,8 @@ export interface ProcessInstance {
   completedAt: string | null
 }
 
+export type ActivityLifecycleStatus = 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'ERROR'
+
 export interface UserTask {
   id: string
   code: string | null
@@ -37,6 +39,7 @@ export interface UserTask {
   processInstanceId: string
   processDefinitionId: string
   formKey: string | null
+  status: ActivityLifecycleStatus | null
   createdAt: string
   completedAt: string | null
 }
@@ -48,6 +51,7 @@ export interface ServiceTask {
   processInstanceId: string
   processDefinitionId: string
   job: string
+  status: ActivityLifecycleStatus | null
   createdAt: string
   completedAt: string | null
 }
