@@ -9,6 +9,7 @@ import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
 import type { ProcessVariable, BpmnNode } from '@/types/api'
+import { taskStatusBadge, isTaskActive } from '@/shared/lib/utils'
 import { RefreshCw, ArrowRight } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
@@ -67,7 +68,7 @@ function goToElementTab(tab: typeof activeTab.value) {
 
 const showCompleteModal = ref(false)
 const completingTaskId = ref('')
-const completingTaskType = ref<'user' | 'service'>('user')
+const completingTaskType = ref<'user' | 'service' | 'resolve'>('user')
 const completeVars = ref<{ name: string; type: string; value: string }[]>([])
 const newVarName = ref('')
 const newVarType = ref('STRING')
@@ -89,26 +90,45 @@ function openCompleteModal(taskId: string, type: 'user' | 'service') {
   completingTaskId.value = taskId
   completingTaskType.value = type
   completeVars.value = []
+  newVarName.value = ''
+  newVarValue.value = ''
+  showCompleteModal.value = true
+}
+
+function openResolveModal(incidentId: string) {
+  completingTaskId.value = incidentId
+  completingTaskType.value = 'resolve'
+  completeVars.value = []
+  newVarName.value = ''
+  newVarValue.value = ''
   showCompleteModal.value = true
 }
 
 async function confirmComplete() {
+  // flush a variable that was typed but not yet "added" — otherwise it would be silently dropped
+  if (newVarName.value) addVariable()
   const variables: ProcessVariable[] = completeVars.value.map((v) => ({
     name: v.name,
     type: v.type as ProcessVariable['type'],
     value: v.value,
   }))
+  let error: string | null
   if (completingTaskType.value === 'user') {
     await taskStore.completeUserTask(completingTaskId.value, variables)
-  } else {
+    error = taskStore.error
+  } else if (completingTaskType.value === 'service') {
     await taskStore.completeServiceTask(completingTaskId.value, variables)
-  }
-  if (!taskStore.error) {
-    toast.success('Task completed')
-    showCompleteModal.value = false
-    await loadTabData()
+    error = taskStore.error
   } else {
-    toast.error(taskStore.error)
+    await incidentStore.resolveIncident(completingTaskId.value, variables)
+    error = incidentStore.error
+  }
+  if (!error) {
+    toast.success(completingTaskType.value === 'resolve' ? 'Incident resolved' : 'Task completed')
+    showCompleteModal.value = false
+    await reloadAll()
+  } else {
+    toast.error(error)
   }
 }
 
@@ -161,6 +181,7 @@ async function reloadAll() {
   const pi = processStore.currentInstance
   if (!pi) return
   bpmnXml.value = ''
+  await processStore.fetchInstance(pi.id) // refresh the instance itself so its status badge updates
   await loadTabData()
   await loadBpmnXml()
 }
@@ -338,15 +359,15 @@ watch(activeTab, onTabChange)
                 <td class="px-4 py-3"><CopyableId :value="task.id" /></td>
                 <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', task.completedAt ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
-                    {{ task.completedAt ? t('completed') : t('active') }}
+                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
+                    {{ taskStatusBadge(task.status, task.completedAt).label }}
                   </span>
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ new Date(task.createdAt).toLocaleString() }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? new Date(task.completedAt).toLocaleString() : '—' }}</td>
                 <td class="px-4 py-3">
                   <button
-                    v-if="!task.completedAt"
+                    v-if="isTaskActive(task.status, task.completedAt)"
                     class="text-sm text-primary hover:underline"
                     @click.stop="openCompleteModal(task.id, 'user')"
                   >
@@ -380,15 +401,15 @@ watch(activeTab, onTabChange)
                 <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
                 <td class="px-4 py-3 font-mono text-xs">{{ task.job }}</td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', task.completedAt ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
-                    {{ task.completedAt ? t('completed') : t('active') }}
+                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
+                    {{ taskStatusBadge(task.status, task.completedAt).label }}
                   </span>
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ new Date(task.createdAt).toLocaleString() }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? new Date(task.completedAt).toLocaleString() : '—' }}</td>
                 <td class="px-4 py-3">
                   <button
-                    v-if="!task.completedAt"
+                    v-if="isTaskActive(task.status, task.completedAt)"
                     class="text-sm text-primary hover:underline"
                     @click.stop="openCompleteModal(task.id, 'service')"
                   >
@@ -412,6 +433,7 @@ watch(activeTab, onTabChange)
                 <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('completedAt') }}</th>
+                <th class="px-4 py-3 text-left font-medium"></th>
               </tr>
             </thead>
             <tbody>
@@ -425,9 +447,18 @@ watch(activeTab, onTabChange)
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ new Date(inc.createdAt).toLocaleString() }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? new Date(inc.completedAt).toLocaleString() : '—' }}</td>
+                <td class="px-4 py-3">
+                  <button
+                    v-if="!inc.completedAt"
+                    class="text-sm text-primary hover:underline"
+                    @click.stop="openResolveModal(inc.id)"
+                  >
+                    {{ t('resolveAction') }}
+                  </button>
+                </td>
               </tr>
               <tr v-if="!incidentStore.incidents?.data?.length">
-                <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noIncidentsInTab') }}</td>
+                <td colspan="6" class="px-4 py-6 text-center text-muted-foreground">{{ t('noIncidentsInTab') }}</td>
               </tr>
             </tbody>
           </table>
@@ -512,7 +543,7 @@ watch(activeTab, onTabChange)
       @click.self="showCompleteModal = false"
     >
       <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-        <h2 class="text-lg font-bold">{{ t('completeTask') }}</h2>
+        <h2 class="text-lg font-bold">{{ completingTaskType === 'resolve' ? t('resolveIncidentTitle') : t('completeTask') }}</h2>
         <div class="space-y-3">
           <div v-for="(v, i) in completeVars" :key="i" class="flex items-center gap-2 text-sm">
             <span class="font-mono">{{ v.name }}</span>
@@ -520,20 +551,29 @@ watch(activeTab, onTabChange)
             <span>= {{ v.value }}</span>
             <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
           </div>
-          <div class="flex items-center gap-2">
-            <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm w-24" />
+          <div class="grid grid-cols-[6rem_5.5rem_1fr] gap-2">
+            <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
             <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
               <option>STRING</option>
               <option>LONG</option>
+              <option>DOUBLE</option>
               <option>BOOLEAN</option>
             </select>
-            <input v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm flex-1" />
-            <button class="text-sm text-primary hover:underline" @click="addVariable">{{ t('add') }}</button>
+            <input v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
           </div>
+          <button
+            class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
+            :disabled="!newVarName"
+            @click="addVariable"
+          >
+            + {{ t('addVariable') }}
+          </button>
         </div>
         <div class="flex justify-end gap-2 pt-2">
           <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showCompleteModal = false">{{ t('cancelAction') }}</button>
-          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="confirmComplete">{{ t('confirm') }}</button>
+          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="confirmComplete">
+            {{ completingTaskType === 'resolve' ? t('resolveAction') : t('confirm') }}
+          </button>
         </div>
       </div>
     </div>
