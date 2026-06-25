@@ -110,6 +110,7 @@ export interface BpmnNode {
   name: string | null
   type: string
   eventDefinition: string | null
+  documentation: string | null
   incoming: string[]
   outgoing: string[]
   properties: Record<string, unknown>
