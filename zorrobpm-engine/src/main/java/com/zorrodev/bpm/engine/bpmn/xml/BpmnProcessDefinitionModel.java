@@ -19,6 +19,9 @@ public class BpmnProcessDefinitionModel {
     private String name;
     @XmlAttribute
     private Boolean isExecutable;
+    /** Process-level BPMN &lt;documentation&gt; (e.g. a link to requirements). */
+    @XmlElement(name = "documentation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private String documentation;
     @XmlElement(name = "startEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnStartEventModel> startEvents;
     @XmlElement(name = "endEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")

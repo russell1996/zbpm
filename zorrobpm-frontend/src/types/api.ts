@@ -131,6 +131,7 @@ export interface BpmnProcessStructure {
   key: string
   version: number
   name: string
+  documentation: string | null
   nodes: BpmnNode[]
   flows: BpmnFlow[]
 }

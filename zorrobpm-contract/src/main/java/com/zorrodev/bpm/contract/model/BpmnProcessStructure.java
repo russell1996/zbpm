@@ -21,6 +21,8 @@ public class BpmnProcessStructure {
     private String key;
     private Integer version;
     private String name;
+    /** Process-level BPMN documentation (shown as overall requirements). */
+    private String documentation;
     private List<BpmnNode> nodes = new ArrayList<>();
     private List<BpmnFlow> flows = new ArrayList<>();
 }
