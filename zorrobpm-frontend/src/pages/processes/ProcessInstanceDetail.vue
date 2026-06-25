@@ -32,6 +32,17 @@ const completedElementIds = computed(() =>
   processStore.currentActivities.filter((a) => a.status === 'COMPLETED').map((a) => a.bpmnElementId))
 const incidentElementIds = computed(() =>
   processStore.currentActivities.filter((a) => a.status === 'ERROR').map((a) => a.bpmnElementId))
+
+// Camunda-style token counts: number of active tokens sitting on each element
+const elementCounts = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = {}
+  for (const a of processStore.currentActivities) {
+    if (a.status === 'CREATED' || a.status === 'IN_PROGRESS') {
+      counts[a.bpmnElementId] = (counts[a.bpmnElementId] || 0) + 1
+    }
+  }
+  return counts
+})
 const tabLoading = ref(false)
 
 // --- selected BPMN element: properties + cross-links to the relevant tab ---
@@ -272,6 +283,7 @@ watch(activeTab, onTabChange)
                 :active-element-ids="activeElementIds"
                 :incident-element-ids="incidentElementIds"
                 :completed-element-ids="completedElementIds"
+                :element-counts="elementCounts"
                 style="height: 500px;"
                 @element-click="selectedElement = $event"
               />
