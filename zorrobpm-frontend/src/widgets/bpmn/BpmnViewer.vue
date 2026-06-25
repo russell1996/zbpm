@@ -102,11 +102,12 @@ function applyHighlights() {
 
 function setupClickHandler() {
   if (!viewer) return
-  const eventBus = viewer.get('eventBus') as { on: (event: string, fn: (e: { element?: { id: string } }) => void) => void }
-  eventBus.on('element.click', (e: { element?: { id: string } }) => {
-    if (e.element?.id) {
-      emit('elementClick', e.element.id)
-    }
+  const eventBus = viewer.get('eventBus') as { on: (event: string, fn: (e: { element?: { id: string; labelTarget?: { id: string } } }) => void) => void }
+  eventBus.on('element.click', (e: { element?: { id: string; labelTarget?: { id: string } } }) => {
+    if (!e.element) return
+    // clicking a text label yields the "<id>_label" element — resolve it to the real element
+    const id = e.element.labelTarget?.id || e.element.id
+    if (id) emit('elementClick', id)
   })
 }
 
@@ -156,24 +157,35 @@ onUnmounted(() => { viewer?.destroy() })
 </template>
 
 <style scoped>
-.bpmn-container :deep(.djs-element.highlight-active .djs-visual rect),
-.bpmn-container :deep(.djs-element.highlight-active .djs-visual path) {
+/* shapes (tasks/events/gateways): stroke + light fill */
+.bpmn-container :deep(.djs-shape.highlight-active .djs-visual > :is(rect, path, circle, polygon)) {
   stroke: #3b82f6 !important;
   stroke-width: 3px;
   filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.5));
 }
-
-.bpmn-container :deep(.djs-element.highlight-completed .djs-visual rect),
-.bpmn-container :deep(.djs-element.highlight-completed .djs-visual path) {
+.bpmn-container :deep(.djs-shape.highlight-completed .djs-visual > :is(rect, path, circle, polygon)) {
   stroke: #22c55e !important;
   fill: #f0fdf4 !important;
 }
-
-.bpmn-container :deep(.djs-element.highlight-incident .djs-visual rect),
-.bpmn-container :deep(.djs-element.highlight-incident .djs-visual path) {
+.bpmn-container :deep(.djs-shape.highlight-incident .djs-visual > :is(rect, path, circle, polygon)) {
   stroke: #ef4444 !important;
   fill: #fef2f2 !important;
   animation: pulse-red 2s infinite;
+}
+
+/* connections (sequence flows): stroke only — never fill an open path, that overlaps neighbours */
+.bpmn-container :deep(.djs-connection.highlight-active .djs-visual path) {
+  stroke: #3b82f6 !important;
+  stroke-width: 2.5px;
+  fill: none !important;
+}
+.bpmn-container :deep(.djs-connection.highlight-completed .djs-visual path) {
+  stroke: #22c55e !important;
+  fill: none !important;
+}
+.bpmn-container :deep(.djs-connection.highlight-incident .djs-visual path) {
+  stroke: #ef4444 !important;
+  fill: none !important;
 }
 
 @keyframes pulse-red {
