@@ -68,6 +68,9 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         structure.setKey(definition.get().getKey());
         structure.setVersion(definition.get().getVersion());
         structure.setName(definition.get().getName());
+        if (process.getDocumentation() != null && !process.getDocumentation().isBlank()) {
+            structure.setDocumentation(process.getDocumentation().trim());
+        }
 
         List<BpmnNode> nodes = structure.getNodes();
         collectProcessNodes(process, refs, nodes);
