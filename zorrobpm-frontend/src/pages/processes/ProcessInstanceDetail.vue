@@ -8,7 +8,7 @@ import { useIncidentStore } from '@/stores/incident'
 import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
-import type { ProcessVariable, BpmnNode } from '@/types/api'
+import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import { taskStatusBadge, isTaskActive } from '@/shared/lib/utils'
 import { RefreshCw, ArrowRight } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
@@ -28,10 +28,16 @@ const selectedElement = ref<string | null>(null)
 // BPMN element highlighting derived from the instance activity history
 const activeElementIds = computed(() =>
   processStore.currentActivities.filter((a) => a.status === 'CREATED' || a.status === 'IN_PROGRESS').map((a) => a.bpmnElementId))
-const completedElementIds = computed(() =>
-  processStore.currentActivities.filter((a) => a.status === 'COMPLETED').map((a) => a.bpmnElementId))
 const incidentElementIds = computed(() =>
   processStore.currentActivities.filter((a) => a.status === 'ERROR').map((a) => a.bpmnElementId))
+// completed shown only where the element isn't currently active/incident, so a re-entered (looped)
+// element shows as active (blue) rather than completed (green)
+const completedElementIds = computed(() => {
+  const busy = new Set([...activeElementIds.value, ...incidentElementIds.value])
+  return processStore.currentActivities
+    .filter((a) => a.status === 'COMPLETED' && !busy.has(a.bpmnElementId))
+    .map((a) => a.bpmnElementId)
+})
 
 // Camunda-style token counts: number of active tokens sitting on each element
 const elementCounts = computed<Record<string, number>>(() => {
@@ -65,6 +71,10 @@ const selectedNode = computed<BpmnNode | null>(() => {
 
 const selectedNodeProps = computed(() =>
   selectedNode.value ? Object.entries(selectedNode.value.properties || {}) : [])
+const selectedFlow = computed<BpmnFlow | null>(() =>
+  selectedElement.value && !selectedNode.value && processStore.currentStructure
+    ? (processStore.currentStructure.flows.find((f) => f.id === selectedElement.value) || null)
+    : null)
 
 const selectedHasUserTask = computed(() =>
   !!selectedElement.value && (taskStore.userTasks?.data || []).some((tk) => tk.code === selectedElement.value))
@@ -324,7 +334,27 @@ watch(activeTab, onTabChange)
                   <span class="ml-1 font-mono break-all">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
                 </div>
               </div>
-              <div v-else class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('properties') }}: —</div>
+
+              <!-- node documentation -->
+              <div v-if="selectedNode?.documentation" class="pt-2 border-t border-border space-y-1">
+                <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('properties') }}</h4>
+                <p class="text-xs whitespace-pre-wrap break-words">{{ selectedNode.documentation }}</p>
+              </div>
+
+              <!-- sequence flow: name, source -> target, FEEL condition -->
+              <template v-if="selectedFlow">
+                <div class="text-sm space-y-1">
+                  <div v-if="selectedFlow.name"><span class="text-muted-foreground">{{ t('name') }}:</span> {{ selectedFlow.name }}</div>
+                  <div class="text-xs text-muted-foreground font-mono">{{ selectedFlow.sourceRef }} → {{ selectedFlow.targetRef }}</div>
+                </div>
+                <div class="pt-2 border-t border-border space-y-1">
+                  <h4 class="text-xs font-semibold text-muted-foreground uppercase">Condition (FEEL)</h4>
+                  <p v-if="selectedFlow.conditionExpression" class="text-xs font-mono break-all bg-muted rounded px-2 py-1">{{ selectedFlow.conditionExpression }}</p>
+                  <p v-else class="text-xs text-muted-foreground">No condition (default / unconditional).</p>
+                </div>
+              </template>
+
+              <div v-if="!selectedNode && !selectedFlow" class="pt-2 border-t border-border text-xs text-muted-foreground">No details for this element.</div>
             </div>
           </div>
           <div v-else class="p-6 text-sm text-muted-foreground">{{ t('bpmnNotAvailable') }}</div>
