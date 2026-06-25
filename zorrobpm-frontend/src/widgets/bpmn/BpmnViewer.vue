@@ -8,6 +8,8 @@ const props = defineProps<{
   activeElementIds?: string[]
   incidentElementIds?: string[]
   completedElementIds?: string[]
+  /** Camunda Operate-style token counts shown as a badge on top of each element. */
+  elementCounts?: Record<string, number>
 }>()
 
 const emit = defineEmits<{
@@ -34,9 +36,32 @@ async function render() {
     canvas.zoom('fit-viewport')
 
     applyHighlights()
+    applyCountOverlays()
     setupClickHandler()
   } catch (err) {
     console.error('Failed to render BPMN:', err)
+  }
+}
+
+// Camunda Operate-style token-count badges on top of elements that hold active tokens
+function applyCountOverlays() {
+  if (!viewer) return
+  const overlays = viewer.get('overlays') as {
+    add: (id: string, type: string, opts: { position: object; html: string }) => void
+    remove: (filter: { type: string }) => void
+  }
+  overlays.remove({ type: 'token-count' })
+  if (!props.elementCounts) return
+  for (const [id, count] of Object.entries(props.elementCounts)) {
+    if (!count) continue
+    try {
+      overlays.add(id, 'token-count', {
+        position: { top: -14, right: 14 },
+        html: `<div class="bpmn-token-count" title="${count} active">${count}</div>`,
+      })
+    } catch {
+      // element id not present in this diagram — ignore
+    }
   }
 }
 
@@ -107,6 +132,7 @@ watch(() => props.xml, () => { render() })
 watch(() => props.activeElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.incidentElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.completedElementIds, () => { applyHighlights() }, { deep: true })
+watch(() => props.elementCounts, () => { applyCountOverlays() }, { deep: true })
 
 onMounted(() => { render() })
 onUnmounted(() => { viewer?.destroy() })
@@ -153,5 +179,25 @@ onUnmounted(() => { viewer?.destroy() })
 @keyframes pulse-red {
   0%, 100% { filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.3)); }
   50% { filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.6)); }
+}
+</style>
+
+<!-- not scoped: bpmn-js overlay HTML is injected outside this component's scope -->
+<style>
+.bpmn-token-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  border: 2px solid #fff;
 }
 </style>

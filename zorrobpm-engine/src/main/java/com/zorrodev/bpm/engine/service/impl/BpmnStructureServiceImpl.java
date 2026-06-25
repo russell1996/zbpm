@@ -73,8 +73,49 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         collectProcessNodes(process, refs, nodes);
         structure.setFlows(mapFlows(process.getFlows()));
         attachBoundaryEvents(process.getBoundaryEvents(), refs, nodes);
+        applyDocumentation(process, nodes);
 
         return Optional.of(structure);
+    }
+
+    /** Surfaces BPMN &lt;documentation&gt; per element (id -> text) onto the built nodes (incl. boundaries/children). */
+    private void applyDocumentation(BpmnProcessDefinitionModel process, List<BpmnNode> nodes) {
+        Map<String, String> docs = new HashMap<>();
+        addDocs(process.getStartEvents(), docs);
+        addDocs(process.getEndEvents(), docs);
+        addDocs(process.getServiceTasks(), docs);
+        addDocs(process.getSendTasks(), docs);
+        addDocs(process.getReceiveTasks(), docs);
+        addDocs(process.getUserTasks(), docs);
+        addDocs(process.getExclusiveGateways(), docs);
+        addDocs(process.getParallelGateways(), docs);
+        addDocs(process.getCallActivities(), docs);
+        // catch/throw/sub-process/boundary models don't share BpmnBaseElementModel; documentation on
+        // those element kinds is not collected (tasks/events/gateways/call activities are the common carriers)
+        setDocs(nodes, docs);
+    }
+
+    private void addDocs(List<? extends BpmnBaseElementModel> list, Map<String, String> docs) {
+        if (list == null) {
+            return;
+        }
+        for (BpmnBaseElementModel e : list) {
+            if (e.getId() != null && e.getDocumentation() != null && !e.getDocumentation().isBlank()) {
+                docs.put(e.getId(), e.getDocumentation().trim());
+            }
+        }
+    }
+
+    private void setDocs(List<BpmnNode> nodes, Map<String, String> docs) {
+        for (BpmnNode n : nodes) {
+            n.setDocumentation(docs.get(n.getId()));
+            for (BpmnNode b : n.getBoundaryEvents()) {
+                b.setDocumentation(docs.get(b.getId()));
+            }
+            if (n.getChildren() != null) {
+                setDocs(n.getChildren().getNodes(), docs);
+            }
+        }
     }
 
     private Refs buildRefs(BpmnDefinitionsModel definitions) {

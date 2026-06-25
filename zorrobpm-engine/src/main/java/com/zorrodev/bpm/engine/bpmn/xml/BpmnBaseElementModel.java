@@ -21,4 +21,7 @@ public class BpmnBaseElementModel {
     private List<String> outgoing;
     @XmlElement(name = "incoming", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<String> incoming;
+    /** BPMN &lt;documentation&gt; text — surfaced in the UI as element "requirements". */
+    @XmlElement(name = "documentation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private String documentation;
 }

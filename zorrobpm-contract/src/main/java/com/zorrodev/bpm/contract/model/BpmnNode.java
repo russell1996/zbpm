@@ -30,6 +30,8 @@ public class BpmnNode {
     private String name;
     private String type;
     private String eventDefinition;
+    /** BPMN documentation text, surfaced in the UI as element "requirements". */
+    private String documentation;
     private List<String> incoming = new ArrayList<>();
     private List<String> outgoing = new ArrayList<>();
     private Map<String, Object> properties = new LinkedHashMap<>();

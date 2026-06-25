@@ -1,20 +1,54 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
+import type { BpmnNode } from '@/types/api'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useProcessStore()
 
 const bpmnXml = ref('')
+const selectedElement = ref<string | null>(null)
 const showStartModal = ref(false)
 const startVars = ref<{ name: string; type: string; value: string }[]>([])
 const newVarName = ref('')
 const newVarType = ref('STRING')
 const newVarValue = ref('')
+
+// --- BPMN breakdown: find / flatten nodes from the parsed structure ---
+function findNode(nodes: BpmnNode[], id: string): BpmnNode | null {
+  for (const n of nodes) {
+    if (n.id === id) return n
+    for (const b of n.boundaryEvents || []) if (b.id === id) return b
+    if (n.children) {
+      const found = findNode(n.children.nodes, id)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+function flatten(nodes: BpmnNode[]): BpmnNode[] {
+  const out: BpmnNode[] = []
+  for (const n of nodes) {
+    out.push(n)
+    for (const b of n.boundaryEvents || []) out.push(b)
+    if (n.children) out.push(...flatten(n.children.nodes))
+  }
+  return out
+}
+
+const allNodes = computed(() => (store.currentStructure ? flatten(store.currentStructure.nodes) : []))
+const selectedNode = computed<BpmnNode | null>(() =>
+  selectedElement.value && store.currentStructure ? findNode(store.currentStructure.nodes, selectedElement.value) : null)
+const selectedNodeProps = computed(() =>
+  selectedNode.value ? Object.entries(selectedNode.value.properties || {}) : [])
+// every element that carries BPMN <documentation>, surfaced as "requirements"
+const requirements = computed(() => allNodes.value.filter((n) => n.documentation))
 
 function addVariable() {
   if (newVarName.value) {
@@ -29,11 +63,12 @@ function removeVariable(index: number) {
 }
 
 async function startProcess() {
+  if (newVarName.value) addVariable()
   const id = await store.startInstance({
     processDefinitionId: route.params.id as string,
     variables: startVars.value.map((v) => ({
       name: v.name,
-      type: v.type as 'STRING' | 'LONG' | 'BOOLEAN',
+      type: v.type as 'STRING' | 'LONG' | 'DOUBLE' | 'BOOLEAN',
       value: v.value,
     })),
   })
@@ -93,21 +128,76 @@ function openVersion(id: string) {
       <div v-if="bpmnXml" class="border border-border rounded-lg bg-card">
         <div class="px-4 py-3 border-b border-border">
           <h2 class="text-lg font-bold">BPMN Process</h2>
+          <p class="text-xs text-muted-foreground">Click an element to inspect its configuration (conditions, FEEL, job type, forms…)</p>
         </div>
-        <BpmnViewer :xml="bpmnXml" style="height: 500px;" />
+        <div class="flex">
+          <div class="flex-1">
+            <BpmnViewer :xml="bpmnXml" style="height: 500px;" @element-click="selectedElement = $event" />
+          </div>
+          <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto" style="max-height: 540px;">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold">Element</h3>
+              <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">Close</button>
+            </div>
+            <div class="text-sm space-y-1">
+              <div v-if="selectedNode?.name"><span class="text-muted-foreground">Name:</span> {{ selectedNode.name }}</div>
+              <div v-if="selectedNode?.type">
+                <span class="text-muted-foreground">Type:</span>
+                <span class="ml-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ selectedNode.type }}<template v-if="selectedNode.eventDefinition">/{{ selectedNode.eventDefinition }}</template></span>
+              </div>
+              <div><span class="text-muted-foreground">ID:</span> <CopyableId :value="selectedElement" /></div>
+            </div>
+
+            <div v-if="selectedNodeProps.length" class="pt-2 border-t border-border space-y-1.5">
+              <h4 class="text-xs font-semibold text-muted-foreground uppercase">Configuration</h4>
+              <div v-for="[k, v] in selectedNodeProps" :key="k" class="text-xs">
+                <span class="text-muted-foreground font-mono">{{ k }}:</span>
+                <span class="ml-1 font-mono break-all">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
+              </div>
+            </div>
+
+            <div v-if="selectedNode?.documentation" class="pt-2 border-t border-border space-y-1">
+              <h4 class="text-xs font-semibold text-muted-foreground uppercase">Requirements</h4>
+              <p class="text-xs whitespace-pre-wrap">{{ selectedNode.documentation }}</p>
+            </div>
+            <div v-if="!selectedNodeProps.length && !selectedNode?.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">No configuration.</div>
+          </div>
+        </div>
       </div>
 
       <div v-else-if="store.currentStructure" class="border border-border rounded-lg p-6 bg-card">
         <h2 class="text-lg font-bold mb-4">BPMN Structure</h2>
         <div class="space-y-2">
           <div v-for="node in store.currentStructure.nodes" :key="node.id" class="flex items-center gap-3 text-sm">
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">
-              {{ node.type }}
-            </span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ node.type }}</span>
             <span class="font-mono">{{ node.id }}</span>
             <span v-if="node.name" class="text-muted-foreground">— {{ node.name }}</span>
           </div>
         </div>
+      </div>
+
+      <!-- Requirements: every element's BPMN documentation -->
+      <div v-if="requirements.length" class="border border-border rounded-lg overflow-hidden bg-card">
+        <div class="px-4 py-3 border-b border-border">
+          <h2 class="text-lg font-bold">Requirements</h2>
+          <p class="text-xs text-muted-foreground">Extracted from BPMN element documentation</p>
+        </div>
+        <table class="w-full text-sm">
+          <thead class="bg-muted">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium">Element</th>
+              <th class="px-4 py-3 text-left font-medium">Type</th>
+              <th class="px-4 py-3 text-left font-medium">Requirement</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="n in requirements" :key="n.id" class="border-t border-border align-top">
+              <td class="px-4 py-3">{{ n.name || n.id }}</td>
+              <td class="px-4 py-3"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ n.type }}</span></td>
+              <td class="px-4 py-3 whitespace-pre-wrap">{{ n.documentation }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div v-if="store.currentVersions.length > 1" class="border border-border rounded-lg overflow-hidden bg-card">
@@ -155,16 +245,23 @@ function openVersion(id: string) {
             <span>= {{ v.value }}</span>
             <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">Remove</button>
           </div>
-          <div class="flex items-center gap-2">
-            <input v-model="newVarName" placeholder="name" class="px-2 py-1 border border-input rounded text-sm w-24" />
+          <div class="grid grid-cols-[6rem_5.5rem_1fr] gap-2">
+            <input v-model="newVarName" placeholder="name" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
             <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
               <option>STRING</option>
               <option>LONG</option>
+              <option>DOUBLE</option>
               <option>BOOLEAN</option>
             </select>
-            <input v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm flex-1" />
-            <button class="text-sm text-primary hover:underline" @click="addVariable">Add</button>
+            <input v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
           </div>
+          <button
+            class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
+            :disabled="!newVarName"
+            @click="addVariable"
+          >
+            + Add variable
+          </button>
         </div>
         <div class="flex justify-end gap-2 pt-2">
           <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showStartModal = false">Cancel</button>
