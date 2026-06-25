@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
-import type { BpmnNode } from '@/types/api'
+import type { BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
@@ -47,6 +47,11 @@ const selectedNode = computed<BpmnNode | null>(() =>
   selectedElement.value && store.currentStructure ? findNode(store.currentStructure.nodes, selectedElement.value) : null)
 const selectedNodeProps = computed(() =>
   selectedNode.value ? Object.entries(selectedNode.value.properties || {}) : [])
+// clicking a sequence flow (arrow) -> show its FEEL condition / source / target
+const selectedFlow = computed<BpmnFlow | null>(() =>
+  selectedElement.value && !selectedNode.value && store.currentStructure
+    ? (store.currentStructure.flows.find((f) => f.id === selectedElement.value) || null)
+    : null)
 // every element that carries BPMN <documentation>, surfaced as "requirements"
 const requirements = computed(() => allNodes.value.filter((n) => n.documentation))
 
@@ -136,31 +141,52 @@ function openVersion(id: string) {
           </div>
           <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto" style="max-height: 540px;">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-bold">Element</h3>
+              <h3 class="text-sm font-bold">{{ selectedFlow ? 'Sequence flow' : 'Element' }}</h3>
               <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">Close</button>
             </div>
-            <div class="text-sm space-y-1">
-              <div v-if="selectedNode?.name"><span class="text-muted-foreground">Name:</span> {{ selectedNode.name }}</div>
-              <div v-if="selectedNode?.type">
-                <span class="text-muted-foreground">Type:</span>
-                <span class="ml-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ selectedNode.type }}<template v-if="selectedNode.eventDefinition">/{{ selectedNode.eventDefinition }}</template></span>
-              </div>
-              <div><span class="text-muted-foreground">ID:</span> <CopyableId :value="selectedElement" /></div>
-            </div>
 
-            <div v-if="selectedNodeProps.length" class="pt-2 border-t border-border space-y-1.5">
-              <h4 class="text-xs font-semibold text-muted-foreground uppercase">Configuration</h4>
-              <div v-for="[k, v] in selectedNodeProps" :key="k" class="text-xs">
-                <span class="text-muted-foreground font-mono">{{ k }}:</span>
-                <span class="ml-1 font-mono break-all">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
+            <!-- node -->
+            <template v-if="selectedNode">
+              <div class="text-sm space-y-1">
+                <div v-if="selectedNode.name"><span class="text-muted-foreground">Name:</span> {{ selectedNode.name }}</div>
+                <div v-if="selectedNode.type">
+                  <span class="text-muted-foreground">Type:</span>
+                  <span class="ml-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ selectedNode.type }}<template v-if="selectedNode.eventDefinition">/{{ selectedNode.eventDefinition }}</template></span>
+                </div>
+                <div><span class="text-muted-foreground">ID:</span> <CopyableId :value="selectedElement" /></div>
               </div>
-            </div>
+              <div v-if="selectedNodeProps.length" class="pt-2 border-t border-border space-y-1.5">
+                <h4 class="text-xs font-semibold text-muted-foreground uppercase">Configuration</h4>
+                <div v-for="[k, v] in selectedNodeProps" :key="k" class="text-xs">
+                  <span class="text-muted-foreground font-mono">{{ k }}:</span>
+                  <span class="ml-1 font-mono break-all">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
+                </div>
+              </div>
+              <div v-if="selectedNode.documentation" class="pt-2 border-t border-border space-y-1">
+                <h4 class="text-xs font-semibold text-muted-foreground uppercase">Requirements</h4>
+                <p class="text-xs whitespace-pre-wrap break-words">{{ selectedNode.documentation }}</p>
+              </div>
+              <div v-if="!selectedNodeProps.length && !selectedNode.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">No configuration.</div>
+            </template>
 
-            <div v-if="selectedNode?.documentation" class="pt-2 border-t border-border space-y-1">
-              <h4 class="text-xs font-semibold text-muted-foreground uppercase">Requirements</h4>
-              <p class="text-xs whitespace-pre-wrap">{{ selectedNode.documentation }}</p>
+            <!-- sequence flow -->
+            <template v-else-if="selectedFlow">
+              <div class="text-sm space-y-1">
+                <div v-if="selectedFlow.name"><span class="text-muted-foreground">Name:</span> {{ selectedFlow.name }}</div>
+                <div><span class="text-muted-foreground">ID:</span> <CopyableId :value="selectedElement" /></div>
+                <div class="text-xs text-muted-foreground font-mono">{{ selectedFlow.sourceRef }} → {{ selectedFlow.targetRef }}</div>
+              </div>
+              <div class="pt-2 border-t border-border space-y-1">
+                <h4 class="text-xs font-semibold text-muted-foreground uppercase">Condition (FEEL)</h4>
+                <p v-if="selectedFlow.conditionExpression" class="text-xs font-mono break-all bg-muted rounded px-2 py-1">{{ selectedFlow.conditionExpression }}</p>
+                <p v-else class="text-xs text-muted-foreground">No condition (default / unconditional flow).</p>
+              </div>
+            </template>
+
+            <div v-else class="text-xs text-muted-foreground">
+              <div><span class="text-muted-foreground">ID:</span> {{ selectedElement }}</div>
+              <p class="mt-1">No details for this element.</p>
             </div>
-            <div v-if="!selectedNodeProps.length && !selectedNode?.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">No configuration.</div>
           </div>
         </div>
       </div>
@@ -176,13 +202,18 @@ function openVersion(id: string) {
         </div>
       </div>
 
-      <!-- Requirements: every element's BPMN documentation -->
-      <div v-if="requirements.length" class="border border-border rounded-lg overflow-hidden bg-card">
+      <!-- Requirements: process-level + per-element BPMN documentation -->
+      <div v-if="requirements.length || store.currentStructure?.documentation" class="border border-border rounded-lg overflow-hidden bg-card">
         <div class="px-4 py-3 border-b border-border">
           <h2 class="text-lg font-bold">Requirements</h2>
-          <p class="text-xs text-muted-foreground">Extracted from BPMN element documentation</p>
+          <p class="text-xs text-muted-foreground">Extracted from BPMN documentation</p>
         </div>
-        <table class="w-full text-sm">
+        <div v-if="store.currentStructure?.documentation" class="px-4 py-3 border-b border-border text-sm">
+          <div class="text-xs font-semibold text-muted-foreground uppercase mb-1">Process</div>
+          <a v-if="/^https?:\/\//.test(store.currentStructure.documentation)" :href="store.currentStructure.documentation" target="_blank" rel="noopener" class="text-primary hover:underline break-all">{{ store.currentStructure.documentation }}</a>
+          <p v-else class="whitespace-pre-wrap break-words">{{ store.currentStructure.documentation }}</p>
+        </div>
+        <table v-if="requirements.length" class="w-full text-sm">
           <thead class="bg-muted">
             <tr>
               <th class="px-4 py-3 text-left font-medium">Element</th>
