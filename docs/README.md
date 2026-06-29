@@ -93,7 +93,7 @@ Camunda FEEL 1.19.3. Исполнение — токенный обход гра
 - [camunda8-compatibility.md](camunda8-compatibility.md) — матрица C8-совместимости по конструкциям (as-is).
 - [multi-tenant-authorization-plan.md](multi-tenant-authorization-plan.md) — дизайн T5.
 - [_audit/doc-inventory.md](_audit/doc-inventory.md) — реестр решений по документации (Mission 0).
-- Технический аудит (667 стр., источник роадмапа) и as-is анализ движка → переедут в `docs/analysis/` (Mission 1).
+- [analysis/](analysis/README.md) — **reverse-engineering анализ движка по коду** (Mission 1): as-is по областям + матрица проблем с кодами P/M/B/T/F/S/SEC. Каждая задача роадмапа трассируется к этим кодам.
 
 ## 5. Governance дока
 
