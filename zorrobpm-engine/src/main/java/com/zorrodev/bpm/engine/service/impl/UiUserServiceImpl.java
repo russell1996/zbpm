@@ -114,6 +114,7 @@ public class UiUserServiceImpl implements UiUserService {
         if (dto.getActive() != null) entity.setActive(dto.getActive());
         if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
             entity.setPasswordHash(passwordHasher.hash(dto.getPassword()));
+            entity.setForcePasswordChange(false);
         }
         entity.setUpdatedAt(Instant.now());
         repository.save(entity);

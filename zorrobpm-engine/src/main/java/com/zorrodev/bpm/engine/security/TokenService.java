@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.security;
 
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;
@@ -25,9 +26,21 @@ public class TokenService {
     private final Base64.Encoder b64 = Base64.getUrlEncoder().withoutPadding();
     private final Base64.Decoder b64d = Base64.getUrlDecoder();
 
+    private static final String DEFAULT_SECRET = "change-me-dev-secret-please-override-in-production";
+
     public TokenService(
-        @Value("${zorrobpm.security.jwt-secret:change-me-dev-secret-please-override-in-production}") String secret,
-        @Value("${zorrobpm.security.jwt-ttl-minutes:720}") long ttlMinutes) {
+        @Value("${zorrobpm.security.jwt-secret:" + DEFAULT_SECRET + "}") String secret,
+        @Value("${zorrobpm.security.jwt-ttl-minutes:720}") long ttlMinutes,
+        Environment environment) {
+        if (environment.getActiveProfiles().length > 0) {
+            for (String profile : environment.getActiveProfiles()) {
+                if ("prod".equals(profile) && DEFAULT_SECRET.equals(secret)) {
+                    throw new IllegalStateException(
+                        "FATAL: zorrobpm.security.jwt-secret must be overridden in production. "
+                        + "The default dev secret is not secure. Set a strong secret via environment variable or application-prod.yml.");
+                }
+            }
+        }
         this.secret = secret.getBytes(StandardCharsets.UTF_8);
         this.ttlSeconds = ttlMinutes * 60;
     }
