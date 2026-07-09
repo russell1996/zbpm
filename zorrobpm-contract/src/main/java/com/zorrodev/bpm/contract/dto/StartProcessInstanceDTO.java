@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.contract.dto;
 
 import com.zorrodev.bpm.contract.model.ProcessVariable;
+import jakarta.validation.constraints.AssertTrue;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -15,4 +16,9 @@ public class StartProcessInstanceDTO {
     private String processDefinitionKey;
     private Integer processDefinitionVersion;
     private List<ProcessVariable> variables = new ArrayList<>();
+
+    @AssertTrue(message = "Either processDefinitionId or processDefinitionKey must be provided")
+    public boolean isIdOrKeyPresent() {
+        return processDefinitionId != null || (processDefinitionKey != null && !processDefinitionKey.isBlank());
+    }
 }

@@ -10,7 +10,6 @@ import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import lombok.RequiredArgsConstructor;
-import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpStatus;
@@ -43,10 +42,17 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
         return processDefinitionService.getProcessDefinitionById(id).orElseThrow( () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found")) ;
     }
 
-    @SneakyThrows
     @Override
     public String getProcessDefinitionXml(UUID id) {
-        return fileService.getFileBytes(id);
+        try {
+            String xml = fileService.getFileBytes(id);
+            if (xml == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition XML not found");
+            }
+            return xml;
+        } catch (java.io.IOException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition XML not found");
+        }
     }
 
     @Override
