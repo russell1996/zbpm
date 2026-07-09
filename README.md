@@ -3,7 +3,7 @@
 Лёгкий движок бизнес-процессов BPMN 2.0 на Spring Boot с **высокой совместимостью с Camunda 8** (реальные C8-BPMN-модели исполняются без правок файлов). Деплой BPMN-процессов, запуск экземпляров, выполнение внешней работы через брокер сообщений и управление пользовательскими задачами — через REST API и единый **SPA** (Operate/Tasklist/Cockpit в одном приложении, `zorrobpm-frontend`).
 
 > ⚠️ **Статус — Community Edition, ранняя стадия.**
-> Рабочий одноузловой движок с хорошим покрытием happy-path тестами. **Ещё не готов к промышленной эксплуатации:** нет встроенной аутентификации/авторизации, рассчитан на запуск в **одном экземпляре** (таймеры и версионирование определений пока небезопасны при нескольких репликах). Запускайте в доверённой сети / за аутентифицирующим шлюзом. См. [Ограничения](#ограничения-и-замечания-по-проду).
+> Рабочий одноузловой движок с хорошим покрытием happy-path тестами. **Ещё не готов к промышленной эксплуатации:** рассчитан на запуск в **одном экземпляре** (таймеры и версионирование определений пока небезопасны при нескольких репликах). JWT-аутентификация для UI и Data-API встроена; обязательно смените JWT-секрет и пароль admin перед выходом в прод. См. [Ограничения](#ограничения-и-замечания-по-проду).
 
 ## Обзор
 
@@ -54,18 +54,16 @@ ZorroBPM исполняет определения BPMN-процессов:
 ## Camunda 8 Compatibility
 
 Движок использует BPMN 2.0 + Zeebe-расширения (`http://camunda.org/schema/zeebe/1.0`), поэтому большинство
-конструкций моделируется так же, как в **Camunda 8**. Полный аудит — в
-[docs/camunda8-compatibility.md](docs/camunda8-compatibility.md). Сводка:
+конструкций моделируется так же, как в **Camunda 8**. Сводка:
 
 | Статус | Конструкции |
 |---|---|
-| ✅ **Совместимо** (модель переносится в C8 без правок) | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события (start/catch/throw/boundary), Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User (вкл. `zeebe:userTask`)/Receive/**Send** task (`zeebe:taskDefinition`), **Script task** (`zeebe:script`, `zeebe:taskDefinition` job-worker, inline), Business rule task (`zeebe:calledDecision`, DMN versioning), Call activity (`propagateAllChildVariables`), Embedded & Event subprocess (message/signal/error/timer), **Multi-instance** (per-instance `inputElement`/`loopCounter` + `outputCollection`, на user **и** service task), **переменные** `STRING/LONG/DOUBLE/BOOLEAN/UUID/JSON` (объекты/списки, доступ к свойствам в FEEL/DMN), **`timeCycle`** (ISO `R[n]/<duration>` + cron + повтор), `zeebe:ioMapping` (scoped), **Compensation** (compensate-all + targeted), correlation key (`zeebe:subscription`), FEEL-условия |
-| ⚠️ **Точечные edge'ы** | Business rule FEEL-режим (`zeebe:script` — проектное расширение), компенсация в scope подпроцесса, ограниченный повтор таймера `R<n>` (бесконечный `R/`/cron — есть), MI на send/script job-worker форме (на user/service — есть) |
-| ❌ **Не поддерживается в Camunda 8** (стандарт BPMN, но C8 не исполняет) | **Conditional** события (start/catch/boundary), **Transaction** subprocess, **Cancel** события (end/boundary) — надстройка движка, полезная вне C8 |
+| ✅ **Совместимо** | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события, Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User/Receive/Send task, Script task, Business rule task (DMN), Call activity, Embedded & Event subprocess, Multi-instance (per-instance vars + outputCollection), переменные STRING/LONG/DOUBLE/BOOLEAN/UUID/JSON, timeCycle (ISO + cron), zeebe:ioMapping (scoped), Compensation (compensate-all + targeted), correlation key, FEEL-условия |
+| ⚠️ **Точечные edge'ы** | Business rule FEEL-режим, компенсация в scope подпроцесса, ограниченный повтор таймера `R<n>`, MI на send/script job-worker форме |
+| ❌ **Не в Camunda 8** (BPMN-стандарт, но C8 не исполняет) | Conditional события, Transaction subprocess, Cancel события — надстройка движка, полезная вне C8 |
 
 Реальные C8-BPMN-модели исполняются **без правок файлов** (главная цель проекта): JSON-payload, десятичные,
-collection-driven multi-instance, cron-таймеры, DMN с версионированием. Полный аудит и оставшиеся edge'ы —
-в [docs/camunda8-compatibility.md](docs/camunda8-compatibility.md). DMN исполняется собственным движком
+collection-driven multi-instance, cron-таймеры, DMN с версионированием. DMN исполняется собственным движком
 решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL).
 
 ## Архитектура
@@ -129,7 +127,7 @@ docker compose up -d --build
 
 **Frontend** собирается отдельным образом (`zorrobpm-frontend/Dockerfile`, multi-stage `node:22` → `nginx`).
 В `src/` нет hardcoded `localhost`/IP: API-база — относительный `/api`, OIDC-redirect берётся из
-`window.location.origin`. Подробности — [docs/deployment.md](docs/deployment.md).
+`window.location.origin`.
 
 ## Локальная разработка
 
@@ -295,10 +293,11 @@ curl -X POST http://localhost:8080/service-tasks/<SERVICE_TASK_ID>/fail \
 |---|---|---|
 | `zorrobpm.security.jwt-secret` | dev-секрет | секрет подписи токена — **обязательно переопределить в проде** |
 | `zorrobpm.security.jwt-ttl-minutes` | `720` | срок жизни токена |
+| `zorrobpm.security.require-api-auth` | `true` | защищать ли Data-API токеном (отключить только при наличии внешнего шлюза) |
 | `zorrobpm.security.default-admin-username` | `admin` | имя сид-админа |
 | `zorrobpm.security.default-admin-password` | `admin` | пароль сид-админа при первом старте |
 
-> Защищены токеном только `/auth/me` и `/users/**` (UI-вход и управление пользователями). **Data-API (`/process-*`, `/incidents`, …) остаются открытыми** — это совместимо с текущим Java-клиентом; полный lockdown данных — отдельная задача (план с API-ключами на систему).
+> По умолчанию **все** эндпоинты (`/process-*`, `/user-tasks`, `/incidents`, …) требуют валидный `Authorization: Bearer <token>`. Отключить можно через `zorrobpm.security.require-api-auth=false` — только при наличии аутентифицирующего шлюза перед сервисом.
 
 ## Java-клиент
 
@@ -318,7 +317,7 @@ curl -X POST http://localhost:8080/service-tasks/<SERVICE_TASK_ID>/fail \
 
 ## Ограничения и замечания по проду
 
-- **Авторизация — только UI-вход** (`/auth/*`, `/users/**`, см. раздел «Авторизация веб-консоли»). **Data-API остаются открытыми** — размещайте сервис за аутентифицирующим шлюзом и в закрытой сети; обязательно задайте `zorrobpm.security.jwt-secret` и смените пароль `admin`.
+- **JWT-авторизация включена по умолчанию** для всех эндпоинтов (`require-api-auth=true`). Обязательно задайте `zorrobpm.security.jwt-secret` (замените dev-значение) и смените пароль `admin`.
 - **Только один экземпляр** — таймеры опрашиваются без leader-election, версионирование определений использует JVM-лок; несколько реплик могут дублировать срабатывание таймеров и конфликтовать на версионировании.
 - **CORS полностью открыт** на backend — в проде доступ идёт через nginx (frontend-контейнер / внешний reverse proxy), ограничивайте на этом уровне.
 - **Сборка требует JDK 21**, хотя в POM движка указано `java.version=17`.
@@ -338,7 +337,6 @@ test  →  package  →  deploy  →  rollback
 - **rollback** — ручная стадия: переразвёртывание предыдущего тега.
 
 Прод за внешним nginx reverse proxy: `https://zorro.i-smet.kz` → `frontend` (nginx) → `/api` → `app:8080`.
-Полный runbook (деплой, откат, переменные, топология) — [docs/deployment.md](docs/deployment.md).
 
 ## Лицензия
 
