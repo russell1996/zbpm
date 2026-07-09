@@ -96,6 +96,39 @@ class JwtAuthFilterTest {
     }
 
     @Test
+    void validToken_passesThrough_withClaimsAttribute() throws Exception {
+        setRequireApiAuth(true);
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(tokenService.verify("good-token")).thenReturn(claims);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/process-instances");
+        request.addHeader("Authorization", "Bearer good-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        verify(chain).doFilter(request, response);
+        assertThat(request.getAttribute("authClaims")).isSameAs(claims);
+    }
+
+    @Test
+    void usersPath_nonAdminRole_returns403() throws Exception {
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/users");
+        request.addHeader("Authorization", "Bearer user-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(403);
+    }
+
+    @Test
     void allDataApiPaths_protectedByDefault() throws Exception {
         setRequireApiAuth(true);
         String[] paths = {
