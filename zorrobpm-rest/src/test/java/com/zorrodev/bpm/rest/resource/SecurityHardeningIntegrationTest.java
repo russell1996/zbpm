@@ -2,13 +2,13 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
+import com.zorrodev.bpm.contract.dto.CreateUiUserDTO;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.UpdateUiUserDTO;
 import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
-import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.UiUserService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -21,7 +21,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,9 +33,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * WO-SEC-2 tests for:
  *  - #5: first login admin/admin → forcePasswordChange: true
- *  - #6: after password change → forcePasswordChange: false
- *  - #3: CORS in prod not * (verified by config, tested via unit assertion)
- *  - #4: CORS in dev — Origin http://localhost:5173 passes
+ *  - #6: after password change on separate user → forcePasswordChange: false
+ *  - #3: CORS — preflight with forbidden Origin → no Access-Control-Allow-Origin
+ *  - #4: CORS — preflight with allowed Origin → correct headers
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -54,21 +53,13 @@ class SecurityHardeningIntegrationTest {
     private PasswordHasher passwordHasher;
 
     @Autowired
-    private TokenService tokenService;
-
-    @Autowired
     private UiUserService userService;
-
-    @Autowired
-    private com.zorrodev.bpm.rest.configuration.WebConfiguration webConfiguration;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String adminToken;
-    private UUID adminUserId;
 
     @BeforeAll
     void setup() throws Exception {
-        // Login as admin to get token and user ID
         LoginDTO loginDTO = new LoginDTO();
         loginDTO.setUsername("admin");
         loginDTO.setPassword("admin");
@@ -81,15 +72,12 @@ class SecurityHardeningIntegrationTest {
 
         AuthResponse authResponse = mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class);
         adminToken = authResponse.getToken();
-        adminUserId = authResponse.getUser().getId();
     }
 
     // --- Criterion #5: first login admin/admin → forcePasswordChange: true ---
 
     @Test
     void criterion5_firstLogin_forcePasswordChangeTrue() throws Exception {
-        // The admin user is seeded by UiUserBootstrap with forcePasswordChange=true
-        // Verify via /auth/me that the flag is set
         MvcResult result = mockMvc.perform(get("/auth/me")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
@@ -99,49 +87,68 @@ class SecurityHardeningIntegrationTest {
         assertThat(user.isForcePasswordChange()).isTrue();
     }
 
-    // --- Criterion #6: after password change → forcePasswordChange: false ---
+    // --- Criterion #6: after password change on SEPARATE user → forcePasswordChange: false ---
 
     @Test
     void criterion6_afterPasswordChange_forcePasswordChangeFalse() throws Exception {
-        // Change admin password via service
-        UpdateUiUserDTO updateDTO = new UpdateUiUserDTO();
-        updateDTO.setPassword("new-secure-password-123");
-        userService.update(adminUserId, updateDTO);
+        // Create a separate user with forcePasswordChange=true
+        UiUserEntity testUser = new UiUserEntity();
+        testUser.setId(UUID.randomUUID());
+        testUser.setUsername("force-pw-test-" + UUID.randomUUID());
+        testUser.setPasswordHash(passwordHasher.hash("initial-password"));
+        testUser.setFullName("Force PW Test User");
+        testUser.setRole("ADMIN");
+        testUser.setActive(true);
+        testUser.setForcePasswordChange(true);
+        testUser.setCreatedAt(java.time.Instant.now());
+        testUser.setUpdatedAt(java.time.Instant.now());
+        userRepository.save(testUser);
 
-        // Re-login with new password
+        // Verify forcePasswordChange is true via login
         LoginDTO loginDTO = new LoginDTO();
-        loginDTO.setUsername("admin");
-        loginDTO.setPassword("new-secure-password-123");
+        loginDTO.setUsername(testUser.getUsername());
+        loginDTO.setPassword("initial-password");
 
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andReturn();
 
-        AuthResponse authResponse = mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class);
-        assertThat(authResponse.getUser().isForcePasswordChange()).isFalse();
+        AuthResponse authResponse = mapper.readValue(loginResult.getResponse().getContentAsString(), AuthResponse.class);
+        assertThat(authResponse.getUser().isForcePasswordChange()).isTrue();
 
-        // Restore original password for other tests
-        UpdateUiUserDTO restoreDTO = new UpdateUiUserDTO();
-        restoreDTO.setPassword("admin");
-        userService.update(adminUserId, restoreDTO);
+        // Change password via service
+        UpdateUiUserDTO updateDTO = new UpdateUiUserDTO();
+        updateDTO.setPassword("new-secure-password-123");
+        userService.update(testUser.getId(), updateDTO);
+
+        // Re-login with new password
+        LoginDTO reloginDTO = new LoginDTO();
+        reloginDTO.setUsername(testUser.getUsername());
+        reloginDTO.setPassword("new-secure-password-123");
+
+        MvcResult reloginResult = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(reloginDTO))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        AuthResponse reloginResponse = mapper.readValue(reloginResult.getResponse().getContentAsString(), AuthResponse.class);
+        assertThat(reloginResponse.getUser().isForcePasswordChange()).isFalse();
     }
 
-    // --- Criterion #3: CORS in prod — allowedOrigins not * ---
+    // --- Criterion #3: CORS — preflight with forbidden Origin → no CORS headers ---
 
     @Test
-    void criterion3_corsProd_notWildcard() {
-        // WebConfiguration reads from zorrobpm.cors.allowed-origins
-        // Default is "http://localhost:5173,http://localhost:3000" — not "*"
-        // In prod profile, the property can be set via env var
-        // Verify the config property is not "*"
-        assertThat(webConfiguration).isNotNull();
-        // The field is private, but we verified the @Value default above
-        // Integration-level: the CORS mapping won't have "*" when credentials=true
+    void criterion3_corsForbiddenOrigin_noAllowHeader() throws Exception {
+        mockMvc.perform(options("/process-instances")
+                        .header("Origin", "http://evil.com")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 
-    // --- Criterion #4: CORS in dev — Origin http://localhost:5173 passes ---
+    // --- Criterion #4: CORS — preflight with allowed Origin → correct headers ---
 
     @Test
     void criterion4_corsDev_localhostAllowed() throws Exception {
