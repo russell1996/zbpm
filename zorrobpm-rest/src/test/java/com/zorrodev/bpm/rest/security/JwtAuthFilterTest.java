@@ -12,6 +12,7 @@ import java.io.IOException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -29,10 +30,8 @@ class JwtAuthFilterTest {
         filter = new JwtAuthFilter(tokenService);
     }
 
-    private void setRequireApiAuth(boolean value) throws Exception {
-        var field = JwtAuthFilter.class.getDeclaredField("requireApiAuth");
-        field.setAccessible(true);
-        field.setBoolean(filter, value);
+    private void setRequireApiAuth(boolean value) {
+        filter.setRequireApiAuth(value);
     }
 
     @Test
@@ -57,7 +56,7 @@ class JwtAuthFilterTest {
         filter.doFilterInternal(request, response, chain);
 
         // Request passes through to chain (not blocked)
-        assertThat(response.getStatus()).isEqualTo(200);
+        verify(chain).doFilter(request, response);
     }
 
     @Test
@@ -69,7 +68,7 @@ class JwtAuthFilterTest {
 
         filter.doFilterInternal(request, response, chain);
 
-        assertThat(response.getStatus()).isEqualTo(200);
+        verify(chain).doFilter(request, response);
     }
 
     @Test
