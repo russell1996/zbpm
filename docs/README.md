@@ -21,7 +21,7 @@
 
 | WO | Задача | Findings | Файлы (scope) |
 |---|---|---|---|
-| [WO-SEC-1](../.mimo/workorders/WO-SEC-1-api-auth.md) | Аутентификация всех Data API эндпоинтов | CRITICAL-2 | `JwtAuthFilter.java` |
+| [WO-SEC-1](../.mimo/workorders/WO-SEC-1-api-auth.md) | ✅ Реализовано. Нужны только IT-тесты (`requireApiAuth=true`, GET без токена → 401) | CRITICAL-2 | `JwtAuthFilter.java` (тесты) |
 | [WO-SEC-2](../.mimo/workorders/WO-SEC-2-hardening.md) | Hardening: CORS + default secret + admin/admin | CRITICAL-1,3 | `WebConfiguration.java`, `UiUserBootstrap.java`, `TokenService.java` |
 | [WO-SEC-3](../.mimo/workorders/WO-SEC-3-validation-errors.md) | DTO validation + global error handler | HIGH-4,5; GAP-8 | все resources, новый `GlobalExceptionHandler` |
 

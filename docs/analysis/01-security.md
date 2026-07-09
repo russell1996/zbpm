@@ -30,34 +30,43 @@ Spring разрешает `allowedOriginPatterns("*") + allowCredentials(true)` 
 
 ---
 
-## CRITICAL-2
-**Нет аутентификации на 90% REST API**
+## ✅ CRITICAL-2 — ЗАКРЫТ
+**Аутентификация всех Data API — уже реализована**
 
 ```
-zorrobpm-rest/.../security/JwtAuthFilter.java:29-31
+zorrobpm-rest/.../security/JwtAuthFilter.java:26-60
 ```
+
+Во время ревью ветки обнаружено: код уже содержит полную защиту.
 
 ```java
-private static boolean isProtected(String path) {
-    return path.equals("/auth/me") || isUsersPath(path);  // только это
+@Value("${zorrobpm.security.require-api-auth:true}")
+private boolean requireApiAuth;
+
+private boolean isProtected(String path) {
+    if (isAuthLogin(path)) return false;
+    if (path.equals("/auth/me") || isUsersPath(path)) return true;
+    if (!requireApiAuth) return false;
+    return isDataApiPath(path);   // защищает все data endpoints
+}
+
+private static boolean isDataApiPath(String path) {
+    return path.startsWith("/process-instances")
+        || path.startsWith("/user-tasks")
+        || path.startsWith("/variables")
+        || path.startsWith("/incidents")
+        || path.startsWith("/dmn")
+        || path.startsWith("/timer-jobs")
+        || path.startsWith("/message-subscriptions")
+        || path.startsWith("/process-definitions")
+        || path.startsWith("/service-tasks");
 }
 ```
 
-Фильтр пропускает без токена **всё** кроме `/auth/me` и `/users/**`:
+По умолчанию `requireApiAuth=true` — все data-эндпоинты защищены.  
+Флаг `zorrobpm.security.require-api-auth=false` обеспечивает обратную совместимость с Java-клиентами без токена.
 
-| Эндпоинт | Что можно сделать без токена |
-|---|---|
-| `GET /process-instances` | читать все инстансы |
-| `GET /variables` | читать все переменные (включая секреты в них) |
-| `POST /process-instances` | запускать произвольные процессы |
-| `POST /user-tasks/{id}/complete` | завершать любые задачи |
-| `POST /incidents/{id}/resolve` | резолвить инциденты |
-| `POST /process-definitions` | деплоить BPMN/DMN |
-| `GET /incidents`, `GET /timer-jobs`, `GET /message-subscriptions` | полный read доступ |
-
-**Проверка:** `curl http://localhost:8080/process-instances` без заголовка Authorization → HTTP 200.
-
-**Фикс:** расширить `isProtected` чтобы охватить все data/runtime пути. Флаг для обратной совместимости с Java-клиентом. IT: GET без токена → 401 для всех эндпоинтов.
+**Статус WO-SEC-1:** задача реализована. Нужны только IT-тесты (GET без токена → 401). Открыть WO-SEC-1-tests.
 
 ---
 

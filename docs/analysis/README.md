@@ -8,7 +8,7 @@
 | ID | Severity | Категория | Краткое описание | Файл / Деталь |
 |---|---|---|---|---|
 | **CRITICAL-1** | CRITICAL | Security | CORS wildcard + `allowCredentials(true)` | [01-security §C1](01-security.md#critical-1) |
-| **CRITICAL-2** | CRITICAL | Security | Нет аутентификации на 90% API-эндпоинтов | [01-security §C2](01-security.md#critical-2) |
+| ~~**CRITICAL-2**~~ | ✅ FIXED | Security | ~~Нет аутентификации на 90% API-эндпоинтов~~ — `requireApiAuth=true` + `isDataApiPath()` уже в коде | [01-security §C2](01-security.md#critical-2) |
 | **CRITICAL-3** | CRITICAL | Security | Дефолтные `admin/admin` + JWT-секрет `change-me-...` | [01-security §C3](01-security.md#critical-3) |
 | **HIGH-1** | HIGH | Security | Hand-rolled JWT — риск регрессии | [01-security §H1](01-security.md#high-1) |
 | **HIGH-2** | HIGH | Security | JWT хранится в `localStorage` — украдётся при XSS | [01-security §H2](01-security.md#high-2) |
