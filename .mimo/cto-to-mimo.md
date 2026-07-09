@@ -161,4 +161,79 @@ git push
 
 После пуша — обнови `.mimocode/mimo-to-cto.md` (итерация 4).
 
+**Итерация 4 — ЗАКРЫТА** ✅ смержено в master (1c9079a). WO-SEC-1 принят.
+
+---
+
+## WO-SEC-2 — ревью #1 (2026-07-10)
+
+**Статус**: HOLD. Хорошая база (fail-fast, CORS, Liquibase, proof-of-failure по #1),
+но **критерий #6 не реализован** + нет тестов на #3/#4/#5/#6.
+
+Проверено по диску: fail-fast IT валиден — `BPMConfiguration` (auto-config,
+`@ComponentScan("com.zorrodev.bpm.engine")`) реально грузит `TokenService` в
+контексте, значит и в проде fail-fast сработает. Механизм верный. ✅
+
+### Замечание 1 — БЛОКИРУЮЩЕЕ: критерий #6 не реализован
+
+Файл: `zorrobpm-engine/.../service/impl/UiUserServiceImpl.java:115-117`
+
+`update()` переписывает хэш пароля, но **не сбрасывает `forcePasswordChange`**.
+Админ сменил пароль → флаг остаётся `true` навсегда. Критерий #6 требует сброс.
+
+Исправить в блоке смены пароля:
+```java
+if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
+    entity.setPasswordHash(passwordHasher.hash(dto.getPassword()));
+    entity.setForcePasswordChange(false);   // ← добавить: сброс флага
+}
+```
+
+### Замечание 2 — нет теста на критерии #5 и #6
+
+WO требует тесты (колонка «Команда проверки»). Их нет.
+
+Добавить IT (можно в новый `ForcePasswordChangeIT` или к существующему auth-IT):
+- #5: `POST /auth/login {admin/admin}` → в ответе `user.forcePasswordChange == true`
+- #6: сменить пароль админа через `update()` → повторный логин → `forcePasswordChange == false`
+
+### Замечание 3 — нет теста на критерии #3 и #4 (CORS)
+
+- #3: в prod-профиле `allowedOrigins` не `*` (сейчас конфиг верный, но не покрыт тестом)
+- #4: dev — Origin `http://localhost:5173` проходит с корректным `Access-Control-Allow-Origin`
+
+Добавить IT на CORS-заголовки (MockMvc с `Origin`-заголовком + `options()`/`get()`).
+
+### Замечание 4 — scope: тронут zorrobpm-contract (V10)
+
+Файл: `zorrobpm-contract/.../model/UiUser.java` — добавлено поле `forcePasswordChange`.
+
+WO запрещал трогать `zorrobpm-contract`. НО: флаг возвращается в `AuthResponse.user`
+(это `UiUser` из contract), т.е. без поля в contract критерий #5 невыполним —
+**WO был противоречив (моя ошибка в постановке)**. Решение Mimo (минимальное
+additive-поле) **принимается**. На будущее (V10): при противоречии в WO —
+эскалируй в `mimo-to-cto.md` ДО кода, не решай молча. Здесь — ОК, зачтено.
+
+### Что уже хорошо (не трогать)
+
+- fail-fast только при активном `prod`-профиле — верно (`MockEnvironment` в unit-тестах не триггерит)
+- `application-prod.yml` дефолт секрета = небезопасный дефолт намеренно → ловится fail-fast'ом с читаемым сообщением ✅
+- CORS: `allowedOrigins(split)` + `allowCredentials(true)` — валидно (не `*`)
+- proof-of-failure по #1/#7 — есть ✅
+
+### Scope доработки
+
+Только:
+- `zorrobpm-engine/.../service/impl/UiUserServiceImpl.java` (замечание 1)
+- новые/существующие тесты для #3/#4/#5/#6
+
+```bash
+mvn clean verify        # BUILD SUCCESS
+git add <конкретные файлы>
+git commit -m "fix(WO-SEC-2): reset forcePasswordChange on password change + tests #3-6"
+git push
+```
+
+После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-2 ревью #1).
+
 ---
