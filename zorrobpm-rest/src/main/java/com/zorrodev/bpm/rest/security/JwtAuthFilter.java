@@ -6,15 +6,16 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
 /**
- * Validates the bearer token for identity/admin routes only ({@code /auth/me}, {@code /users/**}).
- * All other endpoints pass through untouched, so existing API clients are unaffected — locking the
- * data API down is a separate concern (the API-key plan). {@code /users/**} additionally requires ADMIN.
+ * Validates the bearer token for identity/admin routes ({@code /auth/me}, {@code /users/**})
+ * and, when {@code zorrobpm.security.require-api-auth=true}, for all data API endpoints as well.
+ * {@code /auth/login} is always open (no token required).
  */
 @Component
 @RequiredArgsConstructor
@@ -22,12 +23,40 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final TokenService tokenService;
 
+    @Value("${zorrobpm.security.require-api-auth:true}")
+    private boolean requireApiAuth;
+
     private static boolean isUsersPath(String path) {
         return path.equals("/users") || path.startsWith("/users/");
     }
 
-    private static boolean isProtected(String path) {
-        return path.equals("/auth/me") || isUsersPath(path);
+    private static boolean isAuthLogin(String path) {
+        return path.equals("/auth/login");
+    }
+
+    /**
+     * Always protected: /auth/me, /users/**
+     * Protected when requireApiAuth=true: /process-instances, /user-tasks, /variables,
+     *   /incidents, /dmn, /timer-jobs, /message-subscriptions, /process-definitions, /service-tasks
+     * Never protected: /auth/login
+     */
+    private boolean isProtected(String path) {
+        if (isAuthLogin(path)) return false;
+        if (path.equals("/auth/me") || isUsersPath(path)) return true;
+        if (!requireApiAuth) return false;
+        return isDataApiPath(path);
+    }
+
+    private static boolean isDataApiPath(String path) {
+        return path.startsWith("/process-instances")
+            || path.startsWith("/user-tasks")
+            || path.startsWith("/variables")
+            || path.startsWith("/incidents")
+            || path.startsWith("/dmn")
+            || path.startsWith("/timer-jobs")
+            || path.startsWith("/message-subscriptions")
+            || path.startsWith("/process-definitions")
+            || path.startsWith("/service-tasks");
     }
 
     @Override
