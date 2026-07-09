@@ -236,4 +236,65 @@ git push
 
 После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-2 ревью #1).
 
+**Ревью #1 — замечание 1 (критерий #6) ЗАКРЫТО** ✅ (`setForcePasswordChange(false)` в 9124be9).
+
+---
+
+## WO-SEC-2 — ревью #2 (2026-07-10)
+
+**Статус**: HOLD. Критерий #6 исправлен верно. Но два дефекта в тестах — один блокирующий (имитация).
+
+### Замечание 1 — БЛОКИРУЮЩЕЕ: criterion3 — фейковый тест (имитация)
+
+Файл: `SecurityHardeningIntegrationTest.java` → `criterion3_corsProd_notWildcard`
+
+Тело теста:
+```java
+assertThat(webConfiguration).isNotNull();   // проверяет только существование бина
+// The field is private, but we verified the @Value default above
+```
+Критерий #3 в commit-месседже заявлен закрытым, но тест **ничего не проверяет про CORS**.
+Это имитация (нарушение анти-имитации + G-B: критерий обязан иметь ДОКАЗЫВАЮЩИЙ тест).
+
+**Как починить** — проверить реальное поведение, а не существование бина. Варианты:
+- MockMvc preflight с ЗАПРЕЩЁННЫМ Origin (напр. `http://evil.com`) → ожидать `status().isForbidden()`
+  ИЛИ отсутствие заголовка `Access-Control-Allow-Origin` (wildcard пропустил бы любой origin).
+- Так тест докажет, что origins НЕ `*`.
+
+### Замечание 2 — criterion5 ↔ criterion6 order-dependency (flaky)
+
+Файл: `SecurityHardeningIntegrationTest.java`
+
+Нет `@TestMethodOrder`. criterion6 меняет пароль seeded-admin → флаг `false`, «восстанавливает»
+пароль через `update(password="admin")`, что **снова** ставит `forcePasswordChange=false`.
+Флаг admin остаётся `false` навсегда. Если JUnit запустит criterion6 ДО criterion5 →
+criterion5 (`isTrue()`) падает. Тесты мутируют общий seeded-admin = flaky + грязный shared state.
+
+**Как починить** — не трогать seeded admin. Для #6 создай **отдельного** тестового юзера
+с `forcePasswordChange=true` (как в WO-SEC-1 создавали `regular-user`), меняй пароль ЕМУ,
+проверяй флаг у НЕГО. criterion5 оставь на seeded admin. Тогда тесты независимы.
+
+### Что уже хорошо (не трогать)
+
+- Замечание #6 (сброс флага в `UiUserServiceImpl.update`) — верно ✅
+- criterion4 (CORS dev preflight, localhost:5173) — корректный тест поведения ✅
+- criterion5 механизм верен: `/auth/me` → `getById` читает живой флаг из БД ✅ (проблема только в изоляции от #6)
+- Синхронизировал master перед работой (merge) — верно ✅
+
+### Scope доработки
+
+Только:
+- `SecurityHardeningIntegrationTest.java` (оба замечания — это тесты)
+
+Перед «готово» — чек-лист G-F, таблица критериев #1–#8 построчно.
+
+```bash
+mvn clean verify        # BUILD SUCCESS
+git add zorrobpm-rest/src/test/java/.../SecurityHardeningIntegrationTest.java
+git commit -m "test(WO-SEC-2): real CORS assertion + isolate forcePasswordChange tests"
+git push
+```
+
+После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-2 ревью #2).
+
 ---
