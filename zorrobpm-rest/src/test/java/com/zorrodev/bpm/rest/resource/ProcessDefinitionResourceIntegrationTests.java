@@ -2,11 +2,15 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
+import com.zorrodev.bpm.contract.dto.AuthResponse;
+import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.FileService;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -27,6 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ProcessDefinitionResourceIntegrationTests {
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
@@ -40,6 +45,24 @@ class ProcessDefinitionResourceIntegrationTests {
     @Autowired
     private FileService fileService;
 
+    private String validToken;
+
+    @BeforeAll
+    void login() throws Exception {
+        LoginDTO loginDTO = new LoginDTO();
+        loginDTO.setUsername("admin");
+        loginDTO.setPassword("admin");
+
+        MvcResult result = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(loginDTO))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        AuthResponse authResponse = mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class);
+        validToken = authResponse.getToken();
+    }
+
     @Test
     void testSuccessfulAddProcessDefinition() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/process1.bpmn"), StandardCharsets.UTF_8);
@@ -48,6 +71,7 @@ class ProcessDefinitionResourceIntegrationTests {
         String requestJson = mapper.writeValueAsString(requestDTO);
 
         MvcResult result = mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + validToken)
                         .content(requestJson)
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
