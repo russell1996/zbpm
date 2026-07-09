@@ -26,6 +26,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     @Value("${zorrobpm.security.require-api-auth:true}")
     private boolean requireApiAuth;
 
+    void setRequireApiAuth(boolean requireApiAuth) {
+        this.requireApiAuth = requireApiAuth;
+    }
+
     private static boolean isUsersPath(String path) {
         return path.equals("/users") || path.startsWith("/users/");
     }

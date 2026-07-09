@@ -103,12 +103,12 @@ class JwtAuthFilterIntegrationTest {
     void criterion6_authLogin_withoutToken_returns200() throws Exception {
         LoginDTO loginDTO = new LoginDTO();
         loginDTO.setUsername("admin");
-        loginDTO.setPassword("wrong-password");
+        loginDTO.setPassword("admin");
 
         mockMvc.perform(post("/auth/login")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isUnauthorized()); // 401 because wrong password, but NOT blocked by filter
+                .andExpect(status().isOk());
     }
 
     // --- Other data API endpoints ---
