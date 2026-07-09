@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:prodtest
+    driver-class-name: org.h2.Driver
+  rabbitmq:
+    host: localhost
+  liquibase:
+    enabled: false

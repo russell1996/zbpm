@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/zorrobpm-db}
+    username: ${DB_USERNAME:zorrodev}
+    password: ${DB_PASSWORD:zorrodev}
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    username: ${RABBITMQ_USERNAME:zorrodev}
+    password: ${RABBITMQ_PASSWORD:zorrodev}
+    port: ${RABBITMQ_PORT:5672}
+
+zorrobpm:
+  security:
+    jwt-secret: ${ZORROBPM_JWT_SECRET:change-me-dev-secret-please-override-in-production}
+  cors:
+    allowed-origins: ${ZORROBPM_CORS_ORIGINS:http://localhost:5173}
+
+app:
+  filesDir: ${APP_FILES_DIR:/var/lib/zorrobpm/files}

@@ -24,6 +24,7 @@ public class UiUserEntity {
     /** "ADMIN" or "USER". */
     private String role;
     private boolean active;
+    private boolean forcePasswordChange;
     private Instant createdAt;
     private Instant updatedAt;
 }
