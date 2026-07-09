@@ -326,3 +326,56 @@ pre-approved исключения прописаны в самом WO), испр
 4. Начни с proof-of-failure (критерий #7).
 
 ---
+
+## WO-SEC-3 — ревью #1 (2026-07-10)
+
+**Статус**: HOLD. Отличная работа — весь продакшн-код верен (проверено по диску):
+GlobalExceptionHandler, @AssertTrue (не ломает key), @Valid, getFileBytes==null→404,
+убран @SneakyThrows, proof-of-failure валиден. **Но CI test:backend КРАСНЫЙ** — 1 провал.
+
+CI (pipeline 155841): `Tests run: 51, Failures: 1`:
+```
+ValidationIntegrationTest.criterion2_startProcess_byKey_works:94
+  Status expected:<200> but was:<404>
+```
+
+### Замечание 1 — БЛОКИРУЮЩЕЕ: criterion2 не самодостаточен (P-8)
+
+Файл: `ValidationIntegrationTest.java` → `criterion2_startProcess_byKey_works`
+
+Тест запускает процесс по key `"process1"`, но **сам его не деплоит** — полагается,
+что определение уже в БД. В свежем контексте его нет → определение не найдено → 404.
+Это зависимость от глобального состояния / порядка тестов (P-8).
+
+**Как починить** — тест должен САМ задеплоить определение перед запуском:
+```java
+// в criterion2, ДО запуска: задеплоить process1.bpmn
+String bpmn = Files.readString(Paths.get("src/test/files/process1.bpmn"), StandardCharsets.UTF_8);
+AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+addDto.setBpmn(bpmn);
+mockMvc.perform(post("/process-definitions")
+        .header("Authorization", "Bearer " + token)
+        .content(mapper.writeValueAsString(addDto))
+        .contentType(MediaType.APPLICATION_JSON))
+    .andExpect(status().isOk());
+// теперь запуск по key "process1" → 200
+```
+Файл `zorrobpm-rest/src/test/files/process1.bpmn` существует (key = "process1").
+
+### Что уже верно (не трогать)
+
+- proof-of-failure (getUserTask 500→404), criterion1/#3/#5/#6, handler, DTO-constraint — всё корректно ✅
+- pom-зависимости (validation-стартер + jakarta-api) — в рамках pre-approved ✅
+
+### Scope доработки
+Только `ValidationIntegrationTest.java` (criterion2). Проверь чек-лист G-F.
+
+```bash
+mvn clean verify -pl zorrobpm-rest   # BUILD SUCCESS
+git add zorrobpm-rest/src/test/java/.../ValidationIntegrationTest.java
+git commit -m "test(WO-SEC-3): criterion2 self-deploys process1 (fix isolation)"
+git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-3 ревью #1).
+
+---
