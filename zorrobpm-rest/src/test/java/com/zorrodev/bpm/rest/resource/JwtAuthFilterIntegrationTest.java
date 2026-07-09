@@ -3,6 +3,9 @@ package com.zorrodev.bpm.rest.resource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
+import com.zorrodev.bpm.engine.entity.UiUserEntity;
+import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.security.PasswordHasher;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -13,6 +16,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+
+import java.time.Instant;
+import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -39,11 +45,31 @@ class JwtAuthFilterIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private UiUserRepository userRepository;
+
+    @Autowired
+    private PasswordHasher passwordHasher;
+
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String validToken;
+    private String userToken;
 
     @BeforeAll
     void login() throws Exception {
+        // Create a USER-role user for 403 test
+        UiUserEntity userEntity = new UiUserEntity();
+        userEntity.setId(UUID.randomUUID());
+        userEntity.setUsername("regular-user");
+        userEntity.setPasswordHash(passwordHasher.hash("user"));
+        userEntity.setFullName("Regular User");
+        userEntity.setRole("USER");
+        userEntity.setActive(true);
+        userEntity.setCreatedAt(Instant.now());
+        userEntity.setUpdatedAt(Instant.now());
+        userRepository.save(userEntity);
+
+        // Login as admin
         LoginDTO loginDTO = new LoginDTO();
         loginDTO.setUsername("admin");
         loginDTO.setPassword("admin");
@@ -56,6 +82,20 @@ class JwtAuthFilterIntegrationTest {
 
         AuthResponse authResponse = mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class);
         validToken = authResponse.getToken();
+
+        // Login as USER-role user
+        LoginDTO userLoginDTO = new LoginDTO();
+        userLoginDTO.setUsername("regular-user");
+        userLoginDTO.setPassword("user");
+
+        MvcResult userResult = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(userLoginDTO))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        AuthResponse userAuthResponse = mapper.readValue(userResult.getResponse().getContentAsString(), AuthResponse.class);
+        userToken = userAuthResponse.getToken();
     }
 
     // --- Criteria #1-4: without token → 401 ---
@@ -112,6 +152,19 @@ class JwtAuthFilterIntegrationTest {
     }
 
     // --- Other data API endpoints ---
+
+    @Test
+    void users_withoutToken_returns401() throws Exception {
+        mockMvc.perform(get("/users"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void users_nonAdminRole_returns403() throws Exception {
+        mockMvc.perform(get("/users")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
 
     @Test
     void getVariables_withoutToken_returns401() throws Exception {
