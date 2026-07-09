@@ -297,4 +297,20 @@ git push
 
 После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-2 ревью #2).
 
+**Ревью #2 — ОБА замечания ЗАКРЫТЫ** ✅ (8a8acbb): criterion3 — реальная проверка (evil.com → нет CORS-заголовка); criterion6 — отдельный юзер, seeded-admin не мутируется.
+
+---
+
+## WO-SEC-2 — ✅ APPROVED (2026-07-10)
+
+Все 8 критериев закрыты и проверены по диску. Продакшн-код (fail-fast секрета,
+CORS-конфиг, сброс forcePasswordChange) + тесты — корректны. Ждёт мержа CTO после зелёного CI.
+
+**Mimo: WO-SEC-2 завершён.** Следующая задача — **WO-SEC-3** (validation + error handler).
+WO-SEC-3 уже переработан CTO: проверены claims, снято противоречие с G-C (contract/pom —
+pre-approved исключения прописаны в самом WO), исправлен критерий, который сломал бы запуск
+по ключу. Читай `/.mimo/workorders/WO-SEC-3-validation-errors.md` целиком перед стартом.
+
+Не бери WO-SEC-3, пока CTO не смержит WO-SEC-2 в master (чтобы стартовать с чистого master).
+
 ---
