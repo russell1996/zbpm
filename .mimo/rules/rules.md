@@ -17,6 +17,50 @@
 
 ---
 
+## Git workflow (обязателен)
+
+### После завершения каждой задачи
+```bash
+# 1. Создать ветку (если ещё нет)
+git checkout -b feature/WO-XXX-краткое-описание
+
+# 2. Добавить только файлы из scope WO (не git add -A!)
+git add <конкретные файлы>
+
+# 3. Проверить что стейджинг правильный
+git status
+
+# 4. Коммит
+git commit -m "feat(WO-XXX): краткое описание что сделано
+
+- критерий 1: команда → факт
+- критерий 2: команда → факт
+proof-of-failure: <название теста> был RED, стал GREEN
+
+Co-Authored-By: Mimo <mimo@zorrodev.com>"
+
+# 5. Push
+git push -u origin feature/WO-XXX-краткое-описание
+```
+
+### Формат commit message
+```
+<тип>(WO-XXX): <что сделано> (imperative mood)
+
+<необязательно: детали>
+
+Co-Authored-By: Mimo <mimo@zorrodev.com>
+```
+Типы: `feat` / `fix` / `test` / `refactor` / `perf` / `chore`
+
+### Запрещено
+- `git add -A` или `git add .` — только конкретные файлы (риск стейджинга секретов/лишнего)
+- `git push --force` без согласования CTO
+- `git commit --no-verify`
+- Коммит в `master` напрямую — только через PR
+
+---
+
 ## Всегда (в каждом PR)
 
 - Отчёт по шаблону DoD: таблица критерий → команда → факт

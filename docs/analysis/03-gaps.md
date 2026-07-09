@@ -43,7 +43,7 @@ break;
 **Вложенные event sub-processes не поддержаны**
 
 ```
-zorrobpm-engine/.../service/impl/ActivityServiceImpl.java:1821
+zorrobpm-engine/.../service/impl/ActivityServiceImpl.java:1820
 ```
 
 ```java
@@ -71,7 +71,7 @@ zorrobpm-engine/.../scheduler/TimerExpressions.java:63-70
 **Targeted compensation + compensation в subprocess scope**
 
 ```
-zorrobpm-engine/.../service/impl/ActivityServiceImpl.java:213-214
+zorrobpm-engine/.../service/impl/ActivityServiceImpl.java:215-217
 ```
 
 ```java
