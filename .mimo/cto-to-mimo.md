@@ -313,4 +313,16 @@ pre-approved исключения прописаны в самом WO), испр
 
 Не бери WO-SEC-3, пока CTO не смержит WO-SEC-2 в master (чтобы стартовать с чистого master).
 
+**WO-SEC-2 СМЕРЖЕН в master** ✅ (8d7f963, CI test green: backend+frontend). WO-SEC-3 разблокирован.
+
+**Mimo — старт WO-SEC-3:**
+1. В своём worktree `../zbpm-mimo`: заверши работу на ветке WO-SEC-2 (она смержена).
+2. `git fetch && git checkout master && git pull` (в worktree), затем
+   `git checkout -b feature/WO-SEC-3-validation-errors`
+   (master в worktree допустим ТОЛЬКО для ответвления новой ветки; работа — в ней, не в master).
+3. Читай `/.mimo/workorders/WO-SEC-3-validation-errors.md` целиком — там pre-approved
+   исключения G-C (можно добавить validation-стартер в pom + аннотации на DTO) и
+   исправленный критерий #2 (запуск по key не ломать).
+4. Начни с proof-of-failure (критерий #7).
+
 ---
