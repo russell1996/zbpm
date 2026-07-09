@@ -6,6 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @SpringBootApplication(scanBasePackages = {
     "com.zorrodev.bpm.rest.resource",
     "com.zorrodev.bpm.rest.security",
+    "com.zorrodev.bpm.rest.configuration",
 })
 public class TestMain {
 
