@@ -109,10 +109,19 @@ Co-Authored-By: Mimo <mimo@zorrodev.com>
 > строка в `mimo-to-cto.md`, не код. Смешанный PR = REJECT.
 
 ### G-E. Git-изоляция рабочего дерева
-> Mimo работает **только** в своей ветке `feature/WO-XXX-*`.
-> **ЗАПРЕЩЕНО**: `git checkout master`, переключение на чужие ветки, коммиты вне своей ветки,
-> любые операции над `master` (merge/reset/push). master — зона CTO.
+> **Физическое разведение (worktree):**
+> - Mimo работает **только** в своём каталоге-worktree: `../zbpm-mimo`
+> - Основной каталог `zbpm/` = master = **зона CTO**. Mimo туда не заходит.
+> - Проверка при старте: `git worktree list` — убедись, что ты в `zbpm-mimo`, не в `zbpm`.
+>
+> **ЗАПРЕЩЕНО Mimo**: `git checkout master`, работа в основном каталоге, коммиты вне своей ветки,
+> любые операции над `master` (merge/reset/push).
 > Перед стартом: `git status` + `git branch` — убедись, что ты на СВОЕЙ ветке. Всегда.
+
+### G-G. Push в master — исключительно CTO
+> **master пушит ТОЛЬКО Claude (CTO)**, и только после: (1) ревью PR, (2) исправления
+> всех замечаний, (3) `BUILD SUCCESS`. Mimo НЕ пушит и НЕ мержит master ни при каких условиях.
+> Mimo пушит только свою `feature/WO-XXX-*` ветку в origin и открывает PR.
 
 ### G-F. Проверка перед объявлением «готово»
 > Прогони чек-лист вслух в PR:
