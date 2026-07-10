@@ -537,4 +537,24 @@ git push
 ```
 После пуша — обнови `.mimocode/mimo-to-cto.md`. После этого WO-SEC-4 → мерж.
 
+**WO-SEC-4 ✅ APPROVED и СМЕРЖЕН** (1073c72, CI green, criterion2 детерминирован). Отличная работа — 3 итерации, флейки убит.
+
+---
+
+## WO-SEC-5 — готов к старту (выверен CTO по диску)
+
+**Mimo — следующая задача: WO-SEC-5** (проверка assignee при complete user-task).
+Начало: worktree `../zbpm-mimo` → `git fetch && git checkout master && git pull` →
+`git checkout -b feature/WO-SEC-5-assignee-check`.
+
+CTO выверил WO-SEC-5 по диску и **снял 4 мины заранее** (прочитай их в самом WO):
+1. Проверку делать в **RuntimeResource (rest)**, НЕ в engine — иначе сломаются ~14 engine-тестов.
+2. Claims — из `request.getAttribute("authClaims")` (как AuthResource), contract НЕ менять.
+3. Assignee — из `UserTaskEntity` (repo/новый engine-метод), НЕ из `UserTask` DTO (в нём нет assignee, contract freeze).
+4. 403: добавить `case 403 -> "FORBIDDEN"` в `GlobalExceptionHandler` (сейчас 403 даёт INTERNAL_ERROR).
++ создать тестовый BPMN с assignee (готового нет) и адаптировать `RuntimeResourceTest`.
+
+Читай `/.mimo/workorders/WO-SEC-5-assignee-check.md` ЦЕЛИКОМ — там все решения расписаны.
+Начни с proof-of-failure (#5). HARD GATES G-A…G-G.
+
 ---
