@@ -33,7 +33,9 @@ public class TimerStartJobExecutor {
 
     @Transactional
     public void fire(UUID timerStartJobId, UUID processDefinitionId, String elementId) {
-        dbService.markTimerStartJobFired(timerStartJobId);
+        if (!dbService.claimTimerStartJob(timerStartJobId)) {
+            return; // Already claimed by another node
+        }
         activityService.startProcessInstanceFromStartEvent(processDefinitionId, elementId, List.of());
         rescheduleIfRepeatingCycle(processDefinitionId, elementId);
     }

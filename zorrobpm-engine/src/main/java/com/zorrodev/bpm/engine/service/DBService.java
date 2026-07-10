@@ -108,7 +108,8 @@ public interface DBService {
 
     List<com.zorrodev.bpm.engine.dto.TimerJob> findDueTimerJobs(java.time.Instant now);
 
-    void markTimerJobFired(UUID timerJobId);
+    /** Atomically claim a timer job: sets fired=true only if currently false. Returns true if claimed. */
+    boolean claimTimerJob(UUID timerJobId);
 
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName);
 
@@ -166,7 +167,8 @@ public interface DBService {
 
     List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobs(java.time.Instant now);
 
-    void markTimerStartJobFired(UUID timerStartJobId);
+    /** Atomically claim a timer start job: sets fired=true only if currently false. Returns true if claimed. */
+    boolean claimTimerStartJob(UUID timerStartJobId);
 
     /**
      * Records that a branch has arrived at a parallel-gateway join through {@code enteredFlowId}.

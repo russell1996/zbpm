@@ -23,7 +23,9 @@ public class TimerJobExecutor {
 
     @Transactional
     public void fire(TimerJob job) {
-        dbService.markTimerJobFired(job.getId());
+        if (!dbService.claimTimerJob(job.getId())) {
+            return; // Already claimed by another node
+        }
         if (job.getEventSubprocessId() != null) {
             // timer-started event sub-process: no host activity
             activityService.fireEventSubprocessTimer(job.getProcessInstanceId(), job.getEventSubprocessId());
