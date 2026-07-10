@@ -15,4 +15,5 @@ public class TimerJob {
     private String boundaryElementId;
     private UUID processInstanceId;
     private String eventSubprocessId;
+    private Integer remainingCount;
 }

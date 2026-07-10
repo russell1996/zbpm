@@ -51,11 +51,21 @@ public class TimerStartJobExecutor {
             .map(BpmnElementModel::getExtensions)
             .map(BpmnElementExtensionModel::getTimerEventExtension)
             .orElse(null);
-        if (timer == null || timer.getType() != TimerEventType.CYCLE || !TimerExpressions.isInfiniteCycle(timer.getExpression())) {
+        if (timer == null || timer.getType() != TimerEventType.CYCLE) {
             return;
         }
-        Instant next = TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
+        String expression = timer.getExpression();
+        boolean infinite = TimerExpressions.isInfiniteCycle(expression);
+        int repeatCount = TimerExpressions.repeatCount(expression);
+        if (!infinite && repeatCount <= 0) {
+            return; // one-shot or unsupported
+        }
+        Integer remaining = infinite ? null : repeatCount - 1;
+        if (!infinite && remaining != null && remaining <= 0) {
+            return; // done
+        }
+        Instant next = TimerExpressions.firstOccurrence(expression, Instant.now());
         dbService.createTimerStartJob(model.getKey(), processDefinitionId, elementId, next);
-        log.info("Rescheduled repeating timer start {} of {} for {}", elementId, model.getKey(), next);
+        log.info("Rescheduled repeating timer start {} of {} for {} (remaining={})", elementId, model.getKey(), next, remaining);
     }
 }
