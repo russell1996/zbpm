@@ -70,4 +70,26 @@ public final class TimerExpressions {
         }
         return true; // cron = repeats
     }
+
+    /**
+     * Returns the repeat count for a bounded cycle like {@code R3/PT1S}.
+     * @return n for {@code R<n>/...}, -1 for unbounded {@code R/...} or cron
+     */
+    public static int repeatCount(String cycle) {
+        if (cycle == null || cycle.isBlank()) return -1;
+        String spec = cycle.trim();
+        if (spec.startsWith("R")) {
+            int slash = spec.indexOf('/');
+            if (slash > 0) {
+                String countStr = spec.substring(1, slash).trim();
+                if (countStr.isEmpty()) return -1; // "R/..." = unbounded
+                try {
+                    return Integer.parseInt(countStr);
+                } catch (NumberFormatException e) {
+                    return -1;
+                }
+            }
+        }
+        return -1; // bare duration or cron = unbounded
+    }
 }

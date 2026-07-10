@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -30,6 +31,14 @@ public class TimerJobExecutor {
             // timer-started event sub-process: no host activity
             activityService.fireEventSubprocessTimer(job.getProcessInstanceId(), job.getEventSubprocessId());
         } else if (job.getBoundaryElementId() == null) {
+            // Intermediate catch event
+            Integer remaining = job.getRemainingCount();
+            if (remaining != null && remaining > 0) {
+                // Bounded timer with remaining fires: re-arm without completing the event
+                Instant next = TimerExpressions.firstOccurrence("R/PT0S", Instant.now());
+                dbService.createTimerJob(job.getActivityId(), next, null, remaining - 1);
+                return;
+            }
             activityService.signal(job.getActivityId(), List.of());
         } else {
             activityService.fireBoundaryTimer(job.getActivityId(), job.getBoundaryElementId());

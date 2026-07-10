@@ -33,4 +33,9 @@ public class TimerJobEntity {
      *  (no host {@code activityId}). */
     private UUID processInstanceId;
     private String eventSubprocessId;
+    /**
+     * For bounded repeating timers (e.g. R3/PT1S): remaining repetitions after current fire.
+     * Null = infinite repeat. 0 = done (no more re-arm).
+     */
+    private Integer remainingCount;
 }
