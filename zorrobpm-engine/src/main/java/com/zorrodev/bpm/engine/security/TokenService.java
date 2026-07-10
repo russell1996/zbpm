@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Map;
@@ -20,7 +21,9 @@ import java.util.UUID;
 @Component
 public class TokenService {
 
-    private final byte[] secret;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+    private byte[] secret;
     private final long ttlSeconds;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Base64.Encoder b64 = Base64.getUrlEncoder().withoutPadding();
@@ -94,5 +97,23 @@ public class TokenService {
         int result = 0;
         for (int i = 0; i < a.length(); i++) result |= a.charAt(i) ^ b.charAt(i);
         return result == 0;
+    }
+
+    /** Generates a cryptographically random refresh token (not JWT — revocable). */
+    public String generateRefreshToken() {
+        byte[] bytes = new byte[32];
+        SECURE_RANDOM.nextBytes(bytes);
+        return b64.encodeToString(bytes);
+    }
+
+    /** Deterministic SHA-256 hash for refresh token storage/lookup. */
+    public String hashToken(String token) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return b64.encodeToString(hash);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to hash token", e);
+        }
     }
 }

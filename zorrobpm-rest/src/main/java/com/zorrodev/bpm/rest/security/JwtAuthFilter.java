@@ -45,8 +45,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
      * Never protected: /auth/login
      */
     private boolean isProtected(String path) {
-        if (isAuthLogin(path)) return false;
-        if (path.equals("/auth/me") || isUsersPath(path)) return true;
+        if (isAuthLogin(path) || "/auth/refresh".equals(path)) return false;
+        if (path.equals("/auth/me") || path.equals("/auth/logout") || isUsersPath(path)) return true;
         if (!requireApiAuth) return false;
         return isDataApiPath(path);
     }
