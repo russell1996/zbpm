@@ -16,6 +16,8 @@ import java.util.List;
 public class DmnDecisionTableModel {
     @XmlAttribute
     private String hitPolicy;
+    @XmlAttribute
+    private String aggregation;
     @XmlElement(name = "input", namespace = DmnDefinitionsModel.NS)
     private List<DmnInputModel> inputs;
     @XmlElement(name = "output", namespace = DmnDefinitionsModel.NS)
