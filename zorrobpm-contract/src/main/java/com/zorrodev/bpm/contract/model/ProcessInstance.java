@@ -18,4 +18,5 @@ public class ProcessInstance {
     private Integer processVersion;
     private Instant startedAt;
     private Instant completedAt;
+    private boolean cancelled;
 }

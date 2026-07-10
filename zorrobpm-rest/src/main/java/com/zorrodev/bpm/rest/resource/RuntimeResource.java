@@ -9,6 +9,7 @@ import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.TokenService;
+import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -29,6 +30,7 @@ public class RuntimeResource implements RuntimeContract {
 
     private final RuntimeService runtimeService;
     private final UserTaskRepository userTaskRepository;
+    private final DBService dbService;
     private final HttpServletRequest request;
 
     @Transactional
@@ -60,6 +62,20 @@ public class RuntimeResource implements RuntimeContract {
     @Override
     public IdDTO resolveIncident(@PathVariable UUID id, @RequestBody ResolveIncidentDTO dto) {
         return Optional.ofNullable(runtimeService.resolveIncident(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+    }
+
+    @Transactional
+    @Override
+    public IdDTO cancelProcessInstance(@PathVariable UUID id) {
+        var pi = dbService.getProcessInstance(id);
+        if (pi.getCompletedAt() != null || pi.isCancelled()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Process instance already completed or cancelled");
+        }
+        dbService.cancelActiveActivities(id);
+        dbService.cancelProcessInstance(id);
+        IdDTO result = new IdDTO();
+        result.setId(id);
+        return result;
     }
 
     private void checkAssignee(UUID taskId) {

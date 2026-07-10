@@ -67,6 +67,10 @@ public interface ProcessInstanceRepository extends JpaRepository<ProcessInstance
     @Query("UPDATE ProcessInstanceEntity pi SET pi.completedAt = :completedAt WHERE pi.id = :id")
     void setCompletedAt(UUID id, Instant completedAt);
 
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE ProcessInstanceEntity pi SET pi.cancelled = :cancelled WHERE pi.id = :id")
+    void setCancelled(UUID id, boolean cancelled);
+
     /**
      * Acquires a row-level write lock on the process instance. Used to serialise all execution
      * that mutates a single instance (task completions, signals, timer/boundary firings, message
