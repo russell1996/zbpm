@@ -1,7 +1,7 @@
 # ZorroBPM CE — Roadmap & Work Plan
 
 > Единый источник правды. Обновляется по мере выполнения задач.  
-> Анализ: [docs/analysis/](analysis/README.md) | Управление: [/.mimo/](..)
+> Анализ: [docs/analysis/](analysis/README.md) | Управление: [/governance/](..)
 
 ---
 
@@ -21,9 +21,9 @@
 
 | WO | Задача | Findings | Файлы (scope) |
 |---|---|---|---|
-| [WO-SEC-1](../.mimo/workorders/WO-SEC-1-api-auth.md) | ✅ Реализовано. Нужны только IT-тесты (`requireApiAuth=true`, GET без токена → 401) | CRITICAL-2 | `JwtAuthFilter.java` (тесты) |
-| [WO-SEC-2](../.mimo/workorders/WO-SEC-2-hardening.md) | Hardening: CORS + default secret + admin/admin | CRITICAL-1,3 | `WebConfiguration.java`, `UiUserBootstrap.java`, `TokenService.java` |
-| [WO-SEC-3](../.mimo/workorders/WO-SEC-3-validation-errors.md) | DTO validation + global error handler | HIGH-4,5; GAP-8 | все resources, новый `GlobalExceptionHandler` |
+| [WO-SEC-1](../governance/workorders/WO-SEC-1-api-auth.md) | ✅ Реализовано. Нужны только IT-тесты (`requireApiAuth=true`, GET без токена → 401) | CRITICAL-2 | `JwtAuthFilter.java` (тесты) |
+| [WO-SEC-2](../governance/workorders/WO-SEC-2-hardening.md) | Hardening: CORS + default secret + admin/admin | CRITICAL-1,3 | `WebConfiguration.java`, `UiUserBootstrap.java`, `TokenService.java` |
+| [WO-SEC-3](../governance/workorders/WO-SEC-3-validation-errors.md) | DTO validation + global error handler | HIGH-4,5; GAP-8 | все resources, новый `GlobalExceptionHandler` |
 
 ---
 
@@ -31,9 +31,9 @@
 
 | WO | Задача | Findings | Файлы (scope) |
 |---|---|---|---|
-| [WO-REL-1](../.mimo/workorders/WO-REL-1-atomic-timer.md) | Атомарный timer-fire, защита от дублей | R-1, R-2 | `TimerScheduler.java`, `DBServiceImpl.markTimerJobFired` |
-| [WO-REL-2](../.mimo/workorders/WO-REL-2-outbox.md) | Transactional outbox для service-task | R-1, GAP-7 | `ServiceTaskEnqueueServiceImpl.java`, новый `outbox` changeset |
-| [WO-REL-3](../.mimo/workorders/WO-REL-3-cache.md) | Eviction для BpmnServiceImpl cache | R-4 | `BpmnServiceImpl.java` |
+| [WO-REL-1](../governance/workorders/WO-REL-1-atomic-timer.md) | Атомарный timer-fire, защита от дублей | R-1, R-2 | `TimerScheduler.java`, `DBServiceImpl.markTimerJobFired` |
+| [WO-REL-2](../governance/workorders/WO-REL-2-outbox.md) | Transactional outbox для service-task | R-1, GAP-7 | `ServiceTaskEnqueueServiceImpl.java`, новый `outbox` changeset |
+| [WO-REL-3](../governance/workorders/WO-REL-3-cache.md) | Eviction для BpmnServiceImpl cache | R-4 | `BpmnServiceImpl.java` |
 
 ---
 
@@ -41,10 +41,10 @@
 
 | WO | Задача | Findings | Файлы (scope) |
 |---|---|---|---|
-| [WO-SEC-4](../.mimo/workorders/WO-SEC-4-login-ratelimit.md) | Rate-limit на `/auth/login` | HIGH-3 | `AuthResource.java`, новый filter |
-| [WO-SEC-5](../.mimo/workorders/WO-SEC-5-assignee-check.md) | Проверка assignee при complete user-task | HIGH-6 | `RuntimeResource.java`, `ActivityServiceImpl.java` |
-| [WO-SEC-6](../.mimo/workorders/WO-SEC-6-frontend-auth.md) | JWT в httpOnly cookie + role guard на роутах | HIGH-2, MEDIUM-5 | `auth.ts`, `router.ts`, `AuthResource.java` |
-| [WO-SEC-7](../.mimo/workorders/WO-SEC-7-pii-logging.md) | Убрать PII из логов FEEL | MEDIUM-3 | `ScriptServiceImpl.java` |
+| [WO-SEC-4](../governance/workorders/WO-SEC-4-login-ratelimit.md) | Rate-limit на `/auth/login` | HIGH-3 | `AuthResource.java`, новый filter |
+| [WO-SEC-5](../governance/workorders/WO-SEC-5-assignee-check.md) | Проверка assignee при complete user-task | HIGH-6 | `RuntimeResource.java`, `ActivityServiceImpl.java` |
+| [WO-SEC-6](../governance/workorders/WO-SEC-6-frontend-auth.md) | JWT в httpOnly cookie + role guard на роутах | HIGH-2, MEDIUM-5 | `auth.ts`, `router.ts`, `AuthResource.java` |
+| [WO-SEC-7](../governance/workorders/WO-SEC-7-pii-logging.md) | Убрать PII из логов FEEL | MEDIUM-3 | `ScriptServiceImpl.java` |
 
 ---
 
@@ -52,10 +52,10 @@
 
 | WO | Задача | Findings | Файлы (scope) |
 |---|---|---|---|
-| [WO-FEAT-1](../.mimo/workorders/WO-FEAT-1-dmn-hit-policies.md) | DMN: COLLECT/RULE ORDER/PRIORITY/OUTPUT ORDER | GAP-2 | `DmnServiceImpl.java` |
-| [WO-FEAT-2](../.mimo/workorders/WO-FEAT-2-cancel-api.md) | Cancel/terminate API для process instance | GAP-6 | `RuntimeContract.java`, `ActivityServiceImpl.java` |
-| [WO-FEAT-3](../.mimo/workorders/WO-FEAT-3-bounded-timer.md) | Bounded repeating timers `R<n>/PT` | GAP-4 | `TimerExpressions.java`, `TimerScheduler.java` |
-| [WO-FEAT-4](../.mimo/workorders/WO-FEAT-4-token-refresh.md) | Refresh token + revocation | MEDIUM-2 | `TokenService.java`, `AuthResource.java` |
+| [WO-FEAT-1](../governance/workorders/WO-FEAT-1-dmn-hit-policies.md) | DMN: COLLECT/RULE ORDER/PRIORITY/OUTPUT ORDER | GAP-2 | `DmnServiceImpl.java` |
+| [WO-FEAT-2](../governance/workorders/WO-FEAT-2-cancel-api.md) | Cancel/terminate API для process instance | GAP-6 | `RuntimeContract.java`, `ActivityServiceImpl.java` |
+| [WO-FEAT-3](../governance/workorders/WO-FEAT-3-bounded-timer.md) | Bounded repeating timers `R<n>/PT` | GAP-4 | `TimerExpressions.java`, `TimerScheduler.java` |
+| [WO-FEAT-4](../governance/workorders/WO-FEAT-4-token-refresh.md) | Refresh token + revocation | MEDIUM-2 | `TokenService.java`, `AuthResource.java` |
 
 ---
 
