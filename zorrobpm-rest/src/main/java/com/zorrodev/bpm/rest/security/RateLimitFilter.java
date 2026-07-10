@@ -17,8 +17,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Rate-limits POST /auth/login per client IP.
- * Disabled by default ({@code zorrobpm.security.rate-limit.enabled=false}).
- * Enable per-profile or per-test via {@code @TestPropertySource}.
+ * Uses {@code request.getRemoteAddr()} for IP resolution — trust Tomcat's
+ * RemoteIpValve for XFF handling from trusted proxies only.
+ * Enabled by default ({@code zorrobpm.security.rate-limit.enabled=true}).
  */
 @Slf4j
 @Component
@@ -26,7 +27,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final ConcurrentHashMap<String, RateBucket> buckets = new ConcurrentHashMap<>();
 
-    @Value("${zorrobpm.security.rate-limit.enabled:false}")
+    @Value("${zorrobpm.security.rate-limit.enabled:true}")
     private boolean enabled;
 
     @Value("${zorrobpm.security.rate-limit.capacity:5}")
@@ -34,6 +35,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     @Value("${zorrobpm.security.rate-limit.window-seconds:60}")
     private int windowSeconds;
+
+    void setRateLimitEnabled(boolean enabled) { this.enabled = enabled; }
+    void setCapacity(int capacity) { this.capacity = capacity; }
+    void setWindowSeconds(int windowSeconds) { this.windowSeconds = windowSeconds; }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -59,10 +64,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
         return request.getRemoteAddr();
     }
 
