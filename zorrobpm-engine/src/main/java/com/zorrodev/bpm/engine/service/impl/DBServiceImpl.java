@@ -471,6 +471,11 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public boolean claimTimerJob(UUID timerJobId) {
+        return timerJobRepository.claimTimerJob(timerJobId) > 0;
+    }
+
+    @Override
     public void markTimerJobFired(UUID timerJobId) {
         TimerJobEntity entity = timerJobRepository.findById(timerJobId).orElseThrow();
         entity.setFired(true);
@@ -707,6 +712,11 @@ public class DBServiceImpl implements DBService {
                 return job;
             })
             .toList();
+    }
+
+    @Override
+    public boolean claimTimerStartJob(UUID timerStartJobId) {
+        return timerStartJobRepository.claimTimerStartJob(timerStartJobId) > 0;
     }
 
     @Override

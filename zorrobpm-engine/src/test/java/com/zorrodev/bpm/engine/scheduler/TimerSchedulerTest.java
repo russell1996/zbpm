@@ -28,10 +28,11 @@ class TimerSchedulerTest {
     void executor_firesJobAndSignalsActivity() {
         UUID jobId = UUID.randomUUID();
         UUID activityId = UUID.randomUUID();
+        when(dbService.claimTimerJob(jobId)).thenReturn(true);
 
         executor.fire(job(jobId, activityId, null));
 
-        verify(dbService).markTimerJobFired(jobId);
+        verify(dbService).claimTimerJob(jobId);
         verify(activityService).signal(eq(activityId), any());
     }
 
@@ -39,11 +40,24 @@ class TimerSchedulerTest {
     void executor_firesBoundaryTimerWhenBoundarySet() {
         UUID jobId = UUID.randomUUID();
         UUID activityId = UUID.randomUUID();
+        when(dbService.claimTimerJob(jobId)).thenReturn(true);
 
         executor.fire(job(jobId, activityId, "boundary1"));
 
-        verify(dbService).markTimerJobFired(jobId);
+        verify(dbService).claimTimerJob(jobId);
         verify(activityService).fireBoundaryTimer(activityId, "boundary1");
+    }
+
+    @Test
+    void executor_skipsFireWhenClaimFails() {
+        UUID jobId = UUID.randomUUID();
+        UUID activityId = UUID.randomUUID();
+        when(dbService.claimTimerJob(jobId)).thenReturn(false);
+
+        executor.fire(job(jobId, activityId, null));
+
+        verify(dbService).claimTimerJob(jobId);
+        org.mockito.Mockito.verifyNoInteractions(activityService);
     }
 
     @Test
