@@ -10,15 +10,14 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
 /**
  * Polls the outbox table for unpublished entries and publishes them to MQ.
- * Uses atomic claim (UPDATE published=true WHERE id=? AND published=false)
- * to prevent duplicate delivery on multi-node deployments.
+ * At-least-once delivery: publish FIRST, then markPublished.
+ * If publish fails, published stays false → next poll retries.
  */
 @Slf4j
 @Profile("!test")
@@ -35,16 +34,12 @@ public class OutboxPollerService {
         List<OutboxEntry> pending = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
         for (OutboxEntry entry : pending) {
             try {
-                // Atomic claim: only one node can publish this entry
-                if (outboxRepository.claimOutboxEntry(entry.getId()) == 0) {
-                    continue; // Already claimed by another node
-                }
-
                 JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
                 publisher.publishEvent(new ServiceTaskEnqueued(detail));
+                outboxRepository.markPublished(entry.getId());
                 log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
             } catch (Exception e) {
-                log.error("Failed to publish outbox entry {}", entry.getId(), e);
+                log.error("Failed to publish outbox entry {} (will retry)", entry.getId(), e);
             }
         }
     }
