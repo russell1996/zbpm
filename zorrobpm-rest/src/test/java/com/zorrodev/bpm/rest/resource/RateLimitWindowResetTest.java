@@ -15,17 +15,12 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * WO-SEC-4: Rate-limit on /auth/login — deterministic tests.
- *  #1: 6th attempt → 429 RATE_LIMITED (window=3600, all 6 in one window)
- *  #3: first successful login not blocked
- *
- * window-seconds=3600 ensures all 6 logins are guaranteed within one window
- * regardless of PBKDF2 speed (P-10 fix).
+ * WO-SEC-4 criterion #2: after rate-limit window expires, login works again.
+ * Uses window-seconds=1 (short window) + Thread.sleep(1200) to verify reset.
+ * Separate class from RateLimitIntegrationTest because @TestPropertySource is class-level.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -34,9 +29,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @TestPropertySource(properties = {
     "zorrobpm.security.rate-limit.enabled=true",
     "zorrobpm.security.rate-limit.capacity=5",
-    "zorrobpm.security.rate-limit.window-seconds=3600"
+    "zorrobpm.security.rate-limit.window-seconds=1"
 })
-class RateLimitIntegrationTest {
+class RateLimitWindowResetTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -58,33 +53,30 @@ class RateLimitIntegrationTest {
         return dto;
     }
 
-    // --- Criterion #3: first successful login not blocked ---
+    // --- Criterion #2: after window → works again ---
 
     @Test
-    void criterion3_firstLogin_works() throws Exception {
-        mockMvc.perform(post("/auth/login")
-                        .content(mapper.writeValueAsString(validLogin()))
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
-    }
-
-    // --- Criterion #1: 6th attempt → 429 ---
-
-    @Test
-    void criterion1_sixthAttempt_returns429() throws Exception {
-        // Consume 5 tokens (capacity=5)
+    void criterion2_afterWindow_worksAgain() throws Exception {
+        // Drain the bucket
         for (int i = 0; i < 5; i++) {
             mockMvc.perform(post("/auth/login")
                             .content(mapper.writeValueAsString(validLogin()))
                             .contentType(MediaType.APPLICATION_JSON))
                     .andExpect(status().isOk());
         }
-        // 6th attempt → 429
+        // Confirm blocked
         mockMvc.perform(post("/auth/login")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
-                .andExpect(header().exists("Retry-After"));
+                .andExpect(status().isTooManyRequests());
+
+        // Wait for window to expire (window=1s + margin)
+        Thread.sleep(1200);
+
+        // Should work again
+        mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(validLogin()))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
     }
 }
