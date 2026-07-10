@@ -15,5 +15,5 @@ public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
 
     @Modifying
     @Query("UPDATE OutboxEntry o SET o.published = true WHERE o.id = :id AND o.published = false")
-    int claimOutboxEntry(@Param("id") UUID id);
+    int markPublished(@Param("id") UUID id);
 }
