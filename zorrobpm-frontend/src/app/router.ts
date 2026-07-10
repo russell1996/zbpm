@@ -124,7 +124,7 @@ const router = createRouter({
           path: 'admin/users',
           name: 'admin-users',
           component: () => import('@/pages/admin/UserList.vue'),
-          meta: { title: 'Users' },
+          meta: { title: 'Users', requiresAdmin: true },
         },
         {
           path: 'analytics',
@@ -145,6 +145,11 @@ router.beforeEach(async (to) => {
     if (!auth.isAuthenticated) {
       return { name: 'login', query: { redirect: to.fullPath } }
     }
+  }
+
+  // Role guard: admin-only routes require ADMIN role
+  if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return { name: 'access-denied' }
   }
 
   // already signed in -> keep the login page out of reach
