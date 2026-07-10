@@ -7,6 +7,7 @@ import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,7 +25,7 @@ public class RuntimeResource implements RuntimeContract {
 
     @Transactional
     @Override
-    public IdDTO startProcessInstance(@RequestBody StartProcessInstanceDTO dto) {
+    public IdDTO startProcessInstance(@Valid @RequestBody StartProcessInstanceDTO dto) {
         return Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
     }
 
