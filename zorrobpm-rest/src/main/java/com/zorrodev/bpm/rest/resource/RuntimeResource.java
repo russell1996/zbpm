@@ -6,13 +6,19 @@ import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -22,6 +28,8 @@ import java.util.UUID;
 public class RuntimeResource implements RuntimeContract {
 
     private final RuntimeService runtimeService;
+    private final UserTaskRepository userTaskRepository;
+    private final HttpServletRequest request;
 
     @Transactional
     @Override
@@ -44,6 +52,7 @@ public class RuntimeResource implements RuntimeContract {
     @Transactional
     @Override
     public IdDTO completeUserTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
+        checkAssignee(id);
         return Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
     }
 
@@ -51,6 +60,25 @@ public class RuntimeResource implements RuntimeContract {
     @Override
     public IdDTO resolveIncident(@PathVariable UUID id, @RequestBody ResolveIncidentDTO dto) {
         return Optional.ofNullable(runtimeService.resolveIncident(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+    }
+
+    private void checkAssignee(UUID taskId) {
+        TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
+        if (claims == null) return;
+
+        // ADMIN can complete any task
+        if ("ADMIN".equals(claims.role())) return;
+
+        UserTaskEntity task = userTaskRepository.findById(taskId).orElse(null);
+        if (task == null) return;
+
+        // Unassigned task — any user can complete
+        if (task.getAssignee() == null || task.getAssignee().isBlank()) return;
+
+        // Assignee matches — allowed
+        if (task.getAssignee().equals(claims.username())) return;
+
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Task is assigned to another user");
     }
 
     private IdDTO toDTO(com.zorrodev.bpm.engine.dto.IdDTO idDTO) {
