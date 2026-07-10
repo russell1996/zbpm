@@ -72,6 +72,8 @@ public class RuntimeResource implements RuntimeContract {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Process instance already completed or cancelled");
         }
         dbService.cancelActiveActivities(id);
+        dbService.deleteTimerJobsByProcessInstanceId(id);
+        dbService.deleteMessageSubscriptionsByProcessInstanceId(id);
         dbService.cancelProcessInstance(id);
         IdDTO result = new IdDTO();
         result.setId(id);

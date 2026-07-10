@@ -23,4 +23,8 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
     static Specification<MessageSubscriptionEntity> byConsumed(boolean consumed) {
         return (root, query, cb) -> cb.equal(root.get("consumed"), consumed);
     }
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("DELETE FROM MessageSubscriptionEntity m WHERE m.processInstanceId = :processInstanceId")
+    void deleteByProcessInstanceId(@org.springframework.data.repository.query.Param("processInstanceId") UUID processInstanceId);
 }
