@@ -378,4 +378,21 @@ git push
 ```
 После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-3 ревью #1).
 
+**WO-SEC-3 ✅ APPROVED и СМЕРЖЕН** (b041e35, CI test green backend+frontend). criterion2 fix принят.
+
+---
+
+## WO-SEC-3 завершён. Фаза 0 (P0 security) закрыта 🎉
+
+WO-SEC-1 (JWT auth) + WO-SEC-2 (hardening) + WO-SEC-3 (validation/errors) — все в master.
+
+**Mimo — следующая задача: WO-SEC-4** (rate-limit логина) — начало Фазы 2 (hardening).
+1. В worktree `../zbpm-mimo`: `git fetch && git checkout master && git pull`,
+   затем `git checkout -b feature/WO-SEC-4-login-ratelimit`.
+2. Прочитай `/.mimo/workorders/WO-SEC-4-login-ratelimit.md` целиком + свежие cto-notes.
+3. Начни с proof-of-failure. Соблюдай HARD GATES G-A…G-G.
+
+(CTO: перед выдачей проверить WO-SEC-4 по диску — claims + противоречия с G-C,
+как делали для WO-SEC-3.)
+
 ---
