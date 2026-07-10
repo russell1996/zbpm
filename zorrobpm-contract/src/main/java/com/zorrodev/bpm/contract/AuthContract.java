@@ -16,4 +16,12 @@ public interface AuthContract {
     /** Returns the currently authenticated user (requires a valid bearer token). */
     @GetExchange("/auth/me")
     UiUser me();
+
+    /** Refreshes access token using a valid refresh token cookie. Public (refresh token in cookie). */
+    @PostExchange("/auth/refresh")
+    AuthResponse refresh();
+
+    /** Revokes refresh token and clears cookie. Requires valid bearer token. */
+    @PostExchange("/auth/logout")
+    void logout();
 }
