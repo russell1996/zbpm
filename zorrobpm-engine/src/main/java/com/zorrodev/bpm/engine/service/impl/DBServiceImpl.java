@@ -471,10 +471,8 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public void markTimerJobFired(UUID timerJobId) {
-        TimerJobEntity entity = timerJobRepository.findById(timerJobId).orElseThrow();
-        entity.setFired(true);
-        timerJobRepository.save(entity);
+    public boolean claimTimerJob(UUID timerJobId) {
+        return timerJobRepository.claimTimerJob(timerJobId) > 0;
     }
 
     @Override
@@ -710,10 +708,8 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public void markTimerStartJobFired(UUID timerStartJobId) {
-        TimerStartJobEntity entity = timerStartJobRepository.findById(timerStartJobId).orElseThrow();
-        entity.setFired(true);
-        timerStartJobRepository.save(entity);
+    public boolean claimTimerStartJob(UUID timerStartJobId) {
+        return timerStartJobRepository.claimTimerStartJob(timerStartJobId) > 0;
     }
 
     @Override

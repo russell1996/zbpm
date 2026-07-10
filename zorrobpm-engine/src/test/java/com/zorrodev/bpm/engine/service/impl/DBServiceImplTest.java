@@ -478,20 +478,6 @@ class DBServiceImplTest {
     }
 
     @Test
-    void markTimerJobFired_setsFired() {
-        UUID id = UUID.randomUUID();
-        TimerJobEntity entity = new TimerJobEntity();
-        entity.setId(id);
-        when(timerJobRepository.findById(id)).thenReturn(Optional.of(entity));
-
-        dbService.markTimerJobFired(id);
-
-        ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);
-        verify(timerJobRepository).save(captor.capture());
-        assertThat(captor.getValue().isFired()).isTrue();
-    }
-
-    @Test
     void createMessageSubscription_persistsUnconsumed() {
         UUID processInstanceId = UUID.randomUUID();
         UUID activityId = UUID.randomUUID();
