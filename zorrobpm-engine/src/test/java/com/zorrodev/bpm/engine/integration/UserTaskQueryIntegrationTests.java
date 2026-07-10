@@ -21,9 +21,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * User-task query filters. NOTE: the {@code assignee} from {@code zeebe:assignmentDefinition} is parsed
- * into the model but NOT persisted onto the {@code user_tasks} row at creation, so the assignee/assigned
- * filters currently match only the "unassigned" case — these tests pin that current behaviour (partial).
+ * User-task query filters. The {@code assignee} from {@code zeebe:assignmentDefinition}
+ * is persisted onto the {@code user_tasks} row at creation, so assignee/assigned filters
+ * correctly distinguish assigned vs unassigned tasks.
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
@@ -75,19 +75,19 @@ public class UserTaskQueryIntegrationTests {
 
     @Transactional
     @Test
-    void assignedFilterReflectsCurrentBehaviour() throws Exception {
+    void assignedFilterMatchesPersistedAssignee() throws Exception {
         UUID pi = start();
-        // current behaviour: assignee is not persisted, so the task counts as unassigned
+        // assignee "alice" is persisted → task is assigned
         UserTaskQuery unassigned = query(pi);
         unassigned.setAssigned(false);
-        assertThat(queryService.findUserTasks(unassigned).getData()).hasSize(1);
+        assertThat(queryService.findUserTasks(unassigned).getData()).isEmpty();
 
         UserTaskQuery assigned = query(pi);
         assigned.setAssigned(true);
-        assertThat(queryService.findUserTasks(assigned).getData()).isEmpty();
+        assertThat(queryService.findUserTasks(assigned).getData()).hasSize(1);
 
         UserTaskQuery byAssignee = query(pi);
         byAssignee.setAssignee("alice");
-        assertThat(queryService.findUserTasks(byAssignee).getData()).isEmpty();
+        assertThat(queryService.findUserTasks(byAssignee).getData()).hasSize(1);
     }
 }

@@ -7,6 +7,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnConditionExpressionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
@@ -1286,7 +1287,7 @@ public class ActivityServiceImpl implements ActivityService {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createUserTask(activityId);
+        dbService.createUserTask(activityId, extractAssignee(bpmnElement));
         applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
@@ -1300,6 +1301,13 @@ public class ActivityServiceImpl implements ActivityService {
         return Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
             .isPresent();
+    }
+
+    private String extractAssignee(BpmnElementModel element) {
+        return Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getAssignee)
+            .orElse(null);
     }
 
     /**
@@ -1339,7 +1347,7 @@ public class ActivityServiceImpl implements ActivityService {
         UUID activityId = dbService.createActivity(processInstanceId, token, element);
         bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
         if (element.getType() == BpmnElementType.USER_TASK) {
-            dbService.createUserTask(activityId);
+            dbService.createUserTask(activityId, extractAssignee(element));
         } else {
             dbService.createServiceTask(activityId, serviceTaskRetries(element));
             applyIoMappings(processInstanceId, activityId, element, true);
