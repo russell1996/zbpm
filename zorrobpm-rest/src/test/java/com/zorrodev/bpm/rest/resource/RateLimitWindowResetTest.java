@@ -14,13 +14,15 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.UUID;
+
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * WO-SEC-4 criterion #2: after rate-limit window expires, login works again.
  * Uses window-seconds=1 (short window) + Thread.sleep(1200) to verify reset.
- * Separate class from RateLimitIntegrationTest because @TestPropertySource is class-level.
+ * Drain phase uses non-existent user (fast, no PBKDF2) to avoid timing flakiness.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -46,6 +48,14 @@ class RateLimitWindowResetTest {
         rateLimitFilter.reset();
     }
 
+    /** Non-existent user → 401 without PBKDF2 (fast path in UiUserServiceImpl). */
+    private LoginDTO badLogin() {
+        LoginDTO dto = new LoginDTO();
+        dto.setUsername("nobody-" + UUID.randomUUID());
+        dto.setPassword("x");
+        return dto;
+    }
+
     private LoginDTO validLogin() {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("admin");
@@ -57,23 +67,23 @@ class RateLimitWindowResetTest {
 
     @Test
     void criterion2_afterWindow_worksAgain() throws Exception {
-        // Drain the bucket
+        // Drain bucket with non-existent user (fast, no PBKDF2)
         for (int i = 0; i < 5; i++) {
             mockMvc.perform(post("/auth/login")
-                            .content(mapper.writeValueAsString(validLogin()))
+                            .content(mapper.writeValueAsString(badLogin()))
                             .contentType(MediaType.APPLICATION_JSON))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isUnauthorized());
         }
-        // Confirm blocked
+        // Confirm blocked (6th → 429, still fast)
         mockMvc.perform(post("/auth/login")
-                        .content(mapper.writeValueAsString(validLogin()))
+                        .content(mapper.writeValueAsString(badLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isTooManyRequests());
 
         // Wait for window to expire (window=1s + margin)
         Thread.sleep(1200);
 
-        // Should work again
+        // Should work again with valid credentials
         mockMvc.perform(post("/auth/login")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
