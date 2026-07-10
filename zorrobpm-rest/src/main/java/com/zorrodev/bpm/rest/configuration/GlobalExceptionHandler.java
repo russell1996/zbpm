@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -69,6 +70,14 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ex.getStatusCode()).body(Map.of(
             "code", code,
             "message", ex.getReason() != null ? ex.getReason() : "Error"
+        ));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> handleUnreadable(HttpMessageNotReadableException ex) {
+        return ResponseEntity.badRequest().body(Map.of(
+            "code", "MALFORMED_REQUEST",
+            "message", "Request body is malformed or has wrong field types"
         ));
     }
 
