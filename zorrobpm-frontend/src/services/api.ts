@@ -4,14 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: { 'Content-Type': 'application/json' },
-})
-
-api.interceptors.request.use((config) => {
-  const auth = useAuthStore()
-  if (auth.accessToken) {
-    config.headers.Authorization = `Bearer ${auth.accessToken}`
-  }
-  return config
+  withCredentials: true, // Send httpOnly cookie automatically
 })
 
 api.interceptors.response.use(
@@ -22,7 +15,7 @@ api.interceptors.response.use(
     // session expired / token rejected -> sign out (but not for the login attempt itself)
     if (error.response?.status === 401 && !isLoginCall) {
       const auth = useAuthStore()
-      if (auth.accessToken) auth.logout()
+      if (auth.isAuthenticated) auth.logout()
     }
     return Promise.reject(error)
   },

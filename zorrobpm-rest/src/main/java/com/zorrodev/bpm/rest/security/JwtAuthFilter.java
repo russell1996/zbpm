@@ -77,10 +77,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
+        // Try Bearer header first (backward compat for Java clients)
         String header = request.getHeader("Authorization");
-        TokenService.Claims claims = (header != null && header.startsWith("Bearer "))
-            ? tokenService.verify(header.substring(7))
+        String token = (header != null && header.startsWith("Bearer "))
+            ? header.substring(7)
             : null;
+
+        // Fall back to cookie
+        if (token == null) {
+            token = extractTokenFromCookie(request);
+        }
+
+        TokenService.Claims claims = (token != null) ? tokenService.verify(token) : null;
 
         if (claims == null) {
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
@@ -93,5 +101,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         request.setAttribute("authClaims", claims);
         chain.doFilter(request, response);
+    }
+
+    private String extractTokenFromCookie(HttpServletRequest request) {
+        jakarta.servlet.http.Cookie[] cookies = request.getCookies();
+        if (cookies == null) return null;
+        for (jakarta.servlet.http.Cookie cookie : cookies) {
+            if ("zbpm_token".equals(cookie.getName())) {
+                return cookie.getValue();
+            }
+        }
+        return null;
     }
 }

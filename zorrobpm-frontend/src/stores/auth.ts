@@ -3,35 +3,25 @@ import { ref, computed } from 'vue'
 import type { User } from '@/entities/user/User'
 import * as authService from '@/services/authService'
 
-const TOKEN_KEY = 'zbpm_token'
-
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
-  const accessToken = ref<string | null>(localStorage.getItem(TOKEN_KEY))
   const isLoading = ref(false)
   const error = ref<string | null>(null)
 
-  const isAuthenticated = computed(() => !!accessToken.value && !!user.value)
+  const isAuthenticated = computed(() => !!user.value)
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
-
-  function setToken(token: string | null) {
-    accessToken.value = token
-    if (token) localStorage.setItem(TOKEN_KEY, token)
-    else localStorage.removeItem(TOKEN_KEY)
-  }
 
   async function login(username: string, password: string): Promise<boolean> {
     isLoading.value = true
     error.value = null
     try {
       const res = await authService.login({ username, password })
-      setToken(res.token)
+      // Token is now in httpOnly cookie — no localStorage needed
       user.value = res.user
       return true
     } catch (e: unknown) {
       const status = (e as { response?: { status?: number } })?.response?.status
       error.value = status === 401 ? 'Invalid username or password' : 'Login failed'
-      setToken(null)
       user.value = null
       return false
     } finally {
@@ -39,15 +29,13 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /** Restore the session from a stored token (called by the route guard on first navigation/reload). */
+  /** Restore the session by calling /auth/me (cookie is sent automatically). */
   async function init() {
     if (user.value) return
-    if (!accessToken.value) return
     try {
       isLoading.value = true
       user.value = await authService.getMe()
     } catch {
-      setToken(null)
       user.value = null
     } finally {
       isLoading.value = false
@@ -55,15 +43,15 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
-    setToken(null)
     user.value = null
     error.value = null
+    // Clear cookie by setting maxAge to 0
+    document.cookie = 'zbpm_token=; Max-Age=0; Path=/; SameSite=Strict'
     window.location.href = '/ui/login'
   }
 
   return {
     user,
-    accessToken,
     isLoading,
     error,
     isAuthenticated,
