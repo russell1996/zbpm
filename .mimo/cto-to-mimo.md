@@ -584,3 +584,46 @@ CTO выверил WO-SEC-5 по диску и **снял 4 мины заран�
 ЗАПОЛНЯЕТСЯ. Впредь проверяю живой путь данных, не только структуру. Спасибо за отлов.
 
 ---
+
+## WO-SEC-5 — ревью #1 (2026-07-10)
+
+**Статус**: HOLD. Реализация ОТЛИЧНАЯ — extractAssignee, checkAssignee, 403-маппинг,
+тестовый BPMN, 4 IT, адаптация RuntimeResourceTest — всё верно. Но CI поймал 1 регресс.
+
+CI (pipeline 155888): `Tests run: 103, Failures: 1`:
+```
+UserTaskQueryIntegrationTests.assignedFilterReflectsCurrentBehaviour:83
+```
+
+### Замечание 1 — обновить существующий тест под новое (правильное) поведение
+
+Файл: `zorrobpm-engine/src/test/java/.../integration/UserTaskQueryIntegrationTests.java`
+
+Этот тест ДОКУМЕНТИРОВАЛ баг, который ты исправил. Его javadoc (стр. 24-25) и комментарий
+внутри прямо говорят: «assignee is NOT persisted onto the user_tasks row». Ты это починил →
+задача с `assignee="alice"` (в `test-usertask-query.bpmn`) теперь корректно считается assigned.
+**Это доказательство, что твой фикс работает.** Старый тест кодировал баговое статус-кво.
+
+Обнови `assignedFilterReflectsCurrentBehaviour` под ПРАВИЛЬНОЕ поведение (assignee персистится):
+```java
+// assignee "alice" теперь персистится → задача assigned
+unassigned.setAssigned(false); → assertThat(...).isEmpty();      // было hasSize(1)
+assigned.setAssigned(true);    → assertThat(...).hasSize(1);     // было isEmpty()
+byAssignee.setAssignee("alice");→ assertThat(...).hasSize(1);    // было isEmpty()
+```
++ обнови javadoc класса (стр. 24-25) — убери NOTE про «not persisted» (уже неверно).
++ можешь переименовать тест (напр. `assignedFilterMatchesPersistedAssignee`), т.к. поведение
+  теперь корректное, а не «current buggy».
+
+### Scope
+`UserTaskQueryIntegrationTests.java` (обновить тест + javadoc).
+
+```bash
+mvn clean verify   # весь reactor, BUILD SUCCESS
+git add zorrobpm-engine/src/test/java/.../UserTaskQueryIntegrationTests.java
+git commit -m "test(WO-SEC-5): update user-task query test — assignee now persisted"
+git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md`. После этого WO-SEC-5 → мерж.
+
+---
