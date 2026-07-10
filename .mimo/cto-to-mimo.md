@@ -297,4 +297,85 @@ git push
 
 После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-2 ревью #2).
 
+**Ревью #2 — ОБА замечания ЗАКРЫТЫ** ✅ (8a8acbb): criterion3 — реальная проверка (evil.com → нет CORS-заголовка); criterion6 — отдельный юзер, seeded-admin не мутируется.
+
+---
+
+## WO-SEC-2 — ✅ APPROVED (2026-07-10)
+
+Все 8 критериев закрыты и проверены по диску. Продакшн-код (fail-fast секрета,
+CORS-конфиг, сброс forcePasswordChange) + тесты — корректны. Ждёт мержа CTO после зелёного CI.
+
+**Mimo: WO-SEC-2 завершён.** Следующая задача — **WO-SEC-3** (validation + error handler).
+WO-SEC-3 уже переработан CTO: проверены claims, снято противоречие с G-C (contract/pom —
+pre-approved исключения прописаны в самом WO), исправлен критерий, который сломал бы запуск
+по ключу. Читай `/.mimo/workorders/WO-SEC-3-validation-errors.md` целиком перед стартом.
+
+Не бери WO-SEC-3, пока CTO не смержит WO-SEC-2 в master (чтобы стартовать с чистого master).
+
+**WO-SEC-2 СМЕРЖЕН в master** ✅ (8d7f963, CI test green: backend+frontend). WO-SEC-3 разблокирован.
+
+**Mimo — старт WO-SEC-3:**
+1. В своём worktree `../zbpm-mimo`: заверши работу на ветке WO-SEC-2 (она смержена).
+2. `git fetch && git checkout master && git pull` (в worktree), затем
+   `git checkout -b feature/WO-SEC-3-validation-errors`
+   (master в worktree допустим ТОЛЬКО для ответвления новой ветки; работа — в ней, не в master).
+3. Читай `/.mimo/workorders/WO-SEC-3-validation-errors.md` целиком — там pre-approved
+   исключения G-C (можно добавить validation-стартер в pom + аннотации на DTO) и
+   исправленный критерий #2 (запуск по key не ломать).
+4. Начни с proof-of-failure (критерий #7).
+
+---
+
+## WO-SEC-3 — ревью #1 (2026-07-10)
+
+**Статус**: HOLD. Отличная работа — весь продакшн-код верен (проверено по диску):
+GlobalExceptionHandler, @AssertTrue (не ломает key), @Valid, getFileBytes==null→404,
+убран @SneakyThrows, proof-of-failure валиден. **Но CI test:backend КРАСНЫЙ** — 1 провал.
+
+CI (pipeline 155841): `Tests run: 51, Failures: 1`:
+```
+ValidationIntegrationTest.criterion2_startProcess_byKey_works:94
+  Status expected:<200> but was:<404>
+```
+
+### Замечание 1 — БЛОКИРУЮЩЕЕ: criterion2 не самодостаточен (P-8)
+
+Файл: `ValidationIntegrationTest.java` → `criterion2_startProcess_byKey_works`
+
+Тест запускает процесс по key `"process1"`, но **сам его не деплоит** — полагается,
+что определение уже в БД. В свежем контексте его нет → определение не найдено → 404.
+Это зависимость от глобального состояния / порядка тестов (P-8).
+
+**Как починить** — тест должен САМ задеплоить определение перед запуском:
+```java
+// в criterion2, ДО запуска: задеплоить process1.bpmn
+String bpmn = Files.readString(Paths.get("src/test/files/process1.bpmn"), StandardCharsets.UTF_8);
+AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+addDto.setBpmn(bpmn);
+mockMvc.perform(post("/process-definitions")
+        .header("Authorization", "Bearer " + token)
+        .content(mapper.writeValueAsString(addDto))
+        .contentType(MediaType.APPLICATION_JSON))
+    .andExpect(status().isOk());
+// теперь запуск по key "process1" → 200
+```
+Файл `zorrobpm-rest/src/test/files/process1.bpmn` существует (key = "process1").
+
+### Что уже верно (не трогать)
+
+- proof-of-failure (getUserTask 500→404), criterion1/#3/#5/#6, handler, DTO-constraint — всё корректно ✅
+- pom-зависимости (validation-стартер + jakarta-api) — в рамках pre-approved ✅
+
+### Scope доработки
+Только `ValidationIntegrationTest.java` (criterion2). Проверь чек-лист G-F.
+
+```bash
+mvn clean verify -pl zorrobpm-rest   # BUILD SUCCESS
+git add zorrobpm-rest/src/test/java/.../ValidationIntegrationTest.java
+git commit -m "test(WO-SEC-3): criterion2 self-deploys process1 (fix isolation)"
+git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-3 ревью #1).
+
 ---
