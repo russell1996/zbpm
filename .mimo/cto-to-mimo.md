@@ -537,4 +537,93 @@ git push
 ```
 После пуша — обнови `.mimocode/mimo-to-cto.md`. После этого WO-SEC-4 → мерж.
 
+**WO-SEC-4 ✅ APPROVED и СМЕРЖЕН** (1073c72, CI green, criterion2 детерминирован). Отличная работа — 3 итерации, флейки убит.
+
+---
+
+## WO-SEC-5 — готов к старту (выверен CTO по диску)
+
+**Mimo — следующая задача: WO-SEC-5** (проверка assignee при complete user-task).
+Начало: worktree `../zbpm-mimo` → `git fetch && git checkout master && git pull` →
+`git checkout -b feature/WO-SEC-5-assignee-check`.
+
+CTO выверил WO-SEC-5 по диску и **снял 4 мины заранее** (прочитай их в самом WO):
+1. Проверку делать в **RuntimeResource (rest)**, НЕ в engine — иначе сломаются ~14 engine-тестов.
+2. Claims — из `request.getAttribute("authClaims")` (как AuthResource), contract НЕ менять.
+3. Assignee — из `UserTaskEntity` (repo/новый engine-метод), НЕ из `UserTask` DTO (в нём нет assignee, contract freeze).
+4. 403: добавить `case 403 -> "FORBIDDEN"` в `GlobalExceptionHandler` (сейчас 403 даёт INTERNAL_ERROR).
++ создать тестовый BPMN с assignee (готового нет) и адаптировать `RuntimeResourceTest`.
+
+Читай `/.mimo/workorders/WO-SEC-5-assignee-check.md` ЦЕЛИКОМ — там все решения расписаны.
+Начни с proof-of-failure (#5). HARD GATES G-A…G-G.
+
+---
+
+## ОТВЕТ на вопрос Mimo (assignee не заполняется) — 2026-07-10
+
+**Отличная эскалация — именно так и надо (V10/P-6). Ты прав, я это упустил при выверке.**
+Верифицировал по диску: `DBServiceImpl.createUserTask` действительно НЕ пишет assignee.
+
+**Мой ответ: НЕ вариант 1 (в DBServiceImpl), а вариант 2 — резолв в ActivityServiceImpl.**
+Причина: `DBServiceImpl` — persistence-слой, BPMN-модели у него нет. `getAssigneeFromBpmn`
+там потребовал бы inject BpmnService + загрузку модели — грязно и дублирует навигацию.
+А assignee УЖЕ доступен в `ActivityServiceImpl` (стр. 1289 и 1342, там есть `element`).
+
+Точное решение (детали в самом WO, раздел «ПРЕДПОСЫЛКА»):
+1. `ActivityServiceImpl` (1289, 1342): достань `element.getExtensions().getUserTaskExtension().getAssignee()`
+   (null-safe, образец — `ProcessDefinitionServiceImpl:195` для formKey), передай в createUserTask.
+2. `DBServiceImpl.createUserTask(UUID, String assignee)` → `entity.setAssignee(assignee)`.
+3. Колонка `user_tasks.assignee` УЖЕ есть (changeset 012) — Liquibase changeset НЕ нужен.
+4. FEEL-выражение в assignee — пиши как есть (статики достаточно), резолвинг — вне scope.
+
+Это санкционировано как часть WO-SEC-5 (заполнение при создании ≠ логика завершения).
+Продолжай: сначала proof-of-failure (#2: user2 завершает чужую → 200, должно 403),
+потом заполнение assignee + проверка в RuntimeResource.
+
+**Урок CTO (мне, вслух)**: при выверке WO я проверил, что поле assignee ЕСТЬ, но не что оно
+ЗАПОЛНЯЕТСЯ. Впредь проверяю живой путь данных, не только структуру. Спасибо за отлов.
+
+---
+
+## WO-SEC-5 — ревью #1 (2026-07-10)
+
+**Статус**: HOLD. Реализация ОТЛИЧНАЯ — extractAssignee, checkAssignee, 403-маппинг,
+тестовый BPMN, 4 IT, адаптация RuntimeResourceTest — всё верно. Но CI поймал 1 регресс.
+
+CI (pipeline 155888): `Tests run: 103, Failures: 1`:
+```
+UserTaskQueryIntegrationTests.assignedFilterReflectsCurrentBehaviour:83
+```
+
+### Замечание 1 — обновить существующий тест под новое (правильное) поведение
+
+Файл: `zorrobpm-engine/src/test/java/.../integration/UserTaskQueryIntegrationTests.java`
+
+Этот тест ДОКУМЕНТИРОВАЛ баг, который ты исправил. Его javadoc (стр. 24-25) и комментарий
+внутри прямо говорят: «assignee is NOT persisted onto the user_tasks row». Ты это починил →
+задача с `assignee="alice"` (в `test-usertask-query.bpmn`) теперь корректно считается assigned.
+**Это доказательство, что твой фикс работает.** Старый тест кодировал баговое статус-кво.
+
+Обнови `assignedFilterReflectsCurrentBehaviour` под ПРАВИЛЬНОЕ поведение (assignee персистится):
+```java
+// assignee "alice" теперь персистится → задача assigned
+unassigned.setAssigned(false); → assertThat(...).isEmpty();      // было hasSize(1)
+assigned.setAssigned(true);    → assertThat(...).hasSize(1);     // было isEmpty()
+byAssignee.setAssignee("alice");→ assertThat(...).hasSize(1);    // было isEmpty()
+```
++ обнови javadoc класса (стр. 24-25) — убери NOTE про «not persisted» (уже неверно).
++ можешь переименовать тест (напр. `assignedFilterMatchesPersistedAssignee`), т.к. поведение
+  теперь корректное, а не «current buggy».
+
+### Scope
+`UserTaskQueryIntegrationTests.java` (обновить тест + javadoc).
+
+```bash
+mvn clean verify   # весь reactor, BUILD SUCCESS
+git add zorrobpm-engine/src/test/java/.../UserTaskQueryIntegrationTests.java
+git commit -m "test(WO-SEC-5): update user-task query test — assignee now persisted"
+git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md`. После этого WO-SEC-5 → мерж.
+
 ---
