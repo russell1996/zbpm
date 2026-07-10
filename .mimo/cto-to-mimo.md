@@ -647,3 +647,57 @@ CTO выверил, снял/прояснил мины (детали в само
 Читай `/.mimo/workorders/WO-SEC-6-frontend-auth.md` ЦЕЛИКОМ. proof-of-failure #7 (vitest). G-A…G-G.
 
 ---
+
+## WO-SEC-6 — ревью #1 (2026-07-10)
+
+**Статус**: HOLD. Реализация ОТЛИЧНАЯ — backend cookie (Bearer→cookie fallback), guard.ts
+(resolveGuard), router requiresAdmin, access-denied route, isAdmin, vitest 6 тестов,
+localStorage убран. test:backend ЗЕЛЁНЫЙ. Но 2 замечания.
+
+### Замечание 1 — БЛОКИРУЮЩЕЕ (CI red): package-lock.json не обновлён
+
+CI test:frontend упал на `npm ci`:
+```
+npm error `npm ci` can only install packages when package.json and package-lock.json are in sync
+npm error Missing: vitest@4.1.10 from lock file
+```
+Ты добавил vitest в `package.json`, но не обновил `package-lock.json` (его нет в коммите).
+`npm ci` (в отличие от `npm install`) строго требует синхронный lock.
+
+**Починка:**
+```bash
+cd zorrobpm-frontend && npm install   # обновит package-lock.json
+git add zorrobpm-frontend/package.json zorrobpm-frontend/package-lock.json
+```
+
+### Замечание 2 — secure-cookie ломает dev (http)
+
+`AuthResource`: `cookie.setSecure(true)` — в dev (http://localhost через vite) браузер
+НЕ сохранит secure-cookie (secure требует https) → в dev cookie-auth не работает.
+Prod (https через nginx) — ок. CI не ловит (MockMvc игнорирует secure).
+
+**Починка** — сделать secure конфигурируемым:
+```java
+@Value("${zorrobpm.security.cookie-secure:true}")  // default true (prod)
+private boolean cookieSecure;
+...
+cookie.setSecure(cookieSecure);
+```
+В `application-prod.yml` — true (или дефолт). Для локального dev разработчик ставит
+`ZORROBPM_COOKIE_SECURE=false`. Тест-профиль не важен (MockMvc).
+
+### Что уже верно (не трогать)
+- JwtAuthFilter cookie-OR-Bearer (Bearer первым) ✅, guard.ts + vitest ✅, router requiresAdmin ✅,
+  access-denied route ✅, localStorage убран ✅, backend IT #1-3 ✅ (test:backend зелёный).
+
+### Scope доработки
+`package-lock.json` (обновить), `AuthResource.java` (secure конфигурируемый), при желании `application-prod.yml`.
+
+```bash
+cd zorrobpm-frontend && npm install && npm test   # локально зелёное
+mvn clean verify -pl zorrobpm-rest
+git add <файлы> && git commit -m "fix(WO-SEC-6): sync package-lock, configurable cookie-secure" && git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md`. После зелёного CI → мерж.
+
+---
