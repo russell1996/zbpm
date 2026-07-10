@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User } from '@/entities/user/User'
 import * as authService from '@/services/authService'
+import api from '@/services/api'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
@@ -45,6 +46,8 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     user.value = null
     error.value = null
+    // Notify backend to revoke refresh token (fire-and-forget)
+    api.post('/auth/logout').catch(() => {})
     // Clear cookie by setting maxAge to 0
     document.cookie = 'zbpm_token=; Max-Age=0; Path=/; SameSite=Strict'
     window.location.href = '/ui/login'
