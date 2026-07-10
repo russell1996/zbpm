@@ -93,6 +93,8 @@ public interface DBService {
 
     void completeProcessInstance(UUID processInstanceId);
 
+    void cancelProcessInstance(UUID processInstanceId);
+
     UUID createIncident(UUID activityId, String message);
 
     Incident getIncident(UUID incidentId);

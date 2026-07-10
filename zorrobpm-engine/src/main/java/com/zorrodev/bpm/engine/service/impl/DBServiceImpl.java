@@ -387,6 +387,12 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void cancelProcessInstance(UUID processInstanceId) {
+        processInstanceRepository.setCancelled(processInstanceId, true);
+        processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
+    }
+
+    @Override
     public UUID createIncident(UUID activityId, String message) {
         ActivityEntity activityEntity = activityRepository.findById(activityId).orElseThrow();
         UUID id = UUID.randomUUID();
