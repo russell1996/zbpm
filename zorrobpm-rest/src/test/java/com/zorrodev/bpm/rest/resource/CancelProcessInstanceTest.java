@@ -3,8 +3,11 @@ package com.zorrodev.bpm.rest.resource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
+import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -19,8 +22,10 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -29,9 +34,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * WO-FEAT-2: Cancel process instance API.
  *  #1: ACTIVE instance → cancel → 200
+ *  #1b: After cancel, task is CANCELLED (status check)
  *  #2: COMPLETED instance → cancel → 409
  *  #3: Already CANCELLED → cancel → 409
- *  #4: proof-of-failure — POST /cancel on current code → 404
+ *  #4: Zombie timer: boundary timer job deleted after cancel
+ *  #5: proof-of-failure — POST /cancel on current code → 404
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -41,6 +48,9 @@ class CancelProcessInstanceTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private TimerJobRepository timerJobRepository;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String token;
@@ -61,8 +71,7 @@ class CancelProcessInstanceTest {
         token = authResponse.getToken();
     }
 
-    private String startProcessWithUserTask() throws Exception {
-        // Deploy cancel-test-process.bpmn
+    private String deployAndGetProcessKey() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/test-cancel-process.bpmn"), StandardCharsets.UTF_8);
         AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
         addDto.setBpmn(bpmn);
@@ -71,9 +80,12 @@ class CancelProcessInstanceTest {
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
+        return "cancel-test-process";
+    }
 
+    private String startProcess(String processKey) throws Exception {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
-        dto.setProcessDefinitionKey("cancel-test-process");
+        dto.setProcessDefinitionKey(processKey);
         MvcResult result = mockMvc.perform(post("/process-instances")
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(dto))
@@ -81,14 +93,6 @@ class CancelProcessInstanceTest {
                 .andExpect(status().isOk())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
-    }
-
-    private void completeTask(UUID taskId) throws Exception {
-        mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
-                        .header("Authorization", "Bearer " + token)
-                        .content(mapper.writeValueAsString(new com.zorrodev.bpm.contract.dto.CompleteTaskDTO()))
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
     }
 
     private UUID findUserTask() throws Exception {
@@ -100,22 +104,55 @@ class CancelProcessInstanceTest {
         return UUID.fromString(tasksPage.get("data").get(0).get("id").asText());
     }
 
+    private void completeTask(UUID taskId) throws Exception {
+        mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
+                        .header("Authorization", "Bearer " + token)
+                        .content(mapper.writeValueAsString(new CompleteTaskDTO()))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
     // --- Criterion #1: ACTIVE instance → cancel → 200 ---
 
     @Test
     void criterion1_activeInstance_cancelReturns200() throws Exception {
-        String processId = startProcessWithUserTask();
+        String processId = startProcess(deployAndGetProcessKey());
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(processId));
     }
 
+    // --- Criterion #1b: After cancel, task is CANCELLED ---
+
+    @Test
+    void criterion1b_afterCancel_taskIsCancelled() throws Exception {
+        String processId = startProcess(deployAndGetProcessKey());
+        UUID taskId = findUserTask();
+
+        // Verify task is active before cancel
+        mockMvc.perform(get("/user-tasks/" + taskId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CREATED"));
+
+        // Cancel the process
+        mockMvc.perform(post("/process-instances/" + processId + "/cancel")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        // Verify the task is now CANCELLED
+        mockMvc.perform(get("/user-tasks/" + taskId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+    }
+
     // --- Criterion #2: COMPLETED instance → cancel → 409 ---
 
     @Test
     void criterion2_completedInstance_cancelReturns409() throws Exception {
-        String processId = startProcessWithUserTask();
+        String processId = startProcess(deployAndGetProcessKey());
         UUID taskId = findUserTask();
         completeTask(taskId);
 
@@ -129,7 +166,7 @@ class CancelProcessInstanceTest {
 
     @Test
     void criterion3_alreadyCancelled_cancelReturns409() throws Exception {
-        String processId = startProcessWithUserTask();
+        String processId = startProcess(deployAndGetProcessKey());
         // First cancel
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
                         .header("Authorization", "Bearer " + token))
@@ -140,5 +177,42 @@ class CancelProcessInstanceTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CONFLICT"));
+    }
+
+    // --- Criterion #4: Zombie timer — timer_job deleted after cancel ---
+
+    @Test
+    void criterion4_zombieTimer_timerJobDeletedAfterCancel() throws Exception {
+        // Deploy process with boundary timer
+        String bpmn = Files.readString(Paths.get("src/test/files/test-zombie-timer.bpmn"), StandardCharsets.UTF_8);
+        AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+        addDto.setBpmn(bpmn);
+        mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + token)
+                        .content(mapper.writeValueAsString(addDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        // Start process — creates timer_job
+        String processId = startProcess("zombie-timer-process");
+
+        // Verify timer_job exists
+        List<TimerJobEntity> timerJobs = timerJobRepository.findAll();
+        long beforeCancel = timerJobs.stream()
+            .filter(t -> !t.isFired())
+            .count();
+        assertThat(beforeCancel).isGreaterThanOrEqualTo(1);
+
+        // Cancel the process
+        mockMvc.perform(post("/process-instances/" + processId + "/cancel")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        // Verify timer_jobs are deleted — no more pending timer jobs for this instance
+        List<TimerJobEntity> afterCancel = timerJobRepository.findAll();
+        long remaining = afterCancel.stream()
+            .filter(t -> t.getProcessInstanceId() != null && t.getProcessInstanceId().toString().equals(processId))
+            .count();
+        assertThat(remaining).as("All timer_jobs for cancelled instance must be deleted").isEqualTo(0);
     }
 }
