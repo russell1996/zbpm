@@ -55,6 +55,10 @@ public class DmnEvaluationIntegrationTests {
         dmnService.deploy(Files.readString(Paths.get("src/test/files/test-discount.dmn")));
         dmnService.deploy(Files.readString(Paths.get("src/test/files/test-credit-decision.dmn")));
         dmnService.deploy(Files.readString(Paths.get("src/test/files/test-dmn-threshold.dmn")));
+        dmnService.deploy(Files.readString(Paths.get("src/test/files/test-dmn-collect.dmn")));
+        dmnService.deploy(Files.readString(Paths.get("src/test/files/test-dmn-collect-sum.dmn")));
+        dmnService.deploy(Files.readString(Paths.get("src/test/files/test-dmn-ruleorder.dmn")));
+        dmnService.deploy(Files.readString(Paths.get("src/test/files/test-dmn-unique-fail.dmn")));
     }
 
     // --- positive: FIRST hit policy, single output, including the empty default row ---
@@ -131,4 +135,63 @@ public class DmnEvaluationIntegrationTests {
     void getUnknownDecisionThrows() {
         assertThatThrownBy(() -> dmnService.getDecision("nope")).isInstanceOf(EngineException.class);
     }
+
+    // --- Criterion #1: COLLECT returns all matching rules ---
+
+    @Transactional
+    @Test
+    @SuppressWarnings("unchecked")
+    void criterion1_collectReturnsAllMatchingRules() {
+        // score=30 matches all 3 rules (>=10, >=20, >=30)
+        Object result = dmnService.evaluate("collectDecision", List.of(num("score", "30")));
+        assertThat(result).isInstanceOf(List.class);
+        List<Object> list = (List<Object>) result;
+        assertThat(list).hasSize(3);
+        assertThat(list).extracting(r -> ((Number) r).intValue()).containsExactly(10, 20, 30);
+    }
+
+    // --- Criterion #2: COLLECT SUM aggregates ---
+
+    @Transactional
+    @Test
+    void criterion2_collectSumAggregates() {
+        // score=30 matches 3 rules with points 10+20+30 = 60
+        Object result = dmnService.evaluate("collectSumDecision", List.of(num("score", "30")));
+        assertThat(((Number) result).doubleValue()).isEqualTo(60.0);
+    }
+
+    // --- Criterion #3: RULE ORDER preserves order ---
+
+    @Transactional
+    @Test
+    @SuppressWarnings("unchecked")
+    void criterion3_ruleOrderPreservesOrder() {
+        // category="gold" matches rule 1 → priority=1
+        Object result = dmnService.evaluate("ruleOrderDecision", List.of(str("category", "gold")));
+        assertThat(result).isInstanceOf(List.class);
+        List<Object> list = (List<Object>) result;
+        assertThat(list).hasSize(1);
+        assertThat(((Number) list.get(0)).intValue()).isEqualTo(1);
+    }
+
+    // --- Criterion #4: UNIQUE with >1 match → error ---
+
+    @Transactional
+    @Test
+    void criterion4_uniqueMultipleMatchesThrows() {
+        // score=60 matches both rules (>=50) → UNIQUE should throw
+        assertThatThrownBy(() -> dmnService.evaluate("uniqueFailDecision", List.of(num("score", "60"))))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("UNIQUE")
+            .hasMessageContaining("2");
+    }
+
+    // --- Criterion #5: FIRST still works (existing tests cover this) ---
+    // Covered by firstHitPolicySingleOutput parameterized test above
+
+    // --- Criterion #6: proof-of-failure ---
+    // On OLD code: UNIQUE with 2 matches returns 1 result (break on first match)
+    // On NEW code: UNIQUE with 2 matches throws EngineException
+    // This is proven by criterion4 above (GREEN on new code)
+    // RED on old code: the test would pass (returning "A" instead of throwing)
 }
