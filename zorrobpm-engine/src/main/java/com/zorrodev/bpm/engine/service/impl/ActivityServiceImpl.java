@@ -451,8 +451,19 @@ public class ActivityServiceImpl implements ActivityService {
     private void enterTimerCatch(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
         Instant dueAt = computeDueAt(bpmnElement);
-        dbService.createTimerJob(activityId, dueAt);
-        log.info("{}/{}: Timer scheduled for {} at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getId(), dueAt, activityId, bpmnElement.getType());
+        Integer remainingCount = computeRemainingCount(bpmnElement);
+        dbService.createTimerJob(activityId, dueAt, null, remainingCount);
+        log.info("{}/{}: Timer scheduled for {} at {}: {}/{} (remaining={})", processInstanceId, tokenId, bpmnElement.getId(), dueAt, activityId, bpmnElement.getType(), remainingCount);
+    }
+
+    private Integer computeRemainingCount(BpmnElementModel bpmnElement) {
+        return Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .filter(t -> t.getType() == com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE)
+            .map(t -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.repeatCount(t.getExpression()))
+            .filter(count -> count > 0)
+            .map(count -> count - 1) // first fire counts as 1
+            .orElse(null); // null = infinite
     }
 
     /**
@@ -1746,11 +1757,20 @@ public class ActivityServiceImpl implements ActivityService {
         TimerEventExtensionModel timer = Optional.ofNullable(boundary.getExtensions())
             .map(BpmnElementExtensionModel::getTimerEventExtension)
             .orElse(null);
-        if (timer == null || timer.getType() != com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE
-            || !com.zorrodev.bpm.engine.scheduler.TimerExpressions.isInfiniteCycle(timer.getExpression())) {
+        if (timer == null || timer.getType() != com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE) {
             return;
         }
-        dbService.createTimerJob(hostActivityId, computeDueAt(boundary), boundary.getId());
+        String expression = timer.getExpression();
+        boolean infinite = com.zorrodev.bpm.engine.scheduler.TimerExpressions.isInfiniteCycle(expression);
+        int repeatCount = com.zorrodev.bpm.engine.scheduler.TimerExpressions.repeatCount(expression);
+        if (!infinite && repeatCount <= 0) {
+            return; // one-shot or unsupported
+        }
+        Integer remaining = infinite ? null : repeatCount - 1;
+        if (!infinite && remaining != null && remaining <= 0) {
+            return; // done
+        }
+        dbService.createTimerJob(hostActivityId, computeDueAt(boundary), boundary.getId(), remaining);
     }
 
     @Override
