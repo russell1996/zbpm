@@ -493,4 +493,48 @@ git push
 ```
 После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-4 ревью #2).
 
+**Ревью #2 — замечание закрыто** ✅ (7033c7b: split по окнам, criterion1 детерминирован, CI зелёный).
+
+---
+
+## WO-SEC-4 — ревью #3 (2026-07-10)
+
+**Статус**: HOLD (последнее). Split принят, CI зелёный. Но `criterion2` несёт ТОТ ЖЕ
+timing-риск, что мы убрали из criterion1 — дожимаем до конца (последовательность с P-10).
+
+### Замечание 1 — criterion2 остаётся timing-флейки
+
+Файл: `RateLimitWindowResetTest.java` → `criterion2_afterWindow_worksAgain`
+
+Фаза «drain 5 + confirm blocked» = **6 логинов `admin/admin` в окне 1s**, каждый —
+PBKDF2 120k итераций. На загруженном раннере 6×PBKDF2 > 1s → окно сбросится →
+«confirm blocked» получит 200 вместо 429 → флейки. Сейчас повезло, но риск реальный.
+
+**Как починить** — drain-фазу слать с НЕсуществующим юзером (быстрый путь, без PBKDF2):
+```java
+private LoginDTO badLogin() {          // не существует → login коротко замыкается (401), без PBKDF2
+    LoginDTO dto = new LoginDTO();
+    dto.setUsername("nobody-" + java.util.UUID.randomUUID());
+    dto.setPassword("x");
+    return dto;
+}
+```
+- drain 5 + confirm blocked (6-й) → `badLogin()` (401/429, быстро, <100ms суммарно)
+- rate-limit фильтр считает по IP независимо от валидности → 6-й всё равно 429
+- **после `sleep(1200)`** финальный запрос → `validLogin()` (admin) → 200
+
+Проверено по диску: `UiUserServiceImpl.login` при `user==null` возвращает `Optional.empty()`
+БЕЗ вызова `passwordHasher.matches` → быстро. Так drain перестаёт зависеть от PBKDF2.
+
+### Scope
+Только `RateLimitWindowResetTest.java`.
+
+```bash
+mvn clean verify -pl zorrobpm-rest   # прогони 3+ раза, стабильно зелёный
+git add zorrobpm-rest/src/test/java/.../RateLimitWindowResetTest.java
+git commit -m "test(WO-SEC-4): criterion2 drain via non-existent user (kill timing flakiness)"
+git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md`. После этого WO-SEC-4 → мерж.
+
 ---
