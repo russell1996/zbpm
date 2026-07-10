@@ -449,4 +449,48 @@ git push
 ```
 После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-4 ревью #1).
 
+**Ревью #1 — замечание закрыто** ✅ (965401b: application-prod.yml включает rate-limit).
+
+---
+
+## WO-SEC-4 — ревью #2 (2026-07-10)
+
+**Статус**: HOLD. Prod-enable принят ✅. Но CI поймал **флейки-тест** (недетерминизм).
+
+CI (pipeline 155862): `Tests run: 54, Failures: 1`:
+```
+RateLimitIntegrationTest.criterion1_sixthAttempt_returns429:89
+  Status expected:<429> but was:<200>
+```
+На d5edb8f тот же тест был ЗЕЛЁНЫЙ → тест недетерминирован (timing).
+
+### Замечание 1 — БЛОКИРУЮЩЕЕ: флейки timing-тест (причина — промах постановки CTO)
+
+`criterion1` делает 6 логинов `admin/admin`. Каждый login = PBKDF2 **120 000 итераций**
+(медленно намеренно). 6 логинов занимают **>1 сек**, а окно `window-seconds=1` (это Я
+задал в WO). Окно истекает посреди теста → токены сбрасываются → 6-й проходит (200).
+
+**Признание CTO**: `window-seconds=1` глобально — моя ошибка постановки. Для `criterion2`
+(проверка сброса) 1s нужен, но для `criterion1` (все 6 в ОДНОМ окне) 1s слишком мало.
+
+**Как починить** — разные окна для разных сценариев. `@TestPropertySource` — уровень класса,
+поэтому **раздели на два класса**:
+- `RateLimitIntegrationTest` с `window-seconds=3600` (большое): criterion1 (6-й→429), criterion3 (1-й ok).
+  При окне 3600s все 6 запросов гарантированно в одном окне — детерминированно.
+- `RateLimitWindowResetTest` с `window-seconds=1`: criterion2 (после окна → снова 200),
+  `Thread.sleep(1200)`. Здесь короткое окно и нужно.
+
+Оба с `@BeforeEach reset()`. Так criterion1 больше не зависит от скорости PBKDF2.
+
+### Scope доработки
+`RateLimitIntegrationTest.java` (разделить) + новый `RateLimitWindowResetTest.java`.
+
+```bash
+mvn clean verify -pl zorrobpm-rest   # BUILD SUCCESS, прогони несколько раз для стабильности
+git add <оба тестовых файла>
+git commit -m "test(WO-SEC-4): split rate-limit tests by window (fix timing flakiness)"
+git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-4 ревью #2).
+
 ---
