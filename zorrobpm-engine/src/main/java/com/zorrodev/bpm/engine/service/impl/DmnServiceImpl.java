@@ -92,33 +92,123 @@ public class DmnServiceImpl implements DmnService {
         }
 
         String hitPolicy = table.getHitPolicy() == null ? "UNIQUE" : table.getHitPolicy().toUpperCase();
-        DmnRuleModel matched = null;
+        String aggregation = table.getAggregation() == null ? null : table.getAggregation().toUpperCase();
+
+        // Collect all matching rules
+        List<DmnRuleModel> matchedRules = new ArrayList<>();
         for (DmnRuleModel rule : table.getRules()) {
             if (ruleMatches(rule, inputValues, vars)) {
-                matched = rule;
-                // UNIQUE/FIRST/ANY all return a single result — the first matching rule is sufficient here
-                break;
+                matchedRules.add(rule);
             }
         }
-        if (matched == null) {
+
+        if (matchedRules.isEmpty()) {
             log.info("DMN decision '{}' matched no rule", decisionId);
             return null;
         }
 
-        List<DmnTextModel> outputEntries = matched.getOutputEntries();
+        return switch (hitPolicy) {
+            case "COLLECT" -> evaluateCollect(matchedRules, table, vars, decisionId, aggregation);
+            case "RULE ORDER" -> evaluateRuleOrder(matchedRules, table, vars, decisionId);
+            case "OUTPUT ORDER" -> evaluateOutputOrder(matchedRules, table, vars, decisionId);
+            case "PRIORITY" -> evaluatePriority(matchedRules, table, vars, decisionId);
+            case "UNIQUE" -> {
+                if (matchedRules.size() > 1) {
+                    throw new EngineException("DMN UNIQUE hit policy: expected exactly 1 matching rule, found " + matchedRules.size());
+                }
+                yield evaluateSingleRule(matchedRules.get(0), table, vars, decisionId);
+            }
+            default -> evaluateSingleRule(matchedRules.get(0), table, vars, decisionId); // FIRST, ANY
+        };
+    }
+
+    private Object evaluateSingleRule(DmnRuleModel rule, DmnDecisionTableModel table, Map<String, Object> vars, String decisionId) {
+        List<DmnTextModel> outputEntries = rule.getOutputEntries();
         if (table.getOutputs() != null && table.getOutputs().size() == 1) {
             Object result = outputValue(outputEntries.get(0), vars);
-            log.info("DMN decision '{}' ({}) evaluated to {}", decisionId, hitPolicy, result);
+            log.info("DMN decision '{}' evaluated to {}", decisionId, result);
             return result;
         }
-        // multiple outputs: return a name -> value map
         Map<String, Object> result = new LinkedHashMap<>();
         for (int i = 0; i < outputEntries.size(); i++) {
             String name = table.getOutputs().get(i).getName();
             result.put(name != null ? name : "output" + i, outputValue(outputEntries.get(i), vars));
         }
-        log.info("DMN decision '{}' ({}) evaluated to {}", decisionId, hitPolicy, result);
+        log.info("DMN decision '{}' evaluated to {}", decisionId, result);
         return result;
+    }
+
+    private Object evaluateCollect(List<DmnRuleModel> rules, DmnDecisionTableModel table, Map<String, Object> vars, String decisionId, String aggregation) {
+        List<Object> results = new ArrayList<>();
+        for (DmnRuleModel rule : rules) {
+            List<DmnTextModel> outputEntries = rule.getOutputEntries();
+            if (table.getOutputs() != null && table.getOutputs().size() == 1) {
+                results.add(outputValue(outputEntries.get(0), vars));
+            } else {
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (int i = 0; i < outputEntries.size(); i++) {
+                    String name = table.getOutputs().get(i).getName();
+                    row.put(name != null ? name : "output" + i, outputValue(outputEntries.get(i), vars));
+                }
+                results.add(row);
+            }
+        }
+
+        if (aggregation != null) {
+            return aggregate(results, aggregation, decisionId);
+        }
+        log.info("DMN decision '{}' (COLLECT) evaluated to {} results", decisionId, results.size());
+        return results;
+    }
+
+    private Object aggregate(List<Object> results, String aggregation, String decisionId) {
+        if (results.isEmpty()) return null;
+        return switch (aggregation) {
+            case "SUM" -> results.stream().mapToDouble(r -> ((Number) r).doubleValue()).sum();
+            case "MIN" -> results.stream().mapToDouble(r -> ((Number) r).doubleValue()).min().orElse(0);
+            case "MAX" -> results.stream().mapToDouble(r -> ((Number) r).doubleValue()).max().orElse(0);
+            case "COUNT" -> (double) results.size();
+            default -> results; // unknown aggregation → return list
+        };
+    }
+
+    private Object evaluateRuleOrder(List<DmnRuleModel> rules, DmnDecisionTableModel table, Map<String, Object> vars, String decisionId) {
+        List<Object> results = new ArrayList<>();
+        for (DmnRuleModel rule : rules) {
+            results.add(evaluateSingleRule(rule, table, vars, decisionId));
+        }
+        log.info("DMN decision '{}' (RULE ORDER) evaluated to {} results", decisionId, results.size());
+        return results;
+    }
+
+    private Object evaluateOutputOrder(List<DmnRuleModel> rules, DmnDecisionTableModel table, Map<String, Object> vars, String decisionId) {
+        // OUTPUT ORDER: results sorted by output values (ascending)
+        List<Object> results = new ArrayList<>();
+        for (DmnRuleModel rule : rules) {
+            results.add(evaluateSingleRule(rule, table, vars, decisionId));
+        }
+        results.sort((a, b) -> {
+            if (a instanceof Comparable && b instanceof Comparable) {
+                return ((Comparable<Object>) a).compareTo(b);
+            }
+            return 0;
+        });
+        log.info("DMN decision '{}' (OUTPUT ORDER) evaluated to {} results", decisionId, results.size());
+        return results;
+    }
+
+    private Object evaluatePriority(List<DmnRuleModel> rules, DmnDecisionTableModel table, Map<String, Object> vars, String decisionId) {
+        // PRIORITY: return the result with the highest priority (first output, descending)
+        DmnRuleModel bestRule = rules.get(0);
+        Object bestValue = null;
+        for (DmnRuleModel rule : rules) {
+            Object value = outputValue(rule.getOutputEntries().get(0), vars);
+            if (bestValue == null || (value instanceof Comparable && ((Comparable<Object>) value).compareTo(bestValue) > 0)) {
+                bestValue = value;
+                bestRule = rule;
+            }
+        }
+        return evaluateSingleRule(bestRule, table, vars, decisionId);
     }
 
     @Override

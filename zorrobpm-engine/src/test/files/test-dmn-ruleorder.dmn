@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_ruleorder" name="ruleorder-test" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="ruleOrderDecision" name="Rule Order Decision">
+    <decisionTable id="DecisionTable_ruleorder" hitPolicy="RULE ORDER">
+      <input id="Input_1" label="Category">
+        <inputExpression id="InputExpression_1" typeRef="string" expressionLanguage="feel">
+          <text>category</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Priority" name="priority" typeRef="number" />
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>"gold"</text></inputEntry>
+        <outputEntry id="Out_1"><text>1</text></outputEntry>
+      </rule>
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>"silver"</text></inputEntry>
+        <outputEntry id="Out_2"><text>2</text></outputEntry>
+      </rule>
+      <rule id="Rule_3">
+        <inputEntry id="In_3"><text>"bronze"</text></inputEntry>
+        <outputEntry id="Out_3"><text>3</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>
