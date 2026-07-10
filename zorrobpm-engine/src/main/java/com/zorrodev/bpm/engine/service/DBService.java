@@ -95,6 +95,10 @@ public interface DBService {
 
     void cancelProcessInstance(UUID processInstanceId);
 
+    void deleteTimerJobsByProcessInstanceId(UUID processInstanceId);
+
+    void deleteMessageSubscriptionsByProcessInstanceId(UUID processInstanceId);
+
     UUID createIncident(UUID activityId, String message);
 
     Incident getIncident(UUID incidentId);
