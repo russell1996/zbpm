@@ -39,6 +39,9 @@ public class AuthResource implements AuthContract {
     @Value("${zorrobpm.security.refresh-ttl-days:7}")
     private long refreshTtlDays;
 
+    @Value("${zorrobpm.security.jwt-ttl-minutes:720}")
+    private long jwtTtlMinutes;
+
     @Override
     public AuthResponse login(@RequestBody LoginDTO dto) {
         AuthResponse authResponse = userService.login(dto)
@@ -49,7 +52,7 @@ public class AuthResource implements AuthContract {
         cookie.setHttpOnly(true);
         cookie.setSecure(cookieSecure);
         cookie.setPath("/");
-        cookie.setMaxAge(7 * 24 * 60 * 60); // 7 days
+        cookie.setMaxAge((int) (jwtTtlMinutes * 60)); // S15: sync with JWT expiry
         cookie.setAttribute("SameSite", "Strict");
         response.addCookie(cookie);
 
@@ -95,6 +98,14 @@ public class AuthResource implements AuthContract {
         }
 
         String tokenHash = tokenService.hashToken(refreshTokenValue);
+
+        // S10: reuse-detection — if the token exists but is already revoked, revoke ALL for this user
+        var anyToken = refreshTokenRepository.findByTokenHash(tokenHash);
+        if (anyToken.isPresent() && anyToken.get().isRevoked()) {
+            refreshTokenRepository.revokeAllByUserId(anyToken.get().getUserId());
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token revoked — theft detected");
+        }
+
         RefreshTokenEntity found = refreshTokenRepository.findByTokenHashAndRevokedFalse(tokenHash)
                 .filter(t -> t.getExpiresAt().isAfter(Instant.now()))
                 .orElse(null);
@@ -149,12 +160,19 @@ public class AuthResource implements AuthContract {
             refreshTokenRepository.revokeAllByUserId(claims.userId());
         }
 
+        // S4: Clear access cookie (zbpm_token)
+        Cookie clearAccess = new Cookie("zbpm_token", "");
+        clearAccess.setPath("/");
+        clearAccess.setMaxAge(0);
+        clearAccess.setHttpOnly(true);
+        response.addCookie(clearAccess);
+
         // Clear refresh cookie
-        Cookie clearCookie = new Cookie("refresh_token", "");
-        clearCookie.setPath("/");
-        clearCookie.setMaxAge(0);
-        clearCookie.setHttpOnly(true);
-        response.addCookie(clearCookie);
+        Cookie clearRefresh = new Cookie("refresh_token", "");
+        clearRefresh.setPath("/");
+        clearRefresh.setMaxAge(0);
+        clearRefresh.setHttpOnly(true);
+        response.addCookie(clearRefresh);
     }
 
     private String extractCookie(String name) {
