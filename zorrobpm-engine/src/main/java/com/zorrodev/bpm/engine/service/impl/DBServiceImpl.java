@@ -232,13 +232,14 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public void createUserTask(UUID activityId) {
+    public void createUserTask(UUID activityId, String assignee) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         UserTaskEntity entity = new UserTaskEntity();
         entity.setId(activity.getId());
         entity.setBpmnElementId(activity.getBpmnElementId());
         entity.setProcessInstanceId(activity.getProcessInstanceId());
         entity.setCreatedAt(activity.getCreatedAt());
+        entity.setAssignee(assignee);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());

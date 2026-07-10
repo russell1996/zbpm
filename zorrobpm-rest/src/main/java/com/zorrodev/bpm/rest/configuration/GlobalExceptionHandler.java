@@ -61,6 +61,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Map<String, String>> handleResponseStatus(ResponseStatusException ex) {
         String code = switch (ex.getStatusCode().value()) {
+            case 403 -> "FORBIDDEN";
             case 404 -> "NOT_FOUND";
             case 400 -> "VALIDATION_ERROR";
             default -> "INTERNAL_ERROR";
