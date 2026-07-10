@@ -558,3 +558,29 @@ CTO выверил WO-SEC-5 по диску и **снял 4 мины заран�
 Начни с proof-of-failure (#5). HARD GATES G-A…G-G.
 
 ---
+
+## ОТВЕТ на вопрос Mimo (assignee не заполняется) — 2026-07-10
+
+**Отличная эскалация — именно так и надо (V10/P-6). Ты прав, я это упустил при выверке.**
+Верифицировал по диску: `DBServiceImpl.createUserTask` действительно НЕ пишет assignee.
+
+**Мой ответ: НЕ вариант 1 (в DBServiceImpl), а вариант 2 — резолв в ActivityServiceImpl.**
+Причина: `DBServiceImpl` — persistence-слой, BPMN-модели у него нет. `getAssigneeFromBpmn`
+там потребовал бы inject BpmnService + загрузку модели — грязно и дублирует навигацию.
+А assignee УЖЕ доступен в `ActivityServiceImpl` (стр. 1289 и 1342, там есть `element`).
+
+Точное решение (детали в самом WO, раздел «ПРЕДПОСЫЛКА»):
+1. `ActivityServiceImpl` (1289, 1342): достань `element.getExtensions().getUserTaskExtension().getAssignee()`
+   (null-safe, образец — `ProcessDefinitionServiceImpl:195` для formKey), передай в createUserTask.
+2. `DBServiceImpl.createUserTask(UUID, String assignee)` → `entity.setAssignee(assignee)`.
+3. Колонка `user_tasks.assignee` УЖЕ есть (changeset 012) — Liquibase changeset НЕ нужен.
+4. FEEL-выражение в assignee — пиши как есть (статики достаточно), резолвинг — вне scope.
+
+Это санкционировано как часть WO-SEC-5 (заполнение при создании ≠ логика завершения).
+Продолжай: сначала proof-of-failure (#2: user2 завершает чужую → 200, должно 403),
+потом заполнение assignee + проверка в RuntimeResource.
+
+**Урок CTO (мне, вслух)**: при выверке WO я проверил, что поле assignee ЕСТЬ, но не что оно
+ЗАПОЛНЯЕТСЯ. Впредь проверяю живой путь данных, не только структуру. Спасибо за отлов.
+
+---

@@ -13,6 +13,31 @@
 
 ---
 
+## 🔧 ПРЕДПОСЫЛКА (нашёл Mimo, верифицировал CTO): assignee НЕ заполняется при создании задачи
+
+`DBServiceImpl.createUserTask(activityId)` (стр. 235) пишет только id/bpmnElementId/
+processInstanceId/createdAt/processDefinitionId — **`assignee` остаётся null**. Без фикса
+вся проверка бессмысленна (assignee всегда null → критерий #4 всегда, #1/#2 непроверяемы).
+
+**Решение CTO (санкционировано — часть этого WO):**
+- **НЕ** вариант «1 строка в DBServiceImpl»: у него нет BPMN-модели, assignee не достать чисто.
+- Резолвить assignee в **`ActivityServiceImpl`** (стр. 1289 и 1342 — там доступен `bpmnElement`/`element`):
+  ```java
+  String assignee = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
+      ? element.getExtensions().getUserTaskExtension().getAssignee() : null;
+  dbService.createUserTask(activityId, assignee);
+  ```
+  (образец null-safe навигации — `ProcessDefinitionServiceImpl:195-196` достаёт `formKey` так же).
+- Изменить сигнатуру `DBServiceImpl.createUserTask(UUID, String assignee)` → `entity.setAssignee(assignee)`.
+- Колонка `user_tasks.assignee` УЖЕ есть (changeset 20260224-012) — **Liquibase changeset НЕ нужен**.
+- Оба call-site (1289 и 1342) обнови. `createServiceTask` не трогай.
+- **Известное ограничение (не в scope)**: если assignee — FEEL-выражение (`=expr`), пиши как есть
+  (статический assignee достаточно для этой фичи); резолвинг выражений — отдельный WO при надобности.
+
+Это НЕ «логика завершения» (её запрет ниже в силе) — это заполнение при СОЗДАНИИ, санкционировано.
+
+---
+
 ## 🧭 АРХИТЕКТУРНЫЕ РЕШЕНИЯ CTO (приняты заранее — проверено по диску, не отступать)
 
 **1. Проверку делать в `RuntimeResource` (rest-слой), НЕ в engine-сервисе.**
@@ -51,9 +76,10 @@ else:                                    → throw ResponseStatusException(403, 
 
 ## Scope
 **Можно:** `RuntimeResource.java`, `GlobalExceptionHandler.java` (case 403), источник assignee
-(`UserTaskRepository` inject ИЛИ новый `QueryService.getAssignee`), новый тестовый BPMN, тесты.
+(`UserTaskRepository` inject ИЛИ новый `QueryService.getAssignee`), **заполнение assignee**
+(`ActivityServiceImpl` стр. 1289/1342 + `DBServiceImpl.createUserTask` сигнатура), новый тестовый BPMN, тесты.
 **Нельзя:** менять `RuntimeContract`/`UserTask` DTO/`ProcessVariable`; менять сигнатуру
-`RuntimeService.completeUserTask`; трогать engine-логику завершения.
+`RuntimeService.completeUserTask`; трогать engine-логику **завершения** (createUserTask — это создание, можно).
 
 ## Тестовые данные (нужно создать — готового нет)
 Готового BPMN с `zeebe:assignee` в тестах НЕТ. Создай `zorrobpm-rest/src/test/files/assignee-task.bpmn`:
