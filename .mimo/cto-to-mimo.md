@@ -396,3 +396,57 @@ WO-SEC-1 (JWT auth) + WO-SEC-2 (hardening) + WO-SEC-3 (validation/errors) — в
 как делали для WO-SEC-3.)
 
 ---
+
+## WO-SEC-4 — ревью #1 (2026-07-10)
+
+**Статус**: HOLD. Реализация фильтра и тесты корректны, CI зелёный, существующие
+5 IT не сломаны (критерий #4 ✅). Но одно блокирующее: **фича выключена в проде**.
+
+### Замечание 1 — БЛОКИРУЮЩЕЕ: rate-limit не активен в проде (цель WO не достигнута)
+
+`RateLimitFilter` по умолчанию `enabled=false`, и `application-prod.yml` его НЕ включает
+(проверено: `git grep rate-limit` по конфигам — пусто). В проде фильтр спит →
+brute-force защита не работает. Цель WO-SEC-4 не достигнута.
+
+**Примечание CTO**: WO явно не требовал prod-enablement — это мой недочёт постановки.
+Но цель требует. Исправляем.
+
+**Как починить** — включить в `zorrobpm-rest/src/main/resources/application-prod.yml`:
+```yaml
+zorrobpm:
+  security:
+    rate-limit:
+      enabled: ${ZORROBPM_RATE_LIMIT_ENABLED:true}
+      capacity: ${ZORROBPM_RATE_LIMIT_CAPACITY:5}
+      window-seconds: ${ZORROBPM_RATE_LIMIT_WINDOW:60}
+```
+Дефолт в test-профиле остаётся false (не трогать) — существующие IT не ломаются.
+
+### Что уже хорошо / принято
+
+- Своя реализация вместо Bucket4j — **принято** (Bucket4j недоступен в вашем Maven registry;
+  простая ConcurrentHashMap+Atomic реализация разумна). На будущее: такое отклонение от
+  pre-approved подхода эскалируй в `mimo-to-cto.md` ДО кода, не только в commit message (V10).
+- `enabled=false` по умолчанию + `@TestPropertySource` в тесте — верная изоляция ✅
+- criterion2 через window=1s + sleep(1200) вместо 60s — верно ✅
+- 429 + `{code:RATE_LIMITED}` + Retry-After — консистентно с error-контрактом ✅
+
+### Наблюдение (НЕ блок, отдельный бэклог)
+
+- `buckets` (ConcurrentHashMap по IP) не имеет eviction — при атаке с многих IP
+  растёт неограниченно (сам по себе DoS-вектор). Для MVP приемлемо; при желании —
+  отдельный WO (TTL-eviction), родственно [[WO-REL-3]] (unbounded cache).
+
+### Scope доработки
+Только `zorrobpm-rest/src/main/resources/application-prod.yml` (+ при желании тест,
+проверяющий что при `enabled=true` фильтр активен — но это уже покрыто RateLimitIntegrationTest).
+
+```bash
+mvn clean verify        # BUILD SUCCESS
+git add zorrobpm-rest/src/main/resources/application-prod.yml
+git commit -m "fix(WO-SEC-4): enable rate-limit in prod profile"
+git push
+```
+После пуша — обнови `.mimocode/mimo-to-cto.md` (WO-SEC-4 ревью #1).
+
+---
