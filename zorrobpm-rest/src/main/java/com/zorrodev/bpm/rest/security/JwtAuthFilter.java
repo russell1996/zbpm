@@ -30,6 +30,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         this.requireApiAuth = requireApiAuth;
     }
 
+    private static String normalizePath(String raw) {
+        if (raw == null) return "/";
+        String p = raw.replaceAll(";[^/]*", "");   // strip matrix params
+        p = p.replaceAll("/{2,}", "/");            // collapse double slashes
+        if (p.length() > 1 && p.endsWith("/")) p = p.substring(0, p.length() - 1); // strip trailing slash
+        return p;
+    }
+
     private static boolean isUsersPath(String path) {
         return path.equals("/users") || path.startsWith("/users/");
     }
@@ -71,7 +79,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String path = request.getRequestURI();
+        String path = normalizePath(request.getRequestURI());
         if (!isProtected(path)) {
             chain.doFilter(request, response);
             return;
