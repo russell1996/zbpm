@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
@@ -15,6 +16,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasSize;
@@ -82,8 +86,17 @@ class ValidationIntegrationTest {
 
     @Test
     void criterion2_startProcess_byKey_works() throws Exception {
-        // First, get a valid process definition key from the DB
-        // Use the existing process1 from test data
+        // Deploy process1.bpmn first (test must be self-contained — P-8)
+        String bpmn = Files.readString(Paths.get("src/test/files/process1.bpmn"), StandardCharsets.UTF_8);
+        AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+        addDto.setBpmn(bpmn);
+        mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + token)
+                        .content(mapper.writeValueAsString(addDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        // Now start process by key "process1" → must return 200
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionKey("process1");
 
