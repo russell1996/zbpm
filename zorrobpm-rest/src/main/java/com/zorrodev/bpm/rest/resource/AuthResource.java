@@ -6,7 +6,9 @@ import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.UiUserService;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,11 +21,23 @@ public class AuthResource implements AuthContract {
 
     private final UiUserService userService;
     private final HttpServletRequest request;
+    private final HttpServletResponse response;
 
     @Override
     public AuthResponse login(@RequestBody LoginDTO dto) {
-        return userService.login(dto)
+        AuthResponse authResponse = userService.login(dto)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password"));
+
+        // Set httpOnly cookie for browser clients
+        Cookie cookie = new Cookie("zbpm_token", authResponse.getToken());
+        cookie.setHttpOnly(true);
+        cookie.setSecure(true);
+        cookie.setPath("/");
+        cookie.setMaxAge(7 * 24 * 60 * 60); // 7 days
+        cookie.setAttribute("SameSite", "Strict");
+        response.addCookie(cookie);
+
+        return authResponse;
     }
 
     @Override
