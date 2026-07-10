@@ -63,7 +63,7 @@ public class ScriptServiceImpl implements ScriptService {
                 } else {
                     ctx.setAttribute(variable.getName(), variable.getValue(), ScriptContext.ENGINE_SCOPE);
                 }
-                log.info("Variable {} = {}", variable.getName(), variable.getValue());
+                log.debug("Variable {} = {}", variable.getName(), variable.getValue());
             }
         }
         return ctx;
