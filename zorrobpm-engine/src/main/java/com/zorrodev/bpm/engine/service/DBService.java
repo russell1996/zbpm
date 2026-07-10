@@ -103,6 +103,8 @@ public interface DBService {
 
     UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId);
 
+    UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId, Integer remainingCount);
+
     /** Creates a timer job that triggers a timer-started event sub-process when due (no host activity). */
     UUID createEventSubprocessTimerJob(UUID processInstanceId, java.time.Instant dueAt, String eventSubprocessId);
 
