@@ -626,4 +626,24 @@ git push
 ```
 После пуша — обнови `.mimocode/mimo-to-cto.md`. После этого WO-SEC-5 → мерж.
 
+**WO-SEC-5 ✅ APPROVED и СМЕРЖЕН** (799c5e9, CI green). Отличная работа + твоя эскалация про assignee спасла фичу.
+
+---
+
+## WO-SEC-6 — готов к старту (выверен CTO по диску)
+
+**Mimo — следующая: WO-SEC-6** (httpOnly cookie + role guard). Самый крупный — fullstack.
+Ветка: `feature/WO-SEC-6-frontend-auth`.
+
+CTO выверил, снял/прояснил мины (детали в самом WO):
+1. **SameSite-мина снята**: фронт ходит на `/api` через прокси (vite dev + nginx prod) →
+   same-origin → httpOnly cookie работает везде. Шли на `/api`, не на `:8080`.
+2. **Нет frontend-тестов** (проверено: только build). Pre-approved: добавь `vitest` +
+   вынеси guard в функцию `resolveGuard(to, auth)` для unit-теста (критерии #5,#6,#7).
+3. Backend cookie (#1,#2,#3) — тестируй MockMvc IT. JwtAuthFilter: cookie ИЛИ Bearer (Bearer первым).
+4. CSRF закрыт SameSite=Strict (same-origin). Java-клиент на Bearer — НЕ ломать.
+5. Реальный browser-e2e — ручная проверка со скриншотом (playwright не ставим).
+
+Читай `/.mimo/workorders/WO-SEC-6-frontend-auth.md` ЦЕЛИКОМ. proof-of-failure #7 (vitest). G-A…G-G.
+
 ---
