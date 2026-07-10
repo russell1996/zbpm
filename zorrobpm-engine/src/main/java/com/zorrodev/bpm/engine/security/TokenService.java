@@ -10,8 +10,10 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -30,19 +32,18 @@ public class TokenService {
     private final Base64.Decoder b64d = Base64.getUrlDecoder();
 
     private static final String DEFAULT_SECRET = "change-me-dev-secret-please-override-in-production";
+    private static final Set<String> SECRET_OPTIONAL_PROFILES = Set.of("dev", "test");
 
     public TokenService(
         @Value("${zorrobpm.security.jwt-secret:" + DEFAULT_SECRET + "}") String secret,
         @Value("${zorrobpm.security.jwt-ttl-minutes:720}") long ttlMinutes,
         Environment environment) {
-        if (environment.getActiveProfiles().length > 0) {
-            for (String profile : environment.getActiveProfiles()) {
-                if ("prod".equals(profile) && DEFAULT_SECRET.equals(secret)) {
-                    throw new IllegalStateException(
-                        "FATAL: zorrobpm.security.jwt-secret must be overridden in production. "
-                        + "The default dev secret is not secure. Set a strong secret via environment variable or application-prod.yml.");
-                }
-            }
+        boolean devOrTest = Arrays.stream(environment.getActiveProfiles())
+            .anyMatch(SECRET_OPTIONAL_PROFILES::contains);
+        if (!devOrTest && DEFAULT_SECRET.equals(secret)) {
+            throw new IllegalStateException(
+                "FATAL: zorrobpm.security.jwt-secret must be set (default secret allowed only in dev/test profiles). "
+                + "Set ZORROBPM_JWT_SECRET or application-prod.yml.");
         }
         this.secret = secret.getBytes(StandardCharsets.UTF_8);
         this.ttlSeconds = ttlMinutes * 60;
