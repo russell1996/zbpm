@@ -1,7 +1,7 @@
 # Work Orders — индекс
 
 > Брать строго по приоритету. Одна задача одновременно (V8).  
-> Правила: [rules.md](../rules/rules.md) | Роадмап: [docs/README.md](../../docs/README.md)
+> Правила: [/AGENTS.md](../../AGENTS.md) | Роадмап: [docs/README.md](../../docs/README.md)
 
 ## Фаза 0 — Production Blockers 🔴 (блокируют прод)
 
