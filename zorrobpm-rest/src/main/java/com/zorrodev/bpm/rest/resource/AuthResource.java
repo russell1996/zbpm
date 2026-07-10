@@ -4,6 +4,8 @@ import com.zorrodev.bpm.contract.AuthContract;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.model.UiUser;
+import com.zorrodev.bpm.engine.entity.RefreshTokenEntity;
+import com.zorrodev.bpm.engine.repository.RefreshTokenRepository;
 import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.UiUserService;
 import jakarta.servlet.http.Cookie;
@@ -12,9 +14,14 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -23,16 +30,21 @@ public class AuthResource implements AuthContract {
     private final UiUserService userService;
     private final HttpServletRequest request;
     private final HttpServletResponse response;
+    private final TokenService tokenService;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     @Value("${zorrobpm.security.cookie-secure:true}")
     private boolean cookieSecure;
+
+    @Value("${zorrobpm.security.refresh-ttl-days:7}")
+    private long refreshTtlDays;
 
     @Override
     public AuthResponse login(@RequestBody LoginDTO dto) {
         AuthResponse authResponse = userService.login(dto)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password"));
 
-        // Set httpOnly cookie for browser clients
+        // Set httpOnly cookie for access token
         Cookie cookie = new Cookie("zbpm_token", authResponse.getToken());
         cookie.setHttpOnly(true);
         cookie.setSecure(cookieSecure);
@@ -41,14 +53,117 @@ public class AuthResource implements AuthContract {
         cookie.setAttribute("SameSite", "Strict");
         response.addCookie(cookie);
 
+        // Generate and store refresh token
+        TokenService.Claims claims = tokenService.verify(authResponse.getToken());
+        if (claims != null) {
+            String refreshToken = tokenService.generateRefreshToken();
+            RefreshTokenEntity entity = new RefreshTokenEntity();
+            entity.setId(UUID.randomUUID());
+            entity.setUserId(claims.userId());
+            entity.setTokenHash(tokenService.hashToken(refreshToken));
+            entity.setExpiresAt(Instant.now().plus(refreshTtlDays, ChronoUnit.DAYS));
+            entity.setRevoked(false);
+            entity.setCreatedAt(Instant.now());
+            refreshTokenRepository.save(entity);
+
+            // Set refresh token httpOnly cookie
+            Cookie refreshCookie = new Cookie("refresh_token", refreshToken);
+            refreshCookie.setHttpOnly(true);
+            refreshCookie.setSecure(cookieSecure);
+            refreshCookie.setPath("/");
+            refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
+            refreshCookie.setAttribute("SameSite", "Strict");
+            response.addCookie(refreshCookie);
+        }
+
         return authResponse;
     }
 
     @Override
     public UiUser me() {
-        // the auth filter has already validated the token and stashed the claims
         TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
         if (claims == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
         return userService.getById(claims.userId());
+    }
+
+    @Override
+    @Transactional
+    public AuthResponse refresh() {
+        String refreshTokenValue = extractCookie("refresh_token");
+        if (refreshTokenValue == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No refresh token");
+        }
+
+        String tokenHash = tokenService.hashToken(refreshTokenValue);
+        RefreshTokenEntity found = refreshTokenRepository.findByTokenHashAndRevokedFalse(tokenHash)
+                .filter(t -> t.getExpiresAt().isAfter(Instant.now()))
+                .orElse(null);
+
+        if (found == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired refresh token");
+        }
+
+        // Get user info
+        var user = userService.getById(found.getUserId());
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found");
+        }
+
+        // Issue new access token
+        String newAccessToken = tokenService.issue(user.getId(), user.getUsername(), user.getRole());
+
+        // Revoke old refresh token, issue new one (rotation)
+        found.setRevoked(true);
+        refreshTokenRepository.save(found);
+
+        String newRefreshToken = tokenService.generateRefreshToken();
+        RefreshTokenEntity newEntity = new RefreshTokenEntity();
+        newEntity.setId(UUID.randomUUID());
+        newEntity.setUserId(found.getUserId());
+        newEntity.setTokenHash(tokenService.hashToken(newRefreshToken));
+        newEntity.setExpiresAt(Instant.now().plus(refreshTtlDays, ChronoUnit.DAYS));
+        newEntity.setRevoked(false);
+        newEntity.setCreatedAt(Instant.now());
+        refreshTokenRepository.save(newEntity);
+
+        // Set new refresh cookie
+        Cookie refreshCookie = new Cookie("refresh_token", newRefreshToken);
+        refreshCookie.setHttpOnly(true);
+        refreshCookie.setSecure(cookieSecure);
+        refreshCookie.setPath("/");
+        refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
+        refreshCookie.setAttribute("SameSite", "Strict");
+        response.addCookie(refreshCookie);
+
+        AuthResponse authResponse = new AuthResponse();
+        authResponse.setToken(newAccessToken);
+        return authResponse;
+    }
+
+    @Override
+    @Transactional
+    public void logout() {
+        // Revoke all refresh tokens for current user
+        TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
+        if (claims != null) {
+            refreshTokenRepository.revokeAllByUserId(claims.userId());
+        }
+
+        // Clear refresh cookie
+        Cookie clearCookie = new Cookie("refresh_token", "");
+        clearCookie.setPath("/");
+        clearCookie.setMaxAge(0);
+        clearCookie.setHttpOnly(true);
+        response.addCookie(clearCookie);
+    }
+
+    private String extractCookie(String name) {
+        if (request.getCookies() == null) return null;
+        for (Cookie cookie : request.getCookies()) {
+            if (name.equals(cookie.getName())) {
+                return cookie.getValue();
+            }
+        }
+        return null;
     }
 }
