@@ -20,6 +20,10 @@ public interface TimerJobRepository extends JpaRepository<TimerJobEntity, UUID>,
     @Query("UPDATE TimerJobEntity t SET t.fired = true WHERE t.id = :id AND t.fired = false")
     int claimTimerJob(@Param("id") UUID id);
 
+    @Modifying
+    @Query("DELETE FROM TimerJobEntity t WHERE t.processInstanceId = :processInstanceId")
+    void deleteByProcessInstanceId(@Param("processInstanceId") UUID processInstanceId);
+
     static Specification<TimerJobEntity> byProcessInstanceId(UUID processInstanceId) {
         return (root, query, cb) -> cb.equal(root.get("processInstanceId"), processInstanceId);
     }

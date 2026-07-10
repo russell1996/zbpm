@@ -19,5 +19,6 @@ public class ProcessInstanceEntity {
     private UUID processDefinitionId;
     private Instant startedAt;
     private Instant completedAt;
+    private boolean cancelled;
     private UUID parentActivityId;
 }

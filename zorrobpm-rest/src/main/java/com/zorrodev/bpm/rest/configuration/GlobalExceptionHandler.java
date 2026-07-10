@@ -65,6 +65,7 @@ public class GlobalExceptionHandler {
             case 403 -> "FORBIDDEN";
             case 404 -> "NOT_FOUND";
             case 400 -> "VALIDATION_ERROR";
+            case 409 -> "CONFLICT";
             default -> "INTERNAL_ERROR";
         };
         return ResponseEntity.status(ex.getStatusCode()).body(Map.of(

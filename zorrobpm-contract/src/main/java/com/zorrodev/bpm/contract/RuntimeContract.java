@@ -29,4 +29,7 @@ public interface RuntimeContract {
     @PostExchange("/incidents/{id}/resolve")
     IdDTO resolveIncident(@PathVariable UUID id, @RequestBody ResolveIncidentDTO dto);
 
+    @PostExchange("/process-instances/{id}/cancel")
+    IdDTO cancelProcessInstance(@PathVariable UUID id);
+
 }
