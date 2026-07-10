@@ -1,0 +1,72 @@
+package com.zorrodev.bpm.engine.service.impl;
+
+import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.contract.model.ProcessVariableType;
+import com.zorrodev.bpm.engine.service.ScriptService;
+import org.camunda.feel.impl.script.FeelScriptEngineFactory;
+import org.camunda.feel.impl.script.FeelUnaryTestsScriptEngineFactory;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+
+import javax.script.ScriptEngine;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * WO-SEC-7 criterion #2: PII values are visible when DEBUG is enabled.
+ * Logger set to DEBUG programmatically.
+ */
+@ExtendWith(OutputCaptureExtension.class)
+class ScriptServicePiiLogDebugTest {
+
+    @BeforeAll
+    static void enableDebug() {
+        Logger logger = (Logger) LoggerFactory.getLogger(ScriptServiceImpl.class);
+        logger.setLevel(Level.DEBUG);
+    }
+
+    private ScriptService service() {
+        ScriptEngine unary = new FeelUnaryTestsScriptEngineFactory().getScriptEngine();
+        ScriptEngine expression = new FeelScriptEngineFactory().getScriptEngine();
+        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper());
+    }
+
+    private ProcessVariable var(String name, ProcessVariableType type, String value) {
+        ProcessVariable v = new ProcessVariable();
+        v.setName(name);
+        v.setType(type);
+        v.setValue(value);
+        return v;
+    }
+
+    // --- Criterion #2: value visible on DEBUG ---
+
+    @Test
+    void criterion2_secretValue_visibleOnDebug(CapturedOutput output) {
+        String secretValue = "secret-salary-99999";
+        ProcessVariable pii = var("salary", ProcessVariableType.STRING, secretValue);
+
+        service().evaluateExpression("salary", List.of(pii));
+
+        // With DEBUG level enabled, the value SHOULD appear
+        assertThat(output.getOut()).contains(secretValue);
+    }
+
+    // --- Criterion #3: FEEL calculations still work ---
+
+    @Test
+    void criterion3_feelCalculations_continueWorking() {
+        ProcessVariable a = var("a", ProcessVariableType.LONG, "10");
+        ProcessVariable b = var("b", ProcessVariableType.LONG, "5");
+
+        Object result = service().evaluateExpression("a + b", List.of(a, b));
+        assertThat(((Number) result).longValue()).isEqualTo(15L);
+    }
+}
