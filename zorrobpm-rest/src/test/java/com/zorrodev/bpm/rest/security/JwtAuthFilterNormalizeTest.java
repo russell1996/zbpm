@@ -1,5 +1,7 @@
 package com.zorrodev.bpm.rest.security;
 
+import com.zorrodev.bpm.engine.repository.ServiceAccountPermissionRepository;
+import com.zorrodev.bpm.engine.repository.ServiceAccountRepository;
 import com.zorrodev.bpm.engine.security.TokenService;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,7 +33,7 @@ class JwtAuthFilterNormalizeTest {
     @BeforeEach
     void setUp() {
         tokenService = mock(TokenService.class);
-        filter = new JwtAuthFilter(tokenService);
+        filter = new JwtAuthFilter(tokenService, mock(ServiceAccountRepository.class), mock(ServiceAccountPermissionRepository.class));
         filter.setRequireApiAuth(true);
     }
 
