@@ -108,4 +108,49 @@ class JwtAuthFilterNormalizeTest {
         // On fixed code: 401. On unfixed code: 200 (bypass).
         assertThat(status).isEqualTo(401);
     }
+
+    // ==================== WO-SEC-15: %-encoding bypass tests ====================
+
+    /** Proof-of-failure: /%75sers (=%/users) without token should be 401 after fix. */
+    @Test
+    void sec15_proofOfFailure_percentEncodedUsers_noToken_returns401() throws Exception {
+        // On current code (before fix): PathNormalizer does NOT decode %,
+        // so /%75sers stays /%75sers → not matched as protected → 200 (bypass) = RED.
+        // After fix: /%75sers → /users → protected → 401 = GREEN.
+        assertThat(doFilter("/%75sers")).isEqualTo(401);
+    }
+
+    /** Encoded slash in path should NOT bypass auth. */
+    @Test
+    void sec15_encodedSlash_bypassesAuth() throws Exception {
+        // /%2fusers → //users after decode → /users after collapse → protected → 401.
+        assertThat(doFilter("/%2fusers")).isEqualTo(401);
+    }
+
+    /** Mixed: /users%3Bx=1 (encoded semicolon = matrix). */
+    @Test
+    void sec15_encodedSemicolon_noToken_returns401() throws Exception {
+        // /users%3Bx=1 → /users;x=1 after decode → protected → 401.
+        assertThat(doFilter("/users%3Bx=1")).isEqualTo(401);
+    }
+
+    /** /process-instances via encoded path. */
+    @Test
+    void sec15_encodedProcessInstances_noToken_returns401() throws Exception {
+        // /%70rocess-instances → /process-instances → protected → 401.
+        assertThat(doFilter("/%70rocess-instances")).isEqualTo(401);
+    }
+
+    /** /auth/login with encoding still open. */
+    @Test
+    void sec15_encodedAuthLogin_stillOpen() throws Exception {
+        // /%61uth/login → /auth/login → NOT protected → 200 (passes through).
+        assertThat(doFilter("/%61uth/login")).isEqualTo(200);
+    }
+
+    /** Normal /users still works (regression check). */
+    @Test
+    void sec15_normalUsersStillProtected() throws Exception {
+        assertThat(doFilter("/users")).isEqualTo(401);
+    }
 }
