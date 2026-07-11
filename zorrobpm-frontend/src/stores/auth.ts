@@ -10,7 +10,7 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref<string | null>(null)
 
   const isAuthenticated = computed(() => !!user.value)
-  const isAdmin = computed(() => user.value?.role === 'ADMIN')
+  const isAdmin = computed(() => user.value?.role === 'ADMIN' || user.value?.role === 'SUPER_ADMIN')
   const isSuperAdmin = computed(() => user.value?.role === 'SUPER_ADMIN')
 
   async function login(username: string, password: string): Promise<boolean> {
