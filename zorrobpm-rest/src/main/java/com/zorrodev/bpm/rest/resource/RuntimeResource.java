@@ -101,10 +101,7 @@ public class RuntimeResource implements RuntimeContract {
             ProcessDefinitionEntity pd = processDefinitionRepository.findById(dto.getProcessDefinitionId()).orElse(null);
             if (pd != null) definitionKey = pd.getKey();
         }
-        if (definitionKey != null) {
-            requireOperate(definitionKey, AuthorizationService.Action.START);
-        }
-        // If definitionKey is null after resolution, allow (DTO validation will catch bad key later)
+        requireOperate(definitionKey, AuthorizationService.Action.START);
         return Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
     }
 
