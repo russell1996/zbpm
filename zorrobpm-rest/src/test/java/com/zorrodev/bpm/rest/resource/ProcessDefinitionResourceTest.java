@@ -5,9 +5,13 @@ import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
+import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -35,6 +39,18 @@ class ProcessDefinitionResourceTest {
     @Mock
     private BpmnStructureService bpmnStructureService;
 
+    @Mock
+    private ProcessRepository processRepository;
+
+    @Mock
+    private ProcessMemberRepository processMemberRepository;
+
+    @Mock
+    private UiUserRepository uiUserRepository;
+
+    @Mock
+    private HttpServletRequest request;
+
     @InjectMocks
     private ProcessDefinitionResource resource;
 
@@ -43,7 +59,10 @@ class ProcessDefinitionResourceTest {
         AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
         dto.setBpmn("<bpmn/>");
         ProcessDefinition expected = new ProcessDefinition();
+        expected.setKey("test-key");
         when(processDefinitionService.addProcessDefinition("<bpmn/>")).thenReturn(expected);
+        when(processRepository.findByDefinitionKey("test-key")).thenReturn(Optional.empty());
+        when(processRepository.save(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
 
         ProcessDefinition result = resource.addProcessDefinition(dto);
 
