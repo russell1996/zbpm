@@ -6,7 +6,14 @@ import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.security.AuthorizationService;
+import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
@@ -32,6 +39,24 @@ class RuntimeResourceTest {
 
     @Mock
     private UserTaskRepository userTaskRepository;
+
+    @Mock
+    private ServiceTaskRepository serviceTaskRepository;
+
+    @Mock
+    private ProcessInstanceRepository processInstanceRepository;
+
+    @Mock
+    private ProcessDefinitionRepository processDefinitionRepository;
+
+    @Mock
+    private ProcessRepository processRepository;
+
+    @Mock
+    private AuthorizationService authorizationService;
+
+    @Mock
+    private DBService dbService;
 
     @Mock
     private HttpServletRequest request;
@@ -62,6 +87,7 @@ class RuntimeResourceTest {
         dto.setVariables(vars);
         IdDTO expected = new IdDTO(id);
         when(runtimeService.completeServiceTask(id, vars)).thenReturn(toEngineDTO(expected));
+        // serviceTaskRepository.findById returns null → key=null → no auth check needed
 
         IdDTO result = resource.completeServiceTask(id, dto);
 
@@ -77,6 +103,17 @@ class RuntimeResourceTest {
         dto.setVariables(vars);
         IdDTO expected = new IdDTO(id);
         when(runtimeService.completeUserTask(id, vars)).thenReturn(toEngineDTO(expected));
+
+        // SUPER_ADMIN principal
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
+        when(request.getAttribute("principal")).thenReturn(admin);
+        when(authorizationService.canCompleteUserTask(any(), any())).thenReturn(true);
+
+        // UserTaskEntity with processInstanceId for canCompleteUserTask
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        task.setProcessInstanceId(UUID.randomUUID());
+        when(userTaskRepository.findById(id)).thenReturn(java.util.Optional.of(task));
 
         IdDTO result = resource.completeUserTask(id, dto);
 

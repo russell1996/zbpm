@@ -8,6 +8,7 @@ public sealed interface Principal {
     record ServicePrincipal(UUID serviceAccountId, UUID processId, Set<String> permissions) implements Principal {}
 
     default boolean isSuperAdmin() {
-        return this instanceof UserPrincipal u && "SUPER_ADMIN".equals(u.globalRole());
+        // ADMIN is legacy role — treat as SUPER_ADMIN during migration period (ADR-1 §4)
+        return this instanceof UserPrincipal u && ("SUPER_ADMIN".equals(u.globalRole()) || "ADMIN".equals(u.globalRole()));
     }
 }
