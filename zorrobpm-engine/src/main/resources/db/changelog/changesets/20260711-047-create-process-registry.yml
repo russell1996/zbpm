@@ -23,11 +23,19 @@ databaseChangeLog:
                   type: text
               - column:
                   name: created_at
-                  type: timestamp
+                  type: datetime with timezone
                   constraints:
                     nullable: false
         # Backfill: one row per distinct processDefinitionKey from process_definitions
         - sql:
+            dbms: postgresql
+            sql: >
+              INSERT INTO process (id, definition_key, name, created_at)
+              SELECT gen_random_uuid(), pd.code, MAX(pd.name), CURRENT_TIMESTAMP
+              FROM process_definitions pd
+              GROUP BY pd.code;
+        - sql:
+            dbms: h2
             sql: >
               INSERT INTO process (id, definition_key, name, created_at)
               SELECT random_uuid(), pd.code, MAX(pd.name), CURRENT_TIMESTAMP
