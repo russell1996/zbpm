@@ -281,11 +281,14 @@ curl -X POST http://localhost:8080/service-tasks/<SERVICE_TASK_ID>/fail \
 
 Простой self-contained вход в UI по логину/паролю (без Keycloak):
 
-- Аккаунты — в таблице `ui_users` (логин, PBKDF2-хэш пароля, роль `ADMIN`/`USER`).
-- `POST /auth/login` `{username,password}` → `{ token, user }`; токен — подписанный (HMAC-SHA256). Фронт хранит его и шлёт `Authorization: Bearer <token>`.
-- `GET /auth/me` — текущий пользователь (нужен валидный токен).
-- `GET/POST/PUT /users` — управление пользователями (требует роль `ADMIN`).
-- При первом старте создаётся админ **`admin` / `admin`** (если таблица пуста) — **смените пароль**.
+- Аккаунты — в таблице `ui_users` (логин, PBKDF2-хэш пароля, роль `SUPER_ADMIN`/`ADMIN`/`USER`).
+- `POST /auth/login` `{username,password}` → выставляет **httpOnly-cookie** `zbpm_token` (access, подпись HMAC-SHA256) + `refresh_token`; SPA ходит по cookie-сессии, программные клиенты — `Authorization: Bearer <token>`.
+- **Refresh + ревокация** (`POST /auth/refresh`, `/auth/logout`) — короткий access + ротация refresh с детекцией повторного использования.
+- **Rate-limit** на `POST /auth/login` (защита от brute-force).
+- **API-ключи для интеграций** — service accounts аутентифицируются статическим ключом `Authorization: Bearer zbpm_sk_…` (без refresh; хранится как SHA-256, ревокация — kill-switch). Для машин (воркеры, 1С, SAP, боты).
+- `GET /auth/me` — текущий пользователь (нужен валидный токен/ключ).
+- `GET/POST/PUT /users` — управление пользователями (требует роль `ADMIN`/`SUPER_ADMIN`).
+- При первом старте создаётся админ **`admin` / `admin`** (если таблица пуста) — **обязательно смените пароль** (в проде задайте `zorrobpm.security.default-admin-password`).
 
 Конфигурация (env / `application.properties`):
 
@@ -313,13 +316,15 @@ curl -X POST http://localhost:8080/service-tasks/<SERVICE_TASK_ID>/fail \
 
 ## База данных и миграции
 
-Схема управляется **Liquibase** (`zorrobpm-engine/src/main/resources/db/changelog`), применяется автоматически при старте. Ключевые таблицы: `process_definitions`, `process_instances`, `activities`, `tokens`, `variables`, `user_tasks`, `service_tasks`, `incidents`, `timer_jobs`, `message_subscriptions`, `signal_subscriptions`, `signal_start_subscriptions`, `parallel_gateways`, `dmn_definitions`.
+Схема управляется **Liquibase** (`zorrobpm-engine/src/main/resources/db/changelog`), применяется автоматически при старте. Ключевые таблицы: `process_definitions`, `process_instances`, `activities`, `tokens`, `variables`, `user_tasks`, `service_tasks`, `incidents`, `timer_jobs`, `message_subscriptions`, `signal_subscriptions`, `signal_start_subscriptions`, `parallel_gateways`, `dmn_definitions`, `outbox` (transactional outbox), `ui_users`, `refresh_tokens`, а также multi-tenant: `process` (реестр), `process_member` (владельцы/дизайнеры), `service_account` + `service_account_permission` (API-ключи интеграций).
 
 ## Ограничения и замечания по проду
 
-- **JWT-авторизация включена по умолчанию** для всех эндпоинтов (`require-api-auth=true`). Обязательно задайте `zorrobpm.security.jwt-secret` (замените dev-значение) и смените пароль `admin`.
+- **JWT-авторизация включена по умолчанию** для всех эндпоинтов (`require-api-auth=true`). В прод-профиле приложение **не стартует** с дефолтным `jwt-secret` — задайте `ZORROBPM_JWT_SECRET`. Смените пароль `admin`.
+- **Модель авторизации в процессе внедрения.** Разворачивается multi-tenant RBAC (владение процессом: `OWNER`/`DESIGNER`, service accounts с правами, `SUPER_ADMIN`) — см. `docs/adr/ADR-1-multi-tenant-authorization.md`. Чтение открыто любому аутентифицированному; **энфорсмент записи по владельцу процесса ещё раскатывается** (WO-MT-3) — до его завершения любой аутентифицированный пользователь может выполнять операции над любым процессом. Планируйте доступ соответственно.
+- **Известные пункты в работе** (независимый аудит): усиление rate-limit за доверенным прокси и серверный энфорс смены дефолтного пароля — см. `governance/workorders/` (WO-SEC-13/14). До их закрытия усиливайте контроль на уровне nginx/сети.
 - **Только один экземпляр** — таймеры опрашиваются без leader-election, версионирование определений использует JVM-лок; несколько реплик могут дублировать срабатывание таймеров и конфликтовать на версионировании.
-- **CORS полностью открыт** на backend — в проде доступ идёт через nginx (frontend-контейнер / внешний reverse proxy), ограничивайте на этом уровне.
+- **CORS** ограничивается allowlist'ом в прод-профиле (`ZORROBPM_CORS_ORIGINS`, по умолчанию домен прода); в dev — открыт. Доступ в проде идёт через nginx reverse proxy.
 - **Сборка требует JDK 21**, хотя в POM движка указано `java.version=17`.
 - При апгрейде на существующем брокере очередь `zorrobpm.complete-service-task` получает dead-letter-аргументы — если она уже есть без них, удалите её один раз (`PRECONDITION_FAILED` при переобъявлении).
 
