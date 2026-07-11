@@ -1,30 +1,47 @@
 package com.zorrodev.bpm.rest.security;
 
+import com.zorrodev.bpm.engine.entity.ServiceAccountEntity;
+import com.zorrodev.bpm.engine.entity.ServiceAccountPermissionEntity;
+import com.zorrodev.bpm.engine.repository.ServiceAccountPermissionRepository;
+import com.zorrodev.bpm.engine.repository.ServiceAccountRepository;
+import com.zorrodev.bpm.engine.security.KeyHasher;
+import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.TokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
-/**
- * Validates the bearer token for identity/admin routes ({@code /auth/me}, {@code /users/**})
- * and, when {@code zorrobpm.security.require-api-auth=true}, for all data API endpoints as well.
- * {@code /auth/login} is always open (no token required).
- */
+@Slf4j
 @Component
-@RequiredArgsConstructor
 public class JwtAuthFilter extends OncePerRequestFilter {
 
+    private static final String API_KEY_PREFIX = "zbpm_sk_";
+
     private final TokenService tokenService;
+    private final ServiceAccountRepository serviceAccountRepository;
+    private final ServiceAccountPermissionRepository saPermissionRepository;
 
     @Value("${zorrobpm.security.require-api-auth:true}")
     private boolean requireApiAuth;
+
+    public JwtAuthFilter(TokenService tokenService,
+                         ServiceAccountRepository serviceAccountRepository,
+                         ServiceAccountPermissionRepository saPermissionRepository) {
+        this.tokenService = tokenService;
+        this.serviceAccountRepository = serviceAccountRepository;
+        this.saPermissionRepository = saPermissionRepository;
+    }
 
     void setRequireApiAuth(boolean requireApiAuth) {
         this.requireApiAuth = requireApiAuth;
@@ -32,9 +49,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static String normalizePath(String raw) {
         if (raw == null) return "/";
-        String p = raw.replaceAll(";[^/]*", "");   // strip matrix params
-        p = p.replaceAll("/{2,}", "/");            // collapse double slashes
-        if (p.length() > 1 && p.endsWith("/")) p = p.substring(0, p.length() - 1); // strip trailing slash
+        String p = raw.replaceAll(";[^/]*", "");
+        p = p.replaceAll("/{2,}", "/");
+        if (p.length() > 1 && p.endsWith("/")) p = p.substring(0, p.length() - 1);
         return p;
     }
 
@@ -46,12 +63,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         return path.equals("/auth/login");
     }
 
-    /**
-     * Always protected: /auth/me, /users/**
-     * Protected when requireApiAuth=true: /process-instances, /user-tasks, /variables,
-     *   /incidents, /dmn, /timer-jobs, /message-subscriptions, /process-definitions, /service-tasks
-     * Never protected: /auth/login
-     */
     private boolean isProtected(String path) {
         if (isAuthLogin(path) || "/auth/refresh".equals(path)) return false;
         if (path.equals("/auth/me") || path.equals("/auth/logout") || isUsersPath(path)) return true;
@@ -85,30 +96,82 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Try Bearer header first (backward compat for Java clients)
         String header = request.getHeader("Authorization");
         String token = (header != null && header.startsWith("Bearer "))
             ? header.substring(7)
             : null;
 
-        // Fall back to cookie
+        // #3: Bearer header takes priority for both JWT and API key.
+        // Cookie is fallback ONLY when no Bearer header is present.
         if (token == null) {
             token = extractTokenFromCookie(request);
         }
 
-        TokenService.Claims claims = (token != null) ? tokenService.verify(token) : null;
+        // Resolve principal — may verify token (JWT or API key)
+        TokenService.Claims claims = null;
+        Principal principal;
 
-        if (claims == null) {
+        if (token != null && token.startsWith(API_KEY_PREFIX)) {
+            principal = resolveApiKey(token);
+        } else if (token != null) {
+            claims = tokenService.verify(token);
+            principal = (claims != null) ? new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role()) : null;
+        } else {
+            principal = null;
+        }
+
+        if (principal == null) {
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
             return;
         }
-        if (isUsersPath(path) && !"ADMIN".equals(claims.role())) {
+
+        // Legacy /users path guard
+        boolean isUsersAllowed = principal.isSuperAdmin()
+            || (principal instanceof Principal.UserPrincipal u && "ADMIN".equals(u.globalRole()));
+        if (isUsersPath(path) && !isUsersAllowed) {
             response.sendError(HttpServletResponse.SC_FORBIDDEN, "Forbidden");
             return;
         }
 
-        request.setAttribute("authClaims", claims);
+        request.setAttribute("principal", principal);
+
+        // Backward compat: also set authClaims for code that still reads it
+        if (claims != null) {
+            request.setAttribute("authClaims", claims);
+        }
+
         chain.doFilter(request, response);
+    }
+
+    private Principal resolveApiKey(String token) {
+        String keyHash = KeyHasher.sha256(token);
+        var candidates = serviceAccountRepository.findByKeyHash(keyHash);
+        if (candidates.isEmpty()) {
+            log.debug("Unknown API key"); // #2: never log token substring
+            return null;
+        }
+        ServiceAccountEntity sa = candidates.get(0);
+
+        if (sa.getRevokedAt() != null) {
+            log.debug("Revoked API key used: prefix={}", sa.getPrefix());
+            return null;
+        }
+        if (sa.getExpiresAt() != null && sa.getExpiresAt().isBefore(Instant.now())) {
+            log.debug("Expired API key used: prefix={}", sa.getPrefix());
+            return null;
+        }
+
+        Set<String> permissions = loadPermissions(sa.getId());
+        sa.setLastUsedAt(Instant.now());
+        serviceAccountRepository.save(sa);
+
+        return new Principal.ServicePrincipal(sa.getId(), sa.getProcessId(), permissions);
+    }
+
+    private Set<String> loadPermissions(UUID serviceAccountId) {
+        return saPermissionRepository.findByServiceAccountId(serviceAccountId).stream()
+            .map(ServiceAccountPermissionEntity::getPermission)
+            .collect(Collectors.toSet());
     }
 
     private String extractTokenFromCookie(HttpServletRequest request) {
