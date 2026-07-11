@@ -101,15 +101,24 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             ? header.substring(7)
             : null;
 
-        // API key path: use Bearer zbpm_sk_ directly
-        // JWT path: use Bearer JWT, or fall back to cookie
-        if (token == null || (!token.startsWith(API_KEY_PREFIX))) {
-            // Not an API key — try cookie for JWT
-            String cookieToken = extractTokenFromCookie(request);
-            token = (cookieToken != null) ? cookieToken : token;
+        // #3: Bearer header takes priority for both JWT and API key.
+        // Cookie is fallback ONLY when no Bearer header is present.
+        if (token == null) {
+            token = extractTokenFromCookie(request);
         }
 
-        Principal principal = resolvePrincipal(token);
+        // Resolve principal — may verify token (JWT or API key)
+        TokenService.Claims claims = null;
+        Principal principal;
+
+        if (token != null && token.startsWith(API_KEY_PREFIX)) {
+            principal = resolveApiKey(token);
+        } else if (token != null) {
+            claims = tokenService.verify(token);
+            principal = (claims != null) ? new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role()) : null;
+        } else {
+            principal = null;
+        }
 
         if (principal == null) {
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
@@ -127,11 +136,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         request.setAttribute("principal", principal);
 
         // Backward compat: also set authClaims for code that still reads it
-        if (principal instanceof Principal.UserPrincipal) {
-            TokenService.Claims claims = tokenService.verify(token);
-            if (claims != null) {
-                request.setAttribute("authClaims", claims);
-            }
+        if (claims != null) {
+            request.setAttribute("authClaims", claims);
         }
 
         chain.doFilter(request, response);
@@ -142,35 +148,38 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         // API key path
         if (token.startsWith(API_KEY_PREFIX)) {
-            String keyHash = KeyHasher.sha256(token);
-            var candidates = serviceAccountRepository.findByKeyHash(keyHash);
-            if (candidates.isEmpty()) {
-                log.debug("Unknown API key prefix: {}", token.substring(0, Math.min(token.length(), 16)));
-                return null;
-            }
-            ServiceAccountEntity sa = candidates.get(0);
-
-            if (sa.getRevokedAt() != null) {
-                log.debug("Revoked API key used: prefix={}", sa.getPrefix());
-                return null;
-            }
-            if (sa.getExpiresAt() != null && sa.getExpiresAt().isBefore(Instant.now())) {
-                log.debug("Expired API key used: prefix={}", sa.getPrefix());
-                return null;
-            }
-
-            Set<String> permissions = loadPermissions(sa.getId());
-
-            sa.setLastUsedAt(Instant.now());
-            serviceAccountRepository.save(sa);
-
-            return new Principal.ServicePrincipal(sa.getId(), sa.getProcessId(), permissions);
+            return resolveApiKey(token);
         }
 
         // JWT path
         TokenService.Claims claims = tokenService.verify(token);
         if (claims == null) return null;
         return new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role());
+    }
+
+    private Principal resolveApiKey(String token) {
+        String keyHash = KeyHasher.sha256(token);
+        var candidates = serviceAccountRepository.findByKeyHash(keyHash);
+        if (candidates.isEmpty()) {
+            log.debug("Unknown API key"); // #2: never log token substring
+            return null;
+        }
+        ServiceAccountEntity sa = candidates.get(0);
+
+        if (sa.getRevokedAt() != null) {
+            log.debug("Revoked API key used: prefix={}", sa.getPrefix());
+            return null;
+        }
+        if (sa.getExpiresAt() != null && sa.getExpiresAt().isBefore(Instant.now())) {
+            log.debug("Expired API key used: prefix={}", sa.getPrefix());
+            return null;
+        }
+
+        Set<String> permissions = loadPermissions(sa.getId());
+        sa.setLastUsedAt(Instant.now());
+        serviceAccountRepository.save(sa);
+
+        return new Principal.ServicePrincipal(sa.getId(), sa.getProcessId(), permissions);
     }
 
     private Set<String> loadPermissions(UUID serviceAccountId) {

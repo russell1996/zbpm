@@ -140,6 +140,51 @@ class AuthorizationServiceTest {
         assertThat(auth.canCompleteUserTask(user, UUID.randomUUID())).isTrue();
     }
 
+    // --- SA management actions: should be false ---
+
+    @Test
+    void sa_cannotManageKeys() {
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Set.of("START", "COMPLETE_SERVICE_TASK"));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.MANAGE_KEYS)).isFalse();
+    }
+
+    @Test
+    void sa_cannotManageMembers() {
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Set.of("START"));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
+    }
+
+    @Test
+    void sa_cannotDeploy() {
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Set.of("START"));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DEPLOY)).isFalse();
+    }
+
+    @Test
+    void sa_cannotDeleteProcess() {
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Set.of("START"));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DELETE_PROCESS)).isFalse();
+    }
+
+    // --- SA scope guard: wrong process → false ---
+
+    @Test
+    void sa_wrongProcess_cannotOperateRuntime() {
+        UUID saProcessId = UUID.randomUUID();
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), saProcessId,
+            Set.of("START"));
+
+        // Different process key → different process ID
+        ProcessEntity otherProcess = createProcess("other-process");
+        when(processRepository.findByDefinitionKey("other-process")).thenReturn(Optional.of(otherProcess));
+
+        assertThat(auth.canOperate(sa, "other-process", AuthorizationService.Action.START)).isFalse();
+    }
+
     private ProcessEntity createProcess(String key) {
         ProcessEntity p = new ProcessEntity();
         p.setId(UUID.randomUUID());

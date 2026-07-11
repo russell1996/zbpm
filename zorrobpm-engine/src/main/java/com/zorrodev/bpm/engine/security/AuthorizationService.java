@@ -17,12 +17,23 @@ public class AuthorizationService {
     private final ProcessMemberRepository processMemberRepository;
 
     public enum Action {
-        DEPLOY, MANAGE_MEMBERS, MANAGE_KEYS, DELETE_PROCESS
+        // Management actions — OWNER only, SA never
+        DEPLOY, MANAGE_MEMBERS, MANAGE_KEYS, DELETE_PROCESS,
+        // Runtime actions — SA with permission + correct process
+        START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE
     }
 
     public boolean canOperate(Principal principal, String processDefinitionKey, Action action) {
         if (principal.isSuperAdmin()) return true;
-        if (principal instanceof Principal.ServicePrincipal) return true; // SA has pre-approved permissions
+
+        // SA: management actions always denied; runtime actions require permission + process scope
+        if (principal instanceof Principal.ServicePrincipal sa) {
+            if (isManagementAction(action)) return false;
+            ProcessEntity process = processRepository.findByDefinitionKey(processDefinitionKey).orElse(null);
+            if (process == null) return false;
+            if (!sa.processId().equals(process.getId())) return false;
+            return sa.permissions().contains(action.name());
+        }
 
         if (principal instanceof Principal.UserPrincipal user) {
             ProcessEntity process = processRepository.findByDefinitionKey(processDefinitionKey).orElse(null);
@@ -34,14 +45,19 @@ public class AuthorizationService {
                 case DEPLOY, DELETE_PROCESS -> "OWNER".equals(membership.getRole());
                 case MANAGE_MEMBERS -> "OWNER".equals(membership.getRole());
                 case MANAGE_KEYS -> "OWNER".equals(membership.getRole());
+                default -> false; // Runtime actions not checked via canOperate for users
             };
         }
         return false;
     }
 
+    private boolean isManagementAction(Action action) {
+        return action == Action.DEPLOY || action == Action.MANAGE_MEMBERS
+            || action == Action.MANAGE_KEYS || action == Action.DELETE_PROCESS;
+    }
+
     public boolean canCompleteUserTask(Principal principal, UUID processId) {
         if (principal.isSuperAdmin()) return true;
-        // SA with COMPLETE_USER_TASK permission on the right process
         if (principal instanceof Principal.ServicePrincipal sa) {
             return sa.processId().equals(processId) && sa.permissions().contains("COMPLETE_USER_TASK");
         }
