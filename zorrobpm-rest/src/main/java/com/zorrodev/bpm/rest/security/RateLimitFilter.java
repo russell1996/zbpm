@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.Ordered;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -17,13 +18,14 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Rate-limits POST /auth/login per client IP.
- * Uses {@code request.getRemoteAddr()} for IP resolution — trust Tomcat's
- * RemoteIpValve for XFF handling from trusted proxies only.
- * Enabled by default ({@code zorrobpm.security.rate-limit.enabled=true}).
+ *
+ * Runs with {@code HIGHEST_PRECEDENCE + 1} to capture the real TCP remote IP
+ * BEFORE Spring's {@code ForwardedHeaderFilter} rewrites it from X-Forwarded-For.
+ * This prevents attackers from spoofing XFF to create new rate-limit buckets.
  */
 @Slf4j
 @Component
-public class RateLimitFilter extends OncePerRequestFilter {
+public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
     private final ConcurrentHashMap<String, RateBucket> buckets = new ConcurrentHashMap<>();
 
@@ -41,9 +43,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
     void setWindowSeconds(int windowSeconds) { this.windowSeconds = windowSeconds; }
 
     @Override
+    public int getOrder() {
+        // Run before ForwardedHeaderFilter (which is at HIGHEST_PRECEDENCE + 5)
+        // to capture real TCP remote IP before XFF rewriting
+        return Ordered.HIGHEST_PRECEDENCE + 1;
+    }
+
+    @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
         throws ServletException, IOException {
-        if (!enabled || !"POST".equalsIgnoreCase(request.getMethod()) || !"/auth/login".equals(request.getRequestURI())) {
+        String path = PathNormalizer.normalize(request.getRequestURI());
+        if (!enabled || !"POST".equalsIgnoreCase(request.getMethod()) || !"/auth/login".equals(path)) {
             chain.doFilter(request, response);
             return;
         }
