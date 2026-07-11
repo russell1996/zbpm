@@ -6,11 +6,15 @@ import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
@@ -43,6 +47,8 @@ public class RuntimeResource implements RuntimeContract {
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final ProcessRepository processRepository;
+    private final IncidentRepository incidentRepository;
+    private final ActivityRepository activityRepository;
     private final AuthorizationService authorizationService;
     private final DBService dbService;
     private final HttpServletRequest request;
@@ -56,6 +62,9 @@ public class RuntimeResource implements RuntimeContract {
         Principal principal = getPrincipal();
         if (principal == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (definitionKey == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Resource not found");
         }
         if (!authorizationService.canOperate(principal, definitionKey, action)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
@@ -75,6 +84,14 @@ public class RuntimeResource implements RuntimeContract {
         return resolveDefinitionKeyByInstance(st.getProcessInstanceId());
     }
 
+    private String resolveDefinitionKeyByIncident(UUID incidentId) {
+        IncidentEntity incident = incidentRepository.findById(incidentId).orElse(null);
+        if (incident == null) return null;
+        ActivityEntity activity = activityRepository.findById(incident.getActivityId()).orElse(null);
+        if (activity == null) return null;
+        return resolveDefinitionKeyByInstance(activity.getProcessInstanceId());
+    }
+
     @Transactional
     @Override
     public IdDTO startProcessInstance(@Valid @RequestBody StartProcessInstanceDTO dto) {
@@ -87,6 +104,7 @@ public class RuntimeResource implements RuntimeContract {
         if (definitionKey != null) {
             requireOperate(definitionKey, AuthorizationService.Action.START);
         }
+        // If definitionKey is null after resolution, allow (DTO validation will catch bad key later)
         return Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
     }
 
@@ -94,7 +112,7 @@ public class RuntimeResource implements RuntimeContract {
     @Override
     public IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
         String key = resolveDefinitionKeyByServiceTask(id);
-        if (key != null) requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
+        requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
         return Optional.ofNullable(runtimeService.completeServiceTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
     }
 
@@ -102,7 +120,7 @@ public class RuntimeResource implements RuntimeContract {
     @Override
     public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody FailServiceTaskDTO dto) {
         String key = resolveDefinitionKeyByServiceTask(id);
-        if (key != null) requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
+        requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
         return Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage(), dto.getRetries())).map(this::toDTO).orElseThrow();
     }
 
@@ -132,6 +150,9 @@ public class RuntimeResource implements RuntimeContract {
     @Transactional
     @Override
     public IdDTO resolveIncident(@PathVariable UUID id, @RequestBody ResolveIncidentDTO dto) {
+        // B3: enforce authorization — resolve incident → activity → process → definition_key
+        String key = resolveDefinitionKeyByIncident(id);
+        requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
         return Optional.ofNullable(runtimeService.resolveIncident(id, dto.getVariables())).map(this::toDTO).orElseThrow();
     }
 
@@ -144,7 +165,7 @@ public class RuntimeResource implements RuntimeContract {
         }
 
         String key = resolveDefinitionKeyByInstance(id);
-        if (key != null) requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
+        requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
 
         dbService.cancelActiveActivities(id);
         dbService.deleteTimerJobsByProcessInstanceId(id);
