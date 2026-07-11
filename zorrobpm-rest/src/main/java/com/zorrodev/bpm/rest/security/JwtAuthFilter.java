@@ -71,7 +71,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             || path.startsWith("/timer-jobs")
             || path.startsWith("/message-subscriptions")
             || path.startsWith("/process-definitions")
-            || path.startsWith("/service-tasks");
+            || path.startsWith("/service-tasks")
+            || path.startsWith("/processes/");
     }
 
     @Override
