@@ -5,42 +5,51 @@ import ServiceAccountsTab from './ServiceAccountsTab.vue'
 
 /**
  * WO-MT-6 criterion #2: API key does NOT persist in component state after modal close.
- * Proof-of-failure: BEFORE the fix (key not cleared on close), this test would be RED.
- * AFTER the fix (closeKeyModal clears displayedKey), this test is GREEN.
+ *
+ * Proof-of-failure (V3):
+ *   RED:  remove displayedKey = '' from closeKeyModal() → step 4 FAILS (key still present)
+ *   GREEN: restored → displayedKey === '' after close
+ *
+ * This test actually exercises the full cycle:
+ *   1. Set displayedKey + showKeyModal=true (simulating create/rotate response)
+ *   2. Verify key is shown (displayedKey contains key, modal open)
+ *   3. Call closeKeyModal()
+ *   4. Assert displayedKey === '' AND showKeyModal === false
  */
 describe('ServiceAccountsTab — key state isolation', () => {
   it('clears displayedKey when modal closes (key never stays in state)', async () => {
     const wrapper = mount(ServiceAccountsTab, {
       props: { processKey: 'test-process' },
       global: {
-        stubs: {
-          teleport: true, // stub teleport to keep DOM local
-        },
+        stubs: { teleport: true },
       },
     })
 
-    // Simulate receiving a key (as if from createServiceAccount response)
-    // We can't call the API in unit test, but we can test the component's internal state
-    // by accessing the exposed refs. Since <script setup> doesn't expose by default,
-    // we test via the template: set showKeyModal and displayedKey through component methods.
+    const vm = wrapper.vm as any
 
-    // The key invariant: after closeKeyModal(), displayedKey must be empty string.
-    // This is the GREEN assertion. A component that stores the key would fail this test.
-    const componentVm = wrapper.vm as any
+    // Step 1: Simulate receiving a key (as createServiceAccount would return)
+    vm.displayedKey = 'zbpm_sk_test123abc'
+    vm.showKeyModal = true
+    await wrapper.vm.$nextTick()
 
-    // Access internal state via the component instance
-    // In Vue 3 <script setup>, refs are accessible via the component proxy
-    expect(componentVm.displayedKey).toBe('')
-    expect(componentVm.showKeyModal).toBe(false)
+    // Step 2: Verify key IS present (pre-condition for the test to be meaningful)
+    expect(vm.displayedKey).toBe('zbpm_sk_test123abc')
+    expect(vm.showKeyModal).toBe(true)
+
+    // Step 3: Close the modal
+    vm.closeKeyModal()
+    await wrapper.vm.$nextTick()
+
+    // Step 4: Key must be cleared — this is the critical assertion
+    expect(vm.displayedKey).toBe('')
+    expect(vm.showKeyModal).toBe(false)
   })
 
   it('displayedKey is empty string by default (no leakage on mount)', () => {
     const wrapper = mount(ServiceAccountsTab, {
       props: { processKey: 'test-process' },
       global: {
-        stubs: {
-          teleport: true,
-        },
+        stubs: { teleport: true },
       },
     })
     const vm = wrapper.vm as any
