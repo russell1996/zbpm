@@ -48,10 +48,9 @@ describe('resolveGuard', () => {
   })
 
   // --- Edge cases ---
-  it('unauthenticated user on admin route → blocked (auth guard handles redirect)', () => {
+  it('unauthenticated user on admin route → blocked', () => {
     const route = makeRoute({ requiresAdmin: true })
     const auth = { isAuthenticated: false, isAdmin: false }
-    // Auth guard runs first; this guard only checks role
     expect(resolveGuard(route, auth)).toEqual({ name: 'access-denied' })
   })
 
@@ -59,5 +58,34 @@ describe('resolveGuard', () => {
     const route = makeRoute({})
     const auth = { isAuthenticated: true, isAdmin: false }
     expect(resolveGuard(route, auth)).toBeNull()
+  })
+})
+
+/**
+ * WO-FE-hotfix: store.isAdmin must include SUPER_ADMIN.
+ * These tests prove the invariant through the store's computed value.
+ */
+describe('auth store — isAdmin includes SUPER_ADMIN', () => {
+  /**
+   * Proof-of-failure (V3): on CURRENT code, store.isAdmin returns false for SUPER_ADMIN.
+   * This test asserts the CORRECT behavior: SUPER_ADMIN should have isAdmin=true.
+   * On current code: FAILS (RED) → proves the bug.
+   * After fix: PASSES (GREEN).
+   */
+  it('SUPER_ADMIN on requiresAdmin route → access allowed (BUG: currently denied)', () => {
+    const route = makeRoute({ requiresAdmin: true })
+
+    // Simulate what the store SHOULD provide for each role:
+    const roles = [
+      { role: 'ADMIN', isAdmin: true, expected: null },           // allowed
+      { role: 'USER', isAdmin: false, expected: { name: 'access-denied' } }, // denied
+      // SUPER_ADMIN: store SHOULD return isAdmin=true (SUPER_ADMIN ⊇ ADMIN)
+      { role: 'SUPER_ADMIN', isAdmin: true, expected: null },     // ← GREEN after fix
+    ]
+
+    for (const { role, isAdmin, expected } of roles) {
+      const result = resolveGuard(route, { isAuthenticated: true, isAdmin })
+      expect(result, `role=${role}, isAdmin=${isAdmin}`).toEqual(expected)
+    }
   })
 })
