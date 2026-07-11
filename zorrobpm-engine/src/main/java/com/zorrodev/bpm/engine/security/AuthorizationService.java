@@ -45,7 +45,9 @@ public class AuthorizationService {
                 case DEPLOY, DELETE_PROCESS -> "OWNER".equals(membership.getRole());
                 case MANAGE_MEMBERS -> "OWNER".equals(membership.getRole());
                 case MANAGE_KEYS -> "OWNER".equals(membership.getRole());
-                default -> false; // Runtime actions not checked via canOperate for users
+                // Runtime actions: OWNER or DESIGNER can operate
+                case START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE ->
+                    "OWNER".equals(membership.getRole()) || "DESIGNER".equals(membership.getRole());
             };
         }
         return false;
