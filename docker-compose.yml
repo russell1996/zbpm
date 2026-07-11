@@ -54,6 +54,9 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      # Run under the prod profile so application-prod.yml applies (rate-limit, CORS allowlist,
+      # secure cookies, fail-fast on default JWT secret). Override with SPRING_PROFILES_ACTIVE if needed.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-zorrobpm-db}
       DB_USERNAME: ${DB_USERNAME:-zorrodev}
       DB_PASSWORD: ${DB_PASSWORD:-zorrodev}
@@ -62,6 +65,10 @@ services:
       RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-zorrodev}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-zorrodev}
       APP_FILES_DIR: /app/files
+      # REQUIRED in prod: strong secret, else the app refuses to start (WO-SEC-9). Generate: openssl rand -base64 48
+      ZORROBPM_JWT_SECRET: ${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}
+      # Browser origins allowed for the SPA (same-origin via nginx doesn't need this, but set for safety)
+      ZORROBPM_CORS_ORIGINS: ${ZORROBPM_CORS_ORIGINS:-https://zorro.i-smet.kz}
     volumes:
       - app-files:/app/files
     ports:
