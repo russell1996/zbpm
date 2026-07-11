@@ -11,6 +11,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!user.value)
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
+  const isSuperAdmin = computed(() => user.value?.role === 'SUPER_ADMIN')
 
   async function login(username: string, password: string): Promise<boolean> {
     isLoading.value = true
@@ -59,6 +60,7 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     isAuthenticated,
     isAdmin,
+    isSuperAdmin,
     login,
     logout,
     init,
