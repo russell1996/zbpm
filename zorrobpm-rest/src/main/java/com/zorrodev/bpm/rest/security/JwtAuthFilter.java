@@ -143,20 +143,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    Principal resolvePrincipal(String token) {
-        if (token == null) return null;
-
-        // API key path
-        if (token.startsWith(API_KEY_PREFIX)) {
-            return resolveApiKey(token);
-        }
-
-        // JWT path
-        TokenService.Claims claims = tokenService.verify(token);
-        if (claims == null) return null;
-        return new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role());
-    }
-
     private Principal resolveApiKey(String token) {
         String keyHash = KeyHasher.sha256(token);
         var candidates = serviceAccountRepository.findByKeyHash(keyHash);
