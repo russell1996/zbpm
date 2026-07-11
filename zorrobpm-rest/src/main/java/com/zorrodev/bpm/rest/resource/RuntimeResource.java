@@ -6,9 +6,18 @@ import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
+import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
+import com.zorrodev.bpm.engine.entity.ProcessEntity;
+import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
-import com.zorrodev.bpm.engine.security.TokenService;
+import com.zorrodev.bpm.engine.security.AuthorizationService;
+import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,31 +39,93 @@ public class RuntimeResource implements RuntimeContract {
 
     private final RuntimeService runtimeService;
     private final UserTaskRepository userTaskRepository;
+    private final ServiceTaskRepository serviceTaskRepository;
+    private final ProcessInstanceRepository processInstanceRepository;
+    private final ProcessDefinitionRepository processDefinitionRepository;
+    private final ProcessRepository processRepository;
+    private final AuthorizationService authorizationService;
     private final DBService dbService;
     private final HttpServletRequest request;
+
+    private Principal getPrincipal() {
+        Object attr = request.getAttribute("principal");
+        return attr instanceof Principal p ? p : null;
+    }
+
+    private void requireOperate(String definitionKey, AuthorizationService.Action action) {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (!authorizationService.canOperate(principal, definitionKey, action)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+        }
+    }
+
+    private String resolveDefinitionKeyByInstance(UUID instanceId) {
+        ProcessInstanceEntity pi = processInstanceRepository.findById(instanceId).orElse(null);
+        if (pi == null) return null;
+        ProcessDefinitionEntity pd = processDefinitionRepository.findById(pi.getProcessDefinitionId()).orElse(null);
+        return pd != null ? pd.getKey() : null;
+    }
+
+    private String resolveDefinitionKeyByServiceTask(UUID serviceTaskId) {
+        ServiceTaskEntity st = serviceTaskRepository.findById(serviceTaskId).orElse(null);
+        if (st == null) return null;
+        return resolveDefinitionKeyByInstance(st.getProcessInstanceId());
+    }
 
     @Transactional
     @Override
     public IdDTO startProcessInstance(@Valid @RequestBody StartProcessInstanceDTO dto) {
+        // Resolve definitionKey from DTO
+        String definitionKey = dto.getProcessDefinitionKey();
+        if (definitionKey == null && dto.getProcessDefinitionId() != null) {
+            ProcessDefinitionEntity pd = processDefinitionRepository.findById(dto.getProcessDefinitionId()).orElse(null);
+            if (pd != null) definitionKey = pd.getKey();
+        }
+        if (definitionKey != null) {
+            requireOperate(definitionKey, AuthorizationService.Action.START);
+        }
         return Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
     }
 
     @Transactional
     @Override
     public IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
+        String key = resolveDefinitionKeyByServiceTask(id);
+        if (key != null) requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
         return Optional.ofNullable(runtimeService.completeServiceTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
     }
 
     @Transactional
     @Override
     public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody FailServiceTaskDTO dto) {
+        String key = resolveDefinitionKeyByServiceTask(id);
+        if (key != null) requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
         return Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage(), dto.getRetries())).map(this::toDTO).orElseThrow();
     }
 
     @Transactional
     @Override
     public IdDTO completeUserTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
-        checkAssignee(id);
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+
+        UserTaskEntity task = userTaskRepository.findById(id).orElse(null);
+        if (task == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found");
+        }
+
+        if (!authorizationService.canCompleteUserTask(principal, task.getProcessInstanceId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+        }
+
+        // Also check assignee (existing check, refactored to use principal)
+        checkAssignee(principal, task);
+
         return Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
     }
 
@@ -71,6 +142,10 @@ public class RuntimeResource implements RuntimeContract {
         if (pi.getCompletedAt() != null || pi.isCancelled()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Process instance already completed or cancelled");
         }
+
+        String key = resolveDefinitionKeyByInstance(id);
+        if (key != null) requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
+
         dbService.cancelActiveActivities(id);
         dbService.deleteTimerJobsByProcessInstanceId(id);
         dbService.deleteMessageSubscriptionsByProcessInstanceId(id);
@@ -80,23 +155,18 @@ public class RuntimeResource implements RuntimeContract {
         return result;
     }
 
-    private void checkAssignee(UUID taskId) {
-        TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
-        if (claims == null) return;
+    private void checkAssignee(Principal principal, UserTaskEntity task) {
+        if (principal.isSuperAdmin()) return;
 
-        // ADMIN can complete any task
-        if ("ADMIN".equals(claims.role())) return;
+        if (principal instanceof Principal.UserPrincipal user) {
+            // Unassigned task — any user can complete
+            if (task.getAssignee() == null || task.getAssignee().isBlank()) return;
+            // Assignee matches — allowed
+            if (task.getAssignee().equals(user.username())) return;
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Task is assigned to another user");
+        }
 
-        UserTaskEntity task = userTaskRepository.findById(taskId).orElse(null);
-        if (task == null) return;
-
-        // Unassigned task — any user can complete
-        if (task.getAssignee() == null || task.getAssignee().isBlank()) return;
-
-        // Assignee matches — allowed
-        if (task.getAssignee().equals(claims.username())) return;
-
-        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Task is assigned to another user");
+        // SA: canCompleteUserTask already checked permission + processId
     }
 
     private IdDTO toDTO(com.zorrodev.bpm.engine.dto.IdDTO idDTO) {
