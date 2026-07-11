@@ -57,25 +57,39 @@ class WriteEnforcementIntegrationTest {
 
     private String adminToken;
     private String userToken;
+    private String ownerToken;
     private UUID processId;
     private String definitionKey = "we-test-process";
 
     @BeforeAll
     void setup() throws Exception {
-        // Create USER-role user (use unique username to avoid conflicts with other tests)
-        String uniqueUsername = "we-user-" + UUID.randomUUID().toString().substring(0, 8);
+        // Create USER-role non-member (unique username)
+        String nonMemberUsername = "we-nonmember-" + UUID.randomUUID().toString().substring(0, 8);
         UiUserEntity user = new UiUserEntity();
         user.setId(UUID.randomUUID());
-        user.setUsername(uniqueUsername);
+        user.setUsername(nonMemberUsername);
         user.setPasswordHash(passwordHasher.hash("user"));
-        user.setFullName("WE Test User");
+        user.setFullName("WE Non-Member");
         user.setRole("USER");
         user.setActive(true);
         user.setCreatedAt(Instant.now());
         user.setUpdatedAt(Instant.now());
         userRepository.save(user);
 
-        // Promote admin to SUPER_ADMIN (migration runs before bootstrap, so admin gets "ADMIN")
+        // Create OWNER user (unique username) — real person, NOT super-admin
+        String ownerUsername = "we-owner-" + UUID.randomUUID().toString().substring(0, 8);
+        UiUserEntity ownerUser = new UiUserEntity();
+        ownerUser.setId(UUID.randomUUID());
+        ownerUser.setUsername(ownerUsername);
+        ownerUser.setPasswordHash(passwordHasher.hash("owner"));
+        ownerUser.setFullName("WE Owner User");
+        ownerUser.setRole("USER");
+        ownerUser.setActive(true);
+        ownerUser.setCreatedAt(Instant.now());
+        ownerUser.setUpdatedAt(Instant.now());
+        userRepository.save(ownerUser);
+
+        // Promote admin to SUPER_ADMIN
         var admin = userRepository.findByUsername("admin").orElseThrow();
         admin.setRole("SUPER_ADMIN");
         userRepository.save(admin);
@@ -91,9 +105,9 @@ class WriteEnforcementIntegrationTest {
                 .andReturn();
         adminToken = mapper.readValue(adminResult.getResponse().getContentAsString(), AuthResponse.class).getToken();
 
-        // Login user
+        // Login non-member user
         LoginDTO userDto = new LoginDTO();
-        userDto.setUsername(uniqueUsername);
+        userDto.setUsername(nonMemberUsername);
         userDto.setPassword("user");
         MvcResult userResult = mockMvc.perform(post("/auth/login")
                         .content(mapper.writeValueAsString(userDto))
@@ -102,7 +116,18 @@ class WriteEnforcementIntegrationTest {
                 .andReturn();
         userToken = mapper.readValue(userResult.getResponse().getContentAsString(), AuthResponse.class).getToken();
 
-        // Create process in registry (not as OWNER of the user)
+        // Login owner user
+        LoginDTO ownerDto = new LoginDTO();
+        ownerDto.setUsername(ownerUsername);
+        ownerDto.setPassword("owner");
+        MvcResult ownerResult = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(ownerDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        ownerToken = mapper.readValue(ownerResult.getResponse().getContentAsString(), AuthResponse.class).getToken();
+
+        // Create process in registry
         ProcessEntity process = new ProcessEntity();
         process.setId(UUID.randomUUID());
         process.setDefinitionKey(definitionKey);
@@ -110,6 +135,14 @@ class WriteEnforcementIntegrationTest {
         process.setCreatedAt(Instant.now());
         processRepository.save(process);
         processId = process.getId();
+
+        // Make the OWNER user an OWNER of this process via ProcessMember
+        ProcessMemberEntity membership = new ProcessMemberEntity();
+        membership.setProcessId(processId);
+        membership.setUserId(ownerUser.getId());
+        membership.setRole("OWNER");
+        membership.setAddedAt(Instant.now());
+        processMemberRepository.save(membership);
 
         // Deploy BPMN so we can start an instance
         String bpmn = new String(Files.readAllBytes(Paths.get("src/test/files/test-we-enforcement.bpmn")), StandardCharsets.UTF_8);
@@ -136,16 +169,16 @@ class WriteEnforcementIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    // --- #2: OWNER starts own process → 200 ---
+    // --- #2: OWNER starts own process → 200 (U1/U4: real OWNER, not super-admin) ---
 
     @Test
     void criterion2_ownerStartsOwnProcess_returns200() throws Exception {
-        // Admin is SUPER_ADMIN (auto-owner via backfill), so should work
+        // Login as the OWNER user (unique username, promoted to OWNER via ProcessMember)
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionKey(definitionKey);
 
         mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + ownerToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());

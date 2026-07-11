@@ -71,8 +71,13 @@ class RuntimeResourceTest {
     @Test
     void startProcessInstance_delegatesToService() {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionKey("test-process");
         IdDTO expected = new IdDTO(UUID.randomUUID());
         when(runtimeService.startProcessInstance(dto)).thenReturn(toEngineDTO(expected));
+
+        when(request.getAttribute("principal")).thenReturn(
+            new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN"));
+        when(authorizationService.canOperate(any(), any(), any())).thenReturn(true);
 
         IdDTO result = resource.startProcessInstance(dto);
 
