@@ -5,10 +5,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -24,18 +22,14 @@ import java.util.concurrent.atomic.AtomicLong;
  * This prevents attackers from spoofing XFF to create new rate-limit buckets.
  */
 @Slf4j
-@Component
 public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
     private final ConcurrentHashMap<String, RateBucket> buckets = new ConcurrentHashMap<>();
 
-    @Value("${zorrobpm.security.rate-limit.enabled:true}")
     private boolean enabled;
 
-    @Value("${zorrobpm.security.rate-limit.capacity:5}")
     private int capacity;
 
-    @Value("${zorrobpm.security.rate-limit.window-seconds:60}")
     private int windowSeconds;
 
     void setRateLimitEnabled(boolean enabled) { this.enabled = enabled; }
@@ -44,7 +38,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
     @Override
     public int getOrder() {
-        // Run before ForwardedHeaderFilter (which is at HIGHEST_PRECEDENCE + 5)
+        // Run before ForwardedHeaderFilter (HIGHEST_PRECEDENCE + 5)
         // to capture real TCP remote IP before XFF rewriting
         return Ordered.HIGHEST_PRECEDENCE + 1;
     }
