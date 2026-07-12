@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
+import UserDetailPanel from './UserDetailPanel.vue'
 
 const toast = useToast()
 
@@ -13,6 +14,7 @@ const search = ref('')
 const showForm = ref(false)
 const saving = ref(false)
 const editingUser = ref<User | null>(null)
+const expandedUserId = ref<string | null>(null)
 
 const formUsername = ref('')
 const formPassword = ref('')
@@ -154,6 +156,9 @@ onMounted(loadUsers)
             </td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">
+                <button class="text-sm text-primary hover:underline" @click="expandedUserId = expandedUserId === user.id ? null : user.id">
+                  {{ expandedUserId === user.id ? 'Collapse' : 'Details' }}
+                </button>
                 <button class="text-sm text-primary hover:underline" @click="openEdit(user)">Edit</button>
                 <button
                   class="text-sm hover:underline"
@@ -163,6 +168,11 @@ onMounted(loadUsers)
                   {{ user.active ? 'Deactivate' : 'Activate' }}
                 </button>
               </div>
+            </td>
+          </tr>
+          <tr v-if="expandedUserId === user.id">
+            <td colspan="6" class="p-0">
+              <UserDetailPanel :user="user" @close="expandedUserId = null" />
             </td>
           </tr>
           <tr v-if="users.length === 0">
