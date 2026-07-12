@@ -1,7 +1,7 @@
 package com.zorrodev.bpm.rest.security;
 
-import com.zorrodev.bpm.engine.repository.ServiceAccountPermissionRepository;
-import com.zorrodev.bpm.engine.repository.ServiceAccountRepository;
+import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.security.TokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -29,9 +29,9 @@ class JwtAuthFilterTest {
     @BeforeEach
     void setUp() {
         tokenService = mock(TokenService.class);
-        ServiceAccountRepository saRepo = mock(ServiceAccountRepository.class);
-        ServiceAccountPermissionRepository saPermRepo = mock(ServiceAccountPermissionRepository.class);
-        filter = new JwtAuthFilter(tokenService, saRepo, saPermRepo);
+        ApiKeyRepository apiKeyRepo = mock(ApiKeyRepository.class);
+        ApiKeyGrantRepository apiKeyGrantRepo = mock(ApiKeyGrantRepository.class);
+        filter = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo);
     }
 
     private void setRequireApiAuth(boolean value) {
