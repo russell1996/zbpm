@@ -3,6 +3,7 @@ import type { RouteLocationNormalized } from 'vue-router'
 interface AuthState {
   isAuthenticated: boolean
   isAdmin: boolean
+  isSuperAdmin: boolean
 }
 
 /**
@@ -13,6 +14,9 @@ export function resolveGuard(
   to: RouteLocationNormalized,
   auth: AuthState,
 ): { name: string } | null {
+  if (to.meta.requiresSuperAdmin && !auth.isSuperAdmin) {
+    return { name: 'access-denied' }
+  }
   if (to.meta.requiresAdmin && !auth.isAdmin) {
     return { name: 'access-denied' }
   }

@@ -127,6 +127,12 @@ const router = createRouter({
           meta: { title: 'Users', requiresSuperAdmin: true },
         },
         {
+          path: 'me/api-key',
+          name: 'my-api-key',
+          component: () => import('@/pages/me/MyApiKey.vue'),
+          meta: { title: 'My API Key' },
+        },
+        {
           path: 'analytics',
           name: 'analytics',
           component: () => import('@/pages/analytics/AnalyticsOverview.vue'),
