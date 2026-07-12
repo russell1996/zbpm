@@ -5,9 +5,8 @@ import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
-import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
-import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
@@ -25,6 +24,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,12 +43,6 @@ class ProcessDefinitionResourceTest {
     private ProcessRepository processRepository;
 
     @Mock
-    private ProcessMemberRepository processMemberRepository;
-
-    @Mock
-    private UiUserRepository uiUserRepository;
-
-    @Mock
     private HttpServletRequest request;
 
     @InjectMocks
@@ -61,12 +55,36 @@ class ProcessDefinitionResourceTest {
         ProcessDefinition expected = new ProcessDefinition();
         expected.setKey("test-key");
         when(processDefinitionService.addProcessDefinition("<bpmn/>")).thenReturn(expected);
-        when(processRepository.findByDefinitionKey("test-key")).thenReturn(Optional.empty());
-        when(processRepository.save(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
+        // ADR-2: deploy requires SUPER_ADMIN
+        when(request.getAttribute("principal")).thenReturn(
+            new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN"));
 
         ProcessDefinition result = resource.addProcessDefinition(dto);
 
         assertThat(result).isSameAs(expected);
+    }
+
+    @Test
+    void addProcessDefinition_nonSuperAdmin_returns403() {
+        AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
+        dto.setBpmn("<bpmn/>");
+        when(request.getAttribute("principal")).thenReturn(
+            new Principal.UserPrincipal(UUID.randomUUID(), "owner", "USER"));
+
+        assertThatThrownBy(() -> resource.addProcessDefinition(dto))
+            .isInstanceOf(ResponseStatusException.class)
+            .matches(ex -> ((ResponseStatusException) ex).getStatusCode().equals(HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void addProcessDefinition_noAuth_returns401() {
+        AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
+        dto.setBpmn("<bpmn/>");
+        when(request.getAttribute("principal")).thenReturn(null);
+
+        assertThatThrownBy(() -> resource.addProcessDefinition(dto))
+            .isInstanceOf(ResponseStatusException.class)
+            .matches(ex -> ((ResponseStatusException) ex).getStatusCode().equals(HttpStatus.UNAUTHORIZED));
     }
 
     @Test

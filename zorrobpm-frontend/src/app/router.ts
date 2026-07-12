@@ -124,7 +124,7 @@ const router = createRouter({
           path: 'admin/users',
           name: 'admin-users',
           component: () => import('@/pages/admin/UserList.vue'),
-          meta: { title: 'Users', requiresAdmin: true },
+          meta: { title: 'Users', requiresSuperAdmin: true },
         },
         {
           path: 'analytics',
@@ -149,6 +149,11 @@ router.beforeEach(async (to) => {
 
   // Role guard: admin-only routes require ADMIN role
   if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return { name: 'access-denied' }
+  }
+
+  // ADR-2: super-admin-only routes require SUPER_ADMIN
+  if (to.meta.requiresSuperAdmin && !auth.isSuperAdmin) {
     return { name: 'access-denied' }
   }
 

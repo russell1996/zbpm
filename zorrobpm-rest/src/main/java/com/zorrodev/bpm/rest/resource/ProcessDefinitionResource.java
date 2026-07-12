@@ -7,11 +7,8 @@ import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
-import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
-import com.zorrodev.bpm.engine.entity.UiUserEntity;
-import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
-import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
@@ -36,55 +33,51 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
     private final FileService fileService;
     private final BpmnStructureService bpmnStructureService;
     private final ProcessRepository processRepository;
-    private final ProcessMemberRepository processMemberRepository;
-    private final UiUserRepository uiUserRepository;
     private final HttpServletRequest request;
 
+    /**
+     * ADR-2: deploy → SUPER_ADMIN only.
+     * ADR-2: deploy→owner auto-assignment REMOVED.
+     * Process registry entity IS created (needed for member management).
+     */
     @Override
     public ProcessDefinition addProcessDefinition(AddProcessDefinitionDTO dto) {
+        requireSuperAdmin();
         ProcessDefinition result = processDefinitionService.addProcessDefinition(dto.getBpmn());
-        ensureDeployOwnership(result.getKey());
+        ensureProcessRegistry(result.getKey());
         return result;
     }
 
     /**
-     * Deploy→owner hook (ADR §7): when a new process is deployed, the deployer
-     * becomes OWNER if no OWNER exists yet for this definition key.
-     * Redeploy of existing key does NOT change ownership.
+     * Ensure Process entity exists in registry for member management.
+     * Does NOT assign any OWNER — ADR-2 centralized control plane.
      */
-    private void ensureDeployOwnership(String definitionKey) {
-        // Ensure Process entity exists (deploy creates ProcessDefinition, but not Process)
-        ProcessEntity process = processRepository.findByDefinitionKey(definitionKey).orElse(null);
-        if (process == null) {
-            process = new ProcessEntity();
-            process.setId(UUID.randomUUID());
-            process.setDefinitionKey(definitionKey);
-            process.setName(definitionKey);
-            process.setCreatedAt(Instant.now());
-            process = processRepository.save(process);
-        }
-
-        long ownerCount = processMemberRepository.findByProcessId(process.getId()).stream()
-            .filter(m -> "OWNER".equals(m.getRole()))
-            .count();
-        if (ownerCount > 0) return; // Owner already exists — don't change ownership
-
-        // No owner yet — make the deployer the OWNER
-        Principal principal = getDeployerPrincipal();
-        UUID deployerUserId = (principal instanceof Principal.UserPrincipal u) ? u.userId() : null;
-        if (deployerUserId == null) return; // API key deploy — no user to assign
-
-        ProcessMemberEntity owner = new ProcessMemberEntity();
-        owner.setProcessId(process.getId());
-        owner.setUserId(deployerUserId);
-        owner.setRole("OWNER");
-        owner.setAddedBy(deployerUserId);
-        owner.setAddedAt(Instant.now());
-        processMemberRepository.save(owner);
-        log.info("Deploy→owner: user={} now OWNER of process key={}", deployerUserId, definitionKey);
+    private void ensureProcessRegistry(String definitionKey) {
+        processRepository.findByDefinitionKey(definitionKey).ifPresentOrElse(
+            p -> {}, // already exists
+            () -> {
+                ProcessEntity process = new ProcessEntity();
+                process.setId(UUID.randomUUID());
+                process.setDefinitionKey(definitionKey);
+                process.setName(definitionKey);
+                process.setCreatedAt(Instant.now());
+                processRepository.save(process);
+                log.info("Process registry created for key={}", definitionKey);
+            }
+        );
     }
 
-    private Principal getDeployerPrincipal() {
+    private void requireSuperAdmin() {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (!principal.isSuperAdmin()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Deploy requires SUPER_ADMIN");
+        }
+    }
+
+    private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
         return attr instanceof Principal p ? p : null;
     }
