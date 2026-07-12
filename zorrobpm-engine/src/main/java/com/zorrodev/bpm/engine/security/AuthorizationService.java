@@ -17,31 +17,32 @@ public class AuthorizationService {
     private final ProcessMemberRepository processMemberRepository;
 
     public enum Action {
-        // Management actions — OWNER only, SA never
+        // Management actions — SUPER_ADMIN only (ADR-2)
         DEPLOY, MANAGE_MEMBERS, MANAGE_KEYS, DELETE_PROCESS,
-        // Runtime actions — SA with permission + correct process
+        // Runtime actions — SA with grant + correct process
         START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE
     }
 
     public boolean canOperate(Principal principal, String processDefinitionKey, Action action) {
         if (principal.isSuperAdmin()) return true;
 
-        // SA: management actions always denied; runtime actions require permission + process scope
+        // ADR-2: SA — management always denied; runtime requires grant
         if (principal instanceof Principal.ServicePrincipal sa) {
             if (isManagementAction(action)) return false;
             ProcessEntity process = processRepository.findByDefinitionKey(processDefinitionKey).orElse(null);
             if (process == null) return false;
-            if (!sa.processId().equals(process.getId())) return false;
-            return sa.permissions().contains(action.name());
+            Principal.Grant grant = sa.grants().get(process.getId());
+            if (grant == null) return false;
+            return grant.isFull() || grant.permissions().contains(action.name());
         }
 
+        // ADR-2: User — management SUPER_ADMIN only; runtime requires membership
         if (principal instanceof Principal.UserPrincipal user) {
             ProcessEntity process = processRepository.findByDefinitionKey(processDefinitionKey).orElse(null);
             if (process == null) return false;
             ProcessMemberEntity membership = processMemberRepository.findById(
                 new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), user.userId())).orElse(null);
             if (membership == null) return false;
-            // ADR-2: management actions (DEPLOY/MANAGE_MEMBERS/MANAGE_KEYS/DELETE_PROCESS) → SUPER_ADMIN only
             if (isManagementAction(action)) return false;
             return switch (action) {
                 case START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE ->
@@ -60,9 +61,10 @@ public class AuthorizationService {
     public boolean canCompleteUserTask(Principal principal, UUID processId) {
         if (principal.isSuperAdmin()) return true;
         if (principal instanceof Principal.ServicePrincipal sa) {
-            return sa.processId().equals(processId) && sa.permissions().contains("COMPLETE_USER_TASK");
+            Principal.Grant grant = sa.grants().get(processId);
+            if (grant == null) return false;
+            return grant.isFull() || grant.permissions().contains("COMPLETE_USER_TASK");
         }
-        // User: assignee/candidate group check is done separately in RuntimeResource.checkAssignee
         return true;
     }
 }
