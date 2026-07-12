@@ -1,0 +1,64 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260713-052-audit-log
+      author: mimo
+      changes:
+        - createTable:
+            tableName: audit_log
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: principal_type
+                  type: varchar(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: principal_id
+                  type: varchar(128)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: owner_user_id
+                  type: uuid
+              - column:
+                  name: action
+                  type: varchar(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_key
+                  type: varchar(128)
+              - column:
+                  name: target_id
+                  type: varchar(128)
+              - column:
+                  name: at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+
+        - createIndex:
+            tableName: audit_log
+            indexName: idx_audit_log_process_key
+            columns:
+              - column:
+                  name: process_key
+
+        - createIndex:
+            tableName: audit_log
+            indexName: idx_audit_log_at
+            columns:
+              - column:
+                  name: at
+
+        - createIndex:
+            tableName: audit_log
+            indexName: idx_audit_log_owner_user_id
+            columns:
+              - column:
+                  name: owner_user_id
