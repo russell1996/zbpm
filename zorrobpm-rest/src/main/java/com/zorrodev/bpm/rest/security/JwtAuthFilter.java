@@ -1,9 +1,9 @@
 package com.zorrodev.bpm.rest.security;
 
-import com.zorrodev.bpm.engine.entity.ServiceAccountEntity;
-import com.zorrodev.bpm.engine.entity.ServiceAccountPermissionEntity;
-import com.zorrodev.bpm.engine.repository.ServiceAccountPermissionRepository;
-import com.zorrodev.bpm.engine.repository.ServiceAccountRepository;
+import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
+import com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity;
+import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.security.KeyHasher;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.TokenService;
@@ -18,6 +18,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -29,18 +31,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private static final String API_KEY_PREFIX = "zbpm_sk_";
 
     private final TokenService tokenService;
-    private final ServiceAccountRepository serviceAccountRepository;
-    private final ServiceAccountPermissionRepository saPermissionRepository;
+    private final ApiKeyRepository apiKeyRepository;
+    private final ApiKeyGrantRepository apiKeyGrantRepository;
 
     @Value("${zorrobpm.security.require-api-auth:true}")
     private boolean requireApiAuth;
 
     public JwtAuthFilter(TokenService tokenService,
-                         ServiceAccountRepository serviceAccountRepository,
-                         ServiceAccountPermissionRepository saPermissionRepository) {
+                         ApiKeyRepository apiKeyRepository,
+                         ApiKeyGrantRepository apiKeyGrantRepository) {
         this.tokenService = tokenService;
-        this.serviceAccountRepository = serviceAccountRepository;
-        this.saPermissionRepository = saPermissionRepository;
+        this.apiKeyRepository = apiKeyRepository;
+        this.apiKeyGrantRepository = apiKeyGrantRepository;
     }
 
     void setRequireApiAuth(boolean requireApiAuth) {
@@ -72,7 +74,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             || path.startsWith("/message-subscriptions")
             || path.startsWith("/process-definitions")
             || path.startsWith("/service-tasks")
-            || path.startsWith("/processes/");
+            || path.startsWith("/processes/")
+            || path.startsWith("/admin/")
+            || path.equals("/me/api-key") || path.startsWith("/me/api-key/");
     }
 
     @Override
@@ -134,35 +138,47 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
+    /**
+     * ADR-2: resolve API key using api_key + api_key_grant tables.
+     * One key per user → grants map (processId → {permissions, isFull}).
+     */
     private Principal resolveApiKey(String token) {
         String keyHash = KeyHasher.sha256(token);
-        var candidates = serviceAccountRepository.findByKeyHash(keyHash);
-        if (candidates.isEmpty()) {
+        var keyOpt = apiKeyRepository.findByKeyHash(keyHash);
+        if (keyOpt.isEmpty()) {
             log.debug("Unknown API key"); // #2: never log token substring
             return null;
         }
-        ServiceAccountEntity sa = candidates.get(0);
+        ApiKeyEntity apiKey = keyOpt.get();
 
-        if (sa.getRevokedAt() != null) {
-            log.debug("Revoked API key used: prefix={}", sa.getPrefix());
+        if (apiKey.getRevokedAt() != null) {
+            log.debug("Revoked API key used: prefix={}", apiKey.getPrefix());
             return null;
         }
-        if (sa.getExpiresAt() != null && sa.getExpiresAt().isBefore(Instant.now())) {
-            log.debug("Expired API key used: prefix={}", sa.getPrefix());
+        if (apiKey.getExpiresAt() != null && apiKey.getExpiresAt().isBefore(Instant.now())) {
+            log.debug("Expired API key used: prefix={}", apiKey.getPrefix());
             return null;
         }
 
-        Set<String> permissions = loadPermissions(sa.getId());
-        sa.setLastUsedAt(Instant.now());
-        serviceAccountRepository.save(sa);
+        // Load grants
+        Map<UUID, Principal.Grant> grants = loadGrants(apiKey.getId());
+        apiKey.setLastUsedAt(Instant.now());
+        apiKeyRepository.save(apiKey);
 
-        return new Principal.ServicePrincipal(sa.getId(), sa.getProcessId(), permissions);
+        return new Principal.ServicePrincipal(apiKey.getId(), apiKey.getOwnerUserId(), grants);
     }
 
-    private Set<String> loadPermissions(UUID serviceAccountId) {
-        return saPermissionRepository.findByServiceAccountId(serviceAccountId).stream()
-            .map(ServiceAccountPermissionEntity::getPermission)
-            .collect(Collectors.toSet());
+    private Map<UUID, Principal.Grant> loadGrants(UUID apiKeyId) {
+        return apiKeyGrantRepository.findByApiKeyId(apiKeyId).stream()
+            .collect(Collectors.toMap(
+                ApiKeyGrantEntity::getProcessId,
+                g -> new Principal.Grant(
+                    g.getPermissions() != null
+                        ? Set.of(g.getPermissions().split(","))
+                        : Set.of(),
+                    g.isFull()
+                )
+            ));
     }
 
     private String extractTokenFromCookie(HttpServletRequest request) {

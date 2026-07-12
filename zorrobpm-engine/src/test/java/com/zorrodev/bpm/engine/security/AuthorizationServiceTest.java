@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -47,31 +48,6 @@ class AuthorizationServiceTest {
         assertThat(auth.canCompleteUserTask(sa, UUID.randomUUID())).isTrue();
     }
 
-    // --- SA with permissions ---
-
-    @Test
-    void sa_withPermissions_canCompleteUserTask() {
-        UUID procId = UUID.randomUUID();
-        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), procId,
-            Set.of("COMPLETE_USER_TASK", "START"));
-        assertThat(auth.canCompleteUserTask(sa, procId)).isTrue();
-    }
-
-    @Test
-    void sa_withoutPermission_cannotCompleteUserTask() {
-        UUID procId = UUID.randomUUID();
-        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), procId,
-            Set.of("START"));
-        assertThat(auth.canCompleteUserTask(sa, procId)).isFalse();
-    }
-
-    @Test
-    void sa_wrongProcess_cannotCompleteUserTask() {
-        Principal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
-            Set.of("COMPLETE_USER_TASK"));
-        assertThat(auth.canCompleteUserTask(sa, UUID.randomUUID())).isFalse();
-    }
-
     // --- ADR-2: Owner can only do runtime actions, not management ---
 
     @Test
@@ -104,7 +80,6 @@ class AuthorizationServiceTest {
             .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
 
         Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
-        // ADR-2: DEPLOY → super-admin only
         assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.DEPLOY)).isFalse();
     }
 
@@ -121,25 +96,143 @@ class AuthorizationServiceTest {
             .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
 
         Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
-        // ADR-2: MANAGE_MEMBERS → super-admin only
         assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
     }
 
+    // --- ADR-2 SA with grants (scoped keys) ---
+
     @Test
-    void owner_cannotManageKeys_ADR2_superAdminOnly() {
-        UUID userId = UUID.randomUUID();
-        UUID processId = UUID.randomUUID();
-        ProcessEntity process = new ProcessEntity();
-        process.setId(processId);
-        process.setDefinitionKey("test-proc");
+    void sa_withGrant_canCompleteUserTask() {
+        UUID procId = UUID.randomUUID();
+        Principal.Grant grant = new Principal.Grant(Set.of("COMPLETE_USER_TASK", "START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(procId, grant));
+        assertThat(auth.canCompleteUserTask(sa, procId)).isTrue();
+    }
 
+    @Test
+    void sa_withoutCompleteUserTask_cannotCompleteUserTask() {
+        UUID procId = UUID.randomUUID();
+        Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(procId, grant));
+        assertThat(auth.canCompleteUserTask(sa, procId)).isFalse();
+    }
+
+    @Test
+    void sa_fullGrant_canCompleteUserTask() {
+        UUID procId = UUID.randomUUID();
+        Principal.Grant grant = new Principal.Grant(Set.of(), true);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(procId, grant));
+        assertThat(auth.canCompleteUserTask(sa, procId)).isTrue();
+    }
+
+    @Test
+    void sa_wrongProcess_cannotCompleteUserTask() {
+        UUID procId = UUID.randomUUID();
+        Principal.Grant grant = new Principal.Grant(Set.of("COMPLETE_USER_TASK"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(UUID.randomUUID(), grant)); // different process ID
+        assertThat(auth.canCompleteUserTask(sa, procId)).isFalse();
+    }
+
+    @Test
+    void sa_noGrant_cannotOperateRuntime() {
+        UUID procId = UUID.randomUUID();
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of()); // empty grants
+        assertThat(auth.canOperate(sa, "test-proc", AuthorizationService.Action.START)).isFalse();
+    }
+
+    @Test
+    void sa_withGrant_canOperateRuntime() {
+        UUID procId = UUID.randomUUID();
+        ProcessEntity process = createProcess("test-proc");
+        process.setId(procId);
         when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
-        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
-            .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
 
-        Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
-        // ADR-2: MANAGE_KEYS → super-admin only
-        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.MANAGE_KEYS)).isFalse();
+        Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(procId, grant));
+        assertThat(auth.canOperate(sa, "test-proc", AuthorizationService.Action.START)).isTrue();
+    }
+
+    @Test
+    void sa_fullGrant_canOperateAnyRuntime() {
+        UUID procId = UUID.randomUUID();
+        ProcessEntity process = createProcess("test-proc");
+        process.setId(procId);
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+
+        Principal.Grant grant = new Principal.Grant(Set.of(), true);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(procId, grant));
+        assertThat(auth.canOperate(sa, "test-proc", AuthorizationService.Action.START)).isTrue();
+        assertThat(auth.canOperate(sa, "test-proc", AuthorizationService.Action.COMPLETE_SERVICE_TASK)).isTrue();
+    }
+
+    @Test
+    void sa_cannotGrantWrongProcess() {
+        UUID procId = UUID.randomUUID();
+        ProcessEntity process = createProcess("test-proc");
+        process.setId(UUID.randomUUID()); // different ID
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+
+        Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(procId, grant)); // grant for wrong process
+        assertThat(auth.canOperate(sa, "test-proc", AuthorizationService.Action.START)).isFalse();
+    }
+
+    // --- SA management actions: should be false ---
+
+    @Test
+    void sa_cannotManageKeys() {
+        Principal.Grant grant = new Principal.Grant(Set.of("START", "COMPLETE_SERVICE_TASK"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(UUID.randomUUID(), grant));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.MANAGE_KEYS)).isFalse();
+    }
+
+    @Test
+    void sa_cannotManageMembers() {
+        Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(UUID.randomUUID(), grant));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
+    }
+
+    @Test
+    void sa_cannotDeploy() {
+        Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(UUID.randomUUID(), grant));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DEPLOY)).isFalse();
+    }
+
+    @Test
+    void sa_cannotDeleteProcess() {
+        Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
+            Map.of(UUID.randomUUID(), grant));
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DELETE_PROCESS)).isFalse();
+    }
+
+    // --- SA scope guard: wrong process → false ---
+
+    @Test
+    void sa_wrongProcess_cannotOperateRuntime() {
+        UUID saProcessId = UUID.randomUUID();
+        Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
+        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), saProcessId,
+            Map.of(saProcessId, grant)); // grant for different process
+
+        // Different process key → different process ID
+        ProcessEntity otherProcess = createProcess("other-process");
+        when(processRepository.findByDefinitionKey("other-process")).thenReturn(Optional.of(otherProcess));
+
+        assertThat(auth.canOperate(sa, "other-process", AuthorizationService.Action.START)).isFalse();
     }
 
     // --- Designer ---
@@ -189,51 +282,6 @@ class AuthorizationServiceTest {
     void userRole_canCompleteUserTask() {
         Principal user = new Principal.UserPrincipal(UUID.randomUUID(), "user", "USER");
         assertThat(auth.canCompleteUserTask(user, UUID.randomUUID())).isTrue();
-    }
-
-    // --- SA management actions: should be false ---
-
-    @Test
-    void sa_cannotManageKeys() {
-        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
-            Set.of("START", "COMPLETE_SERVICE_TASK"));
-        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.MANAGE_KEYS)).isFalse();
-    }
-
-    @Test
-    void sa_cannotManageMembers() {
-        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
-            Set.of("START"));
-        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
-    }
-
-    @Test
-    void sa_cannotDeploy() {
-        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
-            Set.of("START"));
-        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DEPLOY)).isFalse();
-    }
-
-    @Test
-    void sa_cannotDeleteProcess() {
-        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
-            Set.of("START"));
-        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DELETE_PROCESS)).isFalse();
-    }
-
-    // --- SA scope guard: wrong process → false ---
-
-    @Test
-    void sa_wrongProcess_cannotOperateRuntime() {
-        UUID saProcessId = UUID.randomUUID();
-        Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), saProcessId,
-            Set.of("START"));
-
-        // Different process key → different process ID
-        ProcessEntity otherProcess = createProcess("other-process");
-        when(processRepository.findByDefinitionKey("other-process")).thenReturn(Optional.of(otherProcess));
-
-        assertThat(auth.canOperate(sa, "other-process", AuthorizationService.Action.START)).isFalse();
     }
 
     private ProcessEntity createProcess(String key) {
