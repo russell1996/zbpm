@@ -41,12 +41,12 @@ public class AuthorizationService {
             ProcessMemberEntity membership = processMemberRepository.findById(
                 new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), user.userId())).orElse(null);
             if (membership == null) return false;
+            // ADR-2: management actions (DEPLOY/MANAGE_MEMBERS/MANAGE_KEYS/DELETE_PROCESS) → SUPER_ADMIN only
+            if (isManagementAction(action)) return false;
             return switch (action) {
-                case DEPLOY, DELETE_PROCESS -> "OWNER".equals(membership.getRole());
-                case MANAGE_MEMBERS -> "OWNER".equals(membership.getRole());
-                case MANAGE_KEYS -> "OWNER".equals(membership.getRole());
                 case START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE ->
                     "OWNER".equals(membership.getRole()) || "DESIGNER".equals(membership.getRole());
+                default -> false;
             };
         }
         return false;

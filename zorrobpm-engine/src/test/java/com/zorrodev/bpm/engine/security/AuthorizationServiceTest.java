@@ -72,10 +72,10 @@ class AuthorizationServiceTest {
         assertThat(auth.canCompleteUserTask(sa, UUID.randomUUID())).isFalse();
     }
 
-    // --- Owner ---
+    // --- ADR-2: Owner can only do runtime actions, not management ---
 
     @Test
-    void owner_canOperate() {
+    void owner_canOperateRuntime() {
         UUID userId = UUID.randomUUID();
         UUID processId = UUID.randomUUID();
         ProcessEntity process = new ProcessEntity();
@@ -87,8 +87,59 @@ class AuthorizationServiceTest {
             .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
 
         Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
-        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.DEPLOY)).isTrue();
-        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isTrue();
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.START)).isTrue();
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.COMPLETE_SERVICE_TASK)).isTrue();
+    }
+
+    @Test
+    void owner_cannotDeploy_ADR2_superAdminOnly() {
+        UUID userId = UUID.randomUUID();
+        UUID processId = UUID.randomUUID();
+        ProcessEntity process = new ProcessEntity();
+        process.setId(processId);
+        process.setDefinitionKey("test-proc");
+
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
+
+        Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
+        // ADR-2: DEPLOY → super-admin only
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.DEPLOY)).isFalse();
+    }
+
+    @Test
+    void owner_cannotManageMembers_ADR2_superAdminOnly() {
+        UUID userId = UUID.randomUUID();
+        UUID processId = UUID.randomUUID();
+        ProcessEntity process = new ProcessEntity();
+        process.setId(processId);
+        process.setDefinitionKey("test-proc");
+
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
+
+        Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
+        // ADR-2: MANAGE_MEMBERS → super-admin only
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
+    }
+
+    @Test
+    void owner_cannotManageKeys_ADR2_superAdminOnly() {
+        UUID userId = UUID.randomUUID();
+        UUID processId = UUID.randomUUID();
+        ProcessEntity process = new ProcessEntity();
+        process.setId(processId);
+        process.setDefinitionKey("test-proc");
+
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
+
+        Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
+        // ADR-2: MANAGE_KEYS → super-admin only
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.MANAGE_KEYS)).isFalse();
     }
 
     // --- Designer ---

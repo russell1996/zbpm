@@ -1,6 +1,5 @@
 package com.zorrodev.bpm.rest.resource;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
@@ -31,7 +30,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * WO-MT-5: Member management + deploy→owner.
+ * WO-MT-7: ADR-2 centralized control plane.
+ * Deploy + Members → SUPER_ADMIN only. Runtime → OWNER/DESIGNER.
  * Full-context tests (V11) through real filter chain.
  */
 @ActiveProfiles("test")
@@ -56,33 +56,31 @@ class MemberManagementTest {
     private String adminToken;
     private UUID adminId;
     private String bpmn;
-    private String bpmnKey;
 
     @BeforeAll
     void setup() throws Exception {
         bpmn = new String(Files.readAllBytes(Paths.get("src/test/files/process1.bpmn")));
-        bpmnKey = "process1"; // matches id in process1.bpmn
 
-        // Owner
+        // Owner (USER role, will be OWNER of a process)
         UiUserEntity owner = new UiUserEntity();
         ownerId = UUID.randomUUID();
         owner.setId(ownerId);
-        owner.setUsername("mt5-owner");
+        owner.setUsername("mt7-owner");
         owner.setPasswordHash(passwordHasher.hash("pass"));
-        owner.setFullName("MT5 Owner");
+        owner.setFullName("MT7 Owner");
         owner.setRole("USER");
         owner.setActive(true);
         owner.setCreatedAt(Instant.now());
         owner.setUpdatedAt(Instant.now());
         userRepository.save(owner);
 
-        // Designer (will be added as member)
+        // Designer
         UiUserEntity designer = new UiUserEntity();
         designerId = UUID.randomUUID();
         designer.setId(designerId);
-        designer.setUsername("mt5-designer");
+        designer.setUsername("mt7-designer");
         designer.setPasswordHash(passwordHasher.hash("pass"));
-        designer.setFullName("MT5 Designer");
+        designer.setFullName("MT7 Designer");
         designer.setRole("USER");
         designer.setActive(true);
         designer.setCreatedAt(Instant.now());
@@ -93,9 +91,9 @@ class MemberManagementTest {
         UiUserEntity nonMember = new UiUserEntity();
         nonMemberId = UUID.randomUUID();
         nonMember.setId(nonMemberId);
-        nonMember.setUsername("mt5-nonmember");
+        nonMember.setUsername("mt7-nonmember");
         nonMember.setPasswordHash(passwordHasher.hash("pass"));
-        nonMember.setFullName("MT5 Non-Member");
+        nonMember.setFullName("MT7 Non-Member");
         nonMember.setRole("USER");
         nonMember.setActive(true);
         nonMember.setCreatedAt(Instant.now());
@@ -106,9 +104,9 @@ class MemberManagementTest {
         UiUserEntity admin = new UiUserEntity();
         adminId = UUID.randomUUID();
         admin.setId(adminId);
-        admin.setUsername("mt5-admin");
+        admin.setUsername("mt7-admin");
         admin.setPasswordHash(passwordHasher.hash("pass"));
-        admin.setFullName("MT5 Admin");
+        admin.setFullName("MT7 Admin");
         admin.setRole("SUPER_ADMIN");
         admin.setActive(true);
         admin.setCreatedAt(Instant.now());
@@ -116,10 +114,10 @@ class MemberManagementTest {
         userRepository.save(admin);
 
         // Login all users
-        ownerToken = login("mt5-owner", "pass");
-        designerToken = login("mt5-designer", "pass");
-        nonMemberToken = login("mt5-nonmember", "pass");
-        adminToken = login("mt5-admin", "pass");
+        ownerToken = login("mt7-owner", "pass");
+        designerToken = login("mt7-designer", "pass");
+        nonMemberToken = login("mt7-nonmember", "pass");
+        adminToken = login("mt7-admin", "pass");
     }
 
     private LoginDTO loginDto(String username, String password) {
@@ -138,9 +136,16 @@ class MemberManagementTest {
         return mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class).getToken();
     }
 
-    private String deployBpmn(String token, String bpmnContent) throws Exception {
+    private String uniqueKey() {
+        return "mt7_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    }
+
+    private String deployBpmnAs(String token, String key) throws Exception {
+        String testBpmn = bpmn.replace("id=\"process1\"", "id=\"" + key + "\"")
+                               .replace("name=\"Process 1\"", "name=\"" + key + "\"")
+                               .replace("process id=\"process1\"", "process id=\"" + key + "\"");
         AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
-        dto.setBpmn(bpmnContent);
+        dto.setBpmn(testBpmn);
         MvcResult result = mockMvc.perform(post("/process-definitions")
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(dto))
@@ -150,132 +155,143 @@ class MemberManagementTest {
         return result.getResponse().getContentAsString();
     }
 
-    /** Generate a BPMN with a unique key to avoid H2 state leakage between tests. */
-    private String uniqueBpmn() {
-        String key = "mt5_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
-        return bpmn.replace("id=\"process1\"", "id=\"" + key + "\"")
-                   .replace("name=\"Process 1\"", "name=\"" + key + "\"")
-                   .replace("process id=\"process1\"", "process id=\"" + key + "\"");
-    }
-
-    private String extractKeyFromBpmn(String bpmnContent) {
-        int idx = bpmnContent.indexOf("process id=\"");
-        if (idx < 0) throw new RuntimeException("Cannot find process id in BPMN");
-        int start = idx + "process id=\"".length();
-        int end = bpmnContent.indexOf("\"", start);
-        return bpmnContent.substring(start, end);
-    }
-
-    // ==================== Criterion #1: deploy → deployer becomes OWNER ====================
+    // ==================== Criterion #1: USER-OWNER deploys → 403 ====================
 
     @Test
-    void criterion1_deployCreatesOwner() throws Exception {
-        String testBpmn = uniqueBpmn();
-        String key = extractKeyFromBpmn(testBpmn);
-        deployBpmn(ownerToken, testBpmn);
-
-        var process = processRepository.findByDefinitionKey(key);
-        assertTrue(process.isPresent(), "Process should exist after deploy");
-
-        var members = processMemberRepository.findByProcessId(process.get().getId());
-        long ownerCount = members.stream().filter(m -> "OWNER".equals(m.getRole()) && ownerId.equals(m.getUserId())).count();
-        assertEquals(1, ownerCount, "Deployer should be OWNER");
-    }
-
-    // ==================== Criterion #2: redeploy does NOT change ownership ====================
-
-    @Test
-    void criterion2_redeployDoesNotStealOwnership() throws Exception {
-        String testBpmn = uniqueBpmn();
-        String key = extractKeyFromBpmn(testBpmn);
-        deployBpmn(ownerToken, testBpmn);
-
-        var process = processRepository.findByDefinitionKey(key).orElseThrow();
-
-        deployBpmn(adminToken, testBpmn);
-
-        var members = processMemberRepository.findByProcessId(process.getId());
-        long originalOwner = members.stream()
-            .filter(m -> "OWNER".equals(m.getRole()) && ownerId.equals(m.getUserId()))
-            .count();
-        assertEquals(1, originalOwner, "Original deployer should still be OWNER");
-
-        long adminOwner = members.stream()
-            .filter(m -> "OWNER".equals(m.getRole()) && adminId.equals(m.getUserId()))
-            .count();
-        assertEquals(0, adminOwner, "Redeployer should NOT become OWNER");
-    }
-
-    @Test
-    void criterion3_ownerAddsDesigner() throws Exception {
-        String testBpmn = uniqueBpmn();
-        String key = extractKeyFromBpmn(testBpmn);
-        deployBpmn(ownerToken, testBpmn);
-
-        mockMvc.perform(post("/processes/" + key + "/members")
+    void criterion1_ownerDeploy_returns403() throws Exception {
+        mockMvc.perform(post("/process-definitions")
                         .header("Authorization", "Bearer " + ownerToken)
+                        .content(mapper.writeValueAsString(new AddProcessDefinitionDTO()))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden());
+    }
+
+    // ==================== Criterion #2: SUPER_ADMIN deploys → 200 ====================
+
+    @Test
+    void criterion2_superAdminDeploy_returns200() throws Exception {
+        String key = uniqueKey();
+        String testBpmn = bpmn.replace("id=\"process1\"", "id=\"" + key + "\"")
+                               .replace("name=\"Process 1\"", "name=\"" + key + "\"")
+                               .replace("process id=\"process1\"", "process id=\"" + key + "\"");
+        AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
+        dto.setBpmn(testBpmn);
+        mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
+    // ==================== Criterion #3: USER-OWNER adds member → 403 ====================
+
+    @Test
+    void criterion3_ownerAddMember_returns403() throws Exception {
+        // First, SUPER_ADMIN deploys and adds OWNER as member
+        String key = uniqueKey();
+        deployBpmnAs(adminToken, key);
+        mockMvc.perform(post("/processes/" + key + "/members")
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"" + designerId + "\",\"role\":\"DESIGNER\"}"))
+                        .content("{\"userId\":\"" + ownerId + "\",\"role\":\"OWNER\"}"))
                 .andExpect(status().isOk());
 
-        var process = processRepository.findByDefinitionKey(key).orElseThrow();
-        var members = processMemberRepository.findByProcessId(process.getId());
-        boolean hasDesigner = members.stream()
-            .anyMatch(m -> "DESIGNER".equals(m.getRole()) && designerId.equals(m.getUserId()));
-        assertTrue(hasDesigner, "DESIGNER member should exist after OWNER adds them");
-    }
-
-    @Test
-    void criterion4_nonOwnerGets403() throws Exception {
-        String testBpmn = uniqueBpmn();
-        String key = extractKeyFromBpmn(testBpmn);
-        deployBpmn(ownerToken, testBpmn);
-
+        // OWNER tries to add a member → 403 (MANAGE_MEMBERS → super-admin only)
         mockMvc.perform(post("/processes/" + key + "/members")
-                        .header("Authorization", "Bearer " + nonMemberToken)
+                        .header("Authorization", "Bearer " + ownerToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"" + designerId + "\",\"role\":\"DESIGNER\"}"))
                 .andExpect(status().isForbidden());
     }
 
-    @Test
-    void criterion5_cannotRemoveLastOwner() throws Exception {
-        String testBpmn = uniqueBpmn();
-        String key = extractKeyFromBpmn(testBpmn);
-        deployBpmn(ownerToken, testBpmn);
-
-        mockMvc.perform(delete("/processes/" + key + "/members/" + ownerId)
-                        .header("Authorization", "Bearer " + ownerToken))
-                .andExpect(status().isConflict());
-    }
+    // ==================== Criterion #4: SUPER_ADMIN adds member → 200 ====================
 
     @Test
-    void criterion6_superAdminManagesAny() throws Exception {
-        String testBpmn = uniqueBpmn();
-        String key = extractKeyFromBpmn(testBpmn);
-        deployBpmn(ownerToken, testBpmn);
+    void criterion4_superAdminAddMember_returns200() throws Exception {
+        String key = uniqueKey();
+        deployBpmnAs(adminToken, key);
 
         mockMvc.perform(post("/processes/" + key + "/members")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"" + designerId + "\",\"role\":\"DESIGNER\"}"))
                 .andExpect(status().isOk());
+    }
 
-        mockMvc.perform(get("/processes/" + key + "/members")
+    // ==================== Criterion #5: OWNER runtime (START) → 200 ====================
+
+    @Test
+    void criterion5_ownerStartProcess_returns200() throws Exception {
+        String key = uniqueKey();
+        deployBpmnAs(adminToken, key);
+        // Add OWNER as member
+        mockMvc.perform(post("/processes/" + key + "/members")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"" + ownerId + "\",\"role\":\"OWNER\"}"))
+                .andExpect(status().isOk());
+
+        // OWNER starts process → 200 (runtime allowed)
+        mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"processDefinitionKey\":\"" + key + "\",\"variables\":[]}"))
+                .andExpect(status().isOk());
+    }
+
+    // ==================== Criterion #6: /users under ADMIN → 403; SUPER_ADMIN → 200 ====================
+
+    @Test
+    void criterion6_users_underNonSuperAdmin_returns403() throws Exception {
+        // ADMIN (non-super) → 403
+        mockMvc.perform(get("/users")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void criterion6_users_underSuperAdmin_returns200() throws Exception {
+        mockMvc.perform(get("/users")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
     }
 
-    @Test
-    void criterion8_proofOfFailure_deployCreatesOwnership() throws Exception {
-        String testBpmn = uniqueBpmn();
-        String key = extractKeyFromBpmn(testBpmn);
-        deployBpmn(ownerToken, testBpmn);
+    // ==================== Proof-of-failure ====================
 
+    /**
+     * Proof-of-failure (V3): On CURRENT code, OWNER can deploy (200).
+     * After ADR-2 fix: OWNER deploy → 403.
+     */
+    @Test
+    void criterion8_proofOfFailure_ownerDeployWas200_now403() throws Exception {
+        // This proves the fix: OWNER deploy returns 403 (was 200 before fix)
+        mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .content(mapper.writeValueAsString(new AddProcessDefinitionDTO()))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Proof-of-failure (V3): On CURRENT code, OWNER can add members (200).
+     * After ADR-2 fix: OWNER add member → 403.
+     */
+    @Test
+    void criterion8_proofOfFailure_ownerAddMemberWas200_now403() throws Exception {
+        String key = uniqueKey();
+        deployBpmnAs(adminToken, key);
+        // Add OWNER as member
+        mockMvc.perform(post("/processes/" + key + "/members")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"" + ownerId + "\",\"role\":\"OWNER\"}"))
+                .andExpect(status().isOk());
+
+        // OWNER tries to add member → 403 (was 200 before fix)
         mockMvc.perform(post("/processes/" + key + "/members")
                         .header("Authorization", "Bearer " + ownerToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"" + designerId + "\",\"role\":\"DESIGNER\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isForbidden());
     }
 }
