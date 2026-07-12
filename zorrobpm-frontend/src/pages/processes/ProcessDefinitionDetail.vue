@@ -2,12 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useProcessStore } from '@/stores/process'
-import { useAuthStore } from '@/stores/auth'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
-import MembersTab from '@/widgets/processes/MembersTab.vue'
-import ServiceAccountsTab from '@/widgets/processes/ServiceAccountsTab.vue'
 import * as processService from '@/services/processService'
-import * as memberService from '@/services/memberService'
 import type { BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
@@ -23,8 +19,6 @@ const startVars = ref<{ name: string; type: string; value: string }[]>([])
 const newVarName = ref('')
 const newVarType = ref('STRING')
 const newVarValue = ref('')
-const canManageProcess = ref(false)
-const activeSettingsTab = ref<'members' | 'serviceAccounts' | null>(null)
 
 // --- BPMN breakdown: find / flatten nodes from the parsed structure ---
 function findNode(nodes: BpmnNode[], id: string): BpmnNode | null {
@@ -99,18 +93,6 @@ onMounted(async () => {
   ])
   if (store.currentDefinition) {
     await store.fetchVersions(store.currentDefinition.key)
-
-    // Check if user can manage members/SA: SUPER_ADMIN always, or try listMembers (403 = can't)
-    if (authStore.isSuperAdmin) {
-      canManageProcess.value = true
-    } else {
-      try {
-        await memberService.listMembers(store.currentDefinition.key)
-        canManageProcess.value = true
-      } catch {
-        canManageProcess.value = false
-      }
-    }
   }
   try {
     bpmnXml.value = await processService.getProcessDefinitionXml(id)
@@ -278,30 +260,6 @@ function openVersion(id: string) {
             </tr>
           </tbody>
         </table>
-      </div>
-
-      <!-- Process management tabs (Members + Service Accounts) — visible only to OWNER/SUPER_ADMIN -->
-      <div v-if="canManageProcess" class="border border-border rounded-lg overflow-hidden bg-card">
-        <div class="flex border-b border-border">
-          <button
-            class="px-4 py-3 text-sm font-medium transition-colors"
-            :class="activeSettingsTab === 'members' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'"
-            @click="activeSettingsTab = activeSettingsTab === 'members' ? null : 'members'"
-          >
-            Members
-          </button>
-          <button
-            class="px-4 py-3 text-sm font-medium transition-colors"
-            :class="activeSettingsTab === 'serviceAccounts' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'"
-            @click="activeSettingsTab = activeSettingsTab === 'serviceAccounts' ? null : 'serviceAccounts'"
-          >
-            Service Accounts
-          </button>
-        </div>
-        <div v-if="activeSettingsTab" class="p-4">
-          <MembersTab v-if="activeSettingsTab === 'members'" :process-key="store.currentDefinition!.key" />
-          <ServiceAccountsTab v-else-if="activeSettingsTab === 'serviceAccounts'" :process-key="store.currentDefinition!.key" />
-        </div>
       </div>
 
     </template>
