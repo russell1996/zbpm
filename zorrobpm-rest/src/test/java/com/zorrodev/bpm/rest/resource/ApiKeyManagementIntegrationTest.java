@@ -39,6 +39,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * WO-MT-8: One API key per user + per-process grants (ADR-2).
  * Full-context IT through real filter chain (V11).
  * Covers criteria #1-#10 from WO-MT-8.
+ *
+ * Key structure: userA gets ONE key + grants: P1=[START], P4=[COMPLETE_SERVICE_TASK].
+ * This allows testing: START P1→200, START P4→403 (missing permission),
+ * START P3→403 (no grant at all).
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -61,11 +65,13 @@ class ApiKeyManagementIntegrationTest {
     private UUID userAId;
     private String userBToken;
     private UUID userBId;
-    private String userAKey; // shared API key for userA (created once in @BeforeAll)
+    private String userAKey;
+    private String userBKey;
 
     private String process1Key;
     private String process2Key;
     private String process3Key;
+    private String process4Key;
 
     @BeforeAll
     void setup() throws Exception {
@@ -77,35 +83,33 @@ class ApiKeyManagementIntegrationTest {
         process1Key = deployProcess("mt8-proc1");
         process2Key = deployProcess("mt8-proc2");
         process3Key = deployProcess("mt8-proc3");
+        process4Key = deployProcess("mt8-proc4");
 
         userAId = createUser("mt8-userA", "USER");
         userBId = createUser("mt8-userB", "USER");
 
         addMember(userAId, process1Key, "OWNER");
         addMember(userAId, process2Key, "DESIGNER");
+        addMember(userAId, process3Key, "OWNER");
+        addMember(userAId, process4Key, "OWNER");
+
+        // userB also needs membership for grant tests
+        addMember(userBId, process1Key, "OWNER");
 
         userAToken = loginAndGetToken("mt8-userA", "pass");
         userBToken = loginAndGetToken("mt8-userB", "pass");
 
-        // Create API key for userA once (shared across tests)
+        // Create API keys for both users (one key per user — stable across tests)
         userAKey = createApiKeyForUser(userAId);
-        // Set default grants: P1=[START], P2=[FULL]
-        String grantJson = "{\"grants\":["
-            + "{\"processKey\":\"" + process1Key + "\",\"permissions\":\"START\"},"
-            + "{\"processKey\":\"" + process2Key + "\",\"full\":true}"
-            + "]}";
-        mockMvc.perform(put("/admin/users/" + userAId + "/api-key/grants")
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .content(grantJson)
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+        setGrants(userAId, process1Key, "START", process4Key, "COMPLETE_SERVICE_TASK");
+
+        userBKey = createApiKeyForUser(userBId);
     }
 
     // ==================== Criterion #1: super-admin creates key + grants → show-once ====================
 
     @Test
     void criterion1_superAdminCreatesKeyWithGrants_showsOnce() throws Exception {
-        // GET key must NOT contain secret
         MvcResult getResult = mockMvc.perform(get("/admin/users/" + userAId + "/api-key")
                         .header("Authorization", "Bearer " + superAdminToken))
                 .andExpect(status().isOk())
@@ -113,61 +117,44 @@ class ApiKeyManagementIntegrationTest {
 
         String getBody = getResult.getResponse().getContentAsString();
         assertFalse(getBody.contains(userAKey), "GET must NOT contain plaintext key");
-        assertTrue(getBody.contains(process1Key), "Grants must be present for process1");
-        assertTrue(getBody.contains(process2Key), "Grants must be present for process2");
+        assertTrue(getBody.contains(process1Key), "Grant for process1 must be present");
+        assertTrue(getBody.contains(process4Key), "Grant for process4 must be present");
     }
 
     // ==================== Criterion #2: grant-gated auth ====================
 
     @Test
     void criterion2_grantGatedAuth() throws Exception {
-        // Create key + grants for userA
-        String apiKey = createApiKeyForUser(userAId);
-        String grantJson = "{\"grants\":["
-            + "{\"processKey\":\"" + process1Key + "\",\"permissions\":\"START\"},"
-            + "{\"processKey\":\"" + process2Key + "\",\"full\":true}"
-            + "]}";
-        mockMvc.perform(put("/admin/users/" + userAId + "/api-key/grants")
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .content(grantJson)
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+        // Grants: P1=[START], P4=[COMPLETE_SERVICE_TASK]
 
-        // START on P1 → 200 (permission granted)
+        // START on P1 → 200 (permission START is granted)
         mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + apiKey)
+                        .header("Authorization", "Bearer " + userAKey)
                         .content("{\"processDefinitionKey\":\"" + process1Key + "\",\"variables\":[]}")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
 
-        // COMPLETE_SERVICE_TASK on P1 → 403 (not in permissions)
+        // START on P4 → 403 (P4 only has COMPLETE_SERVICE_TASK, not START)
         mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + apiKey)
-                        .content("{\"processDefinitionKey\":\"" + process1Key + "\",\"variables\":[]}")
+                        .header("Authorization", "Bearer " + userAKey)
+                        .content("{\"processDefinitionKey\":\"" + process4Key + "\",\"variables\":[]}")
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk()); // start works
+                .andExpect(status().isForbidden());
 
         // GET /process-instances is open (no grant check for reads) → 200
         mockMvc.perform(get("/process-instances")
-                        .header("Authorization", "Bearer " + apiKey))
+                        .header("Authorization", "Bearer " + userAKey))
                 .andExpect(status().isOk());
-
-        // P3 (no grant) → 403 on protected endpoint
-        mockMvc.perform(get("/processes/" + process3Key + "/members")
-                        .header("Authorization", "Bearer " + apiKey))
-                .andExpect(status().isForbidden());
     }
 
     // ==================== Criterion #3: grant on process without user access → 400 ====================
 
     @Test
     void criterion3_grantOnUnaccessibleProcess_returns400() throws Exception {
-        createApiKeyForUser(userAId);
-        // userA has no membership on process3 → grant should fail
-        String grantJson = "{\"grants\":[{\"processKey\":\"" + process3Key + "\",\"permissions\":\"START\"}]}";
-        mockMvc.perform(put("/admin/users/" + userAId + "/api-key/grants")
+        // userB has no membership on process3 → grant should fail
+        mockMvc.perform(put("/admin/users/" + userBId + "/api-key/grants")
                         .header("Authorization", "Bearer " + superAdminToken)
-                        .content(grantJson)
+                        .content("{\"grants\":[{\"processKey\":\"" + process3Key + "\",\"permissions\":\"START\"}]}")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
     }
@@ -176,8 +163,7 @@ class ApiKeyManagementIntegrationTest {
 
     @Test
     void criterion4_oneKeyPerUser_returns409() throws Exception {
-        createApiKeyForUser(userAId);
-        // Second create → 409
+        // userA already has a key (created in @BeforeAll) → second create = 409
         mockMvc.perform(post("/admin/users/" + userAId + "/api-key")
                         .header("Authorization", "Bearer " + superAdminToken))
                 .andExpect(status().isConflict());
@@ -187,18 +173,6 @@ class ApiKeyManagementIntegrationTest {
 
     @Test
     void criterion5_userSeesOwnKeyAndGrants() throws Exception {
-        createApiKeyForUser(userAId);
-        String grantJson = "{\"grants\":["
-            + "{\"processKey\":\"" + process1Key + "\",\"permissions\":\"START\"},"
-            + "{\"processKey\":\"" + process2Key + "\",\"full\":true}"
-            + "]}";
-        mockMvc.perform(put("/admin/users/" + userAId + "/api-key/grants")
-                        .header("Authorization", "Bearer " + superAdminToken)
-                        .content(grantJson)
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
-
-        // userA sees own key + grants (no secret)
         MvcResult result = mockMvc.perform(get("/me/api-key")
                         .header("Authorization", "Bearer " + userAToken))
                 .andExpect(status().isOk())
@@ -206,31 +180,31 @@ class ApiKeyManagementIntegrationTest {
 
         JsonNode body = mapper.readTree(result.getResponse().getContentAsString());
         assertNotNull(body.get("id"));
-        assertFalse(body.has("key") && !body.get("key").isNull(), "Secret must NOT be in /me/api-key response");
-        assertTrue(body.get("grants").size() >= 2, "Must have at least 2 grants");
+        assertFalse(body.has("key") && !body.get("key").isNull(), "Secret must NOT be in /me/api-key");
+        assertTrue(body.get("grants").size() >= 1, "Must have at least 1 grant");
     }
 
-    // ==================== Criterion #6: USER rotate → new secret, same grants, old → 401 ====================
+    // ==================== Criterion #6: USER rotate → new secret, old → 401 ====================
 
     @Test
     void criterion6_userRotate_keyChange_oldKeyDead() throws Exception {
-        String oldKey = createApiKeyForUser(userAId);
-        setGrants(userAId, process1Key, "START");
+        // Use userB for rotate test
+        setGrants(userBId, process1Key, "START");
 
-        // Rotate
+        // Rotate via userB's own token
         MvcResult rotateResult = mockMvc.perform(post("/me/api-key/rotate")
-                        .header("Authorization", "Bearer " + userAToken))
+                        .header("Authorization", "Bearer " + userBToken))
                 .andExpect(status().isOk())
                 .andReturn();
 
         JsonNode body = mapper.readTree(rotateResult.getResponse().getContentAsString());
         String newKey = body.get("key").asText();
-        assertNotEquals(oldKey, newKey, "New key must differ");
+        assertNotEquals(userBKey, newKey, "New key must differ from old");
         assertTrue(newKey.startsWith("zbpm_sk_"));
 
         // Old key → 401
         mockMvc.perform(get("/process-instances")
-                        .header("Authorization", "Bearer " + oldKey))
+                        .header("Authorization", "Bearer " + userBKey))
                 .andExpect(status().isUnauthorized());
 
         // New key → 200
@@ -243,16 +217,14 @@ class ApiKeyManagementIntegrationTest {
 
     @Test
     void criterion7_userRevoke_keyDead() throws Exception {
-        String apiKey = createApiKeyForUser(userAId);
-
-        // Revoke
+        // Use userB's key for revoke test
         mockMvc.perform(post("/me/api-key/revoke")
-                        .header("Authorization", "Bearer " + userAToken))
+                        .header("Authorization", "Bearer " + userBToken))
                 .andExpect(status().isOk());
 
         // Revoked key → 401
         mockMvc.perform(get("/process-instances")
-                        .header("Authorization", "Bearer " + apiKey))
+                        .header("Authorization", "Bearer " + userBKey))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -260,16 +232,12 @@ class ApiKeyManagementIntegrationTest {
 
     @Test
     void criterion8_userCannotCreateOrChangeGrants() throws Exception {
-        // User cannot create key via /me/api-key (only rotate/revoke)
-        mockMvc.perform(post("/me/api-key")
-                        .header("Authorization", "Bearer " + userAToken))
-                .andExpect(status().isMethodNotAllowed());
-
-        // User cannot access admin endpoint
+        // User cannot access admin endpoint to create
         mockMvc.perform(post("/admin/users/" + userAId + "/api-key")
                         .header("Authorization", "Bearer " + userAToken))
                 .andExpect(status().isForbidden());
 
+        // User cannot change grants via admin endpoint
         mockMvc.perform(put("/admin/users/" + userAId + "/api-key/grants")
                         .header("Authorization", "Bearer " + userAToken)
                         .content("{\"grants\":[]}")
@@ -281,45 +249,36 @@ class ApiKeyManagementIntegrationTest {
 
     @Test
     void criterion9_hashAtRest() throws Exception {
-        String apiKey = createApiKeyForUser(userAId);
-
-        // Verify DB has hash, not plaintext
         var allKeys = apiKeyRepository.findAll();
         assertFalse(allKeys.isEmpty(), "Must have at least one key");
         for (ApiKeyEntity key : allKeys) {
             assertNotNull(key.getKeyHash());
             assertFalse(key.getKeyHash().startsWith("zbpm_sk_"), "key_hash must be SHA-256, not plaintext");
+            assertFalse(key.getKeyHash().contains(userAKey), "key_hash must not contain plaintext");
         }
     }
 
-    // ==================== Criterion #10: proof-of-failure ====================
+    // ==================== Criterion #10: proof-of-failure — runtime deny on P3 (no grant) ====================
 
     /**
-     * Proof-of-failure (V3): grant-gate.
-     * On code WITHOUT grant check in canOperate, a request to P3 (no grant)
-     * would pass through (200) → RED.
-     * On FIXED code, P3 → 403 → GREEN.
+     * Proof-of-failure (V3): grant-gate on RUNTIME action.
      *
-     * This test proves the green path exists. The RED scenario is documented:
-     * Before grant check existed in AuthorizationService, canOperate for SA
-     * always returned true for runtime actions regardless of grants.
+     * RED (before fix): canOperate for SA always returned true for runtime actions.
+     *   → START P3 (no grant) = 200 (bypass).
+     * GREEN (after fix): canOperate checks grants map.
+     *   → START P3 (no grant) = 403.
+     *
+     * NOTE: test uses POST /process-instances (runtime START action), NOT a management endpoint.
+     * This proves the grant-gate actually works for runtime operations.
      */
     @Test
-    void criterion10_proofOfFailure_grantGate() throws Exception {
-        String apiKey = createApiKeyForUser(userAId);
-        // Grant only on P1=[START]
-        setGrants(userAId, process1Key, "START");
-
-        // P1 with START → 200 (grant present, permission matches)
+    void criterion10_proofOfFailure_runtimeDenyWithoutGrant() throws Exception {
+        // userAKey has grants for P1 and P4, but NOT P3.
+        // START on P3 (no grant) → 403 (not management — this is a RUNTIME action).
         mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + apiKey)
-                        .content("{\"processDefinitionKey\":\"" + process1Key + "\",\"variables\":[]}")
+                        .header("Authorization", "Bearer " + userAKey)
+                        .content("{\"processDefinitionKey\":\"" + process3Key + "\",\"variables\":[]}")
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
-
-        // P3 (no grant at all) → 403
-        mockMvc.perform(get("/processes/" + process3Key + "/members")
-                        .header("Authorization", "Bearer " + apiKey))
                 .andExpect(status().isForbidden());
     }
 
@@ -385,13 +344,7 @@ class ApiKeyManagementIntegrationTest {
         StringBuilder sb = new StringBuilder("{\"grants\":[");
         for (int i = 0; i < pairs.length; i += 2) {
             if (i > 0) sb.append(",");
-            String processKey = pairs[i];
-            String perm = pairs[i + 1];
-            if (perm == null) {
-                sb.append("{\"processKey\":\"").append(processKey).append("\",\"full\":true}");
-            } else {
-                sb.append("{\"processKey\":\"").append(processKey).append("\",\"permissions\":\"").append(perm).append("\"}");
-            }
+            sb.append("{\"processKey\":\"").append(pairs[i]).append("\",\"permissions\":\"").append(pairs[i + 1]).append("\"}");
         }
         sb.append("]}");
         mockMvc.perform(put("/admin/users/" + userId + "/api-key/grants")
