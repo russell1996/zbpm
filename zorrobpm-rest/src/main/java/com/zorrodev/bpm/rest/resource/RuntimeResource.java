@@ -22,6 +22,7 @@ import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -51,6 +52,7 @@ public class RuntimeResource implements RuntimeContract {
     private final ActivityRepository activityRepository;
     private final AuthorizationService authorizationService;
     private final DBService dbService;
+    private final AuditLogService auditLogService;
     private final HttpServletRequest request;
 
     private Principal getPrincipal() {
@@ -102,7 +104,9 @@ public class RuntimeResource implements RuntimeContract {
             if (pd != null) definitionKey = pd.getKey();
         }
         requireOperate(definitionKey, AuthorizationService.Action.START);
-        return Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
+        IdDTO result = Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
+        auditLogService.record(getPrincipal(), "START", definitionKey, result.getId().toString());
+        return result;
     }
 
     @Transactional
@@ -110,7 +114,9 @@ public class RuntimeResource implements RuntimeContract {
     public IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
         String key = resolveDefinitionKeyByServiceTask(id);
         requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
-        return Optional.ofNullable(runtimeService.completeServiceTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+        IdDTO result = Optional.ofNullable(runtimeService.completeServiceTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+        auditLogService.record(getPrincipal(), "COMPLETE_SERVICE_TASK", key, id.toString());
+        return result;
     }
 
     @Transactional
@@ -118,7 +124,9 @@ public class RuntimeResource implements RuntimeContract {
     public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody FailServiceTaskDTO dto) {
         String key = resolveDefinitionKeyByServiceTask(id);
         requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
-        return Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage(), dto.getRetries())).map(this::toDTO).orElseThrow();
+        IdDTO result = Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage(), dto.getRetries())).map(this::toDTO).orElseThrow();
+        auditLogService.record(getPrincipal(), "FAIL_SERVICE_TASK", key, id.toString());
+        return result;
     }
 
     @Transactional
@@ -141,7 +149,9 @@ public class RuntimeResource implements RuntimeContract {
         // Also check assignee (existing check, refactored to use principal)
         checkAssignee(principal, task);
 
-        return Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+        IdDTO result = Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+        auditLogService.record(getPrincipal(), "COMPLETE_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString());
+        return result;
     }
 
     @Transactional
@@ -150,7 +160,9 @@ public class RuntimeResource implements RuntimeContract {
         // B3: enforce authorization — resolve incident → activity → process → definition_key
         String key = resolveDefinitionKeyByIncident(id);
         requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
-        return Optional.ofNullable(runtimeService.resolveIncident(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+        IdDTO result = Optional.ofNullable(runtimeService.resolveIncident(id, dto.getVariables())).map(this::toDTO).orElseThrow();
+        auditLogService.record(getPrincipal(), "RESOLVE_INCIDENT", key, id.toString());
+        return result;
     }
 
     @Transactional
@@ -168,6 +180,7 @@ public class RuntimeResource implements RuntimeContract {
         dbService.deleteTimerJobsByProcessInstanceId(id);
         dbService.deleteMessageSubscriptionsByProcessInstanceId(id);
         dbService.cancelProcessInstance(id);
+        auditLogService.record(getPrincipal(), "CANCEL", key, id.toString());
         IdDTO result = new IdDTO();
         result.setId(id);
         return result;

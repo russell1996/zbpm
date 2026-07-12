@@ -15,6 +15,7 @@ import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.KeyHasher;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +48,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     private final ProcessMemberRepository processMemberRepository;
     private final UiUserRepository uiUserRepository;
     private final AuthorizationService authorizationService;
+    private final AuditLogService auditLogService;
     private final HttpServletRequest request;
 
     // ==================== Super-admin endpoints ====================
@@ -74,6 +76,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         apiKeyRepository.save(apiKey);
 
         log.info("API key created for user={}", user.getUsername());
+        auditLogService.record(getPrincipal(), "KEY_CREATE", null, userId.toString());
         return toWithSecret(apiKey, rawKey);
     }
 
@@ -126,6 +129,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         }
 
         log.info("Grants updated for user={}, count={}", userId, dto.getGrants().size());
+        auditLogService.record(getPrincipal(), "KEY_GRANTS_UPDATE", null, userId.toString());
         return getGrants(apiKey.getId());
     }
 
@@ -140,6 +144,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         apiKeyRepository.save(apiKey);
 
         log.info("API key rotated for user={}", userId);
+        auditLogService.record(getPrincipal(), "KEY_ROTATE", null, userId.toString());
         return toWithSecret(apiKey, rawKey);
     }
 
@@ -150,6 +155,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
 
         apiKey.setRevokedAt(Instant.now());
         apiKeyRepository.save(apiKey);
+        auditLogService.record(getPrincipal(), "KEY_REVOKE", null, userId.toString());
 
         log.info("API key revoked for user={}", userId);
     }

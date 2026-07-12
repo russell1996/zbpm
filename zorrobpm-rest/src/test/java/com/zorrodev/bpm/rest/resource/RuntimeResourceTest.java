@@ -20,6 +20,7 @@ import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -51,6 +52,7 @@ class RuntimeResourceTest {
     @Mock private ActivityRepository activityRepository;
     @Mock private AuthorizationService authorizationService;
     @Mock private DBService dbService;
+    @Mock private AuditLogService auditLogService;
     @Mock private HttpServletRequest request;
 
     @InjectMocks

@@ -13,6 +13,7 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +34,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
     private final FileService fileService;
     private final BpmnStructureService bpmnStructureService;
     private final ProcessRepository processRepository;
+    private final AuditLogService auditLogService;
     private final HttpServletRequest request;
 
     /**
@@ -45,6 +47,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
         requireSuperAdmin();
         ProcessDefinition result = processDefinitionService.addProcessDefinition(dto.getBpmn());
         ensureProcessRegistry(result.getKey());
+        auditLogService.record(getPrincipal(), "DEPLOY", result.getKey(), result.getId().toString());
         return result;
     }
 
