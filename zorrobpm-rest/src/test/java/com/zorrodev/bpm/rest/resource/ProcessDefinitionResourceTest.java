@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +44,9 @@ class ProcessDefinitionResourceTest {
     private ProcessRepository processRepository;
 
     @Mock
+    private AuditLogService auditLogService;
+
+    @Mock
     private HttpServletRequest request;
 
     @InjectMocks
@@ -53,6 +57,7 @@ class ProcessDefinitionResourceTest {
         AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
         dto.setBpmn("<bpmn/>");
         ProcessDefinition expected = new ProcessDefinition();
+        expected.setId(UUID.randomUUID());
         expected.setKey("test-key");
         when(processDefinitionService.addProcessDefinition("<bpmn/>")).thenReturn(expected);
         // ADR-2: deploy requires SUPER_ADMIN

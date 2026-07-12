@@ -13,6 +13,7 @@ import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -35,6 +36,7 @@ public class MemberResource implements MemberContract {
     private final ProcessMemberRepository processMemberRepository;
     private final UiUserRepository uiUserRepository;
     private final AuthorizationService authorizationService;
+    private final AuditLogService auditLogService;
     private final HttpServletRequest request;
 
     private Principal getPrincipal() {
@@ -99,6 +101,7 @@ public class MemberResource implements MemberContract {
         member.setAddedAt(Instant.now());
         processMemberRepository.save(member);
 
+        auditLogService.record(getPrincipal(), "MEMBER_ADD", key, dto.getUserId().toString());
         return toDTO(member);
     }
 
@@ -114,6 +117,7 @@ public class MemberResource implements MemberContract {
 
         member.setRole(dto.getRole());
         processMemberRepository.save(member);
+        auditLogService.record(getPrincipal(), "MEMBER_ROLE_CHANGE", key, userId.toString());
         return toDTO(member);
     }
 
@@ -138,6 +142,7 @@ public class MemberResource implements MemberContract {
         }
 
         processMemberRepository.delete(member);
+        auditLogService.record(getPrincipal(), "MEMBER_REMOVE", key, userId.toString());
 
         IdDTO result = new IdDTO();
         result.setId(userId);
