@@ -118,10 +118,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Legacy /users path guard
-        boolean isUsersAllowed = principal.isSuperAdmin()
-            || (principal instanceof Principal.UserPrincipal u && "ADMIN".equals(u.globalRole()));
-        if (isUsersPath(path) && !isUsersAllowed) {
+        // ADR-2: /users path guard — SUPER_ADMIN only
+        if (isUsersPath(path) && !principal.isSuperAdmin()) {
             response.sendError(HttpServletResponse.SC_FORBIDDEN, "Forbidden");
             return;
         }

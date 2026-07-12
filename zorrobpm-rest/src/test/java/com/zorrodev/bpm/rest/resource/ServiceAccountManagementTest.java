@@ -141,13 +141,13 @@ class ServiceAccountManagementTest {
         return mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class).getToken();
     }
 
-    // ==================== Criterion #1: OWNER creates SA — key shown once ====================
+    // ==================== Criterion #1: SUPER_ADMIN creates SA — key shown once ====================
 
     @Test
-    void criterion1_ownerCreatesSa_keyShownOnce() throws Exception {
+    void criterion1_superAdminCreatesSa_keyShownOnce() throws Exception {
         // Create SA — response must contain plaintext key starting with zbpm_sk_
         MvcResult createResult = mockMvc.perform(post("/processes/" + processKey + "/service-accounts")
-                        .header("Authorization", "Bearer " + ownerToken)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"criterion1-sa\",\"permissions\":[\"START\"]}"))
                 .andExpect(status().isOk())
@@ -161,7 +161,7 @@ class ServiceAccountManagementTest {
 
         // LIST must NOT contain the plaintext key
         MvcResult listResult = mockMvc.perform(get("/processes/" + processKey + "/service-accounts")
-                        .header("Authorization", "Bearer " + ownerToken))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andReturn();
 
@@ -174,9 +174,9 @@ class ServiceAccountManagementTest {
 
     @Test
     void criterion2_hashAtRest() throws Exception {
-        // Create SA
+        // Create SA as SUPER_ADMIN
         MvcResult createResult = mockMvc.perform(post("/processes/" + processKey + "/service-accounts")
-                        .header("Authorization", "Bearer " + ownerToken)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"criterion2-sa\",\"permissions\":[\"START\"]}"))
                 .andExpect(status().isOk())
@@ -198,9 +198,9 @@ class ServiceAccountManagementTest {
 
     @Test
     void criterion3_apiKeyAuthenticates() throws Exception {
-        // Create SA with START permission
+        // Create SA with START permission as SUPER_ADMIN
         MvcResult createResult = mockMvc.perform(post("/processes/" + processKey + "/service-accounts")
-                        .header("Authorization", "Bearer " + ownerToken)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"criterion3-sa\",\"permissions\":[\"START\"]}"))
                 .andExpect(status().isOk())
@@ -220,9 +220,9 @@ class ServiceAccountManagementTest {
 
     @Test
     void criterion4_revokeKillSwitch() throws Exception {
-        // Create SA
+        // Create SA as SUPER_ADMIN
         MvcResult createResult = mockMvc.perform(post("/processes/" + processKey + "/service-accounts")
-                        .header("Authorization", "Bearer " + ownerToken)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"criterion4-sa\",\"permissions\":[\"START\"]}"))
                 .andExpect(status().isOk())
@@ -237,9 +237,9 @@ class ServiceAccountManagementTest {
                         .header("Authorization", "Bearer " + apiKey))
                 .andExpect(status().isOk());
 
-        // Revoke
+        // Revoke as SUPER_ADMIN
         mockMvc.perform(post("/processes/" + processKey + "/service-accounts/" + saId + "/revoke")
-                        .header("Authorization", "Bearer " + ownerToken))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
 
         // Verify revoked key → 401
@@ -252,9 +252,9 @@ class ServiceAccountManagementTest {
 
     @Test
     void criterion5_rotateNewKeyWorksOldKeyDead() throws Exception {
-        // Create SA
+        // Create SA as SUPER_ADMIN
         MvcResult createResult = mockMvc.perform(post("/processes/" + processKey + "/service-accounts")
-                        .header("Authorization", "Bearer " + ownerToken)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"criterion5-sa\",\"permissions\":[\"START\"]}"))
                 .andExpect(status().isOk())
@@ -269,9 +269,9 @@ class ServiceAccountManagementTest {
                         .header("Authorization", "Bearer " + oldKey))
                 .andExpect(status().isOk());
 
-        // Rotate — get new key
+        // Rotate as SUPER_ADMIN
         MvcResult rotateResult = mockMvc.perform(post("/processes/" + processKey + "/service-accounts/" + saId + "/rotate")
-                        .header("Authorization", "Bearer " + ownerToken))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andReturn();
 
