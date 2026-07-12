@@ -10,7 +10,6 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 const route = useRoute()
 const router = useRouter()
 const store = useProcessStore()
-const authStore = useAuthStore()
 
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
