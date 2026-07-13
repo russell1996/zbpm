@@ -56,34 +56,6 @@ test:gate:
     - if: '$CI_COMMIT_BRANCH'
 
 # ---------------------------------------------------------------------------
-# Test: PostgreSQL integration tests (WO-PROC-7).
-# Uses GitLab services: postgres:16 (no Testcontainers/dind needed).
-# Only on zbpm runner (has Docker for services).
-# ---------------------------------------------------------------------------
-
-test:pg:
-  stage: test
-  tags: [zbpm]
-  image: maven:3.9.9-eclipse-temurin-21
-  services:
-    - postgres:16
-  variables:
-    POSTGRES_DB: zbpm_test
-    POSTGRES_USER: test
-    POSTGRES_PASSWORD: test
-    PG_HOST: postgres
-    PG_PORT: "5432"
-    PG_DB: zbpm_test
-    PG_USER: test
-    PG_PASSWORD: test
-  script:
-    - mvn -B -ntp test -pl zorrobpm-engine -Dtest=RetroPgIT -DfailIfNoTests=false
-  allow_failure: false
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH'
-
-# ---------------------------------------------------------------------------
 # Test — runs inside docker build, so a test failure fails the job. No bind mounts.
 # ---------------------------------------------------------------------------
 

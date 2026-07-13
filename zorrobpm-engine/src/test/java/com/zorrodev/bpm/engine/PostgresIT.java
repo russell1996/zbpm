@@ -8,12 +8,14 @@ import org.springframework.test.context.DynamicPropertySource;
 
 /**
  * Base class for integration tests that require real PostgreSQL.
+ * Connects to a local postgres:16 (docker-compose or standalone).
  *
- * In CI, a GitLab service (postgres:16) is available at host "postgres" port 5432.
- * Locally, set environment variables PG_HOST/PG_PORT/PG_DB/PG_USER/PG_PASSWORD
- * or start a local postgres on localhost:5432.
- *
- * Liquibase runs on startup against the real PG.
+ * Run locally:
+ * <pre>
+ * docker compose up -d postgres
+ * mvn test -pl zorrobpm-engine -Dgroups=pg
+ * docker compose down postgres
+ * </pre>
  */
 @Tag("pg")
 @SpringBootTest(classes = TestMain.class)
@@ -22,14 +24,14 @@ public abstract class PostgresIT {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        String host = System.getenv().getOrDefault("PG_HOST", "localhost");
-        String port = System.getenv().getOrDefault("PG_PORT", "5432");
-        String db = System.getenv().getOrDefault("PG_DB", "zbpm_test");
-        String user = System.getenv().getOrDefault("PG_USER", "test");
-        String pass = System.getenv().getOrDefault("PG_PASSWORD", "test");
+        String host = System.getProperty("PG_HOST", "localhost");
+        String port = System.getProperty("PG_PORT", "55432");
+        String db = System.getProperty("PG_DB", "zbpm_test");
+        String user = System.getProperty("PG_USER", "postgres");
+        String pass = System.getProperty("PG_PASSWORD", "postgres");
 
-        registry.add("spring.datasource.url", () ->
-            "jdbc:postgresql://" + host + ":" + port + "/" + db);
+        registry.add("spring.datasource.url",
+            () -> "jdbc:postgresql://" + host + ":" + port + "/" + db + "?sslmode=disable");
         registry.add("spring.datasource.username", () -> user);
         registry.add("spring.datasource.password", () -> pass);
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
