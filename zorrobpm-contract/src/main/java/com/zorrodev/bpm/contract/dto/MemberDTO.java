@@ -14,4 +14,5 @@ public class MemberDTO {
     private String role;
     private UUID addedBy;
     private Instant addedAt;
+    private String processKey;
 }
