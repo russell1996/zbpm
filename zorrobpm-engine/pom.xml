@@ -117,18 +117,6 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
-            <version>1.21.3</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>1.21.3</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
             <groupId>com.zorrodev.bpm</groupId>
             <artifactId>zorrobpm-exchange</artifactId>
             <version>0.7.17-SNAPSHOT</version>
@@ -174,6 +162,8 @@
                         <include>**/*IntegrationTests.java</include>
                         <include>**/*PgIT.java</include>
                     </includes>
+                    <!-- Exclude PG-only tests by default; test:pg overrides with -Dgroups=pg -->
+                    <excludedGroups>pg</excludedGroups>
                 </configuration>
             </plugin>
             <plugin>
