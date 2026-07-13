@@ -59,6 +59,7 @@ class DynamicAssigneeResolutionIT {
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String superAdminToken;
     private String dynamicAssigneeKey;
+    private String feelAssigneeKey;
     private String literalAssigneeKey;
 
     @BeforeAll
@@ -76,6 +77,8 @@ class DynamicAssigneeResolutionIT {
 
         dynamicAssigneeKey = deployProcess("dynamic-assignee-process",
             "src/test/files/dynamic-assignee.bpmn");
+        feelAssigneeKey = deployProcess("feel-assignee-process",
+            "src/test/files/feel-assignee.bpmn");
         literalAssigneeKey = deployProcess("assignee-process",
             "src/test/files/assignee-task.bpmn");
     }
@@ -91,9 +94,11 @@ class DynamicAssigneeResolutionIT {
     @Test
     @Order(2)
     void criterion2_feelExpression_resolves() throws Exception {
-        UUID piId = startProcess(dynamicAssigneeKey, "managerId", "bob", "deptGroup", "sales");
+        // FEEL expression: =managerId + "_lead" → transforms the variable value
+        UUID piId = startProcess(feelAssigneeKey, "managerId", "bob");
         UserTaskEntity entity = findUserTask(piId);
-        assertThat(entity.getAssignee()).isEqualTo("bob");
+        // FEEL evaluates "bob" + "_lead" → "bob_lead" (real transformation, not plain lookup)
+        assertThat(entity.getAssignee()).isEqualTo("bob_lead");
     }
 
     @Test
