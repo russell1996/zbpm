@@ -31,11 +31,19 @@ const showRevokeConfirm = ref(false)
 async function loadMembers() {
   membersLoading.value = true
   try {
-    members.value = await admin.listMembers('*') // Will filter client-side
+    members.value = await admin.listUserMemberships(props.user.id)
   } catch {
     // ignore
   } finally {
     membersLoading.value = false
+  }
+}
+
+async function loadProcesses() {
+  try {
+    processes.value = await admin.listProcesses()
+  } catch {
+    // ignore
   }
 }
 
@@ -139,6 +147,8 @@ async function copyKey() {
 
 onMounted(() => {
   loadApiKey()
+  loadMembers()
+  loadProcesses()
 })
 </script>
 
@@ -204,10 +214,56 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- === Memberships Section (placeholder — loads from all processes) === -->
+    <!-- === Memberships Section === -->
     <div class="space-y-3">
-      <h4 class="font-semibold text-sm uppercase text-muted-foreground">Process Memberships</h4>
-      <p class="text-xs text-muted-foreground">Assign process access via the Members tab on each process's detail page (SUPER_ADMIN only).</p>
+      <div class="flex items-center justify-between">
+        <h4 class="font-semibold text-sm uppercase text-muted-foreground">Process Memberships</h4>
+        <button class="text-xs text-primary hover:underline" @click="showAddMember = !showAddMember">
+          {{ showAddMember ? 'Cancel' : '+ Add' }}
+        </button>
+      </div>
+
+      <!-- Add membership form -->
+      <div v-if="showAddMember" class="bg-card border border-border rounded-lg p-3 space-y-2">
+        <select v-model="addMemberProcessKey" class="w-full px-2 py-1 border border-input rounded text-sm">
+          <option value="">Select process…</option>
+          <option v-for="p in processes" :key="p.id" :value="p.key">{{ p.key }} — {{ p.name }}</option>
+        </select>
+        <select v-model="addMemberRole" class="w-full px-2 py-1 border border-input rounded text-sm">
+          <option value="OWNER">OWNER</option>
+          <option value="DESIGNER">DESIGNER</option>
+        </select>
+        <button class="px-3 py-1 text-sm bg-primary text-primary-foreground rounded" @click="addMember">Add</button>
+      </div>
+
+      <!-- Memberships list -->
+      <div v-if="membersLoading" class="text-sm text-muted-foreground">Loading…</div>
+      <div v-else-if="members.length" class="bg-card border border-border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-muted">
+            <tr>
+              <th class="px-3 py-2 text-left font-medium">Process</th>
+              <th class="px-3 py-2 text-left font-medium">Role</th>
+              <th class="px-3 py-2 text-right font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in members" :key="m.processKey" class="border-t border-border">
+              <td class="px-3 py-2 font-mono text-xs">{{ m.processKey }}</td>
+              <td class="px-3 py-2">
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                  :class="m.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'">
+                  {{ m.role }}
+                </span>
+              </td>
+              <td class="px-3 py-2 text-right">
+                <button class="text-xs text-red-500 hover:underline" @click="removeMember(m.processKey)">Remove</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="text-sm text-muted-foreground">No process memberships.</p>
     </div>
 
     <!-- Key modal — key lives ONLY here (ADR §3) -->
