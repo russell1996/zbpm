@@ -31,7 +31,9 @@ class JwtAuthFilterTest {
         tokenService = mock(TokenService.class);
         ApiKeyRepository apiKeyRepo = mock(ApiKeyRepository.class);
         ApiKeyGrantRepository apiKeyGrantRepo = mock(ApiKeyGrantRepository.class);
-        filter = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo);
+        var userLookup = mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class);
+        var env = mock(org.springframework.core.env.Environment.class);
+        filter = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo, userLookup, env);
     }
 
     private void setRequireApiAuth(boolean value) {

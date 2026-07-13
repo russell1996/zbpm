@@ -67,6 +67,9 @@ services:
       APP_FILES_DIR: /app/files
       # REQUIRED in prod: strong secret, else the app refuses to start (WO-SEC-9). Generate: openssl rand -base64 48
       ZORROBPM_JWT_SECRET: ${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}
+      # REQUIRED in prod: secure admin password, else the app refuses to start (WO-SEC-14 fail-fast).
+      # Must NOT be "admin". Generate a strong one.
+      ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}
       # Browser origins allowed for the SPA (same-origin via nginx doesn't need this, but set for safety)
       ZORROBPM_CORS_ORIGINS: ${ZORROBPM_CORS_ORIGINS:-https://zorro.i-smet.kz}
     volumes:

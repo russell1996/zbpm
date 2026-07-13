@@ -138,6 +138,19 @@ class SecurityHardeningIntegrationTest {
         assertThat(reloginResponse.getUser().isForcePasswordChange()).isFalse();
     }
 
+    // --- WO-SEC-14 Criterion #5: admin role is SUPER_ADMIN after bootstrap ---
+
+    @Test
+    void criterion5_adminRole_isSuperAdmin() throws Exception {
+        MvcResult result = mockMvc.perform(get("/auth/me")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        UiUser user = mapper.readValue(result.getResponse().getContentAsString(), UiUser.class);
+        assertThat(user.getRole()).isEqualTo("SUPER_ADMIN");
+    }
+
     // --- Criterion #3: CORS — preflight with forbidden Origin → no CORS headers ---
 
     @Test
