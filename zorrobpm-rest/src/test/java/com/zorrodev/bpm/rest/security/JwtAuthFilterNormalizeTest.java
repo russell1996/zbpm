@@ -33,7 +33,8 @@ class JwtAuthFilterNormalizeTest {
     @BeforeEach
     void setUp() {
         tokenService = mock(TokenService.class);
-        filter = new JwtAuthFilter(tokenService, mock(ApiKeyRepository.class), mock(ApiKeyGrantRepository.class));
+        var env = mock(org.springframework.core.env.Environment.class);
+        filter = new JwtAuthFilter(tokenService, mock(ApiKeyRepository.class), mock(ApiKeyGrantRepository.class), mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class), env);
         filter.setRequireApiAuth(true);
     }
 
