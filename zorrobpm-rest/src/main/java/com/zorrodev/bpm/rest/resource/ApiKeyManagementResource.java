@@ -57,8 +57,16 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     public ApiKeyWithSecretDTO createApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
 
-        if (apiKeyRepository.findByOwnerUserId(userId).isPresent()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an API key");
+        var existingKey = apiKeyRepository.findByOwnerUserId(userId);
+        if (existingKey.isPresent()) {
+            ApiKeyEntity existing = existingKey.get();
+            if (existing.getRevokedAt() == null) {
+                // Active key → 409
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
+            }
+            // Revoked key → replace it (delete old + its grants, create new)
+            apiKeyGrantRepository.deleteByApiKeyId(existing.getId());
+            apiKeyRepository.delete(existing);
         }
 
         UiUserEntity user = uiUserRepository.findById(userId)

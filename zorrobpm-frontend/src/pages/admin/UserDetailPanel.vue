@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import type { User } from '@/entities/user/User'
 import * as admin from '@/services/adminService'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ user: User }>()
 const emit = defineEmits<{ close: [] }>()
+
+const toast = useToast()
 
 // --- Members ---
 const members = ref<admin.Member[]>([])
@@ -21,12 +24,66 @@ const showCreateKey = ref(false)
 const showKeyModal = ref(false)
 const displayedKey = ref('')  // ADR §3: key only in local ref, never in store
 const keyCopied = ref(false)
-const showGrants = ref(false)
-const grantProcessKey = ref('')
-const grantPermissions = ref('START')
-const grantFull = ref(false)
 const rotating = ref(false)
 const showRevokeConfirm = ref(false)
+
+const PERMISSIONS = ['START', 'FETCH_LOCK', 'COMPLETE_SERVICE_TASK', 'COMPLETE_USER_TASK', 'CORRELATE_MESSAGE'] as const
+
+const availableProcesses = computed(() => {
+  const memberKeys = new Set(members.value.map(m => m.processKey))
+  return processes.value.filter(p => !memberKeys.has(p.key))
+})
+
+function getGrantForProcess(processKey: string): admin.ApiKeyGrant | undefined {
+  return apiKey.value?.grants.find(g => g.processKey === processKey)
+}
+
+function isFullAccess(processKey: string): boolean {
+  return getGrantForProcess(processKey)?.full ?? false
+}
+
+function hasPermission(processKey: string, perm: string): boolean {
+  const grant = getGrantForProcess(processKey)
+  if (!grant) return false
+  if (grant.full) return true
+  return grant.permissions?.split(',').includes(perm) ?? false
+}
+
+async function updateGrant(processKey: string, newPermissions: string[], full: boolean) {
+  if (!apiKey.value) return
+  const grants: { processKey: string; permissions?: string; full?: boolean }[] = []
+  for (const g of apiKey.value.grants) {
+    if (g.processKey !== processKey) {
+      grants.push({ processKey: g.processKey, permissions: g.permissions ?? undefined, full: g.full })
+    }
+  }
+  if (full || newPermissions.length > 0) {
+    grants.push({ processKey, permissions: full ? undefined : newPermissions.join(','), full })
+  }
+  try {
+    await admin.setGrants(props.user.id, grants)
+    await loadApiKey()
+  } catch {
+    toast.error('Failed to update grants')
+  }
+}
+
+async function toggleFull(processKey: string) {
+  await updateGrant(processKey, [], !isFullAccess(processKey))
+}
+
+async function togglePermission(processKey: string, perm: string) {
+  const currentPerms = getGrantForProcess(processKey)?.full
+    ? [...PERMISSIONS]
+    : (getGrantForProcess(processKey)?.permissions?.split(',').filter(Boolean) ?? [])
+  const idx = currentPerms.indexOf(perm)
+  if (idx >= 0) {
+    currentPerms.splice(idx, 1)
+  } else {
+    currentPerms.push(perm)
+  }
+  await updateGrant(processKey, currentPerms, false)
+}
 
 async function loadMembers() {
   membersLoading.value = true
@@ -64,8 +121,13 @@ async function addMember() {
     await admin.addMember(addMemberProcessKey.value, props.user.id, addMemberRole.value)
     showAddMember.value = false
     await loadMembers()
-  } catch {
-    // error handled by toast or silent
+  } catch (e: any) {
+    const msg = e?.response?.data?.message || e?.message
+    if (msg?.includes('409') || msg?.includes('Conflict') || e?.response?.status === 409) {
+      toast.error('User is already a member of this process')
+    } else {
+      toast.error(msg || 'Failed to add member')
+    }
   }
 }
 
@@ -110,21 +172,6 @@ async function revokeKey() {
   try {
     await admin.revokeApiKey(props.user.id)
     showRevokeConfirm.value = false
-    await loadApiKey()
-  } catch {
-    // error handled
-  }
-}
-
-async function saveGrants() {
-  if (!grantProcessKey.value) return
-  try {
-    await admin.setGrants(props.user.id, [{
-      processKey: grantProcessKey.value,
-      permissions: grantFull.value ? undefined : grantPermissions.value,
-      full: grantFull.value,
-    }])
-    showGrants.value = false
     await loadApiKey()
   } catch {
     // error handled
@@ -186,6 +233,11 @@ onMounted(() => {
         <button class="text-primary hover:underline ml-1" @click="showCreateKey = true">Create one</button>
       </div>
 
+      <!-- No key hint for grants -->
+      <p v-if="!apiKey && !apiKeyLoading" class="text-xs text-muted-foreground italic">
+        Create an API key to configure per-process permissions below.
+      </p>
+
       <!-- Create key -->
       <div v-if="showCreateKey" class="bg-card border border-border rounded-lg p-3">
         <p class="text-sm mb-2">Create an API key for this user?</p>
@@ -195,23 +247,6 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Set grants -->
-      <div v-if="apiKey && !apiKey.revokedAt" class="mt-2">
-        <button class="text-xs text-primary hover:underline" @click="showGrants = !showGrants">
-          {{ showGrants ? 'Cancel' : 'Add Grant' }}
-        </button>
-        <div v-if="showGrants" class="mt-2 bg-card border border-border rounded-lg p-3 space-y-2">
-          <input v-model="grantProcessKey" placeholder="Process key" class="w-full px-2 py-1 border border-input rounded text-sm" />
-          <div class="flex items-center gap-2">
-            <label class="text-xs">Full access:</label>
-            <input v-model="grantFull" type="checkbox" class="rounded" />
-          </div>
-          <div v-if="!grantFull">
-            <input v-model="grantPermissions" placeholder="START,FETCH_LOCK,..." class="w-full px-2 py-1 border border-input rounded text-sm" />
-          </div>
-          <button class="px-3 py-1 text-sm bg-primary text-primary-foreground rounded" @click="saveGrants">Save Grant</button>
-        </div>
-      </div>
     </div>
 
     <!-- === Memberships Section === -->
@@ -227,7 +262,7 @@ onMounted(() => {
       <div v-if="showAddMember" class="bg-card border border-border rounded-lg p-3 space-y-2">
         <select v-model="addMemberProcessKey" class="w-full px-2 py-1 border border-input rounded text-sm">
           <option value="">Select process…</option>
-          <option v-for="p in processes" :key="p.id" :value="p.key">{{ p.key }} — {{ p.name }}</option>
+          <option v-for="p in availableProcesses" :key="p.id" :value="p.key">{{ p.key }} — {{ p.name }}</option>
         </select>
         <select v-model="addMemberRole" class="w-full px-2 py-1 border border-input rounded text-sm">
           <option value="OWNER">OWNER</option>
@@ -244,6 +279,7 @@ onMounted(() => {
             <tr>
               <th class="px-3 py-2 text-left font-medium">Process</th>
               <th class="px-3 py-2 text-left font-medium">Role</th>
+              <th v-if="apiKey && !apiKey.revokedAt" class="px-3 py-2 text-left font-medium">API Key Permissions</th>
               <th class="px-3 py-2 text-right font-medium"></th>
             </tr>
           </thead>
@@ -255,6 +291,20 @@ onMounted(() => {
                   :class="m.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'">
                   {{ m.role }}
                 </span>
+              </td>
+              <td v-if="apiKey && !apiKey.revokedAt" class="px-3 py-2">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
+                    <input type="checkbox" class="rounded" :checked="isFullAccess(m.processKey)" @change="toggleFull(m.processKey)" />
+                    Full
+                  </label>
+                  <template v-if="!isFullAccess(m.processKey)">
+                    <label v-for="perm in PERMISSIONS" :key="perm" class="inline-flex items-center gap-1 text-xs cursor-pointer">
+                      <input type="checkbox" class="rounded" :checked="hasPermission(m.processKey, perm)" @change="togglePermission(m.processKey, perm)" />
+                      {{ perm }}
+                    </label>
+                  </template>
+                </div>
               </td>
               <td class="px-3 py-2 text-right">
                 <button class="text-xs text-red-500 hover:underline" @click="removeMember(m.processKey)">Remove</button>
