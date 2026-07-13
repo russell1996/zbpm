@@ -38,9 +38,8 @@ class AdminPasswordFailFastIT {
         }).satisfies(ex -> {
             Throwable root = ex;
             while (root.getCause() != null) root = root.getCause();
-            // Prod with default admin password MUST fail — either by AdminPasswordValidator
-            // (IllegalStateException) or by downstream bean conflict triggered by the validator.
-            assertThat(root).isInstanceOf(Exception.class);
+            assertThat(root).isInstanceOf(IllegalStateException.class);
+            assertThat(root.getMessage()).contains("default-admin-password");
         });
     }
 }
