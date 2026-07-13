@@ -42,6 +42,20 @@ default:
     - docker run --rm -v "$CI_PROJECT_DIR":/w -w /w busybox sh -c 'rm -rf ./target ./*/target' || true
 
 # ---------------------------------------------------------------------------
+# Test gate — blocks PRs that change src/main without a test (WO-PROC-2).
+# Runs before docker builds (cheap shell check).
+# ---------------------------------------------------------------------------
+
+test:gate:
+  stage: test
+  tags: [zbpm]
+  script:
+    - bash ci/test-gate.sh origin/master HEAD
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# ---------------------------------------------------------------------------
 # Test — runs inside docker build, so a test failure fails the job. No bind mounts.
 # ---------------------------------------------------------------------------
 
