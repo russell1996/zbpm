@@ -16,6 +16,9 @@ import java.util.UUID;
 
 public interface MemberContract {
 
+    @GetExchange("/admin/users/{userId}/memberships")
+    List<MemberDTO> listUserMemberships(@PathVariable UUID userId);
+
     @GetExchange("/processes/{key}/members")
     List<MemberDTO> listMembers(@PathVariable String key);
 
