@@ -8,6 +8,8 @@ import com.zorrodev.bpm.contract.dto.MemberDTO;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
+import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
@@ -35,6 +37,8 @@ public class MemberResource implements MemberContract {
     private final ProcessRepository processRepository;
     private final ProcessMemberRepository processMemberRepository;
     private final UiUserRepository uiUserRepository;
+    private final ApiKeyRepository apiKeyRepository;
+    private final ApiKeyGrantRepository apiKeyGrantRepository;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
     private final HttpServletRequest request;
@@ -162,6 +166,14 @@ public class MemberResource implements MemberContract {
         }
 
         processMemberRepository.delete(member);
+
+        // Cascade: remove API key grants for this process (WO-MT-9f)
+        apiKeyRepository.findByOwnerUserId(userId).ifPresent(apiKey -> {
+            apiKeyGrantRepository.findByApiKeyId(apiKey.getId()).stream()
+                .filter(g -> process.getId().equals(g.getProcessId()))
+                .forEach(g -> apiKeyGrantRepository.delete(g));
+        });
+
         auditLogService.record(getPrincipal(), "MEMBER_REMOVE", key, userId.toString());
 
         IdDTO result = new IdDTO();
