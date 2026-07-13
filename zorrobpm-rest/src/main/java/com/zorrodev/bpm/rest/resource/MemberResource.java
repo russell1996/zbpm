@@ -52,6 +52,13 @@ public class MemberResource implements MemberContract {
         }
     }
 
+    private void requireSuperAdmin() {
+        Principal principal = getPrincipal();
+        if (principal == null || !principal.isSuperAdmin()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "SUPER_ADMIN required");
+        }
+    }
+
     private ProcessEntity resolveProcess(String key) {
         return processRepository.findByDefinitionKey(key)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process not found"));
@@ -59,6 +66,19 @@ public class MemberResource implements MemberContract {
 
     private Principal getEffectivePrincipal() {
         return getPrincipal();
+    }
+
+    @Override
+    public List<MemberDTO> listUserMemberships(UUID userId) {
+        requireSuperAdmin();
+        return processMemberRepository.findByUserId(userId).stream()
+            .map(m -> {
+                MemberDTO dto = toDTO(m);
+                processRepository.findById(m.getProcessId())
+                    .ifPresent(p -> dto.setProcessKey(p.getDefinitionKey()));
+                return dto;
+            })
+            .collect(Collectors.toList());
     }
 
     @Override

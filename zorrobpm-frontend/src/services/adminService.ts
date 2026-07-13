@@ -7,6 +7,7 @@ export interface Member {
   role: string
   addedBy: string | null
   addedAt: string
+  processKey?: string
 }
 
 export async function listMembers(processKey: string): Promise<Member[]> {
@@ -26,6 +27,11 @@ export async function changeMemberRole(processKey: string, userId: string, role:
 
 export async function removeMember(processKey: string, userId: string): Promise<void> {
   await api.delete(`/processes/${processKey}/members/${userId}`)
+}
+
+export async function listUserMemberships(userId: string): Promise<Member[]> {
+  const { data } = await api.get<Member[]>(`/admin/users/${userId}/memberships`)
+  return data
 }
 
 // --- API Key management ---
