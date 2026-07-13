@@ -282,6 +282,53 @@ class ApiKeyManagementIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    // ==================== WO-MT-9d review #2: revoke→create ====================
+
+    /**
+     * After revoking a key, creating a new one returns 200 (not 409).
+     * The old key is dead, the new key works.
+     */
+    @Test
+    void createApiKey_afterRevoke_returnsNewKey() throws Exception {
+        UUID testUserId = createUser("mt9d-revoke-test", "USER");
+        addMember(testUserId, process1Key, "OWNER");
+
+        // Create key
+        MvcResult createResult = mockMvc.perform(post("/admin/users/" + testUserId + "/api-key")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        String firstKey = mapper.readTree(createResult.getResponse().getContentAsString()).get("key").asText();
+
+        // Revoke
+        mockMvc.perform(post("/admin/users/" + testUserId + "/api-key/revoke")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isOk());
+
+        // Verify revoked
+        mockMvc.perform(get("/admin/users/" + testUserId + "/api-key")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.revokedAt").isNotEmpty());
+
+        // Create again → 200 (not 409!)
+        MvcResult recreateResult = mockMvc.perform(post("/admin/users/" + testUserId + "/api-key")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        String secondKey = mapper.readTree(recreateResult.getResponse().getContentAsString()).get("key").asText();
+
+        // Old key dead
+        mockMvc.perform(get("/process-instances")
+                .header("Authorization", "Bearer " + firstKey))
+            .andExpect(status().isUnauthorized());
+
+        // New key works
+        mockMvc.perform(get("/process-instances")
+                .header("Authorization", "Bearer " + secondKey))
+            .andExpect(status().isOk());
+    }
+
     // ==================== Helpers ====================
 
     private String loginAndGetToken(String username, String password) throws Exception {
