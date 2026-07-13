@@ -139,7 +139,8 @@ onMounted(loadUsers)
           </tr>
         </thead>
         <tbody>
-          <tr v-for="user in users" :key="user.id" class="border-t border-border hover:bg-muted/50">
+          <template v-for="user in users" :key="user.id">
+          <tr class="border-t border-border hover:bg-muted/50">
             <td class="px-4 py-3 font-mono">{{ user.username }}</td>
             <td class="px-4 py-3">{{ user.fullName || '—' }}</td>
             <td class="px-4 py-3">{{ user.email || '—' }}</td>
@@ -175,6 +176,7 @@ onMounted(loadUsers)
               <UserDetailPanel :user="user" @close="expandedUserId = null" />
             </td>
           </tr>
+          </template>
           <tr v-if="users.length === 0">
             <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">No users found</td>
           </tr>
