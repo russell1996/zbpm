@@ -53,6 +53,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
 
     // ==================== Super-admin endpoints ====================
 
+    @Transactional
     @Override
     public ApiKeyWithSecretDTO createApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
@@ -67,6 +68,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
             // Revoked key → replace it (delete old + its grants, create new)
             apiKeyGrantRepository.deleteByApiKeyId(existing.getId());
             apiKeyRepository.delete(existing);
+            apiKeyRepository.flush();
         }
 
         UiUserEntity user = uiUserRepository.findById(userId)
