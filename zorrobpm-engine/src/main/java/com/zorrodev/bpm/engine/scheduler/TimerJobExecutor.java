@@ -1,9 +1,12 @@
 package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.dto.TimerJob;
+import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
+import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,12 +18,14 @@ import java.util.List;
  * whole poll batch. Separate bean (not a self-invoked method) so the {@link Transactional} proxy
  * actually applies.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class TimerJobExecutor {
 
     private final DBService dbService;
     private final ActivityService activityService;
+    private final ProcessInstanceRepository processInstanceRepository;
 
     @Transactional
     public void fire(TimerJob job) {
@@ -34,7 +39,14 @@ public class TimerJobExecutor {
             // Intermediate catch event
             Integer remaining = job.getRemainingCount();
             if (remaining != null && remaining > 0) {
-                // Bounded timer with remaining fires: re-arm without completing the event
+                // L1 FIX: lock the process instance row to serialise with cancel.
+                // Without this lock, re-arm could read stale "not cancelled" state while
+                // cancel is committing, creating a zombie timer_job.
+                ProcessInstanceEntity pi = processInstanceRepository.findByIdForUpdate(job.getProcessInstanceId()).orElse(null);
+                if (pi != null && (pi.isCancelled() || pi.getCompletedAt() != null)) {
+                    log.debug("Skipping re-arm: process instance {} is cancelled/completed", job.getProcessInstanceId());
+                    return;
+                }
                 Instant next = TimerExpressions.firstOccurrence("R/PT0S", Instant.now());
                 dbService.createTimerJob(job.getActivityId(), next, null, remaining - 1);
                 return;

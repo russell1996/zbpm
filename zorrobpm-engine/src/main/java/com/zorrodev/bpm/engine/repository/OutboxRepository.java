@@ -11,6 +11,12 @@ import java.util.UUID;
 
 public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
 
+    /**
+     * L2 FIX: FOR UPDATE SKIP LOCKED prevents two pollers from picking up the same entries.
+     * When two pollers run concurrently, one gets the rows locked, the other skips them.
+     */
+    @Query(value = "SELECT * FROM outbox WHERE published = false ORDER BY created_at ASC FOR UPDATE SKIP LOCKED",
+           nativeQuery = true)
     List<OutboxEntry> findByPublishedFalseOrderByCreatedAtAsc();
 
     @Modifying
