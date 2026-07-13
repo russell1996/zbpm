@@ -17,11 +17,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-PROC-7: Retroactive catch tests on real PostgreSQL via Testcontainers.
+ * WO-PROC-7: Retroactive catch tests on real PostgreSQL.
+ * Tagged @Tag("pg") — excluded from default CI runs (excludedGroups=pg in failsafe).
+ * Run locally against docker-compose postgres:16:
+ *
+ * <pre>
+ * docker compose up -d postgres
+ * mvn test -pl zorrobpm-engine -Dgroups=pg \
+ *   -Dspring.profiles.active=test,pgtest \
+ *   -DPG_HOST=localhost -DPG_PORT=5433 -DPG_DB=zbpm_test -DPG_USER=test -DPG_PASSWORD=test
+ * docker compose down postgres
+ * </pre>
  *
  * criterion #3 (MT-10): audit filter query on PG — before MT-10 fix, the JPA Specification
  *   with null params generated SQL incompatible with PostgreSQL → 500 in prod.
- *
  * criterion #4 (REL-4 L2): FOR UPDATE SKIP LOCKED on PG — proves two concurrent pollers
  *   don't pick the same outbox entries. H2 doesn't enforce this the same way.
  */
