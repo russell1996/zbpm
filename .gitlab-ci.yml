@@ -56,6 +56,28 @@ test:gate:
     - if: '$CI_COMMIT_BRANCH'
 
 # ---------------------------------------------------------------------------
+# Test: PostgreSQL integration tests via Testcontainers (WO-PROC-7).
+# Runs real postgres:16 container to catch H2-green/PG-broken bugs.
+# Only on zbpm runner (has Docker socket for Testcontainers).
+# ---------------------------------------------------------------------------
+
+test:pg:
+  stage: test
+  tags: [zbpm]
+  image: maven:3.9.9-eclipse-temurin-21
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - mvn -B -ntp test -pl zorrobpm-engine -Dtest=RetroPgIT -DfailIfNoTests=false
+  allow_failure: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# ---------------------------------------------------------------------------
 # Test — runs inside docker build, so a test failure fails the job. No bind mounts.
 # ---------------------------------------------------------------------------
 
