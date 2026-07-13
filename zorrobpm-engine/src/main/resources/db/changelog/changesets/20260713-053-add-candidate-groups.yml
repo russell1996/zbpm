@@ -1,0 +1,13 @@
+databaseChangeLog:
+  - logicalFilePath: 20260713-053
+  - changeSet:
+      id: 20260713-053
+      author: mimo
+      changes:
+        - addColumn:
+            tableName: user_tasks
+            columns:
+              - column:
+                  name: candidate_groups
+                  type: varchar(512)
+                  remarks: Comma-separated list of resolved candidate groups (WO-INT-1)
