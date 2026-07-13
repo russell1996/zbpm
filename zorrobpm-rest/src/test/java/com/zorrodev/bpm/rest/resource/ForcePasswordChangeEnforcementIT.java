@@ -102,7 +102,7 @@ class ForcePasswordChangeEnforcementIT {
                 .andExpect(jsonPath("$.code").value("PASSWORD_CHANGE_REQUIRED"));
     }
 
-    // --- Criterion #4: After password change → 200 ---
+    // --- Criterion #4: After password change → 200 on NON-exempt endpoint + flag reset in DB ---
 
     @Test
     @Order(3)
@@ -111,6 +111,10 @@ class ForcePasswordChangeEnforcementIT {
         UpdateUiUserDTO updateDTO = new UpdateUiUserDTO();
         updateDTO.setPassword("new-secure-password-456");
         userService.update(forcePwUserId, updateDTO);
+
+        // Verify flag is reset in DB
+        UiUserEntity updatedUser = userRepository.findById(forcePwUserId).orElseThrow();
+        assertThat(updatedUser.isForcePasswordChange()).isFalse();
 
         // Re-login with new password
         LoginDTO reloginDTO = new LoginDTO();
@@ -126,37 +130,88 @@ class ForcePasswordChangeEnforcementIT {
         AuthResponse reloginResponse = mapper.readValue(reloginResult.getResponse().getContentAsString(), AuthResponse.class);
         String newToken = reloginResponse.getToken();
 
-        // Now /auth/me should return 200
-        mockMvc.perform(get("/auth/me")
+        // Now /process-definitions (NON-exempt) should return 200
+        mockMvc.perform(get("/process-definitions")
                         .header("Authorization", "Bearer " + newToken))
                 .andExpect(status().isOk());
     }
 
-    // --- Criterion #6: Proof-of-failure (V3+V11) ---
-    // On current code WITHOUT ForcePasswordChangeFilter, the flag is ignored.
-    // This test should pass (200) before the fix, proving the flag is NOT enforced.
-    // After adding ForcePasswordChangeFilter, the same request returns 403.
-    // We test that the filter IS active by verifying 403 now.
+    // --- Criterion #6: Proof-of-failure (V3) — real RED→GREEN ---
+    // Create a SEPARATE user with forcePasswordChange=true for this test
+    // (avoids mutating the admin user which other tests depend on).
+    // GREEN: user with forcePasswordChange=true → 403
+    // RED: change password → flag resets → 200
 
     @Test
     @Order(2)
-    void criterion6_filterEnforcesForcePasswordChange() throws Exception {
-        // The filter is active → 403
+    void criterion6_proofOfFailure_redThenGreen() throws Exception {
+        // Create a separate user for POF
+        UUID pofUserId = UUID.randomUUID();
+        UiUserEntity pofUser = new UiUserEntity();
+        pofUser.setId(pofUserId);
+        pofUser.setUsername("pof-test-" + UUID.randomUUID());
+        pofUser.setPasswordHash(passwordHasher.hash("pof-password-123"));
+        pofUser.setFullName("POF Test User");
+        pofUser.setRole("ADMIN");
+        pofUser.setActive(true);
+        pofUser.setForcePasswordChange(true);
+        pofUser.setCreatedAt(Instant.now());
+        pofUser.setUpdatedAt(Instant.now());
+        userRepository.save(pofUser);
+
+        LoginDTO pofLogin = new LoginDTO();
+        pofLogin.setUsername(pofUser.getUsername());
+        pofLogin.setPassword("pof-password-123");
+        MvcResult pofResult = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(pofLogin))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        AuthResponse pofResp = mapper.readValue(pofResult.getResponse().getContentAsString(), AuthResponse.class);
+        String pofToken = pofResp.getToken();
+
+        // --- GREEN: forcePasswordChange=true → 403 ---
         mockMvc.perform(get("/process-definitions")
-                        .header("Authorization", "Bearer " + forcePwToken))
+                        .header("Authorization", "Bearer " + pofToken))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("PASSWORD_CHANGE_REQUIRED"));
+
+        // --- RED: change password → flag resets → 200 ---
+        UpdateUiUserDTO updateDTO = new UpdateUiUserDTO();
+        updateDTO.setPassword("pof-new-password-456");
+        userService.update(pofUserId, updateDTO);
+
+        // Verify flag reset in DB
+        UiUserEntity updatedUser = userRepository.findById(pofUserId).orElseThrow();
+        assertThat(updatedUser.isForcePasswordChange()).isFalse();
+
+        // Re-login
+        LoginDTO relogin = new LoginDTO();
+        relogin.setUsername(pofUser.getUsername());
+        relogin.setPassword("pof-new-password-456");
+        MvcResult reloginResult = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(relogin))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        AuthResponse reloginResp = mapper.readValue(reloginResult.getResponse().getContentAsString(), AuthResponse.class);
+        String newToken = reloginResp.getToken();
+
+        // --- GREEN: after password change → 200 on NON-exempt endpoint ---
+        mockMvc.perform(get("/process-definitions")
+                        .header("Authorization", "Bearer " + newToken))
+                .andExpect(status().isOk());
     }
 
-    // --- Login and logout are exempt ---
+    // --- Login endpoint is exempt from forcePasswordChange enforcement ---
 
     @Test
     @Order(4)
     void loginEndpoint_notBlockedByForcePasswordChange() throws Exception {
-        // Use the admin bootstrap user (always available, password "admin")
+        // Login with the forcePwUser (forcePasswordChange=true) — login is exempt, should succeed
         LoginDTO loginDTO = new LoginDTO();
-        loginDTO.setUsername("admin");
-        loginDTO.setPassword("admin");
+        loginDTO.setUsername(userRepository.findById(forcePwUserId).orElseThrow().getUsername());
+        loginDTO.setPassword("new-secure-password-456"); // password was changed in criterion4
 
         mockMvc.perform(post("/auth/login")
                         .content(mapper.writeValueAsString(loginDTO))
