@@ -18,15 +18,15 @@ import java.util.Set;
 public class AdminPasswordValidator {
 
     private static final String DEFAULT_ADMIN_PASSWORD = "admin";
-    private static final Set<String> PASSWORD_OPTIONAL_PROFILES = Set.of("dev", "test");
+    private static final Set<String> PROD_REQUIRED_PROFILES = Set.of("prod");
 
     public AdminPasswordValidator(
         @Value("${zorrobpm.security.default-admin-password:admin}") String password,
         Environment environment) {
 
-        boolean devOrTest = Arrays.stream(environment.getActiveProfiles())
-            .anyMatch(PASSWORD_OPTIONAL_PROFILES::contains);
-        if (devOrTest) return;
+        boolean isProd = Arrays.stream(environment.getActiveProfiles())
+            .anyMatch(PROD_REQUIRED_PROFILES::contains);
+        if (!isProd) return;
 
         if (DEFAULT_ADMIN_PASSWORD.equals(password)) {
             throw new IllegalStateException(
