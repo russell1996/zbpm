@@ -131,6 +131,15 @@ async function addMember() {
   }
 }
 
+async function changeRole(processKey: string, newRole: string) {
+  try {
+    await admin.changeMemberRole(processKey, props.user.id, newRole)
+    await loadMembers()
+  } catch {
+    toast.error('Failed to change role')
+  }
+}
+
 async function removeMember(processKey: string) {
   try {
     await admin.removeMember(processKey, props.user.id)
@@ -228,13 +237,18 @@ onMounted(() => {
           </div>
         </div>
       </div>
-      <div v-else class="text-sm text-muted-foreground">
+      <div v-else-if="!apiKey && !apiKeyLoading" class="text-sm text-muted-foreground">
         No API key.
         <button class="text-primary hover:underline ml-1" @click="showCreateKey = true">Create one</button>
       </div>
 
+      <!-- Revoked key: show create new button -->
+      <div v-if="apiKey && apiKey.revokedAt" class="text-sm">
+        <button class="text-primary hover:underline" @click="showCreateKey = true">Create new key</button>
+      </div>
+
       <!-- No key hint for grants -->
-      <p v-if="!apiKey && !apiKeyLoading" class="text-xs text-muted-foreground italic">
+      <p v-if="(!apiKey || (apiKey && apiKey.revokedAt)) && !apiKeyLoading" class="text-xs text-muted-foreground italic">
         Create an API key to configure per-process permissions below.
       </p>
 
@@ -287,10 +301,12 @@ onMounted(() => {
             <tr v-for="m in members" :key="m.processKey" class="border-t border-border">
               <td class="px-3 py-2 font-mono text-xs">{{ m.processKey }}</td>
               <td class="px-3 py-2">
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                  :class="m.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'">
-                  {{ m.role }}
-                </span>
+                <select class="text-xs border border-input rounded px-1 py-0.5 bg-card"
+                  :value="m.role"
+                  @change="changeRole(m.processKey, ($event.target as HTMLSelectElement).value)">
+                  <option value="OWNER">OWNER</option>
+                  <option value="DESIGNER">DESIGNER</option>
+                </select>
               </td>
               <td v-if="apiKey && !apiKey.revokedAt" class="px-3 py-2">
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
