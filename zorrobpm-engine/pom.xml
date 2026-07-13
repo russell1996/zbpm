@@ -144,6 +144,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <excludes>**/*IntegrationTests.java</excludes>
+                    <useSystemClassLoader>false</useSystemClassLoader>
                 </configuration>
             </plugin>
             <plugin>
@@ -160,7 +161,10 @@
                 <configuration>
                     <includes>
                         <include>**/*IntegrationTests.java</include>
+                        <include>**/*PgIT.java</include>
                     </includes>
+                    <!-- Exclude PG-only tests by default; test:pg overrides with -Dgroups=pg -->
+                    <excludedGroups>pg</excludedGroups>
                 </configuration>
             </plugin>
             <plugin>
