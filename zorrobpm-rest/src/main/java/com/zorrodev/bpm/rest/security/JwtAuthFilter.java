@@ -7,12 +7,14 @@ import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.security.KeyHasher;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.TokenService;
+import com.zorrodev.bpm.engine.security.UiUserLookupService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -33,16 +35,25 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final TokenService tokenService;
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyGrantRepository apiKeyGrantRepository;
+    private final UiUserLookupService userLookupService;
+    private final Environment environment;
 
     @Value("${zorrobpm.security.require-api-auth:true}")
     private boolean requireApiAuth;
 
+    @Value("${zorrobpm.security.force-password-enforce:false}")
+    private boolean forcePasswordEnforce;
+
     public JwtAuthFilter(TokenService tokenService,
                          ApiKeyRepository apiKeyRepository,
-                         ApiKeyGrantRepository apiKeyGrantRepository) {
+                         ApiKeyGrantRepository apiKeyGrantRepository,
+                         UiUserLookupService userLookupService,
+                         Environment environment) {
         this.tokenService = tokenService;
         this.apiKeyRepository = apiKeyRepository;
         this.apiKeyGrantRepository = apiKeyGrantRepository;
+        this.userLookupService = userLookupService;
+        this.environment = environment;
     }
 
     void setRequireApiAuth(boolean requireApiAuth) {
@@ -55,6 +66,19 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static boolean isAuthLogin(String path) {
         return path.equals("/auth/login");
+    }
+
+    /**
+     * WO-SEC-14: Paths exempt from forcePasswordChange enforcement.
+     * /auth/me is read-only (returns user info) — exempt.
+     * /users/* is where password change happens (PUT /users/{id}).
+     */
+    private static boolean isAuthExempt(String path) {
+        return isAuthLogin(path)
+            || "/auth/refresh".equals(path)
+            || "/auth/logout".equals(path)
+            || "/auth/me".equals(path)
+            || isUsersPath(path);
     }
 
     private boolean isProtected(String path) {
@@ -129,6 +153,20 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
 
         request.setAttribute("principal", principal);
+
+        // WO-SEC-14: forcePasswordChange enforcement for UserPrincipal
+        // Enforced only when zorrobpm.security.force-password-enforce=true
+        // (prod default: true; test default: false unless overridden)
+        if (principal instanceof Principal.UserPrincipal userPrincipal) {
+            String reqPath = PathNormalizer.normalize(request.getRequestURI());
+            if (forcePasswordEnforce && !isAuthExempt(reqPath)
+                && userLookupService.isForcePasswordChange(userPrincipal.userId())) {
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json");
+                response.getWriter().write("{\"code\":\"PASSWORD_CHANGE_REQUIRED\",\"message\":\"Password change required\"}");
+                return;
+            }
+        }
 
         // Backward compat: also set authClaims for code that still reads it
         if (claims != null) {
