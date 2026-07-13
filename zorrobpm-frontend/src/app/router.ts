@@ -169,4 +169,22 @@ router.beforeEach(async (to) => {
   }
 })
 
+// WO-MT-9e: reload on chunk-loading failure (stale index referencing deleted chunks).
+// Without this, a failed dynamic import leaves the user on a blank screen.
+let chunkReloaded = false
+router.onError((err, to) => {
+  if (!chunkReloaded && /Failed to fetch|dynamically imported module/i.test(err.message)) {
+    chunkReloaded = true
+    window.location.assign(to.fullPath)
+  }
+})
+
+// Exported for testing
+export function handleError(err: Error, to: { fullPath: string }) {
+  if (!chunkReloaded && /Failed to fetch|dynamically imported module/i.test(err.message)) {
+    chunkReloaded = true
+    window.location.assign(to.fullPath)
+  }
+}
+
 export default router
