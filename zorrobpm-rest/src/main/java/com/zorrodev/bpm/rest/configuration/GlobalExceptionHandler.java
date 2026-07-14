@@ -2,6 +2,7 @@ package com.zorrodev.bpm.rest.configuration;
 
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.contract.exception.EngineException;
+import com.zorrodev.bpm.contract.exception.FormValidationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -19,6 +20,23 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(FormValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleFormValidation(FormValidationException ex) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", "VALIDATION_ERROR");
+        List<Map<String, String>> fieldErrors = ex.getErrors().stream()
+            .map(err -> {
+                Map<String, String> error = new LinkedHashMap<>();
+                error.put("field", err.field());
+                error.put("message", err.message());
+                return error;
+            })
+            .toList();
+        body.put("errors", fieldErrors);
+        body.put("message", "Form validation failed");
+        return ResponseEntity.badRequest().body(body);
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationErrors(MethodArgumentNotValidException ex) {
