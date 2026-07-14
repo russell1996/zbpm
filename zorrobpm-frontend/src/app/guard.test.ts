@@ -16,43 +16,40 @@ function makeRoute(meta: Record<string, unknown> = {}): RouteLocationNormalized 
   } as unknown as RouteLocationNormalized
 }
 
+function authState(overrides: Partial<{ isAuthenticated: boolean; isAdmin: boolean; isSuperAdmin: boolean; forcePasswordChange: boolean }> = {}) {
+  return { isAuthenticated: true, isAdmin: false, isSuperAdmin: false, forcePasswordChange: false, ...overrides }
+}
+
 describe('resolveGuard', () => {
   it('USER passes when route has no requiresAdmin', () => {
     const route = makeRoute({ requiresAuth: true })
-    const auth = { isAuthenticated: true, isAdmin: false, isSuperAdmin: false }
-    expect(resolveGuard(route, auth)).toBeNull()
+    expect(resolveGuard(route, authState())).toBeNull()
   })
 
   it('USER on admin route → access-denied', () => {
     const route = makeRoute({ requiresAdmin: true })
-    const auth = { isAuthenticated: true, isAdmin: false, isSuperAdmin: false }
-    expect(resolveGuard(route, auth)).toEqual({ name: 'access-denied' })
+    expect(resolveGuard(route, authState())).toEqual({ name: 'access-denied' })
   })
 
   it('ADMIN on admin route → allowed', () => {
     const route = makeRoute({ requiresAdmin: true })
-    const auth = { isAuthenticated: true, isAdmin: true, isSuperAdmin: false }
-    expect(resolveGuard(route, auth)).toBeNull()
+    expect(resolveGuard(route, authState({ isAdmin: true }))).toBeNull()
   })
 
   it('non-admin on requiresAdmin route blocks access', () => {
     const route = makeRoute({ requiresAdmin: true })
-    const auth = { isAuthenticated: true, isAdmin: false, isSuperAdmin: false }
-    const result = resolveGuard(route, auth)
+    const result = resolveGuard(route, authState())
     expect(result).not.toBeNull()
     expect(result!.name).toBe('access-denied')
   })
 
   it('unauthenticated user on admin route → blocked', () => {
     const route = makeRoute({ requiresAdmin: true })
-    const auth = { isAuthenticated: false, isAdmin: false, isSuperAdmin: false }
-    expect(resolveGuard(route, auth)).toEqual({ name: 'access-denied' })
+    expect(resolveGuard(route, authState({ isAuthenticated: false }))).toEqual({ name: 'access-denied' })
   })
 
   it('route without meta → no redirect', () => {
-    const route = makeRoute({})
-    const auth = { isAuthenticated: true, isAdmin: false, isSuperAdmin: false }
-    expect(resolveGuard(route, auth)).toBeNull()
+    expect(resolveGuard(makeRoute({}), authState())).toBeNull()
   })
 })
 
@@ -62,31 +59,27 @@ describe('resolveGuard', () => {
 describe('resolveGuard — requiresSuperAdmin', () => {
   it('SUPER_ADMIN on requiresSuperAdmin route → allowed', () => {
     const route = makeRoute({ requiresSuperAdmin: true })
-    const auth = { isAuthenticated: true, isAdmin: true, isSuperAdmin: true }
-    expect(resolveGuard(route, auth)).toBeNull()
+    expect(resolveGuard(route, authState({ isAdmin: true, isSuperAdmin: true }))).toBeNull()
   })
 
   it('ADMIN on requiresSuperAdmin route → denied', () => {
     const route = makeRoute({ requiresSuperAdmin: true })
-    const auth = { isAuthenticated: true, isAdmin: true, isSuperAdmin: false }
-    expect(resolveGuard(route, auth)).toEqual({ name: 'access-denied' })
+    expect(resolveGuard(route, authState({ isAdmin: true }))).toEqual({ name: 'access-denied' })
   })
 
   it('USER on requiresSuperAdmin route → denied', () => {
     const route = makeRoute({ requiresSuperAdmin: true })
-    const auth = { isAuthenticated: true, isAdmin: false, isSuperAdmin: false }
-    expect(resolveGuard(route, auth)).toEqual({ name: 'access-denied' })
+    expect(resolveGuard(route, authState())).toEqual({ name: 'access-denied' })
   })
 
   it('SUPER_ADMIN on requiresAdmin route → also allowed (SUPER_ADMIN ⊇ ADMIN)', () => {
     const route = makeRoute({ requiresAdmin: true })
-    const auth = { isAuthenticated: true, isAdmin: true, isSuperAdmin: true }
-    expect(resolveGuard(route, auth)).toBeNull()
+    expect(resolveGuard(route, authState({ isAdmin: true, isSuperAdmin: true }))).toBeNull()
   })
 })
 
 /**
- * WO-FE-hotfix: store.isAdmin includes SUPER_ADMIN.
+ * WO-MT-9: store.isAdmin includes SUPER_ADMIN.
  */
 describe('auth store — isAdmin includes SUPER_ADMIN', () => {
   it('SUPER_ADMIN on requiresAdmin route → access allowed', () => {
@@ -97,8 +90,37 @@ describe('auth store — isAdmin includes SUPER_ADMIN', () => {
       { isAdmin: false, isSuperAdmin: false, expected: { name: 'access-denied' } },
     ]
     for (const { isAdmin, isSuperAdmin, expected } of roles) {
-      const result = resolveGuard(route, { isAuthenticated: true, isAdmin, isSuperAdmin })
+      const result = resolveGuard(route, authState({ isAuthenticated: true, isAdmin, isSuperAdmin }))
       expect(result, `isAdmin=${isAdmin}, isSuperAdmin=${isSuperAdmin}`).toEqual(expected)
     }
+  })
+})
+
+/**
+ * WO-SEC-19: forcePasswordChange guard cases.
+ *
+ * Proof-of-failure (§1b):
+ *   RED:  Without the forcePasswordChange check in resolveGuard,
+ *         a user with forcePasswordChange=true navigates to '/' (dashboard) and gets null (allowed).
+ *         → Test expects { name: 'change-password' } but gets null → FAILS.
+ *   GREEN: With the check, resolveGuard returns { name: 'change-password' } → PASS.
+ */
+describe('resolveGuard — forcePasswordChange (WO-SEC-19)', () => {
+  it('forcePasswordChange=true + target ≠ change-password → redirect to change-password', () => {
+    const route = makeRoute({ requiresAuth: true })
+    const result = resolveGuard(route, authState({ forcePasswordChange: true }))
+    expect(result).toEqual({ name: 'change-password' })
+  })
+
+  it('forcePasswordChange=true + target = change-password → allowed', () => {
+    const route = { ...makeRoute(), name: 'change-password' } as unknown as RouteLocationNormalized
+    const result = resolveGuard(route, authState({ forcePasswordChange: true }))
+    expect(result).toBeNull()
+  })
+
+  it('forcePasswordChange=false → no redirect', () => {
+    const route = makeRoute({ requiresAuth: true })
+    const result = resolveGuard(route, authState({ forcePasswordChange: false }))
+    expect(result).toBeNull()
   })
 })
