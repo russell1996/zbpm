@@ -1,0 +1,58 @@
+{
+  "type": "form",
+  "id": "vacationRequest",
+  "schemaVersion": 16,
+  "components": [
+    {
+      "type": "text",
+      "text": "## Заявление на отпуск"
+    },
+    {
+      "type": "textfield",
+      "key": "employeeName",
+      "label": "ФИО сотрудника",
+      "validate": { "required": true, "maxLength": 200 }
+    },
+    {
+      "type": "textfield",
+      "key": "managerId",
+      "label": "ID руководителя (согласующий)",
+      "description": "Кому уйдёт задача согласования",
+      "validate": { "required": true }
+    },
+    {
+      "type": "select",
+      "key": "vacationType",
+      "label": "Тип отпуска",
+      "values": [
+        { "label": "Ежегодный оплачиваемый", "value": "annual" },
+        { "label": "Без сохранения содержания", "value": "unpaid" },
+        { "label": "Учебный", "value": "study" }
+      ],
+      "validate": { "required": true }
+    },
+    {
+      "type": "datetime",
+      "subtype": "date",
+      "dateLabel": "Дата начала",
+      "key": "dateFrom",
+      "validate": { "required": true }
+    },
+    {
+      "type": "number",
+      "key": "days",
+      "label": "Количество дней",
+      "validate": { "required": true, "min": 1, "max": 60 }
+    },
+    {
+      "type": "textarea",
+      "key": "comment",
+      "label": "Комментарий"
+    },
+    {
+      "type": "checkbox",
+      "key": "urgent",
+      "label": "Срочная заявка"
+    }
+  ]
+}
