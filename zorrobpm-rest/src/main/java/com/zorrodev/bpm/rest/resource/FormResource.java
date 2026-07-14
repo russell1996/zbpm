@@ -13,6 +13,7 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.FormResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -35,6 +36,7 @@ public class FormResource implements FormContract {
     private final UserTaskRepository userTaskRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final DBService dbService;
+    private final FormResolver formResolver;
     private final HttpServletRequest request;
     private final ObjectMapper objectMapper;
 
@@ -113,55 +115,11 @@ public class FormResource implements FormContract {
     // --- WO-FORM-2: resolve logic ---
 
     private TaskFormDTO resolveForm(String formKey, UUID processInstanceId) {
-        if (formKey == null || formKey.isBlank()) {
-            TaskFormDTO dto = new TaskFormDTO();
-            dto.setType("none");
-            return dto;
-        }
-
-        // External reference (URL)
-        if (formKey.startsWith("http://") || formKey.startsWith("https://")) {
-            TaskFormDTO dto = new TaskFormDTO();
-            dto.setType("external");
-            dto.setUrl(formKey);
-            return dto;
-        }
-
-        // Linked form (form key in form table)
-        FormEntity form = formRepository.findTopByFormKeyOrderByVersionDesc(formKey)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                "Form schema not found for key: " + formKey));
-
-        TaskFormDTO dto = new TaskFormDTO();
-        dto.setType("embedded");
-        dto.setSchema(form.getSchemaJson());
-        dto.setData(prefillData(processInstanceId));
-        return dto;
+        return formResolver.resolveTaskForm(formKey, prefillData(processInstanceId));
     }
 
     private TaskFormDTO resolveStartForm(String startFormKey) {
-        if (startFormKey == null || startFormKey.isBlank()) {
-            TaskFormDTO dto = new TaskFormDTO();
-            dto.setType("none");
-            return dto;
-        }
-
-        if (startFormKey.startsWith("http://") || startFormKey.startsWith("https://")) {
-            TaskFormDTO dto = new TaskFormDTO();
-            dto.setType("external");
-            dto.setUrl(startFormKey);
-            return dto;
-        }
-
-        FormEntity form = formRepository.findTopByFormKeyOrderByVersionDesc(startFormKey)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                "Form schema not found for key: " + startFormKey));
-
-        TaskFormDTO dto = new TaskFormDTO();
-        dto.setType("embedded");
-        dto.setSchema(form.getSchemaJson());
-        // No data for start form (no process instance yet)
-        return dto;
+        return formResolver.resolveTaskForm(startFormKey, null);
     }
 
     private Map<String, String> prefillData(UUID processInstanceId) {
