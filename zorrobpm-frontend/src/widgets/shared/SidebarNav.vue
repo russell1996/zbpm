@@ -8,6 +8,7 @@ import {
   ListTodo,
   AlertTriangle,
   Users,
+  FileText,
   ChevronDown,
   ChevronRight,
   BarChart3,
@@ -53,6 +54,7 @@ const navItems = computed<NavItem[]>(() => [
   { labelKey: 'dmn', icon: GitBranch, to: '/dmn' },
   { labelKey: 'analytics', icon: BarChart3, to: '/analytics' },
   { labelKey: 'users', icon: Users, to: '/admin/users' },
+  { labelKey: 'forms', icon: FileText, to: '/admin/forms' },
 ])
 
 function toggle(key: string) {
