@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.repository.AuditLogRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -33,6 +34,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   don't pick the same outbox entries. H2 doesn't enforce this the same way.
  * criterion #5 (WO-INT-1): Migration 053 adds candidate_groups column to user_tasks on PG.
  */
+@TestPropertySource(properties = {
+    "spring.datasource.url=jdbc:postgresql://localhost:5432/zbpm_test?sslmode=disable",
+    "spring.datasource.username=postgres",
+    "spring.datasource.password=postgres",
+    "spring.datasource.driver-class-name=org.postgresql.Driver",
+    "spring.liquibase.enabled=true"
+})
 public class RetroPgIT extends PostgresIT {
 
     @Autowired AuditLogRepository auditLogRepository;
