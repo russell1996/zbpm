@@ -19,6 +19,7 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
+import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
@@ -36,7 +37,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequiredArgsConstructor
@@ -53,6 +56,7 @@ public class RuntimeResource implements RuntimeContract {
     private final AuthorizationService authorizationService;
     private final DBService dbService;
     private final AuditLogService auditLogService;
+    private final UserGroupRepository userGroupRepository;
     private final HttpServletRequest request;
 
     private Principal getPrincipal() {
@@ -190,11 +194,24 @@ public class RuntimeResource implements RuntimeContract {
         if (principal.isSuperAdmin()) return;
 
         if (principal instanceof Principal.UserPrincipal user) {
-            // Unassigned task — any user can complete
-            if (task.getAssignee() == null || task.getAssignee().isBlank()) return;
             // Assignee matches — allowed
-            if (task.getAssignee().equals(user.username())) return;
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Task is assigned to another user");
+            if (task.getAssignee() != null && !task.getAssignee().isBlank()
+                    && task.getAssignee().equals(user.username())) return;
+
+            // Member of a candidate group — allowed (WO-MT-3b)
+            if (task.getCandidateGroups() != null && !task.getCandidateGroups().isBlank()) {
+                Set<String> taskGroups = java.util.Arrays.stream(task.getCandidateGroups().split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty())
+                    .collect(Collectors.toSet());
+                java.util.List<String> userGroups = userGroupRepository.findGroupNamesByUserId(user.userId());
+                if (!java.util.Collections.disjoint(taskGroups, userGroups)) return;
+            }
+
+            // Unassigned task with no candidate groups — any user can complete
+            if ((task.getAssignee() == null || task.getAssignee().isBlank())
+                    && (task.getCandidateGroups() == null || task.getCandidateGroups().isBlank())) return;
+
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
 
         // SA: canCompleteUserTask already checked permission + processId
