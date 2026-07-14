@@ -34,9 +34,8 @@ public class ServiceTaskListener {
             log.info("Queue {} created", queueName);
         }
 
-        log.info("Data {}", detail);
         rabbitTemplate.convertAndSend(queueName, detail);
-        log.info("Sent data for job {} to {}: {}", detail.getJob(), queueName, detail.getVariables());
+        log.info("Sent data for job {} to {}", detail.getJob(), queueName);
     }
 
     @RabbitListener(queues = com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration.COMPLETE_QUEUE)
