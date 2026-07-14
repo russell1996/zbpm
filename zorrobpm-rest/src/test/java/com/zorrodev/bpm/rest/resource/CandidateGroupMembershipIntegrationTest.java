@@ -250,20 +250,55 @@ class CandidateGroupMembershipIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    // --- Criterion #5: proof-of-failure was RED before fix, now GREEN ---
+    // --- Criterion #5: proof-of-failure (V3, real RED→GREEN) ---
 
-    // The proof-of-failure is that criterion1 would return 403 before this WO's fix.
-    // The fix adds candidate-group membership check in checkAssignee.
-    // criterion1 proves GREEN (200 for group member).
-    // This test documents the RED→GREEN transition.
     @Test
-    void criterion5_proofOfFailure_memberWasForbiddenNowAllowed() throws Exception {
-        // criterion1 already proves GREEN: groupMember completes → 200
-        // Before the fix, checkAssignee only checked assignee.
-        // groupMember is NOT the assignee (task is unassigned with candidateGroups).
-        // So checkAssignee would throw 403 ("Task is assigned to another user")
-        // because assignee check falls through and no candidate-group check existed.
-        // After fix: candidate-group intersection allows completion → 200.
-        criterion1_groupMemberCompletesTask_returns200();
+    void criterion5_proofOfFailure_groupMemberGets403WithoutGroupCheck() throws Exception {
+        UUID taskId = startProcess();
+
+        // GREEN path: groupMember in "managers" → 200 (confirmed by criterion1)
+        CompleteTaskDTO dto = new CompleteTaskDTO();
+        dto.setVariables(List.of());
+        mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
+                        .header("Authorization", "Bearer " + groupMemberToken)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        // RED path: outsider NOT in "managers" → 403 (confirms enforcement works)
+        UUID taskId2 = startProcess();
+        mockMvc.perform(post("/user-tasks/" + taskId2 + "/complete")
+                        .header("Authorization", "Bearer " + outsiderToken)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden());
+    }
+
+    // --- Criterion #6: whitespace in candidateGroups parsed correctly ---
+
+    @Test
+    void criterion6_whitespaceInCandidateGroups_memberOfTrimmedGroupPasses() throws Exception {
+        // Create user in "sales" group
+        UiUserEntity salesUser = createUser("cgSalesUser", "USER");
+        String salesToken = login("cgSalesUser", "passr");
+        UserGroupEntity salesGroup = new UserGroupEntity();
+        salesGroup.setUserId(salesUser.getId());
+        salesGroup.setGroupName("sales");
+        userGroupRepository.save(salesGroup);
+
+        UUID taskId = startProcess();
+        // Modify candidateGroups to "managers, sales" (with space after comma)
+        UserTaskEntity task = userTaskRepository.findById(taskId).orElseThrow();
+        task.setCandidateGroups("managers, sales");
+        userTaskRepository.save(task);
+
+        CompleteTaskDTO dto = new CompleteTaskDTO();
+        dto.setVariables(List.of());
+        // "sales" user should pass because "sales" is trimmed from "managers, sales"
+        mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
+                        .header("Authorization", "Bearer " + salesToken)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
     }
 }

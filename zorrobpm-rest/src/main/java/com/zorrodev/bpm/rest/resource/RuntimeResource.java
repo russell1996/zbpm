@@ -200,7 +200,9 @@ public class RuntimeResource implements RuntimeContract {
 
             // Member of a candidate group — allowed (WO-MT-3b)
             if (task.getCandidateGroups() != null && !task.getCandidateGroups().isBlank()) {
-                Set<String> taskGroups = Set.of(task.getCandidateGroups().split(","));
+                Set<String> taskGroups = java.util.Arrays.stream(task.getCandidateGroups().split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty())
+                    .collect(Collectors.toSet());
                 java.util.List<String> userGroups = userGroupRepository.findGroupNamesByUserId(user.userId());
                 if (!java.util.Collections.disjoint(taskGroups, userGroups)) return;
             }
