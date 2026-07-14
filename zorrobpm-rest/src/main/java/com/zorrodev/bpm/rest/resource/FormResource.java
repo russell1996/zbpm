@@ -25,6 +25,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -39,6 +40,17 @@ public class FormResource implements FormContract {
     private final FormResolver formResolver;
     private final HttpServletRequest request;
     private final ObjectMapper objectMapper;
+
+    @Override
+    public List<FormDTO> listForms() {
+        return formRepository.findLatestVersions().stream().map(entity -> {
+            FormDTO dto = new FormDTO();
+            dto.setKey(entity.getFormKey());
+            dto.setVersion(entity.getVersion());
+            dto.setSchema(entity.getSchemaJson());
+            return dto;
+        }).toList();
+    }
 
     @Override
     @Transactional
