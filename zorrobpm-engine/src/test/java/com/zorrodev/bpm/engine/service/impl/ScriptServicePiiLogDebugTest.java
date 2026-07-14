@@ -20,8 +20,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-SEC-7 criterion #2: PII values are visible when DEBUG is enabled.
- * Logger set to DEBUG programmatically.
+ * WO-SEC-16: PII values are NOT logged even at DEBUG level.
+ * Variable values removed from log output to prevent secret leakage.
+ * Logger set to DEBUG programmatically — still no values.
  */
 @ExtendWith(OutputCaptureExtension.class)
 class ScriptServicePiiLogDebugTest {
@@ -46,17 +47,17 @@ class ScriptServicePiiLogDebugTest {
         return v;
     }
 
-    // --- Criterion #2: value visible on DEBUG ---
+    // --- Criterion #2: value NOT visible even on DEBUG (WO-SEC-16) ---
 
     @Test
-    void criterion2_secretValue_visibleOnDebug(CapturedOutput output) {
+    void criterion2_secretValue_notVisibleOnDebug(CapturedOutput output) {
         String secretValue = "secret-salary-99999";
         ProcessVariable pii = var("salary", ProcessVariableType.STRING, secretValue);
 
         service().evaluateExpression("salary", List.of(pii));
 
-        // With DEBUG level enabled, the value SHOULD appear
-        assertThat(output.getOut()).contains(secretValue);
+        // WO-SEC-16: values must NOT appear in logs, even at DEBUG
+        assertThat(output.getOut()).doesNotContain(secretValue);
     }
 
     // --- Criterion #3: FEEL calculations still work ---

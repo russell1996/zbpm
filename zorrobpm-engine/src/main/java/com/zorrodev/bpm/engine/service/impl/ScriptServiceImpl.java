@@ -33,14 +33,14 @@ public class ScriptServiceImpl implements ScriptService {
     @SneakyThrows
     public Object evaluateScript(String script, List<ProcessVariable> variables) {
         Object result = scriptEngine.eval(script, buildContext(variables));
-        log.debug("Expression result {} = {}", script, result);
+        log.debug("Expression result {}", script);
         return result;
     }
 
     @SneakyThrows
     public Object evaluateExpression(String expression, List<ProcessVariable> variables) {
         Object result = feelExpressionScriptEngine.eval(expression, buildContext(variables));
-        log.debug("Script result {} = {}", expression, result);
+        log.debug("Script result {}", expression);
         return result;
     }
 
@@ -63,7 +63,7 @@ public class ScriptServiceImpl implements ScriptService {
                 } else {
                     ctx.setAttribute(variable.getName(), variable.getValue(), ScriptContext.ENGINE_SCOPE);
                 }
-                log.debug("Variable {} = {}", variable.getName(), variable.getValue());
+                log.debug("Variable {}", variable.getName());
             }
         }
         return ctx;
