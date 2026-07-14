@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * WO-FORM-5: Server-side validation of submitted variables against form-js schema.
@@ -32,7 +33,10 @@ public class FormValidator {
     @SuppressWarnings("unchecked")
     public List<ValidationError> validate(String schemaJson, List<ProcessVariable> variables) {
         List<ValidationError> errors = new ArrayList<>();
-        if (schemaJson == null || schemaJson.isBlank() || variables == null) return errors;
+        if (schemaJson == null || schemaJson.isBlank()) return errors;
+
+        // WO-FORM-5: null variables → treat as empty list (validate required → errors)
+        List<ProcessVariable> vars = variables == null ? List.of() : variables;
 
         try {
             Map<String, Object> schema = objectMapper.readValue(schemaJson, Map.class);
@@ -41,7 +45,7 @@ public class FormValidator {
 
             // Build a map of submitted variables by name
             Map<String, String> submittedVars = new LinkedHashMap<>();
-            for (ProcessVariable v : variables) {
+            for (ProcessVariable v : vars) {
                 if (v.getName() != null && v.getValue() != null) {
                     submittedVars.put(v.getName(), v.getValue());
                 }
@@ -83,17 +87,21 @@ public class FormValidator {
 
                 // String validations (for non-numeric, non-boolean types)
                 if (validate != null) {
-                    Integer minLength = (Integer) validate.get("minLength");
-                    Integer maxLength = (Integer) validate.get("maxLength");
+                    Object minLenObj = validate.get("minLength");
+                    Object maxLenObj = validate.get("maxLength");
                     String pattern = (String) validate.get("pattern");
 
-                    if (minLength != null && value.length() < minLength) {
-                        errors.add(new ValidationError(key, key + " must be at least " + minLength + " characters"));
+                    if (minLenObj instanceof Number minLength) {
+                        if (value.length() < minLength.intValue()) {
+                            errors.add(new ValidationError(key, key + " must be at least " + minLength.intValue() + " characters"));
+                        }
                     }
-                    if (maxLength != null && value.length() > maxLength) {
-                        errors.add(new ValidationError(key, key + " must be at most " + maxLength + " characters"));
+                    if (maxLenObj instanceof Number maxLength) {
+                        if (value.length() > maxLength.intValue()) {
+                            errors.add(new ValidationError(key, key + " must be at most " + maxLength.intValue() + " characters"));
+                        }
                     }
-                    if (pattern != null && !value.matches(pattern)) {
+                    if (pattern != null && !Pattern.compile(pattern).matcher(value).find()) {
                         errors.add(new ValidationError(key, key + " does not match the required pattern"));
                     }
                 }
