@@ -140,6 +140,12 @@ const router = createRouter({
           meta: { title: 'Users', requiresSuperAdmin: true },
         },
         {
+          path: 'admin/forms',
+          name: 'admin-forms',
+          component: () => import('@/pages/admin/FormsAdmin.vue'),
+          meta: { title: 'Forms', requiresSuperAdmin: true },
+        },
+        {
           path: 'me/api-key',
           name: 'my-api-key',
           component: () => import('@/pages/me/MyApiKey.vue'),
