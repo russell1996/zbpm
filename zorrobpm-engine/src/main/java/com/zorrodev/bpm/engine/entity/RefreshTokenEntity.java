@@ -20,5 +20,7 @@ public class RefreshTokenEntity {
     private String tokenHash;
     private Instant expiresAt;
     private boolean revoked;
+    /** WO-SEC-18 L7: timestamp when token was revoked (null if still active). */
+    private Instant revokedAt;
     private Instant createdAt;
 }
