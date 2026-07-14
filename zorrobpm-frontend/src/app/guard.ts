@@ -4,6 +4,7 @@ interface AuthState {
   isAuthenticated: boolean
   isAdmin: boolean
   isSuperAdmin: boolean
+  forcePasswordChange: boolean
 }
 
 /**
@@ -14,6 +15,10 @@ export function resolveGuard(
   to: RouteLocationNormalized,
   auth: AuthState,
 ): { name: string } | null {
+  // WO-SEC-19: force password change → block all routes except change-password
+  if (auth.isAuthenticated && auth.forcePasswordChange && to.name !== 'change-password') {
+    return { name: 'change-password' }
+  }
   if (to.meta.requiresSuperAdmin && !auth.isSuperAdmin) {
     return { name: 'access-denied' }
   }

@@ -14,17 +14,8 @@ describe('auth store — isAdmin includes SUPER_ADMIN', () => {
     setActivePinia(createPinia())
   })
 
-  /**
-   * This is the critical test: when user.role is 'SUPER_ADMIN',
-   * store.isAdmin MUST return true (SUPER_ADMIN ⊇ ADMIN).
-   *
-   * On CURRENT code: isAdmin=false → RED (bug confirmed)
-   * After fix: isAdmin=true → GREEN
-   */
   it('SUPER_ADMIN → isAdmin is true (BUG: currently false)', () => {
     const store = useAuthStore()
-
-    // Simulate a SUPER_ADMIN user (as /auth/me would return)
     store.user = {
       id: 'test-id',
       username: 'superadmin',
@@ -32,12 +23,10 @@ describe('auth store — isAdmin includes SUPER_ADMIN', () => {
       email: null,
       role: 'SUPER_ADMIN',
       active: true,
+      forcePasswordChange: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
-
-    // On CURRENT code: isAdmin = false → BUG
-    // After fix: isAdmin = true
     expect(store.isAdmin).toBe(true)
   })
 
@@ -50,6 +39,7 @@ describe('auth store — isAdmin includes SUPER_ADMIN', () => {
       email: null,
       role: 'ADMIN',
       active: true,
+      forcePasswordChange: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -65,9 +55,74 @@ describe('auth store — isAdmin includes SUPER_ADMIN', () => {
       email: null,
       role: 'USER',
       active: true,
+      forcePasswordChange: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
     expect(store.isAdmin).toBe(false)
+  })
+})
+
+/**
+ * WO-SEC-19: forcePasswordChange computed in auth store.
+ */
+describe('auth store — forcePasswordChange', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('forcePasswordChange=true when user.forcePasswordChange is true', () => {
+    const store = useAuthStore()
+    store.user = {
+      id: 'test-id',
+      username: 'forced',
+      fullName: 'Forced',
+      email: null,
+      role: 'SUPER_ADMIN',
+      active: true,
+      forcePasswordChange: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    expect(store.forcePasswordChange).toBe(true)
+  })
+
+  it('forcePasswordChange=false when user.forcePasswordChange is false', () => {
+    const store = useAuthStore()
+    store.user = {
+      id: 'test-id',
+      username: 'admin',
+      fullName: 'Admin',
+      email: null,
+      role: 'ADMIN',
+      active: true,
+      forcePasswordChange: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    expect(store.forcePasswordChange).toBe(false)
+  })
+
+  it('forcePasswordChange=false when no user', () => {
+    const store = useAuthStore()
+    expect(store.forcePasswordChange).toBe(false)
+  })
+
+  it('setForcePasswordChange updates user', () => {
+    const store = useAuthStore()
+    store.user = {
+      id: 'test-id',
+      username: 'admin',
+      fullName: 'Admin',
+      email: null,
+      role: 'ADMIN',
+      active: true,
+      forcePasswordChange: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    expect(store.forcePasswordChange).toBe(true)
+    store.setForcePasswordChange(false)
+    expect(store.forcePasswordChange).toBe(false)
   })
 })
