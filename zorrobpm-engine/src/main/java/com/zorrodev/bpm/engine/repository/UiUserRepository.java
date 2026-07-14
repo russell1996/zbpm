@@ -15,7 +15,9 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
     boolean existsByUsername(String username);
 
     static Specification<UiUserEntity> byUsernameContains(String username) {
-        return (root, query, cb) -> cb.like(cb.lower(root.get("username")), "%" + username.toLowerCase() + "%");
+        // WO-SEC-17 L3: escape LIKE wildcards to prevent injection
+        String escaped = username.toLowerCase().replace("%", "\\%").replace("_", "\\_");
+        return (root, query, cb) -> cb.like(cb.lower(root.get("username")), "%" + escaped + "%", '\\');
     }
 
     static Specification<UiUserEntity> byActive(boolean active) {
