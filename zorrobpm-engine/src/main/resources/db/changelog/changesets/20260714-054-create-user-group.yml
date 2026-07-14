@@ -1,0 +1,28 @@
+databaseChangeLog:
+  - logicalFilePath: 20260714-054
+  - changeSet:
+      id: 20260714-054
+      author: mimo
+      changes:
+        - createTable:
+            tableName: user_group
+            columns:
+              - column:
+                  name: user_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: group_name
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+        - addPrimaryKey:
+            tableName: user_group
+            columnNames: user_id, group_name
+        - addForeignKeyConstraint:
+            baseTableName: user_group
+            baseColumnNames: user_id
+            referencedTableName: ui_users
+            referencedColumnNames: id
+            constraintName: fk_user_group__user_id
