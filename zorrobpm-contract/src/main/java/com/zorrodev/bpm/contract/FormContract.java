@@ -5,9 +5,13 @@ import com.zorrodev.bpm.contract.dto.FormDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 public interface FormContract {
+
+    @GetMapping("/forms")
+    List<FormDTO> listForms();
 
     @PostMapping("/forms")
     FormDTO deployForm(@RequestBody DeployFormDTO dto);
