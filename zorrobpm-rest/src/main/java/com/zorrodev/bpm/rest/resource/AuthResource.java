@@ -99,11 +99,18 @@ public class AuthResource implements AuthContract {
 
         String tokenHash = tokenService.hashToken(refreshTokenValue);
 
-        // S10: reuse-detection — if the token exists but is already revoked, revoke ALL for this user
+        // S10: reuse-detection — if the token exists but is already revoked
         var anyToken = refreshTokenRepository.findByTokenHash(tokenHash);
         if (anyToken.isPresent() && anyToken.get().isRevoked()) {
-            refreshTokenRepository.revokeAllByUserId(anyToken.get().getUserId());
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token revoked — theft detected");
+            // WO-SEC-18 L7: grace window — if revoked within last 5s, treat as retry (not theft)
+            boolean revokedRecently = anyToken.get().getCreatedAt() != null
+                && Instant.now().isBefore(anyToken.get().getCreatedAt().plusSeconds(5));
+            if (!revokedRecently) {
+                // Genuine theft: revoke ALL tokens for this user
+                refreshTokenRepository.revokeAllByUserId(anyToken.get().getUserId());
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token revoked — theft detected");
+            }
+            // Retry within grace window: fall through to find a valid token
         }
 
         RefreshTokenEntity found = refreshTokenRepository.findByTokenHashAndRevokedFalse(tokenHash)
@@ -154,10 +161,30 @@ public class AuthResource implements AuthContract {
     @Override
     @Transactional
     public void logout() {
-        // Revoke all refresh tokens for current user
+        // WO-SEC-18 L6: use access token OR refresh token as identity source
+        UUID userId = null;
+
+        // Try access token first
         TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
         if (claims != null) {
-            refreshTokenRepository.revokeAllByUserId(claims.userId());
+            userId = claims.userId();
+        }
+
+        // If access token expired/unavailable, derive identity from refresh token
+        if (userId == null) {
+            String refreshTokenValue = extractCookie("refresh_token");
+            if (refreshTokenValue != null) {
+                String tokenHash = tokenService.hashToken(refreshTokenValue);
+                var refreshToken = refreshTokenRepository.findByTokenHashAndRevokedFalse(tokenHash);
+                if (refreshToken.isPresent()) {
+                    userId = refreshToken.get().getUserId();
+                }
+            }
+        }
+
+        // Revoke all refresh tokens for identified user
+        if (userId != null) {
+            refreshTokenRepository.revokeAllByUserId(userId);
         }
 
         // S4: Clear access cookie (zbpm_token)

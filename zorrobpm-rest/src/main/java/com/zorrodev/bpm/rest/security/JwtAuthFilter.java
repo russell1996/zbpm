@@ -83,7 +83,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private boolean isProtected(String path) {
         if (isAuthLogin(path) || "/auth/refresh".equals(path)) return false;
-        if (path.equals("/auth/me") || path.equals("/auth/logout") || isUsersPath(path)) return true;
+        // WO-SEC-18 L6: logout accessible without valid access token (refresh token identifies user)
+        if (path.equals("/auth/me") || isUsersPath(path)) return true;
         if (!requireApiAuth) return false;
         return isDataApiPath(path);
     }
@@ -112,6 +113,24 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
 
         String path = PathNormalizer.normalize(request.getRequestURI());
+
+        // WO-SEC-18 L6: logout needs identity but not auth — parse JWT if present, don't reject
+        if (path.equals("/auth/logout")) {
+            String header = request.getHeader("Authorization");
+            String token = (header != null && header.startsWith("Bearer "))
+                ? header.substring(7)
+                : extractTokenFromCookie(request);
+            if (token != null && !token.startsWith(API_KEY_PREFIX)) {
+                TokenService.Claims claims = tokenService.verify(token);
+                if (claims != null) {
+                    request.setAttribute("authClaims", claims);
+                    request.setAttribute("principal", new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role()));
+                }
+            }
+            chain.doFilter(request, response);
+            return;
+        }
+
         if (!isProtected(path)) {
             chain.doFilter(request, response);
             return;
