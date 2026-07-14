@@ -50,6 +50,12 @@ const router = createRouter({
           meta: { title: 'Process Definition' },
         },
         {
+          path: 'processes/:key/start',
+          name: 'start-form',
+          component: () => import('@/pages/processes/StartForm.vue'),
+          meta: { title: 'Start Process' },
+        },
+        {
           path: 'processes/instances',
           name: 'process-instances',
           component: () => import('@/pages/processes/ProcessInstanceList.vue'),
