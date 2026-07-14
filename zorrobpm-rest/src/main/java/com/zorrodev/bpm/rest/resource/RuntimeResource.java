@@ -6,7 +6,9 @@ import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.contract.exception.FormValidationException;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
@@ -16,6 +18,7 @@ import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
@@ -25,6 +28,7 @@ import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.FormValidator;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -36,6 +40,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -57,6 +62,8 @@ public class RuntimeResource implements RuntimeContract {
     private final DBService dbService;
     private final AuditLogService auditLogService;
     private final UserGroupRepository userGroupRepository;
+    private final FormValidator formValidator;
+    private final FormRepository formRepository;
     private final HttpServletRequest request;
 
     private Principal getPrincipal() {
@@ -115,6 +122,26 @@ public class RuntimeResource implements RuntimeContract {
         }
         requireOperate(definitionKey, AuthorizationService.Action.START);
 
+        // WO-FORM-5: server-side validation of variables against form schema
+        if (definitionKey != null && dto.getVariables() != null && !dto.getVariables().isEmpty()) {
+            Integer maxVersion = processDefinitionRepository.findMaxByKey(definitionKey).orElse(null);
+            if (maxVersion != null) {
+                processDefinitionRepository.findByKeyAndVersion(definitionKey, maxVersion)
+                    .ifPresent(pd -> {
+                        if (pd.getStartFormKey() != null) {
+                            String schemaJson = formRepository.findTopByFormKeyOrderByVersionDesc(pd.getStartFormKey())
+                                .map(FormEntity::getSchemaJson).orElse(null);
+                            if (schemaJson != null) {
+                                List<FormValidator.ValidationError> errors = formValidator.validate(schemaJson, dto.getVariables());
+                                if (!errors.isEmpty()) {
+                                    throw new FormValidationException(errors);
+                                }
+                            }
+                        }
+                    });
+            }
+        }
+
         String onBehalfOf = readOnBehalfOf();
         IdDTO result = Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
 
@@ -169,6 +196,19 @@ public class RuntimeResource implements RuntimeContract {
 
         // Also check assignee (existing check, refactored to use principal)
         checkAssignee(principal, task);
+
+        // WO-FORM-5: server-side validation of variables against form schema
+        if (task.getFormKey() != null && !task.getFormKey().isBlank()
+                && dto.getVariables() != null && !dto.getVariables().isEmpty()) {
+            String schemaJson = formRepository.findTopByFormKeyOrderByVersionDesc(task.getFormKey())
+                .map(FormEntity::getSchemaJson).orElse(null);
+            if (schemaJson != null) {
+                List<FormValidator.ValidationError> errors = formValidator.validate(schemaJson, dto.getVariables());
+                if (!errors.isEmpty()) {
+                    throw new FormValidationException(errors);
+                }
+            }
+        }
 
         String onBehalfOf = readOnBehalfOf();
         IdDTO result = Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
