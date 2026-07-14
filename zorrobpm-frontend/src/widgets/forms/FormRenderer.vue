@@ -47,14 +47,15 @@ onUnmounted(() => {
   }
 })
 
-async function submit() {
-  if (!formInstance) return
+function submit(): { data: Record<string, string>; errors: Record<string, string> } | undefined {
+  if (!formInstance) return undefined
   const { data, errors } = formInstance.submit()
   if (errors && Object.keys(errors).length > 0) {
     emit('error', errors)
   } else {
     emit('submit', data)
   }
+  return { data, errors: errors || {} }
 }
 
 defineExpose({ submit })

@@ -6,6 +6,7 @@ import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import { getTaskForm, type TaskFormResponse } from '@/services/formService'
 import type { ProcessVariable } from '@/types/api'
+import { dataToVariables } from '@/shared/lib/formMapping'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import FormRenderer from '@/widgets/forms/FormRenderer.vue'
 
@@ -27,14 +28,6 @@ async function loadForm() {
   } catch {
     formResponse.value = { type: 'none' }
   }
-}
-
-function dataToVariables(data: Record<string, string>): ProcessVariable[] {
-  return Object.entries(data).map(([name, value]) => ({
-    name,
-    type: (typeof value === 'number' ? 'LONG' : typeof value === 'boolean' ? 'BOOLEAN' : 'STRING') as ProcessVariable['type'],
-    value: String(value),
-  }))
 }
 
 async function complete() {
