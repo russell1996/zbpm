@@ -14,32 +14,40 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLDivElement>()
 let editorInstance: any = null
 
-function initEditor() {
+const EMPTY_SCHEMA = { type: 'form', components: [], schemaVersion: 16 }
+
+async function initEditor() {
   if (!containerRef.value) return
   editorInstance = new FormEditor({ container: containerRef.value })
-  if (props.schema) {
-    editorInstance.importSchema(props.schema)
-  } else {
-    editorInstance.importSchema({ type: 'form', components: [] })
-  }
+  // importSchema is async — await it, otherwise the editor may render blank
+  await editorInstance.importSchema(props.schema ?? EMPTY_SCHEMA)
 }
 
 watch(
   () => props.schema,
-  () => {
+  async () => {
     if (editorInstance && props.schema) {
-      editorInstance.importSchema(props.schema)
+      await editorInstance.importSchema(props.schema)
     }
   },
 )
 
-onMounted(() => { initEditor() })
-onUnmounted(() => { if (editorInstance) { editorInstance.destroy(); editorInstance = null } })
+onMounted(() => {
+  initEditor()
+})
+onUnmounted(() => {
+  if (editorInstance) {
+    editorInstance.destroy()
+    editorInstance = null
+  }
+})
 
 function saveSchema() {
   if (!editorInstance) return
-  const schema = editorInstance.save()
+  // form-js editor exposes saveSchema() (NOT save())
+  const schema = editorInstance.saveSchema()
   emit('save', JSON.stringify(schema))
+  return schema
 }
 
 defineExpose({ saveSchema })
@@ -50,5 +58,8 @@ defineExpose({ saveSchema })
 </template>
 
 <style>
+/* Base form-js styles are REQUIRED — the editor embeds a form preview.
+   With only form-js-editor.css the editor renders blank (the "nothing appears" bug). */
+@import '@bpmn-io/form-js/dist/assets/form-js.css';
 @import '@bpmn-io/form-js/dist/assets/form-js-editor.css';
 </style>
