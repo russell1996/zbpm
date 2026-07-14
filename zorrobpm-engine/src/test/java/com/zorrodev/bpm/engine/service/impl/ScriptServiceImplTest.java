@@ -1,11 +1,18 @@
 package com.zorrodev.bpm.engine.service.impl;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import org.camunda.feel.impl.script.FeelScriptEngineFactory;
 import org.camunda.feel.impl.script.FeelUnaryTestsScriptEngineFactory;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import javax.script.ScriptEngine;
 import java.util.List;
@@ -13,6 +20,24 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class ScriptServiceImplTest {
+
+    private ListAppender<ILoggingEvent> logAppender;
+    private Logger logger;
+
+    @BeforeEach
+    void setUp() {
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        logger = (Logger) LoggerFactory.getLogger(ScriptServiceImpl.class);
+        logger.addAppender(logAppender);
+        logger.setLevel(Level.ALL);
+    }
+
+    @AfterEach
+    void tearDown() {
+        logger.detachAppender(logAppender);
+        logAppender.stop();
+    }
 
     private ScriptService service() {
         ScriptEngine unary = new FeelUnaryTestsScriptEngineFactory().getScriptEngine();
@@ -50,5 +75,28 @@ public class ScriptServiceImplTest {
 
         Object greater = service.evaluateExpression("a > b", vars);
         assertThat(greater).isEqualTo(Boolean.TRUE);
+    }
+
+    // --- WO-SEC-16: criterion #2 — DEBUG log must not contain variable values ---
+
+    @Test
+    void criterion2_debugLogDoesNotContainVariableValues() {
+        ScriptService service = service();
+        ProcessVariable secret = var("apiKey", ProcessVariableType.STRING, "sk-live-supersecret123");
+        ProcessVariable token = var("bearer", ProcessVariableType.STRING, "Bearer abcxyz");
+
+        service.evaluateExpression("apiKey", List.of(secret, token));
+
+        List<ILoggingEvent> events = logAppender.list;
+        assertThat(events).isNotEmpty();
+
+        for (ILoggingEvent event : events) {
+            assertThat(event.getFormattedMessage())
+                .as("Log must not contain secret value 'sk-live-supersecret123'")
+                .doesNotContain("sk-live-supersecret123");
+            assertThat(event.getFormattedMessage())
+                .as("Log must not contain token value 'Bearer abcxyz'")
+                .doesNotContain("Bearer abcxyz");
+        }
     }
 }
