@@ -99,4 +99,29 @@ class UiUserServiceImplConstantTimeTest {
         assertThat(result).isPresent();
         verify(passwordHasher).matches("correctpass", "real-hash");
     }
+
+    // --- Observation 3: inactive user must still run matches() (constant-time) ---
+
+    @Test
+    void login_inactiveUser_stillCallsMatches() {
+        UiUserEntity user = new UiUserEntity();
+        user.setId(UUID.randomUUID());
+        user.setUsername("disabled");
+        user.setPasswordHash("real-hash");
+        user.setActive(false);
+        user.setRole("USER");
+
+        when(repository.findByUsername("disabled")).thenReturn(Optional.of(user));
+        when(passwordHasher.matches("somepassword", "real-hash")).thenReturn(true);
+
+        LoginDTO dto = new LoginDTO();
+        dto.setUsername("disabled");
+        dto.setPassword("somepassword");
+
+        Optional<?> result = service.login(dto);
+
+        assertThat(result).isEmpty();
+        // matches() must be called even for inactive user (constant-time)
+        verify(passwordHasher).matches("somepassword", "real-hash");
+    }
 }
