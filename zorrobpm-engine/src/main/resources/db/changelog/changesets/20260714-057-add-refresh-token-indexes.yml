@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260714-057
+  - changeSet:
+      id: 20260714-057
+      author: mimo
+      changes:
+        - addUniqueConstraint:
+            tableName: refresh_tokens
+            columnNames: token_hash
+            constraintName: uk_refresh_tokens_token_hash
+        - createIndex:
+            tableName: refresh_tokens
+            indexName: idx_refresh_tokens_user_id
+            columns:
+              - column:
+                  name: user_id
