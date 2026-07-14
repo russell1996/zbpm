@@ -3,9 +3,16 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.FormContract;
 import com.zorrodev.bpm.contract.dto.DeployFormDTO;
 import com.zorrodev.bpm.contract.dto.FormDTO;
+import com.zorrodev.bpm.contract.dto.TaskFormDTO;
+import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.FormEntity;
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
+import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.FormRepository;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.DBService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -16,6 +23,8 @@ import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -23,6 +32,9 @@ import java.util.UUID;
 public class FormResource implements FormContract {
 
     private final FormRepository formRepository;
+    private final UserTaskRepository userTaskRepository;
+    private final ProcessDefinitionRepository processDefinitionRepository;
+    private final DBService dbService;
     private final HttpServletRequest request;
     private final ObjectMapper objectMapper;
 
@@ -79,6 +91,89 @@ public class FormResource implements FormContract {
         dto.setVersion(entity.getVersion());
         dto.setSchema(entity.getSchemaJson());
         return dto;
+    }
+
+    // --- WO-FORM-2: form resolve endpoints ---
+
+    @Override
+    public TaskFormDTO getUserTaskForm(UUID id) {
+        UserTaskEntity task = userTaskRepository.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found"));
+        return resolveForm(task.getFormKey(), task.getProcessInstanceId());
+    }
+
+    @Override
+    public TaskFormDTO getStartForm(String key) {
+        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, null)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        // For start form, there's no process instance yet — data is empty
+        return resolveStartForm(pd.getStartFormKey());
+    }
+
+    // --- WO-FORM-2: resolve logic ---
+
+    private TaskFormDTO resolveForm(String formKey, UUID processInstanceId) {
+        if (formKey == null || formKey.isBlank()) {
+            TaskFormDTO dto = new TaskFormDTO();
+            dto.setType("none");
+            return dto;
+        }
+
+        // External reference (URL)
+        if (formKey.startsWith("http://") || formKey.startsWith("https://")) {
+            TaskFormDTO dto = new TaskFormDTO();
+            dto.setType("external");
+            dto.setUrl(formKey);
+            return dto;
+        }
+
+        // Linked form (form key in form table)
+        FormEntity form = formRepository.findTopByFormKeyOrderByVersionDesc(formKey)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Form schema not found for key: " + formKey));
+
+        TaskFormDTO dto = new TaskFormDTO();
+        dto.setType("embedded");
+        dto.setSchema(form.getSchemaJson());
+        dto.setData(prefillData(processInstanceId));
+        return dto;
+    }
+
+    private TaskFormDTO resolveStartForm(String startFormKey) {
+        if (startFormKey == null || startFormKey.isBlank()) {
+            TaskFormDTO dto = new TaskFormDTO();
+            dto.setType("none");
+            return dto;
+        }
+
+        if (startFormKey.startsWith("http://") || startFormKey.startsWith("https://")) {
+            TaskFormDTO dto = new TaskFormDTO();
+            dto.setType("external");
+            dto.setUrl(startFormKey);
+            return dto;
+        }
+
+        FormEntity form = formRepository.findTopByFormKeyOrderByVersionDesc(startFormKey)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Form schema not found for key: " + startFormKey));
+
+        TaskFormDTO dto = new TaskFormDTO();
+        dto.setType("embedded");
+        dto.setSchema(form.getSchemaJson());
+        // No data for start form (no process instance yet)
+        return dto;
+    }
+
+    private Map<String, String> prefillData(UUID processInstanceId) {
+        Map<String, String> data = new LinkedHashMap<>();
+        if (processInstanceId == null) return data;
+        java.util.List<ProcessVariable> vars = dbService.getVariables(processInstanceId);
+        for (ProcessVariable v : vars) {
+            if (v.getName() != null && v.getValue() != null) {
+                data.put(v.getName(), v.getValue());
+            }
+        }
+        return data;
     }
 
     private Principal getPrincipal() {

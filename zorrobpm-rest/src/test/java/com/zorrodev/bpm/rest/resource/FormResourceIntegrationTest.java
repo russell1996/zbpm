@@ -1,13 +1,13 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.zorrodev.bpm.contract.dto.AuthResponse;
-import com.zorrodev.bpm.contract.dto.DeployFormDTO;
-import com.zorrodev.bpm.contract.dto.FormDTO;
-import com.zorrodev.bpm.contract.dto.LoginDTO;
+import com.zorrodev.bpm.contract.dto.*;
+import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -20,7 +20,10 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -192,5 +195,194 @@ class FormResourceIntegrationTest {
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isForbidden());
+    }
+
+    // --- WO-FORM-2 tests ---
+
+    private String startProcessAndGetTaskId() throws Exception {
+        String bpmn = new String(
+            Files.readAllBytes(Paths.get("src/test/files/form-task.bpmn")));
+
+        // Deploy BPMN
+        AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+        addDto.setBpmn(bpmn);
+        MvcResult deployResult = mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(addDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID pdId = UUID.fromString(
+            mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
+
+        // Start process with variables for prefill
+        StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
+        startDto.setProcessDefinitionId(pdId);
+        ProcessVariable amount = new ProcessVariable();
+        amount.setName("amount"); amount.setValue("100"); amount.setType(ProcessVariableType.STRING);
+        ProcessVariable currency = new ProcessVariable();
+        currency.setName("currency"); currency.setValue("USD"); currency.setType(ProcessVariableType.STRING);
+        startDto.setVariables(List.of(amount, currency));
+        MvcResult startResult = mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(startDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID instanceId = UUID.fromString(
+            mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
+
+        // Find the user task
+        MvcResult taskResult = mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("processInstanceId", instanceId.toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+        var tasks = mapper.readTree(taskResult.getResponse().getContentAsString()).get("data");
+        return tasks.get(0).get("id").asText();
+    }
+
+    // --- Criterion #1: Task with linked form → {type:embedded, schema, data} ---
+
+    @Test
+    void criterion1_taskWithLinkedForm_returnsEmbeddedWithSchema() throws Exception {
+        // Deploy form schema
+        String schema = "{\"type\":\"form\",\"components\":[{\"type\":\"number\",\"key\":\"amount\"}]}";
+        mockMvc.perform(post("/forms")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(deployForm("orderForm", schema)))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        // Start process and get task
+        String taskId = startProcessAndGetTaskId();
+
+        // GET /user-tasks/{id}/form
+        mockMvc.perform(get("/user-tasks/" + taskId + "/form")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("embedded"))
+                .andExpect(jsonPath("$.schema").value(schema));
+    }
+
+    // --- Criterion #2: data contains current variables (prefill) ---
+
+    @Test
+    void criterion2_prefillData_containsCurrentVariables() throws Exception {
+        String schema = "{\"type\":\"form\",\"components\":[]}";
+        mockMvc.perform(post("/forms")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(deployForm("prefillForm", schema)))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        String taskId = startProcessAndGetTaskId();
+
+        mockMvc.perform(get("/user-tasks/" + taskId + "/form")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("embedded"))
+                .andExpect(jsonPath("$.data.amount").value("100"))
+                .andExpect(jsonPath("$.data.currency").value("USD"));
+    }
+
+    // --- Criterion #3: Task with external-ref → {type:external, url} ---
+
+    @Test
+    void criterion3_externalReference_returnsExternalType() throws Exception {
+        // Create a BPMN with externalReference (URL)
+        String bpmnExternal = new String(
+            Files.readAllBytes(Paths.get("src/test/files/form-task.bpmn")))
+            .replace("formKey=\"orderForm\"", "externalReference=\"https://example.com/form\"");
+
+        AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+        addDto.setBpmn(bpmnExternal);
+        MvcResult deployResult = mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(addDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID pdId = UUID.fromString(
+            mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
+
+        StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
+        startDto.setProcessDefinitionId(pdId);
+        MvcResult startResult = mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(startDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID instanceId = UUID.fromString(
+            mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
+
+        MvcResult taskResult = mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("processInstanceId", instanceId.toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+        String taskId = mapper.readTree(taskResult.getResponse().getContentAsString())
+            .get("data").get(0).get("id").asText();
+
+        mockMvc.perform(get("/user-tasks/" + taskId + "/form")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("external"))
+                .andExpect(jsonPath("$.url").value("https://example.com/form"));
+    }
+
+    // --- Criterion #4: Task without form → {type:none} ---
+
+    @Test
+    void criterion4_noForm_returnsNoneType() throws Exception {
+        // Deploy a BPMN without formDefinition
+        String bpmnNoForm = new String(
+            Files.readAllBytes(Paths.get("src/test/files/form-task.bpmn")))
+            .replace("<zeebe:formDefinition formKey=\"orderForm\" />", "");
+
+        AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+        addDto.setBpmn(bpmnNoForm);
+        MvcResult deployResult = mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(addDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID pdId = UUID.fromString(
+            mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
+
+        StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
+        startDto.setProcessDefinitionId(pdId);
+        MvcResult startResult = mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(startDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID instanceId = UUID.fromString(
+            mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
+
+        MvcResult taskResult = mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("processInstanceId", instanceId.toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+        String taskId = mapper.readTree(taskResult.getResponse().getContentAsString())
+            .get("data").get(0).get("id").asText();
+
+        mockMvc.perform(get("/user-tasks/" + taskId + "/form")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("none"));
+    }
+
+    // --- Criterion #6: Unknown task → 404 ---
+
+    @Test
+    void criterion6_unknownTask_returns404() throws Exception {
+        mockMvc.perform(get("/user-tasks/" + UUID.randomUUID() + "/form")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
     }
 }

@@ -1303,7 +1303,9 @@ public class ActivityServiceImpl implements ActivityService {
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         String resolvedAssignee = resolveAssignee(processInstanceId, bpmnElement);
         String resolvedGroups = resolveCandidateGroups(processInstanceId, bpmnElement);
-        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups);
+        String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
+            ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
+        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
         applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
@@ -1437,7 +1439,9 @@ public class ActivityServiceImpl implements ActivityService {
         if (element.getType() == BpmnElementType.USER_TASK) {
             String resolvedAssignee = resolveAssignee(processInstanceId, element);
             String resolvedGroups = resolveCandidateGroups(processInstanceId, element);
-            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups);
+            String formKey = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
+                ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
+            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
         } else {
             dbService.createServiceTask(activityId, serviceTaskRetries(element));
             applyIoMappings(processInstanceId, activityId, element, true);
