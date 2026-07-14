@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Real IT test on PostgreSQL — creates users with literal %, _, \ and searches.
  * Extends PostgresIT for correct @DynamicPropertySource (port 55432 on PG).
  */
-class LikeEscapeIntegrationTest extends PostgresIT {
+class LikeEscapeIT extends PostgresIT {
 
     @Autowired UiUserService userService;
 
