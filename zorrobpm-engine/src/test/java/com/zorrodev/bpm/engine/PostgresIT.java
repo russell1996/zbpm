@@ -24,7 +24,7 @@ public abstract class PostgresIT {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        String host = System.getProperty("PG_HOST", "localhost");
+        String host = System.getProperty("PG_HOST", "127.0.0.1");
         String port = System.getProperty("PG_PORT", "55432");
         String db = System.getProperty("PG_DB", "zbpm_test");
         String user = System.getProperty("PG_USER", "postgres");

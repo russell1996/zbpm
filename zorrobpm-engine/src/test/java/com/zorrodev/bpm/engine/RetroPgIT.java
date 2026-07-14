@@ -17,15 +17,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-PROC-7: Retroactive catch tests on real PostgreSQL.
- * Tagged @Tag("pg") — excluded from default CI runs (excludedGroups=pg in failsafe).
- * Run locally against docker-compose postgres:16:
+ * WO-PROC-7 + WO-INT-1: Retroactive catch tests on real PostgreSQL.
+ * Tagged @Tag("pg") via PostgresIT base class — excluded from default CI runs.
  *
+ * Run locally:
  * <pre>
  * docker compose up -d postgres
- * mvn test -pl zorrobpm-engine -Dgroups=pg \
- *   -Dspring.profiles.active=test,pgtest \
- *   -DPG_HOST=localhost -DPG_PORT=5433 -DPG_DB=zbpm_test -DPG_USER=test -DPG_PASSWORD=test
+ * mvn test -pl zorrobpm-engine -Dgroups=pg
  * docker compose down postgres
  * </pre>
  *
@@ -33,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   with null params generated SQL incompatible with PostgreSQL → 500 in prod.
  * criterion #4 (REL-4 L2): FOR UPDATE SKIP LOCKED on PG — proves two concurrent pollers
  *   don't pick the same outbox entries. H2 doesn't enforce this the same way.
+ * criterion #5 (WO-INT-1): Migration 053 adds candidate_groups column to user_tasks on PG.
  */
 public class RetroPgIT extends PostgresIT {
 
@@ -54,8 +53,6 @@ public class RetroPgIT extends PostgresIT {
         entry.setTargetId(UUID.randomUUID().toString());
         auditLogRepository.save(entry);
 
-        // Before MT-10 fix: PG 500 (Specification null-param SQL incompatible).
-        // After fix: Specification uses Criteria API → works on PG.
         List<AuditLogEntity> result = auditLogRepository.findByFilters(null, null, null, null);
         assertThat(result).isNotEmpty();
         assertThat(result.get(0).getAction()).isEqualTo("TEST_ACTION");
@@ -141,7 +138,6 @@ public class RetroPgIT extends PostgresIT {
         t1.join(10000);
         t2.join(10000);
 
-        // FOR UPDATE SKIP LOCKED: each entry picked by exactly one poller
         int totalPicked = poller1Count.get() + poller2Count.get();
         assertThat(totalPicked)
             .as("Two pollers must pick all entries without duplicates (FOR UPDATE SKIP LOCKED)")

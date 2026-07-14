@@ -219,7 +219,7 @@ class DBServiceImplTest {
         when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
         when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
 
-        dbService.createUserTask(activityId, "test-assignee");
+        dbService.createUserTask(activityId, "test-assignee", null);
 
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());

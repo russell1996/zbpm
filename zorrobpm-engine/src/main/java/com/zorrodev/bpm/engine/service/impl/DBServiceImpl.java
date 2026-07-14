@@ -232,7 +232,7 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public void createUserTask(UUID activityId, String assignee) {
+    public void createUserTask(UUID activityId, String assignee, String candidateGroups) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         UserTaskEntity entity = new UserTaskEntity();
         entity.setId(activity.getId());
@@ -240,6 +240,7 @@ public class DBServiceImpl implements DBService {
         entity.setProcessInstanceId(activity.getProcessInstanceId());
         entity.setCreatedAt(activity.getCreatedAt());
         entity.setAssignee(assignee);
+        entity.setCandidateGroups(candidateGroups);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());

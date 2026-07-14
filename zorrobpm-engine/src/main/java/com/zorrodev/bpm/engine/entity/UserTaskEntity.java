@@ -23,4 +23,6 @@ public class UserTaskEntity {
     private Instant completedAt;
     private String formKey;
     private String assignee;
+    /** Comma-separated resolved candidate groups (WO-INT-1). */
+    private String candidateGroups;
 }
