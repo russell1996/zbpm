@@ -7,6 +7,7 @@ export interface User {
   email: string | null
   role: UserRole
   active: boolean
+  forcePasswordChange: boolean
   createdAt: string
   updatedAt: string
 }

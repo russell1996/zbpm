@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { resolveGuard } from './guard'
 
 const router = createRouter({
   history: createWebHistory('/ui/'),
@@ -18,6 +19,12 @@ const router = createRouter({
       path: '/access-denied',
       name: 'access-denied',
       component: () => import('@/pages/AccessDenied.vue'),
+    },
+    {
+      path: '/change-password',
+      name: 'change-password',
+      component: () => import('@/pages/ChangePassword.vue'),
+      meta: { requiresAuth: true },
     },
     {
       path: '/',
@@ -153,15 +160,14 @@ router.beforeEach(async (to) => {
     }
   }
 
-  // Role guard: admin-only routes require ADMIN role
-  if (to.meta.requiresAdmin && !auth.isAdmin) {
-    return { name: 'access-denied' }
-  }
-
-  // ADR-2: super-admin-only routes require SUPER_ADMIN
-  if (to.meta.requiresSuperAdmin && !auth.isSuperAdmin) {
-    return { name: 'access-denied' }
-  }
+  // Role + forcePasswordChange guard
+  const guardResult = resolveGuard(to, {
+    isAuthenticated: auth.isAuthenticated,
+    isAdmin: auth.isAdmin,
+    isSuperAdmin: auth.isSuperAdmin,
+    forcePasswordChange: auth.forcePasswordChange,
+  })
+  if (guardResult) return guardResult
 
   // already signed in -> keep the login page out of reach
   if (to.name === 'login' && auth.isAuthenticated) {

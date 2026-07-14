@@ -1,9 +1,13 @@
 import type { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios'
+import { useAuthStore } from '@/stores/auth'
 
 /**
  * Auto-refresh interceptor: on 401, attempts a single /auth/refresh,
  * and retries the original request if successful.
  * Excludes /auth/login, /auth/refresh, and /auth/logout from refresh attempts.
+ *
+ * WO-SEC-19: Also handles 403 PASSWORD_CHANGE_REQUIRED by setting
+ * forcePasswordChange in the auth store and redirecting to change-password.
  */
 export function createRefreshInterceptor(instance: AxiosInstance): void {
   let isRefreshing = false
@@ -25,6 +29,19 @@ export function createRefreshInterceptor(instance: AxiosInstance): void {
     async (error: AxiosError) => {
       const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
       const url: string = originalRequest?.url || ''
+
+      // WO-SEC-19: Handle 403 PASSWORD_CHANGE_REQUIRED
+      if (error.response?.status === 403) {
+        const body = error.response?.data as Record<string, unknown> | undefined
+        if (body?.code === 'PASSWORD_CHANGE_REQUIRED') {
+          const auth = useAuthStore()
+          if (auth.isAuthenticated) {
+            auth.setForcePasswordChange(true)
+            window.location.href = '/ui/change-password'
+          }
+          return Promise.reject(error)
+        }
+      }
 
       // Skip refresh for auth endpoints and already-retried requests
       const isAuthEndpoint =
