@@ -14,7 +14,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -84,9 +86,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleGenericRuntime(RuntimeException ex) {
+        // WO-SEC-17 M6: log full details internally, return generic message to client
+        log.error("Unhandled runtime exception", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
             "code", "INTERNAL_ERROR",
-            "message", ex.getMessage() != null ? ex.getMessage() : "Internal server error"
+            "message", "An unexpected error occurred"
         ));
     }
 }

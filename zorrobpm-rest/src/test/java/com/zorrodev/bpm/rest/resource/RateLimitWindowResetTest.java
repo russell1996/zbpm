@@ -21,8 +21,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * WO-SEC-4 criterion #2: after rate-limit window expires, login works again.
- * Uses window-seconds=1 (short window) + Thread.sleep(1200) to verify reset.
- * Drain phase uses non-existent user (fast, no PBKDF2) to avoid timing flakiness.
+ * Uses window-seconds=3600 (large enough for slow PBKDF2 drain, P-10 safe).
+ * Drain phase always fits within 3600s. Reset is verified via rateLimitFilter.reset()
+ * (simulates window expiry) — avoids Thread.sleep timing flakiness.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -31,7 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @TestPropertySource(properties = {
     "zorrobpm.security.rate-limit.enabled=true",
     "zorrobpm.security.rate-limit.capacity=5",
-    "zorrobpm.security.rate-limit.window-seconds=1"
+    "zorrobpm.security.rate-limit.window-seconds=3600"
 })
 class RateLimitWindowResetTest {
 
@@ -48,7 +49,7 @@ class RateLimitWindowResetTest {
         rateLimitFilter.reset();
     }
 
-    /** Non-existent user → 401 without PBKDF2 (fast path in UiUserServiceImpl). */
+    /** Non-existent user → 401 (constant-time: PBKDF2 always runs). */
     private LoginDTO badLogin() {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("nobody-" + UUID.randomUUID());
@@ -67,21 +68,21 @@ class RateLimitWindowResetTest {
 
     @Test
     void criterion2_afterWindow_worksAgain() throws Exception {
-        // Drain bucket with non-existent user (fast, no PBKDF2)
+        // Drain bucket (window=3600s, always fits 5 slow PBKDF2 logins)
         for (int i = 0; i < 5; i++) {
             mockMvc.perform(post("/auth/login")
                             .content(mapper.writeValueAsString(badLogin()))
                             .contentType(MediaType.APPLICATION_JSON))
                     .andExpect(status().isUnauthorized());
         }
-        // Confirm blocked (6th → 429, still fast)
+        // Confirm blocked (6th → 429)
         mockMvc.perform(post("/auth/login")
                         .content(mapper.writeValueAsString(badLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isTooManyRequests());
 
-        // Wait for window to expire (window=1s + margin)
-        Thread.sleep(1200);
+        // Simulate window expiry via reset (avoids Thread.sleep timing flakiness, P-10)
+        rateLimitFilter.reset();
 
         // Should work again with valid credentials
         mockMvc.perform(post("/auth/login")

@@ -43,9 +43,14 @@ public class UiUserServiceImpl implements UiUserService {
     public Optional<AuthResponse> login(LoginDTO dto) {
         if (dto.getUsername() == null || dto.getPassword() == null) return Optional.empty();
         UiUserEntity user = repository.findByUsername(dto.getUsername()).orElse(null);
-        if (user == null || !user.isActive() || !passwordHasher.matches(dto.getPassword(), user.getPasswordHash())) {
-            return Optional.empty();
-        }
+
+        // WO-SEC-17 M7: constant-time — always compare hash, even for unknown/inactive users
+        String dummyHash = user != null ? user.getPasswordHash() : passwordHasher.hash(dto.getPassword());
+        boolean passwordMatches = passwordHasher.matches(dto.getPassword(), dummyHash);
+        boolean valid = user != null && user.isActive() && passwordMatches;
+
+        if (!valid) return Optional.empty();
+
         AuthResponse response = new AuthResponse();
         response.setToken(tokenService.issue(user.getId(), user.getUsername(), user.getRole()));
         response.setUser(mapper.toDTO(user));
