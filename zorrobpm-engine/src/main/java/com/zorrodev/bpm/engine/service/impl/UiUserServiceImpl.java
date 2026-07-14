@@ -44,10 +44,10 @@ public class UiUserServiceImpl implements UiUserService {
         if (dto.getUsername() == null || dto.getPassword() == null) return Optional.empty();
         UiUserEntity user = repository.findByUsername(dto.getUsername()).orElse(null);
 
-        // WO-SEC-17 M7: constant-time — always compare hash, even for unknown username
+        // WO-SEC-17 M7: constant-time — always compare hash, even for unknown/inactive users
         String dummyHash = user != null ? user.getPasswordHash() : passwordHasher.hash(dto.getPassword());
-        boolean valid = user != null && user.isActive()
-            && passwordHasher.matches(dto.getPassword(), dummyHash);
+        boolean passwordMatches = passwordHasher.matches(dto.getPassword(), dummyHash);
+        boolean valid = user != null && user.isActive() && passwordMatches;
 
         if (!valid) return Optional.empty();
 
