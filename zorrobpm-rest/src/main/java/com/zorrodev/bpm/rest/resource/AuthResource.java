@@ -103,8 +103,8 @@ public class AuthResource implements AuthContract {
         var anyToken = refreshTokenRepository.findByTokenHash(tokenHash);
         if (anyToken.isPresent() && anyToken.get().isRevoked()) {
             // WO-SEC-18 L7: grace window — if revoked within last 5s, treat as retry (not theft)
-            boolean revokedRecently = anyToken.get().getCreatedAt() != null
-                && Instant.now().isBefore(anyToken.get().getCreatedAt().plusSeconds(5));
+            boolean revokedRecently = anyToken.get().getRevokedAt() != null
+                && Instant.now().isBefore(anyToken.get().getRevokedAt().plusSeconds(5));
             if (!revokedRecently) {
                 // Genuine theft: revoke ALL tokens for this user
                 refreshTokenRepository.revokeAllByUserId(anyToken.get().getUserId());
@@ -132,6 +132,7 @@ public class AuthResource implements AuthContract {
 
         // Revoke old refresh token, issue new one (rotation)
         found.setRevoked(true);
+        found.setRevokedAt(Instant.now());
         refreshTokenRepository.save(found);
 
         String newRefreshToken = tokenService.generateRefreshToken();

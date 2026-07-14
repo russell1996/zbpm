@@ -93,21 +93,25 @@ class SecurityLowBatchIntegrationTest {
 
     @Test
     void criterion3_retryRefreshDoesNotRevokeAllSessions() throws Exception {
+        // Create two sessions
         LoginResult login1 = loginWithRefreshToken();
         LoginResult login2 = loginWithRefreshToken();
 
-        // First refresh succeeds → rotation
+        // Realistic scenario: token was created >5s ago, then rotated NOW
+        Thread.sleep(6000);
+
+        // First refresh → rotation (revokedAt set to now)
         mockMvc.perform(post("/auth/refresh")
                         .cookie(new jakarta.servlet.http.Cookie("refresh_token", login1.refreshToken())))
                 .andExpect(status().isOk());
 
-        // Simulate network retry: same refresh token sent again (now revoked)
-        // L7: grace window means this should NOT revoke ALL tokens
+        // Network retry: same old token sent immediately after rotation (within 5s of revokedAt)
+        // L7: grace window → this is a retry, NOT theft → family should survive
         mockMvc.perform(post("/auth/refresh")
                         .cookie(new jakarta.servlet.http.Cookie("refresh_token", login1.refreshToken())))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized()); // retry returns 401 (token revoked)
 
-        // login2's refresh token should still work (not revoked by retry)
+        // login2's refresh token should still work (NOT revoked by the retry)
         mockMvc.perform(post("/auth/refresh")
                         .cookie(new jakarta.servlet.http.Cookie("refresh_token", login2.refreshToken())))
                 .andExpect(status().isOk());
