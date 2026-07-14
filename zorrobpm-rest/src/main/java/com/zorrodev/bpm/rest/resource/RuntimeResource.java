@@ -123,22 +123,23 @@ public class RuntimeResource implements RuntimeContract {
         requireOperate(definitionKey, AuthorizationService.Action.START);
 
         // WO-FORM-5: server-side validation of variables against form schema
-        if (definitionKey != null && dto.getVariables() != null && !dto.getVariables().isEmpty()) {
+        if (definitionKey != null) {
             Integer maxVersion = processDefinitionRepository.findMaxByKey(definitionKey).orElse(null);
             if (maxVersion != null) {
-                processDefinitionRepository.findByKeyAndVersion(definitionKey, maxVersion)
-                    .ifPresent(pd -> {
-                        if (pd.getStartFormKey() != null) {
-                            String schemaJson = formRepository.findTopByFormKeyOrderByVersionDesc(pd.getStartFormKey())
-                                .map(FormEntity::getSchemaJson).orElse(null);
-                            if (schemaJson != null) {
-                                List<FormValidator.ValidationError> errors = formValidator.validate(schemaJson, dto.getVariables());
-                                if (!errors.isEmpty()) {
-                                    throw new FormValidationException(errors);
-                                }
-                            }
+                ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(definitionKey, maxVersion).orElse(null);
+                if (pd != null && pd.getStartFormKey() != null) {
+                    String schemaJson = formRepository.findTopByFormKeyOrderByVersionDesc(pd.getStartFormKey())
+                        .map(FormEntity::getSchemaJson).orElse(null);
+                    if (schemaJson != null) {
+                        List<FormValidator.ValidationError> errors = formValidator.validate(schemaJson, dto.getVariables());
+                        if (!errors.isEmpty()) {
+                            String errorDetails = errors.stream()
+                                .map(e -> e.field() + ": " + e.message())
+                                .reduce((a, b) -> a + "; " + b).orElse("Validation failed");
+                            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, errorDetails);
                         }
-                    });
+                    }
+                }
             }
         }
 

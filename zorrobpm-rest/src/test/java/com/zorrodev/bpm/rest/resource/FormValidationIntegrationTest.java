@@ -139,8 +139,7 @@ class FormValidationIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.errors").isArray())
-                .andExpect(jsonPath("$.errors[0].field").value("name"));
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("name")));
     }
 
     // --- Criterion #5: No form → no validation (200) ---
@@ -172,6 +171,23 @@ class FormValidationIntegrationTest {
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
+    }
+
+    // --- Fail-open fix: variables=null with required field → 400 ---
+
+    @Test
+    void nullVariables_withRequiredField_returns400() throws Exception {
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(processDefinitionId);
+        dto.setVariables(null);
+        // null variables → treated as empty → required field "name" missing → 400
+        mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("name")));
     }
 
     private ProcessVariable createVar(String name, String value, ProcessVariableType type) {
