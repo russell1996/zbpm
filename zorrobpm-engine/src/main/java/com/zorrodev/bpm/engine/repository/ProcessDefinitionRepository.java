@@ -15,7 +15,9 @@ public interface ProcessDefinitionRepository extends JpaRepository<ProcessDefini
 
     /** Case-insensitive partial match on the process name. */
     static Specification<ProcessDefinitionEntity> byNameContains(String name) {
-        return (root, query, cb) -> cb.like(cb.lower(root.get("name")), "%" + name.toLowerCase() + "%");
+        // WO-SEC-17 L3: escape LIKE wildcards + backslash to prevent injection
+        String escaped = name.toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return (root, query, cb) -> cb.like(cb.lower(root.get("name")), "%" + escaped + "%", '\\');
     }
 
     static Specification<ProcessDefinitionEntity> byKey(String key) {
