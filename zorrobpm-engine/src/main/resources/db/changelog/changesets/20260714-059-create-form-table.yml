@@ -1,0 +1,41 @@
+databaseChangeLog:
+  - logicalFilePath: 20260714-059
+  - changeSet:
+      id: 20260714-059
+      author: mimo
+      changes:
+        - createTable:
+            tableName: form
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: form_key
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: version
+                  type: int
+                  constraints:
+                    nullable: false
+              - column:
+                  name: schema_json
+                  type: text
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamp
+                  constraints:
+                    nullable: false
+        - addPrimaryKey:
+            tableName: form
+            columnNames: id
+        - addUniqueConstraint:
+            tableName: form
+            columnNames: form_key, version
+            constraintName: uk_form_key_version
