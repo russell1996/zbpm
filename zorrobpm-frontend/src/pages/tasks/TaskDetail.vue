@@ -4,8 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
+import { getTaskForm, type TaskFormResponse } from '@/services/formService'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import FormRenderer from '@/widgets/forms/FormRenderer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,13 +16,43 @@ const toast = useToast()
 const { t } = useI18n()
 
 const editableVars = ref<{ name: string; type: string; value: string }[]>([])
+const formResponse = ref<TaskFormResponse | null>(null)
+const formRef = ref<InstanceType<typeof FormRenderer> | null>(null)
+const formErrors = ref<Record<string, string> | null>(null)
+
+async function loadForm() {
+  if (!store.currentTask) return
+  try {
+    formResponse.value = await getTaskForm(store.currentTask.id)
+  } catch {
+    formResponse.value = { type: 'none' }
+  }
+}
+
+function dataToVariables(data: Record<string, string>): ProcessVariable[] {
+  return Object.entries(data).map(([name, value]) => ({
+    name,
+    type: (typeof value === 'number' ? 'LONG' : typeof value === 'boolean' ? 'BOOLEAN' : 'STRING') as ProcessVariable['type'],
+    value: String(value),
+  }))
+}
 
 async function complete() {
-  const variables: ProcessVariable[] = editableVars.value.map((v) => ({
+  if (formResponse.value?.type === 'embedded' && formRef.value) {
+    // Form-js submit → collect data → complete
+    formErrors.value = null
+    formRef.value.submit()
+    return // submit handler will call doComplete
+  }
+  // Legacy: direct variable editing
+  await doComplete(editableVars.value.map((v) => ({
     name: v.name,
     type: v.type as ProcessVariable['type'],
     value: v.value,
-  }))
+  })))
+}
+
+async function doComplete(variables: ProcessVariable[]) {
   await store.completeUserTask(route.params.id as string, variables)
   if (!store.error) {
     toast.success('Task completed')
@@ -30,13 +62,26 @@ async function complete() {
   }
 }
 
+function onFormSubmit(data: Record<string, string>) {
+  doComplete(dataToVariables(data))
+}
+
+function onFormError(errors: Record<string, string>) {
+  formErrors.value = errors
+}
+
 onMounted(async () => {
   await store.fetchUserTask(route.params.id as string)
-  editableVars.value = store.currentTaskVariables.map((v) => ({
-    name: v.name,
-    type: v.type,
-    value: v.value,
-  }))
+  await loadForm()
+
+  // Fallback: populate editable vars only if no embedded form
+  if (formResponse.value?.type !== 'embedded') {
+    editableVars.value = store.currentTaskVariables.map((v) => ({
+      name: v.name,
+      type: v.type,
+      value: v.value,
+    }))
+  }
 })
 </script>
 
@@ -73,7 +118,31 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="border border-border rounded-lg p-4 bg-card">
+      <!-- FORM-3: Embedded form (form-js) -->
+      <div v-if="formResponse?.type === 'embedded'" class="border border-border rounded-lg p-4 bg-card">
+        <h2 class="text-lg font-bold mb-4">{{ t('form') }}</h2>
+        <FormRenderer
+          ref="formRef"
+          :schema="formResponse.schema!"
+          :data="formResponse.data || {}"
+          @submit="onFormSubmit"
+          @error="onFormError"
+        />
+        <div v-if="formErrors" class="mt-2 text-sm text-red-500">
+          <div v-for="(msg, field) in formErrors" :key="field">{{ field }}: {{ msg }}</div>
+        </div>
+      </div>
+
+      <!-- FORM-3: External form — show link -->
+      <div v-else-if="formResponse?.type === 'external'" class="border border-border rounded-lg p-4 bg-card">
+        <h2 class="text-lg font-bold mb-4">{{ t('externalForm') }}</h2>
+        <a :href="formResponse.url" target="_blank" rel="noopener" class="text-primary underline">
+          {{ formResponse.url }}
+        </a>
+      </div>
+
+      <!-- FORM-3: No form — legacy variable editor (unchanged) -->
+      <div v-else class="border border-border rounded-lg p-4 bg-card">
         <h2 class="text-lg font-bold mb-4">{{ t('variables') }}</h2>
         <div class="space-y-3">
           <div v-for="(v, i) in editableVars" :key="v.name" class="flex items-center gap-3">
@@ -93,7 +162,7 @@ onMounted(async () => {
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
           @click="complete"
         >
-          {{ t('completeTask') }}
+          {{ formResponse?.type === 'embedded' ? t('submitForm') : t('completeTask') }}
         </button>
       </div>
     </template>
