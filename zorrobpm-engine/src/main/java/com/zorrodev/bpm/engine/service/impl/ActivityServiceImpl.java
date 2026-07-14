@@ -34,6 +34,8 @@ import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
+import org.camunda.feel.api.FeelEngineApi;
+import org.camunda.feel.api.EvaluationResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
@@ -65,6 +67,7 @@ public class ActivityServiceImpl implements ActivityService {
     private final DmnService dmnService;
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
     private final tools.jackson.databind.ObjectMapper objectMapper;
+    private final FeelEngineApi feelEngineApi;
 
     /**
      * Handler for a single BPMN element type. Method references capture {@code this} lazily,
@@ -1298,7 +1301,9 @@ public class ActivityServiceImpl implements ActivityService {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createUserTask(activityId, extractAssignee(bpmnElement));
+        String resolvedAssignee = resolveAssignee(processInstanceId, bpmnElement);
+        String resolvedGroups = resolveCandidateGroups(processInstanceId, bpmnElement);
+        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups);
         applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
@@ -1319,6 +1324,78 @@ public class ActivityServiceImpl implements ActivityService {
             .map(BpmnElementExtensionModel::getUserTaskExtension)
             .map(UserTaskExtensionModel::getAssignee)
             .orElse(null);
+    }
+
+    /**
+     * WO-INT-1: Resolve assignee from BPMN expression against process instance variables.
+     * Expressions: ${var} (MVEL-style) or =expr (FEEL). Plain strings returned as-is.
+     */
+    private String resolveAssignee(UUID processInstanceId, BpmnElementModel element) {
+        String raw = extractAssignee(element);
+        return resolveExpression(raw, processInstanceId);
+    }
+
+    /**
+     * WO-INT-1: Resolve candidateGroups from BPMN expression against process instance variables.
+     * Returns comma-separated resolved groups, or null if none defined.
+     */
+    private String resolveCandidateGroups(UUID processInstanceId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCandidateGroups)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpression(raw, processInstanceId);
+    }
+
+    /**
+     * WO-INT-1: Resolve a raw BPMN expression string against process instance variables.
+     * - ${var} → extract var name from curly braces, look up in variables
+     * - =expr → evaluate as FEEL expression
+     * - plain string → return as-is (literal)
+     * - unresolvable → null + warn
+     */
+    private String resolveExpression(String raw, UUID processInstanceId) {
+        if (raw == null || raw.isBlank()) return null;
+
+        // ${var} syntax — extract variable name
+        if (raw.startsWith("${") && raw.endsWith("}")) {
+            String varName = raw.substring(2, raw.length() - 1).trim();
+            Map<String, Object> vars = variablesToMap(processInstanceId);
+            Object val = vars.get(varName);
+            if (val == null) {
+                log.warn("WO-INT-1: variable '{}' not found in instance {}, returning null", varName, processInstanceId);
+                return null;
+            }
+            return val.toString();
+        }
+
+        // FEEL expression — starts with =
+        if (raw.startsWith("=")) {
+            Map<String, Object> vars = variablesToMap(processInstanceId);
+            EvaluationResult result = feelEngineApi.evaluateExpression(raw.substring(1), vars);
+            if (!result.isSuccess()) {
+                log.warn("WO-INT-1: FEEL expression '{}' failed in instance {}: {}", raw, processInstanceId, result.failure());
+                return null;
+            }
+            Object val = result.result();
+            return val != null ? val.toString() : null;
+        }
+
+        // Plain string — return as-is
+        return raw;
+    }
+
+    /**
+     * WO-INT-1: Convert process instance variables to a Map for FEEL evaluation.
+     */
+    private Map<String, Object> variablesToMap(UUID processInstanceId) {
+        List<ProcessVariable> vars = dbService.getVariables(processInstanceId);
+        Map<String, Object> map = new java.util.HashMap<>();
+        for (ProcessVariable v : vars) {
+            map.put(v.getName(), v.getValue());
+        }
+        return map;
     }
 
     /**
@@ -1358,7 +1435,9 @@ public class ActivityServiceImpl implements ActivityService {
         UUID activityId = dbService.createActivity(processInstanceId, token, element);
         bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
         if (element.getType() == BpmnElementType.USER_TASK) {
-            dbService.createUserTask(activityId, extractAssignee(element));
+            String resolvedAssignee = resolveAssignee(processInstanceId, element);
+            String resolvedGroups = resolveCandidateGroups(processInstanceId, element);
+            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups);
         } else {
             dbService.createServiceTask(activityId, serviceTaskRetries(element));
             applyIoMappings(processInstanceId, activityId, element, true);

@@ -60,7 +60,7 @@ public interface DBService {
 
     void completeServiceTask(UUID serviceTaskId);
 
-    void createUserTask(UUID activityId, String assignee);
+    void createUserTask(UUID activityId, String assignee, String candidateGroups);
 
     void completeUserTask(UUID serviceTaskId);
 
