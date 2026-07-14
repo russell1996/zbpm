@@ -64,6 +64,12 @@ public class RuntimeResource implements RuntimeContract {
         return attr instanceof Principal p ? p : null;
     }
 
+    /** Read optional X-On-Behalf-Of header (WO-INT-2). null if absent. */
+    private String readOnBehalfOf() {
+        String val = request.getHeader("X-On-Behalf-Of");
+        return (val != null && !val.isBlank()) ? val.trim() : null;
+    }
+
     private void requireOperate(String definitionKey, AuthorizationService.Action action) {
         Principal principal = getPrincipal();
         if (principal == null) {
@@ -108,8 +114,19 @@ public class RuntimeResource implements RuntimeContract {
             if (pd != null) definitionKey = pd.getKey();
         }
         requireOperate(definitionKey, AuthorizationService.Action.START);
+
+        String onBehalfOf = readOnBehalfOf();
         IdDTO result = Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
-        auditLogService.record(getPrincipal(), "START", definitionKey, result.getId().toString());
+
+        // WO-INT-2: persist initiator on process instance
+        if (onBehalfOf != null) {
+            processInstanceRepository.findById(result.getId()).ifPresent(pi -> {
+                pi.setInitiator(onBehalfOf);
+                processInstanceRepository.save(pi);
+            });
+        }
+
+        auditLogService.record(getPrincipal(), "START", definitionKey, result.getId().toString(), onBehalfOf);
         return result;
     }
 
@@ -153,8 +170,9 @@ public class RuntimeResource implements RuntimeContract {
         // Also check assignee (existing check, refactored to use principal)
         checkAssignee(principal, task);
 
+        String onBehalfOf = readOnBehalfOf();
         IdDTO result = Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
-        auditLogService.record(getPrincipal(), "COMPLETE_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString());
+        auditLogService.record(getPrincipal(), "COMPLETE_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), onBehalfOf);
         return result;
     }
 

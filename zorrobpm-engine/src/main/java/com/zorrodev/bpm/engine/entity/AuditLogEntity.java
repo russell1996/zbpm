@@ -23,4 +23,6 @@ public class AuditLogEntity {
     private String processKey;
     private String targetId;
     private Instant at;
+    /** External user ID when acting via API key (WO-INT-2). */
+    private String onBehalfOf;
 }

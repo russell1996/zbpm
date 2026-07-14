@@ -18,6 +18,10 @@ public class AuditLogService {
     private final AuditLogRepository auditLogRepository;
 
     public void record(Principal principal, String action, String processKey, String targetId) {
+        record(principal, action, processKey, targetId, null);
+    }
+
+    public void record(Principal principal, String action, String processKey, String targetId, String onBehalfOf) {
         if (principal == null) return;
 
         AuditLogEntity entry = new AuditLogEntity();
@@ -26,6 +30,7 @@ public class AuditLogService {
         entry.setAction(action);
         entry.setProcessKey(processKey);
         entry.setTargetId(targetId);
+        entry.setOnBehalfOf(onBehalfOf);
 
         if (principal instanceof Principal.UserPrincipal u) {
             entry.setPrincipalType("USER");
@@ -38,7 +43,7 @@ public class AuditLogService {
         }
 
         auditLogRepository.save(entry);
-        log.debug("Audit: action={} process={} target={} principal={}",
-            action, processKey, targetId, entry.getPrincipalId());
+        log.debug("Audit: action={} process={} target={} principal={} onBehalfOf={}",
+            action, processKey, targetId, entry.getPrincipalId(), onBehalfOf);
     }
 }

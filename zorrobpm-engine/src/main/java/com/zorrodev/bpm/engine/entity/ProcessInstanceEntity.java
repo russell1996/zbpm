@@ -21,4 +21,6 @@ public class ProcessInstanceEntity {
     private Instant completedAt;
     private boolean cancelled;
     private UUID parentActivityId;
+    /** External user ID who initiated the process (WO-INT-2). */
+    private String initiator;
 }
