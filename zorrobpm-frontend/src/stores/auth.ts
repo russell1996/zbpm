@@ -12,6 +12,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!user.value)
   const isAdmin = computed(() => user.value?.role === 'ADMIN' || user.value?.role === 'SUPER_ADMIN')
   const isSuperAdmin = computed(() => user.value?.role === 'SUPER_ADMIN')
+  const forcePasswordChange = computed(() => user.value?.forcePasswordChange === true)
 
   async function login(username: string, password: string): Promise<boolean> {
     isLoading.value = true
@@ -44,6 +45,17 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  function setForcePasswordChange(value: boolean) {
+    if (user.value) {
+      user.value = { ...user.value, forcePasswordChange: value }
+    }
+  }
+
+  /** Refresh user data from /auth/me (after password change). */
+  async function refreshUser() {
+    user.value = await authService.getMe()
+  }
+
   function logout() {
     user.value = null
     error.value = null
@@ -61,6 +73,9 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     isAdmin,
     isSuperAdmin,
+    forcePasswordChange,
+    setForcePasswordChange,
+    refreshUser,
     login,
     logout,
     init,

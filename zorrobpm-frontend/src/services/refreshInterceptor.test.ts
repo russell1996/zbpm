@@ -3,6 +3,13 @@ import axios, { AxiosError, AxiosHeaders } from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
 import { createRefreshInterceptor } from './refreshInterceptor'
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: vi.fn(() => ({
+    isAuthenticated: true,
+    setForcePasswordChange: vi.fn(),
+  })),
+}))
+
 function make401Error(config: Partial<InternalAxiosRequestConfig> = {}): AxiosError {
   const fullConfig: InternalAxiosRequestConfig = {
     url: config.url || '/test',
@@ -22,11 +29,30 @@ function make401Error(config: Partial<InternalAxiosRequestConfig> = {}): AxiosEr
   return error
 }
 
+function make403PcrError(config: Partial<InternalAxiosRequestConfig> = {}): AxiosError {
+  const fullConfig: InternalAxiosRequestConfig = {
+    url: config.url || '/test',
+    method: config.method || 'GET',
+    headers: new AxiosHeaders(),
+    ...config,
+  }
+  const error = new AxiosError('Forbidden')
+  error.response = {
+    data: { code: 'PASSWORD_CHANGE_REQUIRED', message: 'Password change required' },
+    status: 403,
+    statusText: 'Forbidden',
+    headers: new AxiosHeaders(),
+    config: fullConfig,
+  }
+  error.config = fullConfig
+  return error
+}
+
 describe('createRefreshInterceptor', () => {
   let instance: ReturnType<typeof axios.create>
 
   beforeEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
     instance = axios.create({ baseURL: 'http://localhost' })
     createRefreshInterceptor(instance)
   })
@@ -110,6 +136,20 @@ describe('createRefreshInterceptor', () => {
     ;(instance.defaults as Record<string, unknown>).adapter = adapterSpy
 
     await expect(instance.get('/test')).rejects.toThrow()
+    expect(adapterSpy).toHaveBeenCalledTimes(1)
+  })
+
+  // --- WO-SEC-19: 403 PASSWORD_CHANGE_REQUIRED ---
+
+  it('does NOT attempt refresh for 403 PASSWORD_CHANGE_REQUIRED (propagates error)', async () => {
+    const adapterSpy = vi.fn()
+      .mockRejectedValueOnce(make403PcrError({ url: '/process-instances' }))
+
+    ;(instance.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    // 403 PCR should NOT trigger refresh (only 1 adapter call), and error should propagate
+    await expect(instance.get('/process-instances')).rejects.toThrow()
+    // Only 1 call: the original request, no refresh attempted
     expect(adapterSpy).toHaveBeenCalledTimes(1)
   })
 })
