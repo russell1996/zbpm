@@ -146,10 +146,10 @@ const router = createRouter({
           meta: { title: 'Forms', requiresSuperAdmin: true },
         },
         {
-          path: 'admin/start-bindings',
-          name: 'admin-start-bindings',
-          component: () => import('@/pages/admin/StartBindingAdmin.vue'),
-          meta: { title: 'Start Bindings', requiresSuperAdmin: true },
+          path: 'admin/process-schemas',
+          name: 'admin-process-schemas',
+          component: () => import('@/pages/admin/ProcessSchemaAdmin.vue'),
+          meta: { title: 'Process Schemas', requiresSuperAdmin: true },
         },
         {
           path: 'me/api-key',

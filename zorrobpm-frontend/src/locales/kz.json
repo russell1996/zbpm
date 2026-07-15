@@ -151,5 +151,15 @@
   "error403": "Тек қана SUPER_ADMIN байланыстар жасай алады",
   "errorGeneric": "Байланыс жасау сәтсіз аяқталды",
   "formKeyRequired": "Нысан кілті міндетті",
-  "formKeyPlaceholder": "мыс. orderForm"
+  "formKeyPlaceholder": "мыс. orderForm",
+  "processSchemas": "Процес схемалары",
+  "elements": "Элементтер",
+  "noSchema": "Схема жоқ",
+  "shared": "Ортақ",
+  "back": "Артқа",
+  "saving": "Сақталуда...",
+  "saveSchema": "Схеманы сақтау",
+  "schemaSaved": "Схема сақталды",
+  "noExternalReference": "Сақтау мүмкін емес: External Form Reference көрсетілмеген",
+  "noExternalReferenceHint": "Схеманы сақтауға дейін Camunda Modeler-де осы user task үшін External Form Reference орнатыңыз."
 }
