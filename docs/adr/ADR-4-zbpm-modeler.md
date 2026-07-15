@@ -1,6 +1,10 @@
 # ADR-4 — ZBPM Modeler (enterprise-замена Camunda Modeler)
 
-Статус: **ПРИНЯТ** (продукт-владелец, 2026-07-15)
+Статус: **ОТМЕНЁН / SUPERSEDED** (продукт-владелец, 2026-07-15) — решение пересмотрено: собственный ZBPM Modeler
+НЕ разрабатываем, моделирование ведём через **Camunda Modeler desktop** (внешний инструмент, import/export `.bpmn`).
+Эпик EPIC-MODELER и WO-MOD-1..6 закрыты как cancelled. Ниже — исходный (недействующий) текст ADR.
+
+~~Статус: ПРИНЯТ (продукт-владелец, 2026-07-15)~~
 Автор: CTO / Chief Architect. Горизонт: многолетний независимый продукт экосистемы ZBPM.
 Связь: [ADR-3 (формы)](ADR-3-embedded-forms.md), [integration-guide](../integration-guide.md), [EPIC-MODELER](../../governance/workorders/EPIC-MODELER.md).
 
