@@ -2,10 +2,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import FormEditor from './FormEditor.vue'
+import { EMPTY_SCHEMA } from './formSchema'
 
 const mockImportSchema = vi.fn().mockResolvedValue(undefined)
 // form-js editor's real method is saveSchema() (not save())
-const mockSaveSchema = vi.fn().mockReturnValue({ type: 'form', components: [] })
+const mockSaveSchema = vi.fn().mockReturnValue({ type: 'default', components: [] })
 const mockDestroy = vi.fn()
 
 vi.mock('@bpmn-io/form-js', () => ({
@@ -36,6 +37,17 @@ describe('FormEditor', () => {
     expect(mockSaveSchema).toHaveBeenCalled()
     const emitted = wrapper.emitted('save')
     expect(emitted).toBeTruthy()
-    expect(emitted![0][0]).toContain('"type":"form"')
+    expect(emitted![0][0]).toContain('"type":"default"')
+  })
+})
+
+describe('EMPTY_SCHEMA (formSchema)', () => {
+  it('root type is "default" (not "form") — form-js requires this', () => {
+    expect(EMPTY_SCHEMA.type).toBe('default')
+  })
+
+  it('has required form-js properties', () => {
+    expect(EMPTY_SCHEMA).toHaveProperty('components')
+    expect(EMPTY_SCHEMA).toHaveProperty('schemaVersion')
   })
 })

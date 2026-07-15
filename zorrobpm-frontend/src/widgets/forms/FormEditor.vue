@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 // @ts-expect-error form-js has no TS types
 import { FormEditor } from '@bpmn-io/form-js'
+import { EMPTY_SCHEMA } from './formSchema'
 
 const props = defineProps<{
   schema?: Record<string, unknown>
@@ -13,8 +14,6 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLDivElement>()
 let editorInstance: any = null
-
-const EMPTY_SCHEMA = { type: 'form', components: [], schemaVersion: 16 }
 
 async function initEditor() {
   if (!containerRef.value) return
