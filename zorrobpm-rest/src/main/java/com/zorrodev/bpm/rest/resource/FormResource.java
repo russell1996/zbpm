@@ -19,6 +19,7 @@ import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormResolver;
+import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -44,6 +45,7 @@ public class FormResource implements FormContract {
     private final ElementArtifactBindingRepository bindingRepository;
     private final DBService dbService;
     private final FormResolver formResolver;
+    private final JsonSchemaValidator jsonSchemaValidator;
     private final HttpServletRequest request;
     private final ObjectMapper objectMapper;
 
@@ -92,7 +94,16 @@ public class FormResource implements FormContract {
         try {
             objectMapper.readValue(dto.getSchema(), Object.class);
         } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid JSON schema");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid JSON");
+        }
+
+        // WO-VM-5: validate JSON Schema structure for VARIABLE_SCHEMA
+        if (kind == FormArtifactKind.VARIABLE_SCHEMA) {
+            java.util.Set<String> errors = jsonSchemaValidator.validateSchema(dto.getSchema());
+            if (!errors.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invalid JSON Schema: " + String.join("; ", errors));
+            }
         }
 
         // Versioning: version = max + 1
