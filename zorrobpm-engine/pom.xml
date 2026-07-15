@@ -104,12 +104,6 @@
             <version>1.4.1</version>
             <scope>test</scope>
         </dependency>
-        <dependency>
-            <groupId>com.zorrodev.bpm</groupId>
-            <artifactId>zorrobpm-event</artifactId>
-            <version>0.7.17-SNAPSHOT</version>
-            <scope>compile</scope>
-        </dependency>
 
         <dependency>
             <groupId>com.h2database</groupId>
