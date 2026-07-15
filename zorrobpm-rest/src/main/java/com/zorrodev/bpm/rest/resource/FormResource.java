@@ -1,14 +1,18 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.FormContract;
+import com.zorrodev.bpm.contract.dto.CreateElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.DeployFormDTO;
+import com.zorrodev.bpm.contract.dto.ElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.FormDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.engine.entity.ElementArtifactBindingEntity;
 import com.zorrodev.bpm.engine.entity.FormArtifactKind;
 import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
@@ -37,6 +41,7 @@ public class FormResource implements FormContract {
     private final FormRepository formRepository;
     private final UserTaskRepository userTaskRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
+    private final ElementArtifactBindingRepository bindingRepository;
     private final DBService dbService;
     private final FormResolver formResolver;
     private final HttpServletRequest request;
@@ -137,8 +142,70 @@ public class FormResource implements FormContract {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
         ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-        // For start form, there's no process instance yet — data is empty
+
+        // ADR-6 §D7: try element-artifact binding first (per elementId)
+        List<ElementArtifactBindingEntity> bindings = bindingRepository.findByProcessDefinitionId(pd.getId());
+        if (!bindings.isEmpty()) {
+            // For now, return the first binding's artifact (start event binding)
+            ElementArtifactBindingEntity binding = bindings.get(0);
+            return resolveByBinding(binding);
+        }
+
+        // Fallback to scalar startFormKey (back-compat)
         return resolveStartForm(pd.getStartFormKey());
+    }
+
+    @Override
+    @Transactional
+    public ElementBindingDTO createElementBinding(String key, CreateElementBindingDTO dto) {
+        // SUPER_ADMIN only
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (!principal.isSuperAdmin()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only SUPER_ADMIN can create element bindings");
+        }
+
+        if (dto.getElementId() == null || dto.getElementId().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "elementId is required");
+        }
+        if (dto.getArtifactKey() == null || dto.getArtifactKey().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "artifactKey is required");
+        }
+
+        // Resolve latest version of process definition
+        Integer maxPdVersion = processDefinitionRepository.findMaxByKey(key)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxPdVersion)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+
+        // Resolve latest version of artifact (pin to this version)
+        FormEntity artifact = formRepository.findTopByFormKeyOrderByVersionDesc(dto.getArtifactKey())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact not found: " + dto.getArtifactKey()));
+
+        // Upsert: delete existing binding for same PD + elementId
+        bindingRepository.findByProcessDefinitionIdAndElementId(pd.getId(), dto.getElementId())
+            .ifPresent(bindingRepository::delete);
+
+        ElementArtifactBindingEntity binding = new ElementArtifactBindingEntity();
+        binding.setId(UUID.randomUUID());
+        binding.setProcessDefinitionId(pd.getId());
+        binding.setProcessDefinitionVersion(pd.getVersion());
+        binding.setElementId(dto.getElementId());
+        binding.setArtifactKey(dto.getArtifactKey());
+        binding.setArtifactVersion(artifact.getVersion());
+        binding.setCreatedAt(Instant.now());
+        bindingRepository.save(binding);
+
+        ElementBindingDTO result = new ElementBindingDTO();
+        result.setId(binding.getId());
+        result.setElementId(binding.getElementId());
+        result.setArtifactKey(binding.getArtifactKey());
+        result.setArtifactVersion(binding.getArtifactVersion());
+        result.setProcessDefinitionId(binding.getProcessDefinitionId());
+        result.setProcessDefinitionVersion(binding.getProcessDefinitionVersion());
+        return result;
     }
 
     // --- WO-FORM-2: resolve logic ---
@@ -149,6 +216,21 @@ public class FormResource implements FormContract {
 
     private TaskFormDTO resolveStartForm(String startFormKey) {
         return formResolver.resolveTaskForm(startFormKey, null);
+    }
+
+    private TaskFormDTO resolveByBinding(ElementArtifactBindingEntity binding) {
+        // ADR-6 §D8: pin to artifact_version from binding
+        FormEntity form = formRepository.findByFormKeyAndVersion(binding.getArtifactKey(), binding.getArtifactVersion())
+            .orElse(null);
+        if (form == null) {
+            // Fallback: try latest version
+            return resolveStartForm(binding.getArtifactKey());
+        }
+        TaskFormDTO dto = new TaskFormDTO();
+        dto.setType("embedded");
+        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
+        dto.setSchema(form.getSchemaJson());
+        return dto;
     }
 
     private Map<String, String> prefillData(UUID processInstanceId) {

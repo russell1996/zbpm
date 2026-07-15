@@ -1,6 +1,8 @@
 package com.zorrodev.bpm.contract;
 
+import com.zorrodev.bpm.contract.dto.CreateElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.DeployFormDTO;
+import com.zorrodev.bpm.contract.dto.ElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.FormDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import org.springframework.web.bind.annotation.*;
@@ -24,4 +26,7 @@ public interface FormContract {
 
     @GetMapping("/process-definitions/{key}/start-form")
     TaskFormDTO getStartForm(@PathVariable String key);
+
+    @PostMapping("/process-definitions/{key}/element-bindings")
+    ElementBindingDTO createElementBinding(@PathVariable String key, @RequestBody CreateElementBindingDTO dto);
 }
