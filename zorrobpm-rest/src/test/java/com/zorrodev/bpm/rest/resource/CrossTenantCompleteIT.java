@@ -40,10 +40,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * #1: Non-member completes unassigned task of foreign process → 403
  * #2: Process member completes unassigned task → 200
- * #3: Assignee completes own task → 200 (not broken)
+ * #3: Assignee completes own task → 200 (covered by AssigneeCheckIntegrationTest.criterion1)
  * #4: Candidate group member completes → 200 (not broken)
  * #5: Super-admin completes → 200 (not broken)
- * #6: proof-of-failure: non-member was 200 before fix, now 403
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -106,7 +105,7 @@ class CrossTenantCompleteIT {
         processMemberRepository.save(pm);
     }
 
-    // --- #1: Non-member completes unassigned task → 403 ---
+    // --- #1: Non-member completes unassigned task → 403 (proof-of-failure §1b) ---
 
     @Test
     void criterion1_nonMemberCompletesUnassignedTask_returns403() throws Exception {
@@ -139,21 +138,7 @@ class CrossTenantCompleteIT {
     }
 
     // --- #3: Assignee completes own task → 200 ---
-
-    @Test
-    void criterion3_assigneeCompletesOwnTask_returns200() throws Exception {
-        UUID taskId = startProcessAndReturnTask();
-        // Task is assigned to admin (who deployed it)
-        // Admin is SUPER_ADMIN → canCompleteUserTask passes → 200
-
-        CompleteTaskDTO dto = new CompleteTaskDTO();
-        dto.setVariables(List.of());
-        mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .content(mapper.writeValueAsString(dto))
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
-    }
+    // (Assignee path covered by AssigneeCheckIntegrationTest.criterion1)
 
     // --- #4: Candidate group member completes → 200 (not broken) ---
 
@@ -202,23 +187,7 @@ class CrossTenantCompleteIT {
                 .andExpect(status().isOk());
     }
 
-    // --- #6: proof-of-failure §1b: non-member was 200 before fix, now 403 ---
 
-    @Test
-    void criterion6_proofOfFailure_nonMemberWas200Now403() throws Exception {
-        // This test verifies the current behavior (after fix):
-        // Non-member completing unassigned task of foreign process → 403
-        UUID taskId = startProcessAndReturnTask();
-        unassignTask(taskId);
-
-        CompleteTaskDTO dto = new CompleteTaskDTO();
-        dto.setVariables(List.of());
-        mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
-                        .header("Authorization", "Bearer " + nonMemberToken)
-                        .content(mapper.writeValueAsString(dto))
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isForbidden());
-    }
 
     // --- Helpers ---
 
