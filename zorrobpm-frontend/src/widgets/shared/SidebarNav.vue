@@ -55,6 +55,7 @@ const navItems = computed<NavItem[]>(() => [
   { labelKey: 'analytics', icon: BarChart3, to: '/analytics' },
   { labelKey: 'users', icon: Users, to: '/admin/users' },
   { labelKey: 'forms', icon: FileText, to: '/admin/forms' },
+  { labelKey: 'processSchemas', icon: FileText, to: '/admin/process-schemas' },
 ])
 
 function toggle(key: string) {
