@@ -136,5 +136,18 @@
   "noForms": "Нысандар әлі орналастырылмаған.",
   "kind": "Түрі",
   "kindFormJs": "Нысан (form-js)",
-  "kindVariableSchema": "Айнымалы схемасы (JSON Schema)"
+  "kindVariableSchema": "Айнымалы схемасы (JSON Schema)",
+  "startBindings": "Бастау оқиғалары байланыстары",
+  "selectDefinition": "Процес анықтамасын таңдаңыз",
+  "bindArtifact": "Бастау оқиғасына артефакт байланыстыру",
+  "startEvent": "Бастау оқиғасы",
+  "selectElement": "— элементті таңдаңыз —",
+  "artifact": "Артефакт",
+  "selectArtifact": "— артефактты таңдаңыз —",
+  "bind": "Байланыстыру",
+  "binding": "Байланыстыру...",
+  "bindingCreated": "Байланыс жасалды",
+  "noStartEvents": "Бұл анықтамада бастау оқиғалары жоқ",
+  "error403": "Тек қана SUPER_ADMIN байланыстар жасай алады",
+  "errorGeneric": "Байланыс жасау сәтсіз аяқталды"
 }

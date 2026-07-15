@@ -35,3 +35,17 @@ export async function getStartForm(processKey: string): Promise<TaskFormResponse
 export async function deployForm(key: string, schema: string, kind: ArtifactKind): Promise<void> {
   await api.post('/forms', { key, schema, kind })
 }
+
+export interface ElementBinding {
+  id: string
+  elementId: string
+  artifactKey: string
+  artifactVersion: number
+  processDefinitionId: string
+  processDefinitionVersion: number
+}
+
+export async function createElementBinding(processKey: string, elementId: string, artifactKey: string): Promise<ElementBinding> {
+  const { data } = await api.post<ElementBinding>(`/process-definitions/${processKey}/element-bindings`, { elementId, artifactKey })
+  return data
+}
