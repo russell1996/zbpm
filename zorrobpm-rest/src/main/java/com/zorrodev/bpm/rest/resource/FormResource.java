@@ -283,9 +283,28 @@ public class FormResource implements FormContract {
         Map<String, ElementArtifactBindingEntity> bindingByElement = bindings.stream()
             .collect(java.util.stream.Collectors.toMap(ElementArtifactBindingEntity::getElementId, b -> b, (a, b) -> a));
 
-        // Count how many elements share each artifact key
-        Map<String, Long> artifactKeyCount = bindings.stream()
-            .collect(java.util.stream.Collectors.groupingBy(ElementArtifactBindingEntity::getArtifactKey, java.util.stream.Collectors.counting()));
+        // WO-VM-9a fix: shared = GLOBALLY — count ALL bindings across ALL PDs + user-task externalReferences
+        // A key is shared if >1 element (across all processes) uses it
+        Map<String, Long> globalArtifactUsage = new java.util.HashMap<>();
+        // Count from all bindings (all PDs)
+        bindingRepository.findAll().forEach(b ->
+            globalArtifactUsage.merge(b.getArtifactKey(), 1L, Long::sum));
+        // Count from user-task externalReferences across all PDs
+        for (ProcessDefinitionEntity allPd : processDefinitionRepository.findAll()) {
+            try {
+                var allModel = bpmnService.getProcessDefinitionModelById(allPd.getId());
+                allModel.getElements().stream()
+                    .filter(e -> e.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK)
+                    .forEach(e -> {
+                        if (e.getExtensions() != null && e.getExtensions().getUserTaskExtension() != null
+                            && e.getExtensions().getUserTaskExtension().getFormKey() != null) {
+                            globalArtifactUsage.merge(e.getExtensions().getUserTaskExtension().getFormKey(), 1L, Long::sum);
+                        }
+                    });
+            } catch (Exception ignored) {
+                // Skip PDs that can't be parsed
+            }
+        }
 
         List<SchemaMapElementDTO> elements = model.getElements().stream()
             .filter(e -> e.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.START_EVENT
@@ -321,7 +340,7 @@ public class FormResource implements FormContract {
                         dto.setKind(form.getKind() != null ? form.getKind().name() : null);
                         dto.setArtifactVersion(form.getVersion());
                     });
-                    dto.setShared(artifactKeyCount.getOrDefault(artifactKey, 0L) > 1);
+                    dto.setShared(globalArtifactUsage.getOrDefault(artifactKey, 0L) > 1);
                 }
 
                 dto.setHasExternalReference(hasExternalReference);
