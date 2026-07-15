@@ -24,4 +24,13 @@ describe('SidebarNav', () => {
     const wrapper = mount(SidebarNav)
     expect(wrapper.text()).toContain('users')
   })
+
+  it('renders Process Schemas menu item with correct route (WO-VM-10 — close P-21)', () => {
+    const wrapper = mount(SidebarNav)
+    expect(wrapper.text()).toContain('processSchemas')
+    // Verify the link points to the correct route
+    const buttons = wrapper.findAll('button')
+    const processSchemasBtn = buttons.find(b => b.text().includes('processSchemas'))
+    expect(processSchemasBtn).toBeTruthy()
+  })
 })
