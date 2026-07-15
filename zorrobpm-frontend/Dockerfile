@@ -20,6 +20,7 @@ FROM nginx:1.27-alpine
 
 # SPA fallback + /api proxy to the backend container (resolved by Docker DNS, not a hardcoded IP)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY snippets /etc/nginx/snippets
 COPY --from=builder /build/dist /usr/share/nginx/html
 
 # Fail the image build (in CI) if the nginx config is syntactically invalid
