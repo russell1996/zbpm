@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.scheduler.OutboxBatchProcessor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -41,10 +42,44 @@ public class RetroPgIT extends PostgresIT {
     @Autowired OutboxRepository outboxRepository;
     @Autowired TransactionTemplate transactionTemplate;
     @Autowired OutboxBatchProcessor outboxBatchProcessor;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void cleanOutbox() {
         outboxRepository.deleteAllInBatch();
+    }
+
+    // ==================== WO-AUD-2: hot table indexes exist on PG ====================
+
+    @Test
+    void aud2_hotTableIndexesExist() {
+        List<String> expectedIndexes = List.of(
+            // activities
+            "idx_activities_process_instance_status",
+            "idx_activities_token_bpmn_element",
+            "idx_activities_token_status",
+            // outbox
+            "idx_outbox_published_created_at",
+            // user_tasks
+            "idx_user_tasks_process_instance_id",
+            "idx_user_tasks_process_definition_id",
+            // service_tasks
+            "idx_service_tasks_process_instance_id",
+            "idx_service_tasks_process_definition_id",
+            // incidents
+            "idx_incidents_activity_id"
+        );
+
+        List<String> actualIndexes = jdbcTemplate.queryForList(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname LIKE 'idx_%'",
+            String.class
+        );
+
+        for (String expected : expectedIndexes) {
+            assertThat(actualIndexes)
+                .as("Index %s must exist on PostgreSQL", expected)
+                .contains(expected);
+        }
     }
 
     // ==================== Criterion #3: MT-10 audit filter on PG ====================
