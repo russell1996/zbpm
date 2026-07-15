@@ -128,5 +128,13 @@
   "close": "Закрыть",
   "cancelAction": "Отмена",
   "confirm": "Подтвердить",
-  "view": "Просмотр"
+  "view": "Просмотр",
+  "createForm": "Создать форму",
+  "edit": "Редактировать",
+  "newForm": "Новая форма",
+  "formSaved": "Форма сохранена",
+  "noForms": "Формы не развернуты.",
+  "kind": "Тип",
+  "kindFormJs": "Форма (form-js)",
+  "kindVariableSchema": "Схема переменных (JSON Schema)"
 }
