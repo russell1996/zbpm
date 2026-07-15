@@ -1,8 +1,12 @@
 package com.zorrodev.bpm.engine.security;
 
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
+import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberId;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,13 +27,17 @@ class AuthorizationServiceTest {
 
     private ProcessRepository processRepository;
     private ProcessMemberRepository processMemberRepository;
+    private ProcessInstanceRepository processInstanceRepository;
+    private ProcessDefinitionRepository processDefinitionRepository;
     private AuthorizationService auth;
 
     @BeforeEach
     void setUp() {
         processRepository = mock(ProcessRepository.class);
         processMemberRepository = mock(ProcessMemberRepository.class);
-        auth = new AuthorizationService(processRepository, processMemberRepository);
+        processInstanceRepository = mock(ProcessInstanceRepository.class);
+        processDefinitionRepository = mock(ProcessDefinitionRepository.class);
+        auth = new AuthorizationService(processRepository, processMemberRepository, processInstanceRepository, processDefinitionRepository);
     }
 
     // --- SuperAdmin bypass ---
@@ -104,37 +112,69 @@ class AuthorizationServiceTest {
     @Test
     void sa_withGrant_canCompleteUserTask() {
         UUID procId = UUID.randomUUID();
+        UUID instanceId = UUID.randomUUID();
+        UUID defId = UUID.randomUUID();
         Principal.Grant grant = new Principal.Grant(Set.of("COMPLETE_USER_TASK", "START"), false);
         Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
             Map.of(procId, grant));
-        assertThat(auth.canCompleteUserTask(sa, procId)).isTrue();
+        when(processInstanceRepository.findById(instanceId)).thenReturn(
+            Optional.of(createProcessInstance(instanceId, defId)));
+        when(processDefinitionRepository.findById(defId)).thenReturn(
+            Optional.of(createProcessDefinition(defId, "test-proc")));
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(
+            Optional.of(createProcessByKey(procId, "test-proc")));
+        assertThat(auth.canCompleteUserTask(sa, instanceId)).isTrue();
     }
 
     @Test
     void sa_withoutCompleteUserTask_cannotCompleteUserTask() {
         UUID procId = UUID.randomUUID();
+        UUID instanceId = UUID.randomUUID();
+        UUID defId = UUID.randomUUID();
         Principal.Grant grant = new Principal.Grant(Set.of("START"), false);
         Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
             Map.of(procId, grant));
-        assertThat(auth.canCompleteUserTask(sa, procId)).isFalse();
+        when(processInstanceRepository.findById(instanceId)).thenReturn(
+            Optional.of(createProcessInstance(instanceId, defId)));
+        when(processDefinitionRepository.findById(defId)).thenReturn(
+            Optional.of(createProcessDefinition(defId, "test-proc")));
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(
+            Optional.of(createProcessByKey(procId, "test-proc")));
+        assertThat(auth.canCompleteUserTask(sa, instanceId)).isFalse();
     }
 
     @Test
     void sa_fullGrant_canCompleteUserTask() {
         UUID procId = UUID.randomUUID();
+        UUID instanceId = UUID.randomUUID();
+        UUID defId = UUID.randomUUID();
         Principal.Grant grant = new Principal.Grant(Set.of(), true);
         Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
             Map.of(procId, grant));
-        assertThat(auth.canCompleteUserTask(sa, procId)).isTrue();
+        when(processInstanceRepository.findById(instanceId)).thenReturn(
+            Optional.of(createProcessInstance(instanceId, defId)));
+        when(processDefinitionRepository.findById(defId)).thenReturn(
+            Optional.of(createProcessDefinition(defId, "test-proc")));
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(
+            Optional.of(createProcessByKey(procId, "test-proc")));
+        assertThat(auth.canCompleteUserTask(sa, instanceId)).isTrue();
     }
 
     @Test
     void sa_wrongProcess_cannotCompleteUserTask() {
         UUID procId = UUID.randomUUID();
+        UUID instanceId = UUID.randomUUID();
+        UUID defId = UUID.randomUUID();
         Principal.Grant grant = new Principal.Grant(Set.of("COMPLETE_USER_TASK"), false);
         Principal.ServicePrincipal sa = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(),
             Map.of(UUID.randomUUID(), grant)); // different process ID
-        assertThat(auth.canCompleteUserTask(sa, procId)).isFalse();
+        when(processInstanceRepository.findById(instanceId)).thenReturn(
+            Optional.of(createProcessInstance(instanceId, defId)));
+        when(processDefinitionRepository.findById(defId)).thenReturn(
+            Optional.of(createProcessDefinition(defId, "test-proc")));
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(
+            Optional.of(createProcessByKey(procId, "test-proc")));
+        assertThat(auth.canCompleteUserTask(sa, instanceId)).isFalse();
     }
 
     @Test
@@ -280,8 +320,38 @@ class AuthorizationServiceTest {
 
     @Test
     void userRole_canCompleteUserTask() {
+        UUID processId = UUID.randomUUID();
+        UUID instanceId = UUID.randomUUID();
+        UUID defId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Principal user = new Principal.UserPrincipal(userId, "user", "USER");
+        // WO-AUD-5: must be a process member to complete
+        when(processInstanceRepository.findById(instanceId)).thenReturn(
+            Optional.of(createProcessInstance(instanceId, defId)));
+        when(processDefinitionRepository.findById(defId)).thenReturn(
+            Optional.of(createProcessDefinition(defId, "test-proc")));
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(
+            Optional.of(createProcessByKey(processId, "test-proc")));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
+        assertThat(auth.canCompleteUserTask(user, instanceId)).isTrue();
+    }
+
+    @Test
+    void userRole_canCompleteUserTask_notMember_returnsFalse() {
+        UUID processId = UUID.randomUUID();
+        UUID instanceId = UUID.randomUUID();
+        UUID defId = UUID.randomUUID();
         Principal user = new Principal.UserPrincipal(UUID.randomUUID(), "user", "USER");
-        assertThat(auth.canCompleteUserTask(user, UUID.randomUUID())).isTrue();
+        // WO-AUD-5: non-member cannot complete
+        when(processInstanceRepository.findById(instanceId)).thenReturn(
+            Optional.of(createProcessInstance(instanceId, defId)));
+        when(processDefinitionRepository.findById(defId)).thenReturn(
+            Optional.of(createProcessDefinition(defId, "test-proc")));
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(
+            Optional.of(createProcessByKey(processId, "test-proc")));
+        when(processMemberRepository.findById(any())).thenReturn(Optional.empty());
+        assertThat(auth.canCompleteUserTask(user, instanceId)).isFalse();
     }
 
     private ProcessEntity createProcess(String key) {
@@ -299,5 +369,29 @@ class AuthorizationServiceTest {
         m.setRole(role);
         m.setAddedAt(Instant.now());
         return m;
+    }
+
+    private ProcessInstanceEntity createProcessInstance(UUID instanceId, UUID processDefinitionId) {
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(instanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+        pi.setStartedAt(Instant.now());
+        return pi;
+    }
+
+    private ProcessDefinitionEntity createProcessDefinition(UUID id, String key) {
+        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
+        pd.setId(id);
+        pd.setKey(key);
+        pd.setCreatedAt(Instant.now());
+        return pd;
+    }
+
+    private ProcessEntity createProcessByKey(UUID id, String key) {
+        ProcessEntity p = new ProcessEntity();
+        p.setId(id);
+        p.setDefinitionKey(key);
+        p.setCreatedAt(Instant.now());
+        return p;
     }
 }
