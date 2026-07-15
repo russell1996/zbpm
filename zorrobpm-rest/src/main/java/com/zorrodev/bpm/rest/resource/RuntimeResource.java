@@ -13,6 +13,8 @@ import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
+import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
+import com.zorrodev.bpm.engine.entity.ProcessMemberId;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
@@ -21,6 +23,7 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
@@ -64,6 +67,7 @@ public class RuntimeResource implements RuntimeContract {
     private final UserGroupRepository userGroupRepository;
     private final FormValidator formValidator;
     private final FormRepository formRepository;
+    private final ProcessMemberRepository processMemberRepository;
     private final HttpServletRequest request;
 
     private Principal getPrincipal() {
@@ -266,9 +270,24 @@ public class RuntimeResource implements RuntimeContract {
                 if (!java.util.Collections.disjoint(taskGroups, userGroups)) return;
             }
 
-            // Unassigned task with no candidate groups — any user can complete
+            // Unassigned task with no candidate groups — only process members can complete (WO-AUD-5 F18)
             if ((task.getAssignee() == null || task.getAssignee().isBlank())
-                    && (task.getCandidateGroups() == null || task.getCandidateGroups().isBlank())) return;
+                    && (task.getCandidateGroups() == null || task.getCandidateGroups().isBlank())) {
+                // Resolve instance → definition → key → registry → membership
+                ProcessInstanceEntity instance = processInstanceRepository.findById(task.getProcessInstanceId()).orElse(null);
+                if (instance != null) {
+                    ProcessDefinitionEntity definition = processDefinitionRepository.findById(instance.getProcessDefinitionId()).orElse(null);
+                    if (definition != null) {
+                        ProcessEntity process = processRepository.findByDefinitionKey(definition.getKey()).orElse(null);
+                        if (process != null) {
+                            ProcessMemberEntity membership = processMemberRepository.findById(
+                                new ProcessMemberId(process.getId(), user.userId())).orElse(null);
+                            if (membership != null) return; // member can complete
+                        }
+                    }
+                }
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+            }
 
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
