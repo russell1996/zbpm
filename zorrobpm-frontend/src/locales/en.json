@@ -151,5 +151,15 @@
   "error403": "Only SUPER_ADMIN can create bindings",
   "errorGeneric": "Failed to create binding",
   "formKeyRequired": "Form key is required",
-  "formKeyPlaceholder": "e.g. orderForm"
+  "formKeyPlaceholder": "e.g. orderForm",
+  "processSchemas": "Process Schemas",
+  "elements": "Elements",
+  "noSchema": "No schema",
+  "shared": "Shared",
+  "back": "Back",
+  "saving": "Saving...",
+  "saveSchema": "Save Schema",
+  "schemaSaved": "Schema saved",
+  "noExternalReference": "Cannot save: no External Form Reference set",
+  "noExternalReferenceHint": "Set External Form Reference in Camunda Modeler for this user task before saving a schema."
 }
