@@ -207,4 +207,26 @@ class JwtAuthFilterIntegrationTest {
         mockMvc.perform(get("/service-tasks"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // ==================== WO-AUD-4 F8: /forms/{key} must require auth ====================
+
+    @Test
+    void aud4_getFormByKey_withoutToken_returns401() throws Exception {
+        mockMvc.perform(get("/forms/some-form-key"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aud4_getFormsList_withoutToken_returns401() throws Exception {
+        mockMvc.perform(get("/forms"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aud4_postForms_withoutToken_returns401() throws Exception {
+        mockMvc.perform(post("/forms")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"key\":\"test\",\"schema\":\"{}\"}"))
+                .andExpect(status().isUnauthorized());
+    }
 }

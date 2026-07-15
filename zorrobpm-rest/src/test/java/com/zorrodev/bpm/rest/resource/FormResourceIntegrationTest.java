@@ -158,7 +158,8 @@ class FormResourceIntegrationTest {
                 .andExpect(status().isOk());
 
         // GET returns v2
-        mockMvc.perform(get("/forms/" + key))
+        mockMvc.perform(get("/forms/" + key)
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.key").value(key))
                 .andExpect(jsonPath("$.version").value(2))
@@ -169,7 +170,8 @@ class FormResourceIntegrationTest {
 
     @Test
     void criterion4_getForm_unknownKey_returns404() throws Exception {
-        mockMvc.perform(get("/forms/nonexistent-form-" + UUID.randomUUID()))
+        mockMvc.perform(get("/forms/nonexistent-form-" + UUID.randomUUID())
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
     }
 
