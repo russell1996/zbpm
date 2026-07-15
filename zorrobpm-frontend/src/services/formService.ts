@@ -22,6 +22,11 @@ export async function listForms(): Promise<FormSummary[]> {
   return data
 }
 
+export async function getForm(key: string): Promise<FormSummary> {
+  const { data } = await api.get<FormSummary>(`/forms/${key}`)
+  return data
+}
+
 export async function getTaskForm(taskId: string): Promise<TaskFormResponse> {
   const { data } = await api.get<TaskFormResponse>(`/user-tasks/${taskId}/form`)
   return data

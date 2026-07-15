@@ -161,5 +161,7 @@
   "saveSchema": "Save Schema",
   "schemaSaved": "Schema saved",
   "noExternalReference": "Cannot save: no External Form Reference set",
-  "noExternalReferenceHint": "Set External Form Reference in Camunda Modeler for this user task before saving a schema."
+  "noExternalReferenceHint": "Set External Form Reference in Camunda Modeler for this user task before saving a schema.",
+  "failedToLoadSchema": "Failed to load existing schema",
+  "loadingSchema": "Loading schema..."
 }
