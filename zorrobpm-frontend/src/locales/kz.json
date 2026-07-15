@@ -149,5 +149,7 @@
   "bindingCreated": "Байланыс жасалды",
   "noStartEvents": "Бұл анықтамада бастау оқиғалары жоқ",
   "error403": "Тек қана SUPER_ADMIN байланыстар жасай алады",
-  "errorGeneric": "Байланыс жасау сәтсіз аяқталды"
+  "errorGeneric": "Байланыс жасау сәтсіз аяқталды",
+  "formKeyRequired": "Нысан кілті міндетті",
+  "formKeyPlaceholder": "мыс. orderForm"
 }
