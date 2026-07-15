@@ -149,5 +149,7 @@
   "bindingCreated": "Binding created",
   "noStartEvents": "No start events in this definition",
   "error403": "Only SUPER_ADMIN can create bindings",
-  "errorGeneric": "Failed to create binding"
+  "errorGeneric": "Failed to create binding",
+  "formKeyRequired": "Form key is required",
+  "formKeyPlaceholder": "e.g. orderForm"
 }

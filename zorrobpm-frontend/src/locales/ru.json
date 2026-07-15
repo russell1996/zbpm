@@ -149,5 +149,7 @@
   "bindingCreated": "Привязка создана",
   "noStartEvents": "Нет стартовых событий в этом определении",
   "error403": "Только SUPER_ADMIN может создавать привязки",
-  "errorGeneric": "Не удалось создать привязку"
+  "errorGeneric": "Не удалось создать привязку",
+  "formKeyRequired": "Ключ формы обязателен",
+  "formKeyPlaceholder": "напр. orderForm"
 }
