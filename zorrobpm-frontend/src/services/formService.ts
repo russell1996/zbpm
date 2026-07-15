@@ -1,7 +1,10 @@
 import api from './api'
 
+export type ArtifactKind = 'FORM_JS' | 'VARIABLE_SCHEMA'
+
 export interface TaskFormResponse {
   type: 'embedded' | 'external' | 'none'
+  kind?: ArtifactKind
   schema?: Record<string, unknown>
   data?: Record<string, string>
   url?: string
@@ -10,6 +13,7 @@ export interface TaskFormResponse {
 export interface FormSummary {
   key: string
   version: number
+  kind: ArtifactKind
   schema: string
 }
 
@@ -28,6 +32,6 @@ export async function getStartForm(processKey: string): Promise<TaskFormResponse
   return data
 }
 
-export async function deployForm(key: string, schema: string): Promise<void> {
-  await api.post('/forms', { key, schema })
+export async function deployForm(key: string, schema: string, kind: ArtifactKind): Promise<void> {
+  await api.post('/forms', { key, schema, kind })
 }

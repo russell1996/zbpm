@@ -128,5 +128,13 @@
   "close": "Close",
   "cancelAction": "Cancel",
   "confirm": "Confirm",
-  "view": "View"
+  "view": "View",
+  "createForm": "Create Form",
+  "edit": "Edit",
+  "newForm": "New Form",
+  "formSaved": "Form saved",
+  "noForms": "No forms deployed yet.",
+  "kind": "Kind",
+  "kindFormJs": "Form (form-js)",
+  "kindVariableSchema": "Variable Schema (JSON Schema)"
 }

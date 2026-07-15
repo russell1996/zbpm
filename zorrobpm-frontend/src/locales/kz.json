@@ -128,5 +128,13 @@
   "close": "Жабу",
   "cancelAction": "Болдырмау",
   "confirm": "Растау",
-  "view": "Қарау"
+  "view": "Қарау",
+  "createForm": "Нысан жасау",
+  "edit": "Өңдеу",
+  "newForm": "Жаңа нысан",
+  "formSaved": "Нысан сақталды",
+  "noForms": "Нысандар әлі орналастырылмаған.",
+  "kind": "Түрі",
+  "kindFormJs": "Нысан (form-js)",
+  "kindVariableSchema": "Айнымалы схемасы (JSON Schema)"
 }
