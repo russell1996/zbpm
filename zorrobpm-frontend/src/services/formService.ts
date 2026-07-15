@@ -49,3 +49,38 @@ export async function createElementBinding(processKey: string, elementId: string
   const { data } = await api.post<ElementBinding>(`/process-definitions/${processKey}/element-bindings`, { elementId, artifactKey })
   return data
 }
+
+export interface SchemaMapElement {
+  elementId: string
+  name: string | null
+  type: string
+  artifactKey: string | null
+  kind: ArtifactKind | null
+  artifactVersion: number | null
+  hasExternalReference: boolean
+  shared: boolean
+}
+
+export interface SchemaMap {
+  processDefinitionKey: string
+  version: number
+  elements: SchemaMapElement[]
+}
+
+export async function getSchemaMap(processKey: string): Promise<SchemaMap> {
+  const { data } = await api.get<SchemaMap>(`/process-definitions/${processKey}/schema-map`)
+  return data
+}
+
+export async function saveElementSchema(
+  processKey: string,
+  elementId: string,
+  kind: ArtifactKind,
+  schema: string,
+): Promise<SchemaMapElement> {
+  const { data } = await api.post<SchemaMapElement>(
+    `/process-definitions/${processKey}/elements/${elementId}/schema`,
+    { kind, schema },
+  )
+  return data
+}
