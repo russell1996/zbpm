@@ -204,3 +204,126 @@ Content-Type: application/json
   бутстрап-админу). Фронт `PASSWORD_CHANGE_REQUIRED` — в бэклоге (нужен до fresh-install).
 - **Серверная валидация стартовой формы** (400 на невалидный старт) — не реализована; валидируйте в своей форме.
 - **Секреты/значения переменных в аудит не пишутся** — только идентификатор действия и `on_behalf_of`.
+
+---
+
+## 10. Variable Model: контракт входных variables для внешнего BFF
+
+> **ADR-6**. Этот раздел описывает, как внешний BFF узнаёт, какие variables ожидает процесс, и как их валидировать
+> до вызова Runtime. Для рендеринга **визуальных форм** (form-js) — см. раздел 3.
+
+### 10.1. Модель ElementArtifact
+
+Артефакт привязан к элементу процесса (start event / user task) и хранит **описание ожидаемых variables**.
+
+| Поле | Описание |
+|---|---|
+| `key` | Уникальный ключ артефакта (как `formKey` для форм) |
+| `kind` | Тип артефакта: **`FORM_JS`** (визуальная форма) или **`VARIABLE_SCHEMA`** (JSON Schema для BFF) |
+| `version` | Номер версии (автоинкремент при каждом деплое) |
+| `schema` | Payload: form-js schema (для FORM_JS) или JSON Schema 2020-12 (для VARIABLE_SCHEMA) |
+
+### 10.2. Привязка к элементам процесса
+
+| Элемент | Механизм привязки | Где настраивается |
+|---|---|---|
+| **User Task** | `externalReference` (Camunda External Form Reference) | Camunda Modeler → `zeebe:formDefinition externalReference="artifactKey"` |
+| **Start Event** | `elementId`-привязка | ZorroBPM UI: Admin → Start Bindings (`POST /process-definitions/{key}/element-bindings`) |
+
+**User Task**: `externalReference` на BPMN-элементе — это `artifactKey`. Движок резолвит его как артефакт.
+**Start Event**: привязка задаётся через admin UI (пиннится к версии Process Definition).
+
+### 10.3. Резолв артефакта
+
+Три эндпоинта возвращают `{ kind, payload }`:
+
+| Эндпоинт | Когда | Что отдаёт |
+|---|---|---|
+| `GET /forms/{key}` | Прямой запрос по ключу | `{ key, version, kind, schema }` |
+| `GET /user-tasks/{id}/form` | Задача с `formKey`/`externalReference` | `{ type, kind, schema, data? }` |
+| `GET /process-definitions/{key}/start-form` | Старт формы (latest version) | `{ type, kind, schema }` |
+
+BFF получает `kind` и решает:
+- `kind=FORM_JS` → рендерить через form-js (визуальная форма)
+- `kind=VARIABLE_SCHEMA` → валидировать JSON через свою JSON-Schema-библиотеку, собрать variables, вызвать Runtime
+
+### 10.4. Пиннинг версии
+
+Артефакт **пиннится к версии Process Definition** (ADR-6 §D8):
+- Инстанс, стартованный на PD v3, резолвит артефакт, актуальный для v3 (не «последний»).
+- При новом деплое артефакта (v2) старые инстансы продолжают использовать v1.
+- Пиннинг автоматический: `POST /process-definitions/{key}/element-bindings` фиксирует `artifact_version`.
+
+### 10.5. Поток BFF (VARIABLE_SCHEMA)
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  1. РЕЗОЛВ   │────▶│  2. ВАЛИДАЦИЯ │────▶│  3. СТАРТ    │
+│  GET /forms  │     │  JSON Schema  │     │  POST /proc  │
+│  → {kind,    │     │  → variables  │     │  → variables │
+│    schema}   │     │  → 400/error  │     │              │
+└──────────────┘     └──────────────┘     └──────────────┘
+```
+
+1. **Резолв**: BFF запрашивает `GET /forms/{key}` или `GET /user-tasks/{id}/form` → получает `{ kind, schema }`.
+2. **Валидация**: BFF парсит `schema` как JSON Schema 2020-12. Пользователь заполняет форму → BFF валидирует
+   JSON-объект через библиотеку (ajv, json-schema-validator). Если невалидно → показать ошибку, не вызывать Runtime.
+3. **Старт/завершение**: BFF собирает variables из валидного JSON → `POST /process-instances` или
+   `POST /user-tasks/{id}/complete`.
+
+### 10.6. UI-метаданные `x-ui` (будущее)
+
+JSON Schema поддерживает **расширения через неизвестные ключи** — валидатор их игнорирует. BFF может добавить
+`x-ui`, `x-layout`, `x-component` для автогенерации UI-формы внешним фронтендом. **Ядро и BFF эти свойства
+не анализируют** — только для внешних Frontend-генераторов.
+
+### 10.7. Пример: входящая корреспонденция (JSON Schema 2020-12)
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Входящая корреспонденция",
+  "type": "object",
+  "properties": {
+    "senderType": {
+      "type": "string",
+      "enum": ["LEGAL_ENTITY", "INDIVIDUAL"],
+      "description": "Тип отправителя"
+    },
+    "bin": {
+      "type": "string",
+      "pattern": "^[0-9]{12}$",
+      "description": "БИН юридического лица (12 цифр)"
+    },
+    "iin": {
+      "type": "string",
+      "pattern": "^[0-9]{12}$",
+      "description": "ИИН физического лица (12 цифр)"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Тема корреспонденции"
+    },
+    "language": {
+      "type": "string",
+      "enum": ["RU", "KZ", "EN"],
+      "default": "RU"
+    }
+  },
+  "required": ["senderType", "subject"],
+  "if": {
+    "properties": { "senderType": { "const": "LEGAL_ENTITY" } }
+  },
+  "then": {
+    "required": ["senderType", "bin", "subject"]
+  },
+  "else": {
+    "required": ["senderType", "iin", "subject"]
+  }
+}
+```
+
+**Логика**: если `senderType=LEGAL_ENTITY` → обязателен `BIN`; если `INDIVIDUAL` → обязателен `ИИН`.
+BFF парсит эту схему и валидирует JSON пользователя.
