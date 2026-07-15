@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.dto.DeployFormDTO;
 import com.zorrodev.bpm.contract.dto.FormDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.engine.entity.FormArtifactKind;
 import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
@@ -47,6 +48,7 @@ public class FormResource implements FormContract {
             FormDTO dto = new FormDTO();
             dto.setKey(entity.getFormKey());
             dto.setVersion(entity.getVersion());
+            dto.setKind(entity.getKind() != null ? entity.getKind().name() : null);
             dto.setSchema(entity.getSchemaJson());
             return dto;
         }).toList();
@@ -67,6 +69,16 @@ public class FormResource implements FormContract {
         if (dto.getKey() == null || dto.getKey().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Form key is required");
         }
+        if (dto.getKind() == null || dto.getKind().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "kind is required");
+        }
+        FormArtifactKind kind;
+        try {
+            kind = FormArtifactKind.valueOf(dto.getKind());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid kind: " + dto.getKind() + ". Must be FORM_JS or VARIABLE_SCHEMA");
+        }
         if (dto.getSchema() == null || dto.getSchema().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Form schema is required");
         }
@@ -84,6 +96,7 @@ public class FormResource implements FormContract {
         entity.setId(UUID.randomUUID());
         entity.setFormKey(dto.getKey());
         entity.setVersion(maxVersion + 1);
+        entity.setKind(kind);
         entity.setSchemaJson(dto.getSchema());
         entity.setCreatedAt(Instant.now());
         formRepository.save(entity);
@@ -91,6 +104,7 @@ public class FormResource implements FormContract {
         FormDTO result = new FormDTO();
         result.setKey(entity.getFormKey());
         result.setVersion(entity.getVersion());
+        result.setKind(entity.getKind().name());
         result.setSchema(entity.getSchemaJson());
         return result;
     }
@@ -103,6 +117,7 @@ public class FormResource implements FormContract {
         FormDTO dto = new FormDTO();
         dto.setKey(entity.getFormKey());
         dto.setVersion(entity.getVersion());
+        dto.setKind(entity.getKind() != null ? entity.getKind().name() : null);
         dto.setSchema(entity.getSchemaJson());
         return dto;
     }

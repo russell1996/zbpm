@@ -91,6 +91,7 @@ class FormResourceIntegrationTest {
     private DeployFormDTO deployForm(String key, String schema) {
         DeployFormDTO dto = new DeployFormDTO();
         dto.setKey(key);
+        dto.setKind("FORM_JS");
         dto.setSchema(schema);
         return dto;
     }
@@ -397,7 +398,7 @@ class FormResourceIntegrationTest {
         String schema = "{\"type\":\"form\",\"components\":[{\"type\":\"textfield\",\"key\":\"name\"}],\"properties\":{}}";
         mockMvc.perform(post("/forms")
                         .header("Authorization", "Bearer " + adminToken)
-                        .content(mapper.writeValueAsString(new DeployFormDTO() {{ setKey(formKey); setSchema(schema); }}))
+                        .content(mapper.writeValueAsString(new DeployFormDTO() {{ setKey(formKey); setKind("FORM_JS"); setSchema(schema); }}))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
 
