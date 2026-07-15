@@ -104,10 +104,13 @@ Content-Type: application/json
 
 ### 4.4. Уведомления «появилась задача» — два подхода
 - **Поллинг (просто):** периодически `GET /user-tasks?assignee=|candidateGroup=`. Годится для реконнекта/сверки.
-- **Push через события (правильно):** движок публикует доменные события (`UserTaskInstanceCreated`,
-  `…Completed`, `ProcessInstanceCreated/Completed`, incidents) через **транзакционный outbox → RabbitMQ**.
-  Backend вашей системы подписывается и реагирует мгновенно.
-- **Websocket** — на **вашей** стороне: ваш backend слушает RabbitMQ-события и пушит своим клиентам.
+- **Push через события — ⚠️ ПОКА НЕ РЕАЛИЗОВАНО (планируется).** Доменные события
+  (`UserTaskInstanceCreated`, `…Completed`, `ProcessInstanceCreated/Completed`, incidents) в коде движка
+  **пока только логируются** — публикация в RabbitMQ закомментирована (`ProcessEngineEventsServiceImpl`,
+  находка аудита F13). **Не полагайтесь на подписку до реализации.** Актуальный механизм уведомлений —
+  **поллинг** `GET /user-tasks`. (Транзакционный outbox → RabbitMQ реально работает только для диспетча
+  **service-task** воркерам, не для доменных событий.)
+- **Websocket** — на **вашей** стороне: пока — поверх поллинга; после реализации F13 — поверх RabbitMQ-событий.
   В самом ZBPM websocket'а нет.
 
 ### 4.5. Внешняя работа (service-task) и корреляция
@@ -150,7 +153,7 @@ Content-Type: application/json
 
 Согласование (руководитель):
   4. Процесс дошёл до user-task «Согласование», assignee резолвится в managerId.
-  5. KT Docs узнаёт о задаче: поллинг GET /user-tasks?assignee=mgr-7  ИЛИ  RabbitMQ UserTaskInstanceCreated.
+  5. KT Docs узнаёт о задаче: поллинг GET /user-tasks?assignee=mgr-7 (RabbitMQ-события — план, F13).
   6. В инбоксе руководителя всплывает задача → GET /user-tasks/{id} → formKey+vars → KT Docs рисует форму.
   7. «Согласовать» → POST /user-tasks/{id}/complete  X-On-Behalf-Of: mgr-7  { approved:true }
   8. Процесс идёт дальше (HR, приказ). audit_log: принципал=ключ, on_behalf_of=mgr-7.
@@ -169,7 +172,7 @@ Content-Type: application/json
 | Рендер/валидация движком | нет | нет |
 | Инбокс | `/user-tasks/search`, native tasks | `GET /user-tasks?…` |
 | Динамический assignee | FEEL | `${var}` / FEEL |
-| Push событий | exporters → ES/Kafka | RabbitMQ outbox |
+| Push событий | exporters → ES/Kafka | поллинг (домен-события в RabbitMQ — план, F13) |
 | Вход без кода | inbound Connectors (webhook/Kafka) | — (на будущее) |
 | Websocket в браузер | нет (Tasklist поллит) | нет (на стороне вашей системы) |
 
