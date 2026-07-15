@@ -10,4 +10,5 @@ public class UserTaskExtensionModel {
     private String candidateUsers;
     private String candidateGroups;
     private String formKey;
+    private String externalReference;
 }

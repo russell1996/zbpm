@@ -43,6 +43,8 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final BpmnParseService bpmnParseService;
     private final FileService fileService;
     private final DBService dbService;
+    private final com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository bindingRepository;
+    private final com.zorrodev.bpm.engine.repository.FormRepository formRepository;
 
     @Override
     public Optional<ProcessDefinition> getProcessDefinitionById(UUID id) {
@@ -87,6 +89,11 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             registerMessageStartSubscriptions(key, id, model);
             registerTimerStartJobs(key, id, model);
             registerSignalStartSubscriptions(key, id, model);
+
+            // WO-VM-9a: carry-forward element_artifact_bindings from previous version
+            if (processDefinitionEntity.getVersion() > 1) {
+                carryForwardBindings(key, processDefinitionEntity.getVersion() - 1, processDefinitionEntity);
+            }
         } else {
             processDefinitionEntity = processDefinitionEntityOptional.get();
         }
@@ -202,6 +209,28 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         processDefinition.setCreatedAt(processDefinitionEntity.getCreatedAt());
         processDefinition.setStartFormKey(processDefinitionEntity.getStartFormKey());
         return processDefinition;
+    }
+
+    /**
+     * WO-VM-9a: Carry-forward element_artifact_bindings from previous PD version to new version.
+     * Copies bindings by elementId and re-pins artifact_version to current artifact version.
+     */
+    private void carryForwardBindings(String key, int oldVersion, ProcessDefinitionEntity newPd) {
+        var oldBindings = bindingRepository.findByKeyAndOldVersion(key, oldVersion);
+        for (var oldBinding : oldBindings) {
+            // Find current artifact version
+            formRepository.findTopByFormKeyOrderByVersionDesc(oldBinding.getArtifactKey()).ifPresent(currentArtifact -> {
+                var newBinding = new com.zorrodev.bpm.engine.entity.ElementArtifactBindingEntity();
+                newBinding.setId(java.util.UUID.randomUUID());
+                newBinding.setProcessDefinitionId(newPd.getId());
+                newBinding.setProcessDefinitionVersion(newPd.getVersion());
+                newBinding.setElementId(oldBinding.getElementId());
+                newBinding.setArtifactKey(oldBinding.getArtifactKey());
+                newBinding.setArtifactVersion(currentArtifact.getVersion());
+                newBinding.setCreatedAt(java.time.Instant.now());
+                bindingRepository.save(newBinding);
+            });
+        }
     }
 
 }
