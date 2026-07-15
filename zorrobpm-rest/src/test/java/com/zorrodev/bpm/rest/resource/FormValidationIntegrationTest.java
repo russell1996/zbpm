@@ -57,7 +57,7 @@ class FormValidationIntegrationTest {
         String schema = "{\"type\":\"form\",\"components\":[{\"type\":\"textfield\",\"key\":\"name\",\"validate\":{\"required\":true}},{\"type\":\"number\",\"key\":\"amount\"}]}";
         mockMvc.perform(post("/forms")
                         .header("Authorization", "Bearer " + adminToken)
-                        .content(mapper.writeValueAsString(new DeployFormDTO() {{ setKey("orderForm"); setSchema(schema); }}))
+                        .content(mapper.writeValueAsString(new DeployFormDTO() {{ setKey("orderForm"); setKind("FORM_JS"); setSchema(schema); }}))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
 

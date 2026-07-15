@@ -10,6 +10,8 @@ import java.util.Map;
 public class TaskFormDTO {
     /** "embedded" (linked form in form table), "external" (URL), or "none" (no form). */
     private String type;
+    /** Artifact kind — "FORM_JS" or "VARIABLE_SCHEMA". Present for type=embedded. */
+    private String kind;
     /** Schema JSON — present only for type=embedded. */
     private String schema;
     /** Prefill data from process instance variables — present only for type=embedded. */
