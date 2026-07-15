@@ -136,5 +136,18 @@
   "noForms": "Формы не развернуты.",
   "kind": "Тип",
   "kindFormJs": "Форма (form-js)",
-  "kindVariableSchema": "Схема переменных (JSON Schema)"
+  "kindVariableSchema": "Схема переменных (JSON Schema)",
+  "startBindings": "Привязки стартовых событий",
+  "selectDefinition": "Выберите определение процесса",
+  "bindArtifact": "Привязать артефакт к стартовому событию",
+  "startEvent": "Стартовое событие",
+  "selectElement": "— выберите элемент —",
+  "artifact": "Артефакт",
+  "selectArtifact": "— выберите артефакт —",
+  "bind": "Привязать",
+  "binding": "Привязка...",
+  "bindingCreated": "Привязка создана",
+  "noStartEvents": "Нет стартовых событий в этом определении",
+  "error403": "Только SUPER_ADMIN может создавать привязки",
+  "errorGeneric": "Не удалось создать привязку"
 }

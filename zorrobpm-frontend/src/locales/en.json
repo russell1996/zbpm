@@ -136,5 +136,18 @@
   "noForms": "No forms deployed yet.",
   "kind": "Kind",
   "kindFormJs": "Form (form-js)",
-  "kindVariableSchema": "Variable Schema (JSON Schema)"
+  "kindVariableSchema": "Variable Schema (JSON Schema)",
+  "startBindings": "Start Event Bindings",
+  "selectDefinition": "Select Process Definition",
+  "bindArtifact": "Bind Artifact to Start Event",
+  "startEvent": "Start Event",
+  "selectElement": "— select element —",
+  "artifact": "Artifact",
+  "selectArtifact": "— select artifact —",
+  "bind": "Bind",
+  "binding": "Binding...",
+  "bindingCreated": "Binding created",
+  "noStartEvents": "No start events in this definition",
+  "error403": "Only SUPER_ADMIN can create bindings",
+  "errorGeneric": "Failed to create binding"
 }
