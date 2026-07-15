@@ -118,7 +118,9 @@ public class FormResource implements FormContract {
 
     @Override
     public TaskFormDTO getStartForm(String key) {
-        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, null)
+        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
         // For start form, there's no process instance yet — data is empty
         return resolveStartForm(pd.getStartFormKey());

@@ -385,4 +385,66 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
     }
+
+    // ==================== WO-AUD-3: getStartForm ====================
+
+    @Test
+    void aud3_startForm_deployedFormAndProcess_returns200WithSchema() throws Exception {
+        // Deploy form with key matching BPMN's start formKey
+        String formKey = "startFormAudit-" + UUID.randomUUID().toString().substring(0, 8);
+        String schema = "{\"type\":\"form\",\"components\":[{\"type\":\"textfield\",\"key\":\"name\"}],\"properties\":{}}";
+        mockMvc.perform(post("/forms")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(new DeployFormDTO() {{ setKey(formKey); setSchema(schema); }}))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        // Deploy BPMN with startFormKey
+        String bpmn = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+              xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+              xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+              xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+              xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+              id="Definitions_aud3" targetNamespace="http://bpmn.io/schema/bpmn">
+              <bpmn:process id="audit3-process" name="Audit3 Process" isExecutable="true">
+                <bpmn:startEvent id="startEvent">
+                  <bpmn:extensionElements>
+                    <zeebe:properties>
+                      <zeebe:property name="formKey" value="%s" />
+                    </zeebe:properties>
+                  </bpmn:extensionElements>
+                  <bpmn:outgoing>flow1</bpmn:outgoing>
+                </bpmn:startEvent>
+                <bpmn:endEvent id="endEvent">
+                  <bpmn:incoming>flow1</bpmn:incoming>
+                </bpmn:endEvent>
+                <bpmn:sequenceFlow id="flow1" sourceRef="startEvent" targetRef="endEvent" />
+              </bpmn:process>
+            </bpmn:definitions>
+            """.formatted(formKey);
+
+        AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
+        addDto.setBpmn(bpmn);
+        mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(addDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        // GET /process-definitions/{key}/start-form → 200 + schema
+        mockMvc.perform(get("/process-definitions/audit3-process/start-form")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.schema").value(schema))
+                .andExpect(jsonPath("$.type").value("embedded"));
+    }
+
+    @Test
+    void aud3_startForm_unknownKey_returns404() throws Exception {
+        mockMvc.perform(get("/process-definitions/nonexistent-key-999/start-form")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
 }
