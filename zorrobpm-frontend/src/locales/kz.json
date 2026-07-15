@@ -161,5 +161,7 @@
   "saveSchema": "Схеманы сақтау",
   "schemaSaved": "Схема сақталды",
   "noExternalReference": "Сақтау мүмкін емес: External Form Reference көрсетілмеген",
-  "noExternalReferenceHint": "Схеманы сақтауға дейін Camunda Modeler-де осы user task үшін External Form Reference орнатыңыз."
+  "noExternalReferenceHint": "Схеманы сақтауға дейін Camunda Modeler-де осы user task үшін External Form Reference орнатыңыз.",
+  "failedToLoadSchema": "Бар схеманы жүктеу мүмкін болмады",
+  "loadingSchema": "Схема жүктелуде..."
 }
