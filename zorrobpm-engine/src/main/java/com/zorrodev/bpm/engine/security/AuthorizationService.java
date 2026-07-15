@@ -1,7 +1,12 @@
 package com.zorrodev.bpm.engine.security;
 
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
+import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
+import com.zorrodev.bpm.engine.entity.ProcessMemberId;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +20,8 @@ public class AuthorizationService {
 
     private final ProcessRepository processRepository;
     private final ProcessMemberRepository processMemberRepository;
+    private final ProcessInstanceRepository processInstanceRepository;
+    private final ProcessDefinitionRepository processDefinitionRepository;
 
     public enum Action {
         // Management actions — SUPER_ADMIN only (ADR-2)
@@ -58,13 +65,29 @@ public class AuthorizationService {
             || action == Action.MANAGE_KEYS || action == Action.DELETE_PROCESS;
     }
 
-    public boolean canCompleteUserTask(Principal principal, UUID processId) {
+    public boolean canCompleteUserTask(Principal principal, UUID processInstanceId) {
         if (principal.isSuperAdmin()) return true;
+
+        // Resolve instance → definition → key → registry processId
+        ProcessInstanceEntity instance = processInstanceRepository.findById(processInstanceId).orElse(null);
+        if (instance == null) return false;
+        ProcessDefinitionEntity definition = processDefinitionRepository.findById(instance.getProcessDefinitionId()).orElse(null);
+        if (definition == null) return false;
+        ProcessEntity process = processRepository.findByDefinitionKey(definition.getKey()).orElse(null);
+        if (process == null) return false;
+        UUID registryProcessId = process.getId();
+
         if (principal instanceof Principal.ServicePrincipal sa) {
-            Principal.Grant grant = sa.grants().get(processId);
+            Principal.Grant grant = sa.grants().get(registryProcessId);
             if (grant == null) return false;
             return grant.isFull() || grant.permissions().contains("COMPLETE_USER_TASK");
         }
-        return true;
+        if (principal instanceof Principal.UserPrincipal user) {
+            // WO-AUD-5 F18: cross-tenant check — user must be a process member
+            ProcessMemberEntity membership = processMemberRepository.findById(
+                new ProcessMemberId(registryProcessId, user.userId())).orElse(null);
+            return membership != null;
+        }
+        return false;
     }
 }
