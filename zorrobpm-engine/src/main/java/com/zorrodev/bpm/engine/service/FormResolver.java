@@ -38,6 +38,7 @@ public class FormResolver {
 
         TaskFormDTO dto = new TaskFormDTO();
         dto.setType("embedded");
+        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
         dto.setSchema(form.getSchemaJson());
         if (prefillData != null) dto.setData(prefillData);
         return dto;

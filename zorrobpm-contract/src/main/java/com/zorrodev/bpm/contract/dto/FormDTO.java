@@ -8,5 +8,6 @@ import lombok.Setter;
 public class FormDTO {
     private String key;
     private int version;
+    private String kind;
     private String schema;
 }
