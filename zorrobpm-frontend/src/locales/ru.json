@@ -161,5 +161,7 @@
   "saveSchema": "Сохранить схему",
   "schemaSaved": "Схема сохранена",
   "noExternalReference": "Невозможно сохранить: не задан External Form Reference",
-  "noExternalReferenceHint": "Задайте External Form Reference в Camunda Modeler для этого user task перед сохранением схемы."
+  "noExternalReferenceHint": "Задайте External Form Reference в Camunda Modeler для этого user task перед сохранением схемы.",
+  "failedToLoadSchema": "Не удалось загрузить существующую схему",
+  "loadingSchema": "Загрузка схемы..."
 }

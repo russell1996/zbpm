@@ -6,6 +6,7 @@ import ProcessSchemaAdmin from './ProcessSchemaAdmin.vue'
 const mockGetProcessDefinitions = vi.fn()
 const mockGetSchemaMap = vi.fn()
 const mockSaveElementSchema = vi.fn()
+const mockGetForm = vi.fn()
 const mockSuccess = vi.fn()
 const mockError = vi.fn()
 
@@ -17,6 +18,7 @@ vi.mock('@/services/processService', () => ({
 vi.mock('@/services/formService', () => ({
   getSchemaMap: (...args: any[]) => mockGetSchemaMap(...args),
   saveElementSchema: (...args: any[]) => mockSaveElementSchema(...args),
+  getForm: (...args: any[]) => mockGetForm(...args),
   listForms: vi.fn().mockResolvedValue([]),
   createElementBinding: vi.fn(),
 }))
@@ -145,5 +147,76 @@ describe('ProcessSchemaAdmin', () => {
     // Save button should not exist
     const saveBtn = wrapper.findAll('button').find(b => b.text().includes('saveSchema'))
     expect(saveBtn).toBeFalsy()
+  })
+
+  // --- WO-VM-11 tests ---
+
+  it('POF: select element with artifactKey → getForm called, schema loaded (WO-VM-11 criterion 1)', async () => {
+    // Fresh schema-map for this test — userTask with artifactKey
+    mockGetSchemaMap.mockResolvedValue({
+      processDefinitionKey: 'proc1',
+      version: 1,
+      elements: [
+        { elementId: 'ut1', name: 'Task', type: 'USER_TASK', artifactKey: 'savedForm', kind: 'VARIABLE_SCHEMA', artifactVersion: 1, hasExternalReference: true, shared: false },
+      ],
+    })
+
+    const savedSchema = '{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"name":{"type":"string"}}}'
+    mockGetForm.mockReset()
+    mockGetForm.mockResolvedValue({ key: 'savedForm', version: 1, kind: 'VARIABLE_SCHEMA', schema: savedSchema })
+
+    const wrapper = mount(ProcessSchemaAdmin)
+    await flushPromises()
+
+    // Select process
+    await wrapper.find('.cursor-pointer').trigger('click')
+    await flushPromises()
+
+    // Click the user-task element (has artifactKey='savedForm')
+    const clickables = wrapper.findAll('.cursor-pointer')
+    const userTaskEl = clickables.find(el => el.text().includes('ut1'))
+    expect(userTaskEl).toBeTruthy()
+    await userTaskEl!.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    // getForm should have been called with the artifactKey
+    expect(mockGetForm).toHaveBeenCalledTimes(1)
+    expect(mockGetForm).toHaveBeenCalledWith('savedForm')
+
+    // Textarea should exist and contain the saved schema content
+    const textarea = wrapper.find('textarea')
+    expect(textarea.exists()).toBe(true)
+    const val = (textarea.element as HTMLTextAreaElement).value
+    expect(val).toContain('name')
+  })
+
+  it('select element without artifactKey → empty editor, no getForm (WO-VM-11 criterion 2)', async () => {
+    // Fresh schema-map — only startEvent (no artifactKey)
+    mockGetSchemaMap.mockResolvedValue({
+      processDefinitionKey: 'proc1',
+      version: 1,
+      elements: [
+        { elementId: 'startEvent', name: 'Start', type: 'START_EVENT', artifactKey: null, kind: null, artifactVersion: null, hasExternalReference: false, shared: false },
+      ],
+    })
+    mockGetForm.mockReset()
+
+    const wrapper = mount(ProcessSchemaAdmin)
+    await flushPromises()
+
+    // Select process
+    await wrapper.find('.cursor-pointer').trigger('click')
+    await flushPromises()
+
+    // Click the startEvent element
+    const clickables = wrapper.findAll('.cursor-pointer')
+    const startEventEl = clickables.find(el => el.text().includes('startEvent'))
+    expect(startEventEl).toBeTruthy()
+    await startEventEl!.trigger('click')
+    await flushPromises()
+
+    // getForm should NOT have been called (no artifactKey)
+    expect(mockGetForm).not.toHaveBeenCalled()
   })
 })

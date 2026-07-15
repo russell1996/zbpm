@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { getProcessDefinitions, getProcessDefinitionStructure, type ProcessDefinition, type BpmnNode } from '@/services/processService'
-import { getSchemaMap, saveElementSchema, type SchemaMap, type SchemaMapElement, type ArtifactKind } from '@/services/formService'
+import { getSchemaMap, saveElementSchema, getForm, type SchemaMap, type SchemaMapElement, type ArtifactKind } from '@/services/formService'
 import FormEditor from '@/widgets/forms/FormEditor.vue'
 import JsonSchemaEditor from '@/widgets/forms/JsonSchemaEditor.vue'
 
@@ -20,6 +20,7 @@ const formEditorRef = ref<InstanceType<typeof FormEditor> | null>(null)
 const jsonEditorRef = ref<InstanceType<typeof JsonSchemaEditor> | null>(null)
 const loadingDefs = ref(true)
 const loadingMap = ref(false)
+const loadingSchema = ref(false)
 const saving = ref(false)
 
 onMounted(async () => {
@@ -46,7 +47,7 @@ async function onSelectDef(def: ProcessDefinition) {
   }
 }
 
-function selectElement(el: SchemaMapElement) {
+async function selectElement(el: SchemaMapElement) {
   selectedElement.value = el
   if (el.kind) {
     selectedKind.value = el.kind
@@ -54,6 +55,23 @@ function selectElement(el: SchemaMapElement) {
     selectedKind.value = 'FORM_JS'
   }
   jsonSchemaContent.value = ''
+
+  // WO-VM-11: load existing schema content if element has artifactKey
+  if (el.artifactKey) {
+    loadingSchema.value = true
+    try {
+      const form = await getForm(el.artifactKey)
+      if (selectedKind.value === 'VARIABLE_SCHEMA' && form.schema) {
+        jsonSchemaContent.value = form.schema
+      } else if (selectedKind.value === 'FORM_JS' && form.schema && formEditorRef.value) {
+        await (formEditorRef.value as any).importSchema(JSON.parse(form.schema))
+      }
+    } catch {
+      toast.error(t('failedToLoadSchema'))
+    } finally {
+      loadingSchema.value = false
+    }
+  }
 }
 
 function deselectElement() {
@@ -195,7 +213,8 @@ function statusBadge(el: SchemaMapElement) {
 
           <!-- Editor -->
           <div v-if="selectedElement.type !== 'USER_TASK' || selectedElement.hasExternalReference">
-            <FormEditor v-if="selectedKind === 'FORM_JS'" ref="formEditorRef" style="height: 400px;" />
+            <div v-if="loadingSchema" class="text-sm text-muted-foreground py-4">{{ t('loadingSchema') }}</div>
+            <FormEditor v-else-if="selectedKind === 'FORM_JS'" ref="formEditorRef" style="height: 400px;" />
             <JsonSchemaEditor v-else ref="jsonEditorRef" v-model="jsonSchemaContent" style="height: 400px;" />
           </div>
 
