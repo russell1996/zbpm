@@ -8,7 +8,6 @@ import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.exception.FormValidationException;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
-import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
@@ -20,7 +19,6 @@ import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
@@ -31,6 +29,7 @@ import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.FormValidator;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -65,8 +64,7 @@ public class RuntimeResource implements RuntimeContract {
     private final DBService dbService;
     private final AuditLogService auditLogService;
     private final UserGroupRepository userGroupRepository;
-    private final FormValidator formValidator;
-    private final FormRepository formRepository;
+    private final FormArtifactService formArtifactService;
     private final ProcessMemberRepository processMemberRepository;
     private final HttpServletRequest request;
 
@@ -126,22 +124,19 @@ public class RuntimeResource implements RuntimeContract {
         }
         requireOperate(definitionKey, AuthorizationService.Action.START);
 
-        // WO-FORM-5: server-side validation of variables against form schema
+        // ADR-6 §D9: form validation via FormArtifactService facade
         if (definitionKey != null) {
             Integer maxVersion = processDefinitionRepository.findMaxByKey(definitionKey).orElse(null);
             if (maxVersion != null) {
                 ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(definitionKey, maxVersion).orElse(null);
                 if (pd != null && pd.getStartFormKey() != null) {
-                    String schemaJson = formRepository.findTopByFormKeyOrderByVersionDesc(pd.getStartFormKey())
-                        .map(FormEntity::getSchemaJson).orElse(null);
-                    if (schemaJson != null) {
-                        List<FormValidator.ValidationError> errors = formValidator.validate(schemaJson, dto.getVariables());
-                        if (!errors.isEmpty()) {
-                            String errorDetails = errors.stream()
-                                .map(e -> e.field() + ": " + e.message())
-                                .reduce((a, b) -> a + "; " + b).orElse("Validation failed");
-                            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, errorDetails);
-                        }
+                    List<FormValidator.ValidationError> errors = formArtifactService.validateFormIfApplicable(
+                        pd.getStartFormKey(), dto.getVariables());
+                    if (!errors.isEmpty()) {
+                        String errorDetails = errors.stream()
+                            .map(e -> e.field() + ": " + e.message())
+                            .reduce((a, b) -> a + "; " + b).orElse("Validation failed");
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, errorDetails);
                     }
                 }
             }
@@ -202,16 +197,12 @@ public class RuntimeResource implements RuntimeContract {
         // Also check assignee (existing check, refactored to use principal)
         checkAssignee(principal, task);
 
-        // WO-FORM-5: server-side validation of variables against form schema
-        if (task.getFormKey() != null && !task.getFormKey().isBlank()
-                && dto.getVariables() != null && !dto.getVariables().isEmpty()) {
-            String schemaJson = formRepository.findTopByFormKeyOrderByVersionDesc(task.getFormKey())
-                .map(FormEntity::getSchemaJson).orElse(null);
-            if (schemaJson != null) {
-                List<FormValidator.ValidationError> errors = formValidator.validate(schemaJson, dto.getVariables());
-                if (!errors.isEmpty()) {
-                    throw new FormValidationException(errors);
-                }
+        // ADR-6 §D9: form validation via FormArtifactService facade
+        if (dto.getVariables() != null && !dto.getVariables().isEmpty()) {
+            List<FormValidator.ValidationError> errors = formArtifactService.validateFormIfApplicable(
+                task.getFormKey(), dto.getVariables());
+            if (!errors.isEmpty()) {
+                throw new FormValidationException(errors);
             }
         }
 

@@ -7,5 +7,6 @@ import lombok.Setter;
 @Setter
 public class DeployFormDTO {
     private String key;
+    private String kind;
     private String schema;
 }

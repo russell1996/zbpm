@@ -22,6 +22,7 @@ import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,7 @@ class RuntimeResourceTest {
     @Mock private AuthorizationService authorizationService;
     @Mock private DBService dbService;
     @Mock private AuditLogService auditLogService;
+    @Mock private FormArtifactService formArtifactService;
     @Mock private HttpServletRequest request;
 
     @InjectMocks
