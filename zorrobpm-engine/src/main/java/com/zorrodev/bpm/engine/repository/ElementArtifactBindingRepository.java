@@ -12,4 +12,6 @@ public interface ElementArtifactBindingRepository extends JpaRepository<ElementA
     Optional<ElementArtifactBindingEntity> findByProcessDefinitionIdAndElementId(UUID processDefinitionId, String elementId);
 
     List<ElementArtifactBindingEntity> findByProcessDefinitionId(UUID processDefinitionId);
+
+    void deleteByProcessDefinitionIdAndElementId(UUID processDefinitionId, String elementId);
 }

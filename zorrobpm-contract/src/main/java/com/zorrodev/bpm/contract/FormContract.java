@@ -29,4 +29,10 @@ public interface FormContract {
 
     @PostMapping("/process-definitions/{key}/element-bindings")
     ElementBindingDTO createElementBinding(@PathVariable String key, @RequestBody CreateElementBindingDTO dto);
+
+    @GetMapping("/process-definitions/{key}/element-bindings")
+    List<ElementBindingDTO> listElementBindings(@PathVariable String key);
+
+    @DeleteMapping("/process-definitions/{key}/element-bindings/{elementId}")
+    void deleteElementBinding(@PathVariable String key, @PathVariable String elementId);
 }
