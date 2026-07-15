@@ -9,6 +9,10 @@ import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.entity.ProcessEntity;
+import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
@@ -60,6 +64,12 @@ class AssigneeCheckIntegrationTest {
     @Autowired
     private UserTaskRepository userTaskRepository;
 
+    @Autowired
+    private ProcessRepository processRepository;
+
+    @Autowired
+    private ProcessMemberRepository processMemberRepository;
+
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String adminToken;
     private String user1Token;
@@ -87,6 +97,21 @@ class AssigneeCheckIntegrationTest {
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
+
+        // WO-AUD-5: add both users as process members (canCompleteUserTask requires membership)
+        ProcessEntity process = processRepository.findByDefinitionKey(
+            mapper.readTree(deployResult.getResponse().getContentAsString()).get("key").asText()
+        ).orElseThrow();
+        for (String username : List.of("user1", "user2")) {
+            UiUserEntity u = userRepository.findByUsername(username).orElseThrow();
+            ProcessMemberEntity pm = new ProcessMemberEntity();
+            pm.setProcessId(process.getId());
+            pm.setUserId(u.getId());
+            pm.setRole("OWNER");
+            pm.setAddedBy(u.getId());
+            pm.setAddedAt(Instant.now());
+            processMemberRepository.save(pm);
+        }
     }
 
     private void createUser(String username, String role) {

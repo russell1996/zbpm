@@ -6,10 +6,14 @@ import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.engine.entity.ProcessEntity;
+import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserGroupEntity;
 import com.zorrodev.bpm.engine.entity.UserGroupId;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
@@ -66,10 +70,17 @@ class CandidateGroupMembershipIntegrationTest {
     @Autowired
     private UserGroupRepository userGroupRepository;
 
+    @Autowired
+    private ProcessRepository processRepository;
+
+    @Autowired
+    private ProcessMemberRepository processMemberRepository;
+
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String adminToken;
     private String groupMemberToken;
     private String outsiderToken;
+    private String nonMemberToken;
     private UUID processDefinitionId;
 
     @BeforeAll
@@ -80,9 +91,11 @@ class CandidateGroupMembershipIntegrationTest {
         // Create users (use unique names to avoid collision with other test classes)
         UiUserEntity member = createUser("cgMember", "USER");
         UiUserEntity outsider = createUser("cgOutsider", "USER");
+        UiUserEntity nonMember = createUser("cgNonMember", "USER");
 
         groupMemberToken = login("cgMember", "passr");
         outsiderToken = login("cgOutsider", "passr");
+        nonMemberToken = login("cgNonMember", "passr");
 
         // Add groupMember to "managers" group
         UserGroupEntity ug = new UserGroupEntity();
@@ -103,6 +116,20 @@ class CandidateGroupMembershipIntegrationTest {
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
+
+        // WO-AUD-5: add both users as process members (canCompleteUserTask requires membership)
+        ProcessEntity process = processRepository.findByDefinitionKey(
+            mapper.readTree(deployResult.getResponse().getContentAsString()).get("key").asText()
+        ).orElseThrow();
+        for (UiUserEntity u : List.of(member, outsider)) {
+            ProcessMemberEntity pm = new ProcessMemberEntity();
+            pm.setProcessId(process.getId());
+            pm.setUserId(u.getId());
+            pm.setRole("OWNER");
+            pm.setAddedBy(u.getId());
+            pm.setAddedAt(Instant.now());
+            processMemberRepository.save(pm);
+        }
     }
 
     private UiUserEntity createUser(String username, String role) {
@@ -230,10 +257,10 @@ class CandidateGroupMembershipIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    // --- Criterion #4: Unassigned task with no candidate groups → any user can complete ---
+    // --- Criterion #4: Unassigned task with no candidate groups → non-member gets 403 (WO-AUD-5) ---
 
     @Test
-    void criterion4_unassignedNoGroups_anyUserCompletes_returns200() throws Exception {
+    void criterion4_unassignedNoGroups_nonMember_returns403() throws Exception {
         UUID taskId = startProcess();
         // Clear assignee and candidateGroups
         UserTaskEntity task = userTaskRepository.findById(taskId).orElseThrow();
@@ -244,10 +271,10 @@ class CandidateGroupMembershipIntegrationTest {
         CompleteTaskDTO dto = new CompleteTaskDTO();
         dto.setVariables(List.of());
         mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
-                        .header("Authorization", "Bearer " + outsiderToken)
+                        .header("Authorization", "Bearer " + nonMemberToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isForbidden());
     }
 
     // --- Criterion #5: proof-of-failure (V3, real RED→GREEN) ---
@@ -278,13 +305,25 @@ class CandidateGroupMembershipIntegrationTest {
 
     @Test
     void criterion6_whitespaceInCandidateGroups_memberOfTrimmedGroupPasses() throws Exception {
-        // Create user in "sales" group
+        // Create user in "sales" group and add as process member (WO-AUD-5)
         UiUserEntity salesUser = createUser("cgSalesUser", "USER");
         String salesToken = login("cgSalesUser", "passr");
         UserGroupEntity salesGroup = new UserGroupEntity();
         salesGroup.setUserId(salesUser.getId());
         salesGroup.setGroupName("sales");
         userGroupRepository.save(salesGroup);
+
+        // Add salesUser as process member (WO-AUD-5: canCompleteUserTask requires membership)
+        ProcessEntity process = processRepository.findByDefinitionKey(
+            "candidate-group-process"
+        ).orElseThrow();
+        ProcessMemberEntity salesPm = new ProcessMemberEntity();
+        salesPm.setProcessId(process.getId());
+        salesPm.setUserId(salesUser.getId());
+        salesPm.setRole("OWNER");
+        salesPm.setAddedBy(salesUser.getId());
+        salesPm.setAddedAt(Instant.now());
+        processMemberRepository.save(salesPm);
 
         UUID taskId = startProcess();
         // Modify candidateGroups to "managers, sales" (with space after comma)
