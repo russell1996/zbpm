@@ -7,14 +7,12 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.FileService;
-import com.zorrodev.bpm.event.ProcessDefinitionCreatedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -34,7 +32,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -52,9 +49,6 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private com.zorrodev.bpm.engine.service.DBService dbService;
 
-    @Mock
-    private ApplicationEventPublisher publisher;
-
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
@@ -66,8 +60,7 @@ class ProcessDefinitionServiceImplTest {
             bpmnService,
             bpmnParseService,
             fileService,
-            dbService,
-            publisher
+            dbService
         );
     }
 
@@ -111,7 +104,6 @@ class ProcessDefinitionServiceImplTest {
 
         verify(bpmnService).addProcessDefinition(eq(savedEntity.getValue().getId()), any());
         verify(fileService).saveFile(eq(savedEntity.getValue().getId()), eq(bpmn));
-        verify(publisher).publishEvent(any(ProcessDefinitionCreatedEvent.class));
 
         assertThat(result.getKey()).isEqualTo("test1");
         assertThat(result.getVersion()).isEqualTo(3);
@@ -131,7 +123,6 @@ class ProcessDefinitionServiceImplTest {
         verify(processDefinitionRepository, never()).save(any());
         verify(bpmnService, never()).addProcessDefinition(any(), any());
         verify(fileService, never()).saveFile(any(), any());
-        verifyNoInteractions(publisher);
 
         assertThat(result.getId()).isEqualTo(existingId);
         assertThat(result.getVersion()).isEqualTo(5);

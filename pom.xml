@@ -40,7 +40,6 @@
 
     <modules>
         <module>zorrobpm-contract</module>
-        <module>zorrobpm-event</module>
         <module>zorrobpm-client</module>
         <module>zorrobpm-engine</module>
         <module>zorrobpm-rest</module>

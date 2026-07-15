@@ -5,7 +5,6 @@ import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
-import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
@@ -16,12 +15,8 @@ import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
-import com.zorrodev.bpm.event.ProcessDefinitionCreatedEvent;
-import com.zorrodev.bpm.event.data.ServiceTaskElement;
-import com.zorrodev.bpm.event.data.UserTaskElement;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -48,8 +43,6 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final BpmnParseService bpmnParseService;
     private final FileService fileService;
     private final DBService dbService;
-
-    private final ApplicationEventPublisher publisher;
 
     @Override
     public Optional<ProcessDefinition> getProcessDefinitionById(UUID id) {
@@ -94,8 +87,6 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             registerMessageStartSubscriptions(key, id, model);
             registerTimerStartJobs(key, id, model);
             registerSignalStartSubscriptions(key, id, model);
-
-            publishProcessDefinitionCreatedEvent(processDefinitionEntity, model, bpmn);
         } else {
             processDefinitionEntity = processDefinitionEntityOptional.get();
         }
@@ -169,49 +160,6 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             };
             dbService.createTimerStartJob(key, processDefinitionId, start.getId(), dueAt);
         }
-    }
-
-    private void publishProcessDefinitionCreatedEvent(ProcessDefinitionEntity processDefinitionEntity, BpmnProcessDefinitionModel model, String bpmn) {
-        ProcessDefinitionCreatedEvent event = new ProcessDefinitionCreatedEvent();
-        event.setId(processDefinitionEntity.getId());
-        event.setType("ProcessDefinitionCreatedEvent");
-        event.setProcessDefinitionId(processDefinitionEntity.getId());
-        event.setCreatedAt(processDefinitionEntity.getCreatedAt());
-        event.setProcessDefinitionName(processDefinitionEntity.getName());
-        event.setProcessDefinitionKey(processDefinitionEntity.getKey());
-        event.setProcessDefinitionVersion(processDefinitionEntity.getVersion());
-        event.setStartFormKey(processDefinitionEntity.getStartFormKey());
-        event.setBpmn(bpmn);
-
-        event.setServiceTaskElements(new LinkedList<>());
-        event.setUserTaskElements(new LinkedList<>());
-        for (var x : model.getElements()) {
-            if (x.getType() == BpmnElementType.USER_TASK) {
-                UserTaskElement e = new UserTaskElement();
-                e.setId(x.getId());
-                e.setName(x.getName());
-                String formKey = Optional.ofNullable(x)
-                    .map(BpmnElementModel::getExtensions)
-                    .map(BpmnElementExtensionModel::getUserTaskExtension)
-                    .map(UserTaskExtensionModel::getFormKey)
-                    .orElse(null);
-                e.setFormKey(formKey);
-                event.getUserTaskElements().add(e);
-            } else if (x.getType() == BpmnElementType.SERVICE_TASK) {
-                ServiceTaskElement e = new ServiceTaskElement();
-                e.setId(x.getId());
-                e.setName(x.getName());
-                String jobType = Optional.ofNullable(x)
-                    .map(BpmnElementModel::getExtensions)
-                    .map(BpmnElementExtensionModel::getServiceTaskExtension)
-                    .map(ServiceTaskExtensionModel::getJob)
-                    .orElse(null);
-                e.setJobType(jobType);
-                event.getServiceTaskElements().add(e);
-            }
-        }
-
-        publisher.publishEvent(event);
     }
 
     @Override
