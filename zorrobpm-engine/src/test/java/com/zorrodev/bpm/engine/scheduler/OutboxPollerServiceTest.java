@@ -7,7 +7,6 @@ import com.zorrodev.bpm.exchange.ServiceTaskEnqueued;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -22,10 +21,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * WO-REL-2 tests for OutboxPollerService:
+ * WO-REL-2 + WO-AUD-1 tests for OutboxBatchProcessor and OutboxPollerService:
  *  #2: publish fails then recovers → delivered
  *  #4: successful publish+mark → no double publish
  *  #5: proof-of-failure — old order (claim→publish) loses messages
+ *  AUD-1: pollOnce delegates to batchProcessor.processBatch()
  */
 @ExtendWith(MockitoExtension.class)
 class OutboxPollerServiceTest {
@@ -34,11 +34,13 @@ class OutboxPollerServiceTest {
     @Mock private ApplicationEventPublisher publisher;
     @Mock private ObjectMapper objectMapper;
 
+    private OutboxBatchProcessor batchProcessor;
     private OutboxPollerService poller;
 
     @BeforeEach
     void setUp() {
-        poller = new OutboxPollerService(outboxRepository, publisher, objectMapper);
+        batchProcessor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper);
+        poller = new OutboxPollerService(batchProcessor);
     }
 
     private OutboxEntry entry(String jobId) throws Exception {
@@ -115,23 +117,17 @@ class OutboxPollerServiceTest {
         // Entry stays pending → next poll will retry
     }
 
-    // --- Proof-of-failure comparison ---
-    // To demonstrate the difference, here's what OLD order would do:
-    //
-    // OLD ORDER (claim→publish):
-    //   claimOutboxEntry → published=true  (ALREADY MARKED)
-    //   publishEvent → throws               (message LOST, entry is published=true)
-    //   Result: message lost forever
-    //
-    // NEW ORDER (publish→mark):
-    //   publishEvent → throws               (entry still published=false)
-    //   markPublished → NOT called           (catch block)
-    //   Result: entry pending, next poll retries
-    //
-    // The test above (#5) proves the NEW order works correctly.
-    // To prove the OLD order would fail, we can verify that:
-    // - In OLD order: claimOutboxEntry would be called BEFORE publish
-    // - In NEW order: markPublished is called ONLY AFTER successful publish
-    //
-    // This is verified by: verify(outboxRepository, never()).markPublished() when publish throws.
+    // --- AUD-1: pollOnce delegates to batchProcessor ---
+
+    @Test
+    void aud1_pollOnce_delegatesToBatchProcessor() throws Exception {
+        OutboxEntry entry = entry("job-delegate");
+        when(outboxRepository.findByPublishedFalseOrderByCreatedAtAsc()).thenReturn(List.of(entry));
+
+        poller.pollOnce();
+
+        verify(outboxRepository).findByPublishedFalseOrderByCreatedAtAsc();
+        verify(publisher).publishEvent(any(ServiceTaskEnqueued.class));
+        verify(outboxRepository).markPublished(entry.getId());
+    }
 }
