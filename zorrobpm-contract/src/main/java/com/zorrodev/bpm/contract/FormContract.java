@@ -4,6 +4,9 @@ import com.zorrodev.bpm.contract.dto.CreateElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.DeployFormDTO;
 import com.zorrodev.bpm.contract.dto.ElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.FormDTO;
+import com.zorrodev.bpm.contract.dto.SchemaMapDTO;
+import com.zorrodev.bpm.contract.dto.SchemaMapElementDTO;
+import com.zorrodev.bpm.contract.dto.SaveElementSchemaDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,4 +38,10 @@ public interface FormContract {
 
     @DeleteMapping("/process-definitions/{key}/element-bindings/{elementId}")
     void deleteElementBinding(@PathVariable String key, @PathVariable String elementId);
+
+    @GetMapping("/process-definitions/{key}/schema-map")
+    SchemaMapDTO getSchemaMap(@PathVariable String key);
+
+    @PostMapping("/process-definitions/{key}/elements/{elementId}/schema")
+    SchemaMapElementDTO saveElementSchema(@PathVariable String key, @PathVariable String elementId, @RequestBody SaveElementSchemaDTO dto);
 }

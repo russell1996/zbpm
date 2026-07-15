@@ -49,6 +49,12 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private com.zorrodev.bpm.engine.service.DBService dbService;
 
+    @Mock
+    private com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository bindingRepository;
+
+    @Mock
+    private com.zorrodev.bpm.engine.repository.FormRepository formRepository;
+
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
@@ -60,7 +66,9 @@ class ProcessDefinitionServiceImplTest {
             bpmnService,
             bpmnParseService,
             fileService,
-            dbService
+            dbService,
+            bindingRepository,
+            formRepository
         );
     }
 

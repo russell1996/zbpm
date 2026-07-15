@@ -5,6 +5,9 @@ import com.zorrodev.bpm.contract.dto.CreateElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.DeployFormDTO;
 import com.zorrodev.bpm.contract.dto.ElementBindingDTO;
 import com.zorrodev.bpm.contract.dto.FormDTO;
+import com.zorrodev.bpm.contract.dto.SchemaMapDTO;
+import com.zorrodev.bpm.contract.dto.SchemaMapElementDTO;
+import com.zorrodev.bpm.contract.dto.SaveElementSchemaDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.ElementArtifactBindingEntity;
@@ -17,6 +20,8 @@ import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.BpmnParseService;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormResolver;
 import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
@@ -44,6 +49,8 @@ public class FormResource implements FormContract {
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final ElementArtifactBindingRepository bindingRepository;
     private final DBService dbService;
+    private final BpmnParseService bpmnParseService;
+    private final BpmnService bpmnService;
     private final FormResolver formResolver;
     private final JsonSchemaValidator jsonSchemaValidator;
     private final HttpServletRequest request;
@@ -257,6 +264,187 @@ public class FormResource implements FormContract {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
 
         bindingRepository.deleteByProcessDefinitionIdAndElementId(pd.getId(), elementId);
+    }
+
+    // --- WO-VM-9a: schema-map + save ---
+
+    @Override
+    public SchemaMapDTO getSchemaMap(String key) {
+        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+
+        // Parse BPMN to get elements
+        var model = bpmnService.getProcessDefinitionModelById(pd.getId());
+
+        // Get bindings for this PD
+        List<ElementArtifactBindingEntity> bindings = bindingRepository.findByProcessDefinitionId(pd.getId());
+        Map<String, ElementArtifactBindingEntity> bindingByElement = bindings.stream()
+            .collect(java.util.stream.Collectors.toMap(ElementArtifactBindingEntity::getElementId, b -> b, (a, b) -> a));
+
+        // Count how many elements share each artifact key
+        Map<String, Long> artifactKeyCount = bindings.stream()
+            .collect(java.util.stream.Collectors.groupingBy(ElementArtifactBindingEntity::getArtifactKey, java.util.stream.Collectors.counting()));
+
+        List<SchemaMapElementDTO> elements = model.getElements().stream()
+            .filter(e -> e.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.START_EVENT
+                || e.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK)
+            .map(e -> {
+                SchemaMapElementDTO dto = new SchemaMapElementDTO();
+                dto.setElementId(e.getId());
+                dto.setName(e.getName());
+                dto.setType(e.getType().name());
+
+                String artifactKey = null;
+                boolean hasExternalReference = false;
+
+                if (e.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK) {
+                    // User task: formKey from extensions (may be externalReference or formKey)
+                    if (e.getExtensions() != null && e.getExtensions().getUserTaskExtension() != null) {
+                        artifactKey = e.getExtensions().getUserTaskExtension().getFormKey();
+                        hasExternalReference = e.getExtensions().getUserTaskExtension().getExternalReference() != null;
+                    }
+                } else {
+                    // Start event: check binding
+                    ElementArtifactBindingEntity binding = bindingByElement.get(e.getId());
+                    if (binding != null) {
+                        artifactKey = binding.getArtifactKey();
+                    }
+                }
+
+                dto.setArtifactKey(artifactKey);
+
+                if (artifactKey != null) {
+                    // Resolve artifact kind and version
+                    formRepository.findTopByFormKeyOrderByVersionDesc(artifactKey).ifPresent(form -> {
+                        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
+                        dto.setArtifactVersion(form.getVersion());
+                    });
+                    dto.setShared(artifactKeyCount.getOrDefault(artifactKey, 0L) > 1);
+                }
+
+                dto.setHasExternalReference(hasExternalReference);
+                return dto;
+            })
+            .toList();
+
+        SchemaMapDTO result = new SchemaMapDTO();
+        result.setProcessDefinitionKey(pd.getKey());
+        result.setVersion(pd.getVersion());
+        result.setElements(elements);
+        return result;
+    }
+
+    @Override
+    @Transactional
+    public SchemaMapElementDTO saveElementSchema(String key, String elementId, SaveElementSchemaDTO dto) {
+        // SUPER_ADMIN only
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (!principal.isSuperAdmin()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only SUPER_ADMIN can save element schemas");
+        }
+
+        // Validate kind
+        if (dto.getKind() == null || dto.getKind().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "kind is required");
+        }
+        FormArtifactKind kind;
+        try {
+            kind = FormArtifactKind.valueOf(dto.getKind());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid kind: " + dto.getKind());
+        }
+
+        // Validate schema
+        if (dto.getSchema() == null || dto.getSchema().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "schema is required");
+        }
+        try {
+            objectMapper.readValue(dto.getSchema(), Object.class);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid JSON");
+        }
+        if (kind == FormArtifactKind.VARIABLE_SCHEMA) {
+            java.util.Set<String> errors = jsonSchemaValidator.validateSchema(dto.getSchema());
+            if (!errors.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invalid JSON Schema: " + String.join("; ", errors));
+            }
+        }
+
+        // Resolve PD
+        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+
+        // Parse BPMN to find element and determine artifactKey
+        var model = bpmnService.getProcessDefinitionModelById(pd.getId());
+        var element = model.getElements().stream()
+            .filter(e -> e.getId().equals(elementId))
+            .findFirst()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Element not found: " + elementId));
+
+        String artifactKey;
+        if (element.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK) {
+            // User task: must have externalReference
+            if (element.getExtensions() == null
+                || element.getExtensions().getUserTaskExtension() == null
+                || element.getExtensions().getUserTaskExtension().getExternalReference() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "User task has no External Form Reference. Set it in Camunda Modeler first.");
+            }
+            artifactKey = element.getExtensions().getUserTaskExtension().getExternalReference();
+        } else {
+            // Start event: auto-generate key
+            artifactKey = key + ":" + elementId;
+        }
+
+        // Create new artifact version
+        int maxArtifactVersion = formRepository.findMaxVersionByFormKey(artifactKey);
+        FormEntity artifact = new FormEntity();
+        artifact.setId(UUID.randomUUID());
+        artifact.setFormKey(artifactKey);
+        artifact.setVersion(maxArtifactVersion + 1);
+        artifact.setKind(kind);
+        artifact.setSchemaJson(dto.getSchema());
+        artifact.setCreatedAt(Instant.now());
+        formRepository.save(artifact);
+
+        // Start event: upsert binding with pinning
+        if (element.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.START_EVENT) {
+            bindingRepository.findByProcessDefinitionIdAndElementId(pd.getId(), elementId)
+                .ifPresent(bindingRepository::delete);
+
+            ElementArtifactBindingEntity binding = new ElementArtifactBindingEntity();
+            binding.setId(UUID.randomUUID());
+            binding.setProcessDefinitionId(pd.getId());
+            binding.setProcessDefinitionVersion(pd.getVersion());
+            binding.setElementId(elementId);
+            binding.setArtifactKey(artifactKey);
+            binding.setArtifactVersion(artifact.getVersion());
+            binding.setCreatedAt(Instant.now());
+            bindingRepository.save(binding);
+        }
+
+        // Return updated element status
+        SchemaMapElementDTO result = new SchemaMapElementDTO();
+        result.setElementId(elementId);
+        result.setName(element.getName());
+        result.setType(element.getType().name());
+        result.setArtifactKey(artifactKey);
+        result.setKind(kind.name());
+        result.setArtifactVersion(artifact.getVersion());
+        result.setHasExternalReference(
+            element.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK
+                && element.getExtensions() != null
+                && element.getExtensions().getUserTaskExtension() != null
+                && element.getExtensions().getUserTaskExtension().getExternalReference() != null);
+        return result;
     }
 
     // --- WO-FORM-2: resolve logic ---

@@ -756,6 +756,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     element.getExtensions().getUserTaskExtension().setFormKey(userTask.getExtensionElements().getFormDefinition().getFormKey());
                 } else if (userTask.getExtensionElements().getFormDefinition().getExternalReference() != null) {
                     element.getExtensions().getUserTaskExtension().setFormKey(userTask.getExtensionElements().getFormDefinition().getExternalReference());
+                    element.getExtensions().getUserTaskExtension().setExternalReference(userTask.getExtensionElements().getFormDefinition().getExternalReference());
                 }
             }
         }
