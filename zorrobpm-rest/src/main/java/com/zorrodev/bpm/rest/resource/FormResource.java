@@ -219,6 +219,46 @@ public class FormResource implements FormContract {
         return result;
     }
 
+    @Override
+    public List<ElementBindingDTO> listElementBindings(String key) {
+        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+
+        return bindingRepository.findByProcessDefinitionId(pd.getId()).stream()
+            .map(b -> {
+                ElementBindingDTO dto = new ElementBindingDTO();
+                dto.setId(b.getId());
+                dto.setElementId(b.getElementId());
+                dto.setArtifactKey(b.getArtifactKey());
+                dto.setArtifactVersion(b.getArtifactVersion());
+                dto.setProcessDefinitionId(b.getProcessDefinitionId());
+                dto.setProcessDefinitionVersion(b.getProcessDefinitionVersion());
+                return dto;
+            })
+            .toList();
+    }
+
+    @Override
+    @Transactional
+    public void deleteElementBinding(String key, String elementId) {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (!principal.isSuperAdmin()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only SUPER_ADMIN can delete element bindings");
+        }
+
+        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+
+        bindingRepository.deleteByProcessDefinitionIdAndElementId(pd.getId(), elementId);
+    }
+
     // --- WO-FORM-2: resolve logic ---
 
     private TaskFormDTO resolveForm(String formKey, UUID processInstanceId) {
