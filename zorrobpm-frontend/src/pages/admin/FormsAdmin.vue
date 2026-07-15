@@ -13,6 +13,7 @@ const forms = ref<FormSummary[]>([])
 const loading = ref(true)
 const editing = ref(false)
 const editingKey = ref('')
+const originalKey = ref('')
 const selectedKind = ref<ArtifactKind>('FORM_JS')
 const jsonSchemaContent = ref('')
 const formEditorRef = ref<InstanceType<typeof FormEditor> | null>(null)
@@ -31,23 +32,29 @@ onMounted(async () => {
 function startCreate() {
   editing.value = true
   editingKey.value = ''
+  originalKey.value = ''
   selectedKind.value = 'FORM_JS'
 }
 
 function startEdit(form: FormSummary) {
   editing.value = true
   editingKey.value = form.key
+  originalKey.value = form.key
   selectedKind.value = form.kind || 'FORM_JS'
 }
 
 function cancelEdit() {
   editing.value = false
   editingKey.value = ''
+  originalKey.value = ''
   selectedKind.value = 'FORM_JS'
 }
 
 async function saveForm() {
-  if (!editingKey.value) return
+  if (!editingKey.value) {
+    toast.error(t('formKeyRequired'))
+    return
+  }
 
   let schema: string
   if (selectedKind.value === 'FORM_JS') {
@@ -127,8 +134,19 @@ async function saveForm() {
           </div>
         </div>
 
+        <!-- Key input (editable when creating, read-only when editing) -->
+        <div class="mb-4">
+          <label class="block text-sm font-medium mb-1">{{ t('formKey') }}</label>
+          <input
+            v-model="editingKey"
+            :readonly="originalKey !== ''"
+            :placeholder="t('formKeyPlaceholder')"
+            class="w-full max-w-xs px-3 py-2 border border-border rounded-md bg-background text-sm"
+          />
+        </div>
+
         <!-- Kind selector (only for new forms) -->
-        <div v-if="!editingKey" class="mb-4">
+        <div v-if="!originalKey" class="mb-4">
           <label class="block text-sm font-medium mb-1">{{ t('kind') }}</label>
           <select
             v-model="selectedKind"
