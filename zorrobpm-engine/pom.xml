@@ -64,6 +64,13 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- WO-VM-5: JSON Schema 2020-12 validation for VARIABLE_SCHEMA artifacts -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.4</version>
+        </dependency>
+
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
