@@ -146,6 +146,12 @@ const router = createRouter({
           meta: { title: 'Forms', requiresSuperAdmin: true },
         },
         {
+          path: 'admin/start-bindings',
+          name: 'admin-start-bindings',
+          component: () => import('@/pages/admin/StartBindingAdmin.vue'),
+          meta: { title: 'Start Bindings', requiresSuperAdmin: true },
+        },
+        {
           path: 'me/api-key',
           name: 'my-api-key',
           component: () => import('@/pages/me/MyApiKey.vue'),
