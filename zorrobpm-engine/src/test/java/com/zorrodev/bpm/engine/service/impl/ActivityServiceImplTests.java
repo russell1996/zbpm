@@ -11,8 +11,12 @@ import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
+import com.zorrodev.bpm.engine.handler.ExecutionContext;
+import com.zorrodev.bpm.engine.handler.HandlerRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -59,8 +63,23 @@ public class ActivityServiceImplTests {
     @Mock
     private ServiceTaskEnqueueService serviceTaskEnqueueService;
 
+    @Mock
+    private DmnService dmnService;
+
+    @Mock
+    private ExecutionContext executionContext;
+
+    @Mock
+    private HandlerRegistry handlerRegistry;
+
     @InjectMocks
     private ActivityServiceImpl activityService;
+
+    @BeforeEach
+    void setUp() {
+        // Simulate @PostConstruct — initialize handler map and register in registry
+        activityService.init();
+    }
 
     @Test
     public void test1() throws IOException {
@@ -940,8 +959,10 @@ public class ActivityServiceImplTests {
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(dbService.createToken(any())).thenReturn(token);
 
-        // keep the limit low so the test fails fast and never risks an actual StackOverflowError
-        ReflectionTestUtils.setField(activityService, "maxExecutionDepth", 100);
+        // Use a real ExecutionContext with low depth limit (not a mock)
+        ExecutionContext realCtx = new ExecutionContext();
+        ReflectionTestUtils.setField(realCtx, "maxExecutionDepth", 100);
+        ReflectionTestUtils.setField(activityService, "executionContext", realCtx);
 
         assertThatThrownBy(() -> activityService.execute(processInstanceId, tokenId, "parallel1"))
             .isInstanceOf(EngineException.class)
