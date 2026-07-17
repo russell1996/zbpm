@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
+import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 import * as processService from '@/services/processService'
 import type { BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
@@ -229,6 +230,15 @@ function openVersion(id: string) {
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- WO-VM-12: Element Schemas -->
+      <div v-if="store.currentDefinition" class="border border-border rounded-lg p-4 bg-card">
+        <div class="px-0 pb-3">
+          <h2 class="text-lg font-bold">Element Schemas</h2>
+          <p class="text-xs text-muted-foreground">Bind and edit form/variable schemas for start events and user tasks</p>
+        </div>
+        <SchemaEditorPanel :process-key="store.currentDefinition.key" />
       </div>
 
       <div v-if="store.currentVersions.length > 1" class="border border-border rounded-lg overflow-hidden bg-card">

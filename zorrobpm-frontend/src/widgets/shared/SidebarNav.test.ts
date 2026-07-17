@@ -25,12 +25,11 @@ describe('SidebarNav', () => {
     expect(wrapper.text()).toContain('users')
   })
 
-  it('renders Process Schemas menu item with correct route (WO-VM-10 — close P-21)', () => {
+  it('Process Schemas menu item removed — now inside definitions detail (WO-VM-12)', () => {
     const wrapper = mount(SidebarNav)
-    expect(wrapper.text()).toContain('processSchemas')
-    // Verify the link points to the correct route
+    // processSchemas was moved into ProcessDefinitionDetail, so it should NOT be in the sidebar
     const buttons = wrapper.findAll('button')
     const processSchemasBtn = buttons.find(b => b.text().includes('processSchemas'))
-    expect(processSchemasBtn).toBeTruthy()
+    expect(processSchemasBtn).toBeFalsy()
   })
 })
