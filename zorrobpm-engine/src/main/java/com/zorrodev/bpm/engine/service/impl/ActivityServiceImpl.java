@@ -2017,10 +2017,28 @@ public class ActivityServiceImpl implements ActivityService {
         Activity activity = dbService.getActivity(incident.getActivityId());
         dbService.lockProcessInstance(activity.getProcessInstanceId());
 
+        // Idempotency: already resolved → no-op
+        if (incident.getCompletedAt() != null) {
+            log.info("{}/{}: Incident {} already resolved, no-op", activity.getProcessInstanceId(), activity.getToken(), incidentId);
+            return;
+        }
+
+        // Guard: if an active activity already exists for this (token, element), close incident without re-execution
+        if (dbService.hasActiveActivityOnTokenAndElement(activity.getToken(), activity.getBpmnElementId())) {
+            log.info("{}/{}: Active activity already exists for element {}, closing incident {} without re-execution",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), incidentId);
+            dbService.completeIncident(incidentId);
+            return;
+        }
+
         if (variables != null && !variables.isEmpty()) {
             dbService.setVariables(activity.getProcessInstanceId(), variables);
         }
-        dbService.completeIncident(incidentId);
+
+        // Auto-close stale incidents for this (token, element) before re-execution
+        List<Activity> sameElementActivities = dbService.getActivitiesByTokenAndBpmnElementId(activity.getToken(), activity.getBpmnElementId());
+        List<UUID> staleActivityIds = sameElementActivities.stream().map(Activity::getId).toList();
+        dbService.completeIncidentsByActivityIds(staleActivityIds);
 
         // Cancel the parked (ERROR) activity before re-executing: re-execution creates a fresh active
         // activity, and cancelling the old one ensures a late/duplicate worker completion of its in-flight
