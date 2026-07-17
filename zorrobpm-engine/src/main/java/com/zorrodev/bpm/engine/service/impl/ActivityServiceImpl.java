@@ -28,6 +28,11 @@ import com.zorrodev.bpm.engine.dto.SignalSubscription;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
+import com.zorrodev.bpm.engine.handler.ElementHandler;
+import com.zorrodev.bpm.engine.handler.ExecutionContext;
+import com.zorrodev.bpm.engine.handler.ExecutionCtx;
+import com.zorrodev.bpm.engine.handler.HandlerRegistry;
+import com.zorrodev.bpm.engine.handler.TokenExecutor;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -36,10 +41,10 @@ import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import org.camunda.feel.api.FeelEngineApi;
 import org.camunda.feel.api.EvaluationResult;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -59,7 +64,7 @@ import java.util.UUID;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class ActivityServiceImpl implements ActivityService {
+public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     private final DBService dbService;
     private final BpmnService bpmnService;
@@ -68,83 +73,73 @@ public class ActivityServiceImpl implements ActivityService {
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final FeelEngineApi feelEngineApi;
+    private final ExecutionContext executionContext;
+    private final HandlerRegistry handlerRegistry;
 
-    /**
-     * Handler for a single BPMN element type. Method references capture {@code this} lazily,
-     * so building the registry as a field initializer is safe even before the injected
-     * dependencies are assigned by the generated constructor.
-     */
-    @FunctionalInterface
-    private interface ElementHandler {
-        void handle(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element);
+    private Map<BpmnElementType, ElementHandler> handlers;
+
+    @PostConstruct
+    void init() {
+        handlers = createHandlers();
     }
-
-    /**
-     * Maximum number of nested {@link #execute} calls for a single triggering request.
-     * Guards against unbounded control-flow loops and self/mutually-recursive call activities
-     * that would otherwise grow the call stack until {@link StackOverflowError}.
-     */
-    @Value("${zorrobpm.engine.max-execution-depth:1000}")
-    private int maxExecutionDepth = 1000;
-
-    private final ThreadLocal<Integer> executionDepth = ThreadLocal.withInitial(() -> 0);
-    // re-entrancy guard: a fired conditional event's own continuation must not re-trigger evaluation
-    private final ThreadLocal<Boolean> evaluatingConditionals = ThreadLocal.withInitial(() -> false);
-
-    private final Map<BpmnElementType, ElementHandler> handlers = createHandlers();
 
     private Map<BpmnElementType, ElementHandler> createHandlers() {
         Map<BpmnElementType, ElementHandler> map = new EnumMap<>(BpmnElementType.class);
-        map.put(BpmnElementType.START_EVENT, (pi, t, bpmn, el) -> processStartEvent(pi, t, bpmn, el));
+        map.put(BpmnElementType.START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // message/timer start events, once triggered, behave like a plain start: complete and continue
-        map.put(BpmnElementType.MESSAGE_START_EVENT, this::processStartEvent);
-        map.put(BpmnElementType.TIMER_START_EVENT, this::processStartEvent);
-        map.put(BpmnElementType.SIGNAL_START_EVENT, this::processStartEvent);
-        map.put(BpmnElementType.END_EVENT, this::processEndEvent);
-        map.put(BpmnElementType.TERMINATE_END_EVENT, this::processTerminateEnd);
-        map.put(BpmnElementType.ERROR_END_EVENT, this::processErrorEnd);
-        map.put(BpmnElementType.ESCALATION_END_EVENT, this::processEscalationEnd);
-        map.put(BpmnElementType.ESCALATION_THROW_EVENT, this::processEscalationThrow);
-        map.put(BpmnElementType.SERVICE_TASK, (pi, t, bpmn, el) -> enterServiceTask(pi, t, el));
+        map.put(BpmnElementType.MESSAGE_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.TIMER_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.SIGNAL_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.END_EVENT, (ctx, bpmn, el) -> processEndEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.TERMINATE_END_EVENT, (ctx, bpmn, el) -> processTerminateEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.ERROR_END_EVENT, (ctx, bpmn, el) -> processErrorEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.ESCALATION_END_EVENT, (ctx, bpmn, el) -> processEscalationEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.ESCALATION_THROW_EVENT, (ctx, bpmn, el) -> processEscalationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.SERVICE_TASK, (ctx, bpmn, el) -> enterServiceTask(ctx.processInstanceId(), ctx.tokenId(), el));
         // Script task = synchronous inline FEEL evaluation; the result is written to a process variable.
-        map.put(BpmnElementType.SCRIPT_TASK, this::processScriptTask);
+        map.put(BpmnElementType.SCRIPT_TASK, (ctx, bpmn, el) -> processScriptTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Business rule task = evaluate a DMN decision or an inline FEEL expression, store the result.
-        map.put(BpmnElementType.BUSINESS_RULE_TASK, this::processBusinessRuleTask);
-        map.put(BpmnElementType.USER_TASK, (pi, t, bpmn, el) -> enterUserTask(pi, t, el));
+        map.put(BpmnElementType.BUSINESS_RULE_TASK, (ctx, bpmn, el) -> processBusinessRuleTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.USER_TASK, (ctx, bpmn, el) -> enterUserTask(ctx.processInstanceId(), ctx.tokenId(), el));
         // Send task: a zeebe:taskDefinition makes it a job worker (Camunda 8), otherwise it is a message
         // throw in task form. Receive task = message catch (wait state) in task form.
-        map.put(BpmnElementType.SEND_TASK, this::processSendTask);
-        map.put(BpmnElementType.RECEIVE_TASK, (pi, t, bpmn, el) -> enterMessageCatch(pi, t, el));
-        map.put(BpmnElementType.EXCLUSIVE_GATEWAY, this::processExclusiveGateway);
-        map.put(BpmnElementType.PARALLEL_GATEWAY, this::processParallelGateway);
-        map.put(BpmnElementType.EVENT_BASED_GATEWAY, this::processEventBasedGateway);
-        map.put(BpmnElementType.INCLUSIVE_GATEWAY, this::processInclusiveGateway);
-        map.put(BpmnElementType.CALL_ACTIVITY, this::processCallActivity);
-        map.put(BpmnElementType.SUB_PROCESS, this::processSubProcess);
+        map.put(BpmnElementType.SEND_TASK, (ctx, bpmn, el) -> processSendTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.RECEIVE_TASK, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
+        map.put(BpmnElementType.EXCLUSIVE_GATEWAY, (ctx, bpmn, el) -> processExclusiveGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.PARALLEL_GATEWAY, (ctx, bpmn, el) -> processParallelGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.EVENT_BASED_GATEWAY, (ctx, bpmn, el) -> processEventBasedGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.INCLUSIVE_GATEWAY, (ctx, bpmn, el) -> processInclusiveGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.CALL_ACTIVITY, (ctx, bpmn, el) -> processCallActivity(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.SUB_PROCESS, (ctx, bpmn, el) -> processSubProcess(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Catch events are wait states: the token parks here until an external trigger
         // (timer fires / message correlated) resumes it via signal(...). Until the timer
         // and message subsystems land, these elements at least park cleanly with an active
         // activity instead of silently falling through to "Unsupported".
-        map.put(BpmnElementType.INTERMEDIATE_CATCH_EVENT, (pi, t, bpmn, el) -> enterWaitState(pi, t, el));
-        map.put(BpmnElementType.MESSAGE_CATCH_EVENT, (pi, t, bpmn, el) -> enterMessageCatch(pi, t, el));
-        map.put(BpmnElementType.TIMER_CATCH_EVENT, (pi, t, bpmn, el) -> enterTimerCatch(pi, t, el));
+        map.put(BpmnElementType.INTERMEDIATE_CATCH_EVENT, (ctx, bpmn, el) -> enterWaitState(ctx.processInstanceId(), ctx.tokenId(), el));
+        map.put(BpmnElementType.MESSAGE_CATCH_EVENT, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
+        map.put(BpmnElementType.TIMER_CATCH_EVENT, (ctx, bpmn, el) -> enterTimerCatch(ctx.processInstanceId(), ctx.tokenId(), el));
         // Conditional catch: passes through if its FEEL condition already holds, otherwise parks until a
         // variable change re-evaluates it to true (see triggerConditionalEvents).
-        map.put(BpmnElementType.CONDITIONAL_CATCH_EVENT, this::enterConditionalCatch);
+        map.put(BpmnElementType.CONDITIONAL_CATCH_EVENT, (ctx, bpmn, el) -> enterConditionalCatch(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Throw events are pass-through: a plain intermediate throw has no side effect and simply
         // continues. (Message throw publishing is added with the message subsystem.)
-        map.put(BpmnElementType.INTERMEDIATE_THROW_EVENT, this::processThrowEvent);
-        map.put(BpmnElementType.MESSAGE_THROW_EVENT, this::processMessageThrow);
+        map.put(BpmnElementType.INTERMEDIATE_THROW_EVENT, (ctx, bpmn, el) -> processThrowEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.MESSAGE_THROW_EVENT, (ctx, bpmn, el) -> processMessageThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Signal catch parks and subscribes; signal throw broadcasts to all active subscribers (1:N).
-        map.put(BpmnElementType.SIGNAL_CATCH_EVENT, (pi, t, bpmn, el) -> enterSignalCatch(pi, t, el));
-        map.put(BpmnElementType.SIGNAL_THROW_EVENT, this::processSignalThrow);
+        map.put(BpmnElementType.SIGNAL_CATCH_EVENT, (ctx, bpmn, el) -> enterSignalCatch(ctx.processInstanceId(), ctx.tokenId(), el));
+        map.put(BpmnElementType.SIGNAL_THROW_EVENT, (ctx, bpmn, el) -> processSignalThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Link throw jumps to the matching link catch (an intra-process goto); the catch is a pass-through.
-        map.put(BpmnElementType.LINK_THROW_EVENT, this::processLinkThrow);
-        map.put(BpmnElementType.LINK_CATCH_EVENT, this::processStartEvent);
+        map.put(BpmnElementType.LINK_THROW_EVENT, (ctx, bpmn, el) -> processLinkThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.LINK_CATCH_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Compensation throw runs the compensation handlers of completed compensation-bounded activities.
-        map.put(BpmnElementType.COMPENSATION_THROW_EVENT, this::processCompensationThrow);
+        map.put(BpmnElementType.COMPENSATION_THROW_EVENT, (ctx, bpmn, el) -> processCompensationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Cancel end (inside a transaction) compensates the transaction and routes to its cancel boundary.
-        map.put(BpmnElementType.CANCEL_END_EVENT, this::processCancelEnd);
+        map.put(BpmnElementType.CANCEL_END_EVENT, (ctx, bpmn, el) -> processCancelEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+
+        // Register all handlers in the HandlerRegistry
+        for (var entry : map.entrySet()) {
+            handlerRegistry.register(entry.getKey(), entry.getValue());
+        }
         return map;
     }
 
@@ -543,10 +538,10 @@ public class ActivityServiceImpl implements ActivityService {
      * runs through {@link #signal}/{@link #fireBoundary}) from recursively re-triggering this pass.
      */
     private void triggerConditionalEvents(UUID processInstanceId) {
-        if (Boolean.TRUE.equals(evaluatingConditionals.get())) {
+        if (executionContext.isEvaluatingConditionals()) {
             return;
         }
-        evaluatingConditionals.set(true);
+        executionContext.setEvaluatingConditionals(true);
         try {
             ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
             if (pi.getCompletedAt() != null) {
@@ -574,7 +569,7 @@ public class ActivityServiceImpl implements ActivityService {
                 }
             }
         } finally {
-            evaluatingConditionals.set(false);
+            executionContext.setEvaluatingConditionals(false);
         }
     }
 
@@ -649,15 +644,7 @@ public class ActivityServiceImpl implements ActivityService {
         if (element == null) {
             throw new IllegalStateException("Cannot execute a null element — a referenced element was not found in the process definition");
         }
-        int depth = executionDepth.get() + 1;
-        if (depth > maxExecutionDepth) {
-            // Thrown before incrementing the counter: parent frames restore depth via their
-            // finally blocks while unwinding, and the outermost frame removes the ThreadLocal.
-            throw new EngineException("Execution depth limit (" + maxExecutionDepth + ") exceeded at element '"
-                + element.getId() + "' in process instance " + processInstanceId
-                + " — likely an unbounded loop or recursive call activity");
-        }
-        executionDepth.set(depth);
+        int depth = executionContext.enterDepth(element.getId(), processInstanceId);
         try {
             BpmnElementType type = element.getType();
 
@@ -673,8 +660,9 @@ public class ActivityServiceImpl implements ActivityService {
                 dbService.createIncident(activityId, "Unsupported BPMN element type: " + type);
                 return;
             }
+            ExecutionCtx ctx = new ExecutionCtx(processInstanceId, tokenId, this, executionContext);
             try {
-                handler.handle(processInstanceId, tokenId, bpmn, element);
+                handler.handle(ctx, bpmn, element);
             } catch (EngineException e) {
                 // engine-level aborts (e.g. depth limit) propagate; they are not element failures
                 throw e;
@@ -684,11 +672,7 @@ public class ActivityServiceImpl implements ActivityService {
                 raiseIncident(processInstanceId, tokenId, element, e);
             }
         } finally {
-            if (depth <= 1) {
-                executionDepth.remove();
-            } else {
-                executionDepth.set(depth - 1);
-            }
+            executionContext.exitDepth(depth);
         }
     }
 
