@@ -176,6 +176,38 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public boolean hasActiveActivityOnTokenAndElement(UUID tokenId, String bpmnElementId) {
+        return !activityRepository.findByTokenAndBpmnElementIdAndStatusIn(
+                tokenId, bpmnElementId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS))
+            .isEmpty();
+    }
+
+    @Override
+    public List<Incident> findOpenIncidentsByActivityIds(List<UUID> activityIds) {
+        return incidentRepository.findByActivityIdInAndCompletedAtIsNull(activityIds).stream()
+            .map(entity -> {
+                Incident i = new Incident();
+                i.setId(entity.getId());
+                i.setActivityId(entity.getActivityId());
+                i.setMessage(entity.getMessage());
+                i.setCreatedAt(entity.getCreatedAt());
+                i.setCompletedAt(entity.getCompletedAt());
+                return i;
+            })
+            .toList();
+    }
+
+    @Override
+    public void completeIncidentsByActivityIds(List<UUID> activityIds) {
+        List<IncidentEntity> open = incidentRepository.findByActivityIdInAndCompletedAtIsNull(activityIds);
+        Instant now = Instant.now();
+        for (IncidentEntity entity : open) {
+            entity.setCompletedAt(now);
+        }
+        incidentRepository.saveAll(open);
+    }
+
+    @Override
     public List<Activity> getCompletedActivities(UUID processInstanceId) {
         return activityRepository.findByProcessInstanceIdAndStatusIn(
                 processInstanceId, List.of(ActivityStatus.COMPLETED)).stream()

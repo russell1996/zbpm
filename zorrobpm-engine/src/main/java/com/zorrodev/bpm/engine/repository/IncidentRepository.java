@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -93,4 +94,5 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID>,
     @Query("SELECT e.bpmnElementId AS bpmnElementId, COUNT(e.id) AS count FROM UserTaskEntity e WHERE e.processInstanceId = :processInstanceId GROUP BY e.bpmnElementId")
     List<BpmnElementStatistics> findStatsByProcessInstanceId(UUID processInstanceId);
 
+    List<IncidentEntity> findByActivityIdInAndCompletedAtIsNull(Collection<UUID> activityIds);
 }
