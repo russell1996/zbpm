@@ -36,6 +36,15 @@ public interface DBService {
     /** Active (created/in-progress) activities of an instance — used to re-evaluate conditional events. */
     List<Activity> getActiveActivities(UUID processInstanceId);
 
+    /** Active (created/in-progress) activities for a specific token and BPMN element. */
+    boolean hasActiveActivityOnTokenAndElement(UUID tokenId, String bpmnElementId);
+
+    /** Open (unresolved) incidents linked to any of the given activity IDs. */
+    List<com.zorrodev.bpm.contract.dto.Incident> findOpenIncidentsByActivityIds(List<UUID> activityIds);
+
+    /** Close all open incidents linked to the given activity IDs (auto-close stale). */
+    void completeIncidentsByActivityIds(List<UUID> activityIds);
+
     /** Completed activities of an instance — used to compensate them (in reverse completion order). */
     List<Activity> getCompletedActivities(UUID processInstanceId);
 
