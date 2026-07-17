@@ -1,0 +1,59 @@
+package com.zorrodev.bpm.rest.resource;
+
+import com.zorrodev.bpm.contract.VariableSchemaContract;
+import com.zorrodev.bpm.contract.dto.FieldDTO;
+import com.zorrodev.bpm.contract.dto.GenerateSchemaDTO;
+import com.zorrodev.bpm.contract.dto.GeneratedSchemaDTO;
+import com.zorrodev.bpm.contract.exception.EngineException;
+import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
+import com.zorrodev.bpm.engine.service.SchemaGeneratorService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Set;
+
+@RestController
+@RequiredArgsConstructor
+public class VariableSchemaResource implements VariableSchemaContract {
+
+    private final SchemaGeneratorService schemaGeneratorService;
+    private final JsonSchemaValidator jsonSchemaValidator;
+
+    @Override
+    public GeneratedSchemaDTO generateSchema(@RequestBody GenerateSchemaDTO dto) {
+        if (dto.getFields() == null || dto.getFields().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "fields must not be empty");
+        }
+
+        for (FieldDTO field : dto.getFields()) {
+            if (field.getKey() == null || field.getKey().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "field key must not be blank");
+            }
+            if (field.getType() == null || field.getType().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "field type must not be blank for key: " + field.getKey());
+            }
+        }
+
+        String schema;
+        try {
+            schema = schemaGeneratorService.generateSchema(dto.getFields());
+        } catch (EngineException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+
+        // Validate the generated schema passes VM-5 validator
+        Set<String> errors = jsonSchemaValidator.validateSchema(schema);
+        if (!errors.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Generated schema is invalid: " + String.join("; ", errors));
+        }
+
+        GeneratedSchemaDTO result = new GeneratedSchemaDTO();
+        result.setSchema(schema);
+        return result;
+    }
+}
