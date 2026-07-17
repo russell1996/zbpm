@@ -89,3 +89,23 @@ export async function saveElementSchema(
   )
   return data
 }
+
+export interface SchemaField {
+  key: string
+  label?: string
+  type: string
+  required?: boolean
+  enum?: string[]
+  min?: number
+  max?: number
+  maxLength?: number
+  pattern?: string
+  itemsType?: string
+  minItems?: number
+  maxItems?: number
+}
+
+export async function generateSchema(fields: SchemaField[]): Promise<string> {
+  const { data } = await api.post<{ schema: string }>('/variable-schemas/generate', { fields })
+  return data.schema
+}

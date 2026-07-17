@@ -2,9 +2,10 @@
 import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
-import { getSchemaMap, saveElementSchema, getForm, type SchemaMap, type SchemaMapElement, type ArtifactKind } from '@/services/formService'
+import { getSchemaMap, saveElementSchema, getForm, generateSchema, type SchemaMap, type SchemaMapElement, type ArtifactKind, type SchemaField } from '@/services/formService'
 import FormEditor from '@/widgets/forms/FormEditor.vue'
 import JsonSchemaEditor from '@/widgets/forms/JsonSchemaEditor.vue'
+import SchemaFieldBuilder from '@/widgets/shared/SchemaFieldBuilder.vue'
 
 const props = defineProps<{ processKey: string }>()
 
@@ -20,6 +21,11 @@ const jsonEditorRef = ref<InstanceType<typeof JsonSchemaEditor> | null>(null)
 const loadingMap = ref(false)
 const loadingSchema = ref(false)
 const saving = ref(false)
+
+// Constructor/JSON mode for VARIABLE_SCHEMA
+const editorMode = ref<'constructor' | 'json'>('constructor')
+const schemaFields = ref<SchemaField[]>([])
+const hasXBuilder = ref(false)
 
 async function loadSchemaMap() {
   loadingMap.value = true
@@ -43,6 +49,9 @@ async function selectElement(el: SchemaMapElement) {
     selectedKind.value = 'FORM_JS'
   }
   jsonSchemaContent.value = ''
+  schemaFields.value = []
+  hasXBuilder.value = false
+  editorMode.value = 'constructor'
 
   if (el.artifactKey) {
     loadingSchema.value = true
@@ -50,6 +59,21 @@ async function selectElement(el: SchemaMapElement) {
       const form = await getForm(el.artifactKey)
       if (selectedKind.value === 'VARIABLE_SCHEMA' && form.schema) {
         jsonSchemaContent.value = form.schema
+        // Try to extract x-builder fields for round-trip
+        try {
+          const parsed = JSON.parse(form.schema)
+          if (parsed['x-builder'] && Array.isArray(parsed['x-builder'].fields)) {
+            schemaFields.value = parsed['x-builder'].fields
+            hasXBuilder.value = true
+            editorMode.value = 'constructor'
+          } else {
+            hasXBuilder.value = false
+            editorMode.value = 'json'
+          }
+        } catch {
+          hasXBuilder.value = false
+          editorMode.value = 'json'
+        }
       } else if (selectedKind.value === 'FORM_JS' && form.schema && formEditorRef.value) {
         await (formEditorRef.value as any).importSchema(JSON.parse(form.schema))
       }
@@ -76,6 +100,19 @@ async function saveElement() {
   if (selectedKind.value === 'FORM_JS') {
     if (!formEditorRef.value) return
     schema = (formEditorRef.value as any).saveSchema()
+  } else if (selectedKind.value === 'VARIABLE_SCHEMA' && editorMode.value === 'constructor') {
+    // Generate schema from fields via backend VM-13
+    if (schemaFields.value.length === 0) {
+      toast.error(t('noFields'))
+      return
+    }
+    try {
+      schema = await generateSchema(schemaFields.value)
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e.message
+      toast.error(msg || t('errorGeneric'))
+      return
+    }
   } else {
     if (!jsonEditorRef.value) return
     schema = (jsonEditorRef.value as any).saveSchema()
@@ -160,10 +197,42 @@ defineExpose({ loadSchemaMap })
           </select>
         </div>
 
+        <!-- VARIABLE_SCHEMA: Constructor/JSON mode toggle -->
+        <div v-if="selectedKind === 'VARIABLE_SCHEMA' && (selectedElement.type !== 'USER_TASK' || selectedElement.hasExternalReference)"
+             class="flex gap-2 mb-2">
+          <button
+            class="px-3 py-1 text-xs rounded-md border"
+            :class="editorMode === 'constructor' ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground border-border'"
+            @click="editorMode = 'constructor'"
+          >{{ t('constructor') }}</button>
+          <button
+            class="px-3 py-1 text-xs rounded-md border"
+            :class="editorMode === 'json' ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground border-border'"
+            @click="editorMode = 'json'"
+          >{{ t('jsonMode') }}</button>
+        </div>
+
+        <!-- No x-builder hint -->
+        <div v-if="selectedKind === 'VARIABLE_SCHEMA' && !hasXBuilder && editorMode === 'constructor' && jsonSchemaContent"
+             class="p-2 bg-yellow-50 border border-yellow-200 rounded-md text-xs text-yellow-800">
+          {{ t('constructorUnavailable') }}
+        </div>
+
         <div v-if="selectedElement.type !== 'USER_TASK' || selectedElement.hasExternalReference">
           <div v-if="loadingSchema" class="text-sm text-muted-foreground py-4">{{ t('loadingSchema') }}</div>
           <FormEditor v-else-if="selectedKind === 'FORM_JS'" ref="formEditorRef" style="height: 400px;" />
-          <JsonSchemaEditor v-else ref="jsonEditorRef" v-model="jsonSchemaContent" style="height: 400px;" />
+          <template v-else-if="selectedKind === 'VARIABLE_SCHEMA'">
+            <SchemaFieldBuilder
+              v-if="editorMode === 'constructor'"
+              v-model="schemaFields"
+            />
+            <JsonSchemaEditor
+              v-else
+              ref="jsonEditorRef"
+              v-model="jsonSchemaContent"
+              style="height: 400px;"
+            />
+          </template>
         </div>
 
         <button
