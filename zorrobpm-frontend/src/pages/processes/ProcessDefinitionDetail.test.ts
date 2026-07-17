@@ -14,8 +14,20 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+
 vi.mock('@/services/processService', () => ({
   getProcessDefinitionXml: vi.fn().mockResolvedValue(null),
+}))
+
+vi.mock('@/services/formService', () => ({
+  getSchemaMap: vi.fn().mockResolvedValue({ processDefinitionKey: 'test-proc', version: 1, elements: [] }),
+  saveElementSchema: vi.fn(),
+  getForm: vi.fn(),
+  listForms: vi.fn().mockResolvedValue([]),
+  createElementBinding: vi.fn(),
 }))
 vi.mock('@/stores/process', () => ({
   useProcessStore: () => ({
