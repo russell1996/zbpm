@@ -10,7 +10,7 @@
 4. **Привязка:** linked (`formId` + деплой) как основа; embedded — по возможности, не обязателен для MVP.
 5. **Серверная валидация (FORM-5):** нужна (жёсткая, 400) — «мусором не стартанёшь».
 
-Контекст: [integration-guide.md](../integration-guide.md), [ADR-2](ADR-2-centralized-control-plane.md)
+Контекст: [integration-guide.md](../../README.md), [ADR-2](ADR-2-centralized-control-plane.md)
 
 ## Проблема
 Сейчас движок несёт только `formKey` (строку) — форму рендерит и валидирует внешняя система (external forms,
