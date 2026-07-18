@@ -61,18 +61,19 @@ class TimerSchedulerTest {
     }
 
     @Test
-    void scheduler_firesEachDueJob_andIsolatesFailures() {
+    void batchProcessor_firesEachDueJob_andIsolatesFailures() {
+        DBService dbServiceMock = org.mockito.Mockito.mock(DBService.class);
         TimerJobExecutor executorMock = org.mockito.Mockito.mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutorMock = org.mockito.Mockito.mock(TimerStartJobExecutor.class);
-        TimerScheduler scheduler = new TimerScheduler(dbService, executorMock, startExecutorMock);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbServiceMock, executorMock, startExecutorMock);
 
         TimerJob bad = job();
         TimerJob good = job();
-        when(dbService.findDueTimerJobs(any())).thenReturn(List.of(bad, good));
-        when(dbService.findDueTimerStartJobs(any())).thenReturn(List.of());
+        when(dbServiceMock.findDueTimerJobsLocked(any())).thenReturn(List.of(bad, good));
+        when(dbServiceMock.findDueTimerStartJobsLocked(any())).thenReturn(List.of());
         org.mockito.Mockito.doThrow(new RuntimeException("boom")).when(executorMock).fire(eq(bad));
 
-        scheduler.fireDueTimers();
+        batchProcessor.processBatch();
 
         // the failing job must not stop the next one from firing
         verify(executorMock).fire(eq(bad));
