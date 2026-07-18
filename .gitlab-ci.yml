@@ -76,6 +76,10 @@ test:backend:
 test:pg:
   stage: test
   tags: [zbpm]
+  variables:
+    # Non-standard host port so the ephemeral CI postgres never collides with any
+    # 5432 already bound on the shared runner.
+    PG_PORT: "55432"
   script:
     - bash ci/run-pg-tests.sh
 
