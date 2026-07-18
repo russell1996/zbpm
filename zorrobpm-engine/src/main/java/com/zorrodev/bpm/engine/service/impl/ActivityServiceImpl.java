@@ -90,10 +90,43 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         map.put(BpmnElementType.MESSAGE_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.TIMER_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.SIGNAL_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.END_EVENT, (ctx, bpmn, el) -> processEndEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.TERMINATE_END_EVENT, (ctx, bpmn, el) -> processTerminateEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.ERROR_END_EVENT, (ctx, bpmn, el) -> processErrorEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.ESCALATION_END_EVENT, (ctx, bpmn, el) -> processEscalationEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.END_EVENT, (ctx, bpmn, el) -> {
+            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
+            dbService.completeActivity(activityId);
+            log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
+            finishBranch(ctx.processInstanceId(), ctx.tokenId(), bpmn);
+        });
+        map.put(BpmnElementType.TERMINATE_END_EVENT, (ctx, bpmn, el) -> {
+            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
+            dbService.completeActivity(activityId);
+            log.info("{}/{}: Terminating instance at {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
+            dbService.cancelActiveActivities(ctx.processInstanceId());
+            dbService.completeProcessInstance(ctx.processInstanceId());
+        });
+        map.put(BpmnElementType.ERROR_END_EVENT, (ctx, bpmn, el) -> {
+            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
+            dbService.completeActivity(activityId);
+            String errorCode = Optional.ofNullable(el.getExtensions())
+                .map(BpmnElementExtensionModel::getEventDefinition)
+                .map(EventDefinitionExtensionModel::getCode)
+                .orElse(null);
+            log.info("{}/{}: Error end {} thrown (code={}) at {}", ctx.processInstanceId(), ctx.tokenId(), el.getId(), errorCode, activityId);
+            boolean handled = throwError(ctx.processInstanceId(), ctx.tokenId(), errorCode);
+            if (!handled) {
+                dbService.errorActivity(activityId);
+                dbService.createIncident(activityId, "Unhandled BPMN error" + (errorCode != null ? " '" + errorCode + "'" : ""));
+            }
+        });
+        map.put(BpmnElementType.ESCALATION_END_EVENT, (ctx, bpmn, el) -> {
+            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
+            dbService.completeActivity(activityId);
+            String escalationCode = escalationCode(el);
+            log.info("{}/{}: Escalation end {} thrown (code={}) at {}", ctx.processInstanceId(), ctx.tokenId(), el.getId(), escalationCode, activityId);
+            boolean interrupted = throwEscalation(ctx.processInstanceId(), ctx.tokenId(), escalationCode);
+            if (!interrupted) {
+                finishBranch(ctx.processInstanceId(), ctx.tokenId(), bpmn);
+            }
+        });
         map.put(BpmnElementType.ESCALATION_THROW_EVENT, (ctx, bpmn, el) -> processEscalationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.SERVICE_TASK, (ctx, bpmn, el) -> enterServiceTask(ctx.processInstanceId(), ctx.tokenId(), el));
         // Script task = synchronous inline FEEL evaluation; the result is written to a process variable.
@@ -136,10 +169,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         // Cancel end (inside a transaction) compensates the transaction and routes to its cancel boundary.
         map.put(BpmnElementType.CANCEL_END_EVENT, (ctx, bpmn, el) -> processCancelEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
 
-        // Register all handlers in the HandlerRegistry
-        for (var entry : map.entrySet()) {
-            handlerRegistry.register(entry.getKey(), entry.getValue());
-        }
         return map;
     }
 
@@ -648,7 +677,10 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         try {
             BpmnElementType type = element.getType();
 
-            ElementHandler handler = handlers.get(type);
+            ElementHandler handler = handlerRegistry.get(type);
+            if (handler == null) {
+                handler = handlers.get(type);
+            }
             if (handler == null) {
                 // No handler for this element type: park the token as an incident instead of
                 // silently dropping it (which would strand the process instance forever). An
@@ -705,7 +737,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     /**
      * Enters an embedded subprocess: records the subprocess container activity, creates a child
      * token scoped to it, and starts the subprocess's nested start event. When the nested end
-     * event is reached (see {@link #processEndEvent}) the container completes and the parent token
+     * event is reached (see {@link com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent}) the container completes and the parent token
      * continues from the subprocess's outgoing flows.
      */
     private void processSubProcess(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
@@ -2156,22 +2188,13 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         return flowActivityId;
     }
 
-    private void processEndEvent(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        finishBranch(processInstanceId, tokenId, bpmn);
-    }
-
     /**
      * Ends the current branch at an end event: if the token is inside an embedded subprocess scope,
      * completes the container and continues the parent token from the subprocess's outgoing flows;
      * otherwise completes the process instance and continues the parent call activity (if any). Shared
      * by plain and escalation end events.
      */
-    private void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn) {
+    public void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn) {
         Token endToken = dbService.getToken(tokenId);
         if (endToken != null && endToken.getScopeActivityId() != null) {
             // end of an embedded subprocess scope: complete the container and continue the parent
@@ -2225,43 +2248,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     /**
-     * Terminate end event: ends the whole process instance immediately, cancelling any other
-     * active activities (parked user tasks, waiting catch events, parallel branches).
-     */
-    private void processTerminateEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        log.info("{}/{}: Terminating instance at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        dbService.cancelActiveActivities(processInstanceId);
-        dbService.completeProcessInstance(processInstanceId);
-    }
-
-    /**
-     * Error end event: completes its activity, then throws a BPMN error that propagates up the scope
-     * hierarchy looking for a matching error boundary (see {@link #throwError}). If nothing catches it
-     * the error is recorded as an incident on this element instead of silently ending the instance.
-     */
-    private void processErrorEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        String errorCode = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getEventDefinition)
-            .map(EventDefinitionExtensionModel::getCode)
-            .orElse(null);
-
-        log.info("{}/{}: Error end {} thrown (code={}) at {}", processInstanceId, tokenId, bpmnElement.getId(), errorCode, activityId);
-
-        boolean handled = throwError(processInstanceId, tokenId, errorCode);
-        if (!handled) {
-            dbService.errorActivity(activityId);
-            dbService.createIncident(activityId, "Unhandled BPMN error" + (errorCode != null ? " '" + errorCode + "'" : ""));
-        }
-    }
-
-    /**
      * Propagates a BPMN error from {@code tokenId} outward through the scope hierarchy, looking for
      * an interrupting error boundary that matches {@code errorCode} (a boundary without a code is a
      * catch-all). Search order: enclosing embedded subprocess scopes (innermost first), then — if the
@@ -2270,7 +2256,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      *
      * @return {@code true} if an error boundary handled the error, {@code false} if it escaped unhandled.
      */
-    private boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode) {
+    public boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode) {
         ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
 
@@ -2367,25 +2353,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     /**
-     * Escalation end event: completes its activity, raises a (non-critical) escalation that propagates
-     * up the scope hierarchy looking for an escalation boundary, then ends the branch like a plain end
-     * event. An uncaught escalation is non-critical — it does not create an incident.
-     */
-    private void processEscalationEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        String escalationCode = escalationCode(bpmnElement);
-        log.info("{}/{}: Escalation end {} thrown (code={}) at {}", processInstanceId, tokenId, bpmnElement.getId(), escalationCode, activityId);
-
-        boolean interrupted = throwEscalation(processInstanceId, tokenId, escalationCode);
-        // if an interrupting boundary cancelled this token's scope, the branch is already gone
-        if (!interrupted) {
-            finishBranch(processInstanceId, tokenId, bpmn);
-        }
-    }
-
-    /**
      * Escalation throw event: completes its activity, raises a (non-critical) escalation, then continues
      * down its own outgoing flow regardless of whether the escalation was caught (escalation, unlike a
      * thrown error, never interrupts the throwing path).
@@ -2405,7 +2372,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         }
     }
 
-    private String escalationCode(BpmnElementModel element) {
+    public String escalationCode(BpmnElementModel element) {
         return Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getEventDefinition)
             .map(EventDefinitionExtensionModel::getCode)
@@ -2422,7 +2389,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * @return {@code true} if an interrupting boundary on a scope enclosing {@code tokenId} fired
      *         (so the throwing path was cancelled and must not continue), {@code false} otherwise.
      */
-    private boolean throwEscalation(UUID processInstanceId, UUID tokenId, String escalationCode) {
+    public boolean throwEscalation(UUID processInstanceId, UUID tokenId, String escalationCode) {
         ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
 
