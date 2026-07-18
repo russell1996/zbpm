@@ -1,0 +1,21 @@
+# WO-PROC-8: minimal postgres:16 for PG-IT in CI.
+# Separate from the root docker-compose.yml so `up` does NOT interpolate the `app`
+# service (which requires ZORROBPM_JWT_SECRET / ADMIN_PASSWORD with no default and
+# aborts `docker compose up postgres` before postgres even starts).
+# Ephemeral: no named volume — every CI run gets a clean database.
+name: zbpm-pgci
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${PG_DB:-zorrobpm-db}
+      POSTGRES_USER: ${PG_USER:-zorrodev}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-zorrodev}
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-zorrodev} -d ${PG_DB:-zorrobpm-db}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
