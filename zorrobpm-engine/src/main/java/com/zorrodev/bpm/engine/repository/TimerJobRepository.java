@@ -16,6 +16,14 @@ public interface TimerJobRepository extends JpaRepository<TimerJobEntity, UUID>,
 
     List<TimerJobEntity> findByFiredFalseAndDueAtLessThanEqual(Instant now);
 
+    /**
+     * L6 FIX: FOR UPDATE SKIP LOCKED prevents two pollers from picking up the same timer jobs.
+     * Row locks are held until the calling transaction commits.
+     */
+    @Query(value = "SELECT * FROM timer_jobs WHERE fired = false AND due_at <= :now ORDER BY due_at ASC FOR UPDATE SKIP LOCKED",
+           nativeQuery = true)
+    List<TimerJobEntity> findDueLocked(@Param("now") Instant now);
+
     @Modifying
     @Query("UPDATE TimerJobEntity t SET t.fired = true WHERE t.id = :id AND t.fired = false")
     int claimTimerJob(@Param("id") UUID id);
