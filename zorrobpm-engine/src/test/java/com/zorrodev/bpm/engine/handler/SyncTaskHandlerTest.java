@@ -32,14 +32,15 @@ class SyncTaskHandlerTest {
     @Mock private DmnService dmnService;
     @Mock private BpmnService bpmnService;
     @Mock private ActivityServiceImpl activityService;
+    @Mock private ElementSupport elementSupport;
 
     private SyncTaskHandler.ScriptTask scriptTask;
     private SyncTaskHandler.BusinessRuleTask businessRuleTask;
 
     @BeforeEach
     void setUp() {
-        scriptTask = new SyncTaskHandler.ScriptTask(dbService, scriptService, activityService);
-        businessRuleTask = new SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, activityService);
+        scriptTask = new SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, activityService);
+        businessRuleTask = new SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, activityService);
     }
 
     @Test
@@ -62,7 +63,7 @@ class SyncTaskHandlerTest {
         when(dbService.createActivity(eq(piId), eq(tokenId), eq(el))).thenReturn(activityId);
         when(dbService.getVariables(piId)).thenReturn(List.of());
         when(scriptService.evaluateExpression(eq("x + 1"), any())).thenReturn(42L);
-        when(activityService.toProcessVariable(eq("result"), eq(42L))).thenReturn(new ProcessVariable());
+        when(elementSupport.toProcessVariable(eq("result"), eq(42L))).thenReturn(new ProcessVariable());
 
         ExecutionCtx ctx = new ExecutionCtx(piId, tokenId, null, null);
         scriptTask.handle(ctx, bpmn, el);
@@ -94,7 +95,7 @@ class SyncTaskHandlerTest {
         when(dbService.createActivity(eq(piId), eq(tokenId), eq(el))).thenReturn(activityId);
         when(dbService.getVariables(piId)).thenReturn(List.of());
         when(dmnService.evaluate(eq("decision1"), any())).thenReturn("approved");
-        when(activityService.toProcessVariable(eq("output"), eq("approved"))).thenReturn(new ProcessVariable());
+        when(elementSupport.toProcessVariable(eq("output"), eq("approved"))).thenReturn(new ProcessVariable());
 
         ExecutionCtx ctx = new ExecutionCtx(piId, tokenId, null, null);
         businessRuleTask.handle(ctx, bpmn, el);
