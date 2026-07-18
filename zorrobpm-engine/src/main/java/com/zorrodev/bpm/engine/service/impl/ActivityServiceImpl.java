@@ -85,11 +85,16 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     private Map<BpmnElementType, ElementHandler> createHandlers() {
         Map<BpmnElementType, ElementHandler> map = new EnumMap<>(BpmnElementType.class);
-        map.put(BpmnElementType.START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        // message/timer start events, once triggered, behave like a plain start: complete and continue
-        map.put(BpmnElementType.MESSAGE_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.TIMER_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.SIGNAL_START_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.START_EVENT, (ctx, bpmn, el) -> {
+            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
+            dbService.completeActivity(activityId);
+            log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
+            proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
+        });
+        // message/timer/signal start events behave like a plain start: complete and continue
+        map.put(BpmnElementType.MESSAGE_START_EVENT, map.get(BpmnElementType.START_EVENT));
+        map.put(BpmnElementType.TIMER_START_EVENT, map.get(BpmnElementType.START_EVENT));
+        map.put(BpmnElementType.SIGNAL_START_EVENT, map.get(BpmnElementType.START_EVENT));
         map.put(BpmnElementType.END_EVENT, (ctx, bpmn, el) -> {
             UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
             dbService.completeActivity(activityId);
@@ -127,7 +132,16 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
                 finishBranch(ctx.processInstanceId(), ctx.tokenId(), bpmn);
             }
         });
-        map.put(BpmnElementType.ESCALATION_THROW_EVENT, (ctx, bpmn, el) -> processEscalationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.ESCALATION_THROW_EVENT, (ctx, bpmn, el) -> {
+            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
+            dbService.completeActivity(activityId);
+            String escalationCode = escalationCode(el);
+            log.info("{}/{}: Escalation throw {} (code={}) at {}", ctx.processInstanceId(), ctx.tokenId(), el.getId(), escalationCode, activityId);
+            boolean interrupted = throwEscalation(ctx.processInstanceId(), ctx.tokenId(), escalationCode);
+            if (!interrupted) {
+                proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
+            }
+        });
         map.put(BpmnElementType.SERVICE_TASK, (ctx, bpmn, el) -> enterServiceTask(ctx.processInstanceId(), ctx.tokenId(), el));
         // Script task = synchronous inline FEEL evaluation; the result is written to a process variable.
         map.put(BpmnElementType.SCRIPT_TASK, (ctx, bpmn, el) -> processScriptTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
@@ -163,7 +177,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         map.put(BpmnElementType.SIGNAL_THROW_EVENT, (ctx, bpmn, el) -> processSignalThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Link throw jumps to the matching link catch (an intra-process goto); the catch is a pass-through.
         map.put(BpmnElementType.LINK_THROW_EVENT, (ctx, bpmn, el) -> processLinkThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.LINK_CATCH_EVENT, (ctx, bpmn, el) -> processStartEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.LINK_CATCH_EVENT, map.get(BpmnElementType.START_EVENT));
         // Compensation throw runs the compensation handlers of completed compensation-bounded activities.
         map.put(BpmnElementType.COMPENSATION_THROW_EVENT, (ctx, bpmn, el) -> processCompensationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Cancel end (inside a transaction) compensates the transaction and routes to its cancel boundary.
@@ -177,7 +191,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * target of each. Shared "continue from here" step used by start events, completed tasks,
      * signalled wait states and parent continuation after a subprocess/call activity ends.
      */
-    private void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
+    public void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
         if (element.getOutgoing() == null) {
             return; // a dead end (e.g. a compensation handler off the main flow has no outgoing flow)
         }
@@ -2352,26 +2366,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         return null;
     }
 
-    /**
-     * Escalation throw event: completes its activity, raises a (non-critical) escalation, then continues
-     * down its own outgoing flow regardless of whether the escalation was caught (escalation, unlike a
-     * thrown error, never interrupts the throwing path).
-     */
-    private void processEscalationThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        String escalationCode = escalationCode(bpmnElement);
-        log.info("{}/{}: Escalation throw {} (code={}) at {}", processInstanceId, tokenId, bpmnElement.getId(), escalationCode, activityId);
-
-        boolean interrupted = throwEscalation(processInstanceId, tokenId, escalationCode);
-        // escalation never interrupts the throwing path unless an interrupting boundary on an enclosing
-        // scope of this very token fired (cancelling it); otherwise continue down the outgoing flow
-        if (!interrupted) {
-            proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-        }
-    }
-
     public String escalationCode(BpmnElementModel element) {
         return Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getEventDefinition)
@@ -2481,15 +2475,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             }
         }
         return null;
-    }
-
-    private void processStartEvent(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
     }
 
 }
