@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -54,7 +55,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
         UUID activityId = UUID.randomUUID();
         jdbc.update(
             "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) VALUES (?, ?, ?, false, ?)",
-            jobId, activityId, Instant.now().minusSeconds(10), Instant.now());
+            jobId, activityId, Timestamp.from(Instant.now().minusSeconds(10)), Timestamp.from(Instant.now()));
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
@@ -118,7 +119,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
         jdbc.update(
             "INSERT INTO timer_start_jobs (id, process_key, process_definition_id, element_id, due_at, fired, created_at) " +
             "VALUES (?, 'test-proc', ?, 'start1', ?, false, ?)",
-            jobId, UUID.randomUUID(), Instant.now().minusSeconds(10), Instant.now());
+            jobId, UUID.randomUUID(), Timestamp.from(Instant.now().minusSeconds(10)), Timestamp.from(Instant.now()));
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
@@ -178,7 +179,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
         UUID activityId = UUID.randomUUID();
         jdbc.update(
             "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) VALUES (?, ?, ?, false, ?)",
-            jobId, activityId, Instant.now().minusSeconds(10), Instant.now());
+            jobId, activityId, Timestamp.from(Instant.now().minusSeconds(10)), Timestamp.from(Instant.now()));
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
@@ -232,7 +233,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
         UUID jobId = UUID.randomUUID();
         jdbc.update(
             "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) VALUES (?, ?, ?, false, ?)",
-            jobId, UUID.randomUUID(), Instant.now().plusSeconds(3600), Instant.now());
+            jobId, UUID.randomUUID(), Timestamp.from(Instant.now().plusSeconds(3600)), Timestamp.from(Instant.now()));
 
         List<UUID> locked = jdbc.queryForList(
             "SELECT id FROM timer_jobs WHERE fired = false AND due_at <= now() FOR UPDATE SKIP LOCKED",

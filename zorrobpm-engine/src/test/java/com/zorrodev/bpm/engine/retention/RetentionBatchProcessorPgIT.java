@@ -68,17 +68,17 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
 
         UUID varId = UUID.randomUUID();
         jdbc.update(
-            "INSERT INTO variables (id, process_instance_id, scope_id, name, type, value) " +
+            "INSERT INTO variables (id, process_instance_id, scope_id, name, type, text_value) " +
             "VALUES (?, ?, ?, 'testVar', 'STRING', 'hello')",
             varId, piId, actId);
 
         UUID timerId = UUID.randomUUID();
         jdbc.update(
-            "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) " +
-            "VALUES (?, ?, ?, false, ?)",
-            timerId, actId, ago(10), ago(90));
+            "INSERT INTO timer_jobs (id, activity_id, process_instance_id, due_at, fired, created_at) " +
+            "VALUES (?, ?, ?, ?, false, ?)",
+            timerId, actId, piId, ago(10), ago(90));
 
-        List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
+        List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now(), 100);
         assertThat(eligible).contains(piId);
 
         int deleted = batchProcessor.deleteInstances(eligible);
@@ -132,9 +132,9 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "VALUES (?, ?, 'usr1', ?, ?, 'USER_TASK', 'COMPLETED', ?)",
             actId, piId, ago(90), ago(80), UUID.randomUUID());
         jdbc.update(
-            "INSERT INTO user_tasks (id, activity_id, process_instance_id, created_at, completed_at) " +
-            "VALUES (?, ?, ?, ?, NULL)",
-            UUID.randomUUID(), actId, piId, ago(80));
+            "INSERT INTO user_tasks (id, process_instance_id, process_definition_id, bpmn_element_id, created_at, completed_at) " +
+            "VALUES (?, ?, ?, 'userTask', ?, NULL)",
+            UUID.randomUUID(), piId, sharedPdId, ago(80));
 
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
         assertThat(eligible).doesNotContain(piId);
@@ -153,9 +153,9 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "VALUES (?, ?, 'svc1', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
             actId, piId, ago(90), ago(80), UUID.randomUUID());
         jdbc.update(
-            "INSERT INTO service_tasks (id, activity_id, process_instance_id, created_at, completed_at, retries) " +
-            "VALUES (?, ?, ?, ?, NULL, 3)",
-            UUID.randomUUID(), actId, piId, ago(80));
+            "INSERT INTO service_tasks (id, process_instance_id, process_definition_id, bpmn_element_id, created_at, completed_at, retries_remaining) " +
+            "VALUES (?, ?, ?, 'svcTask', ?, NULL, 3)",
+            UUID.randomUUID(), piId, sharedPdId, ago(80));
 
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
         assertThat(eligible).doesNotContain(piId);
@@ -171,7 +171,7 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "VALUES (?, ?, ?, ?, false)",
             piId, sharedPdId, ago(100), ago(50));
 
-        List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now(), 100);
+        List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(100), 100);
         assertThat(eligible).isEmpty();
     }
 

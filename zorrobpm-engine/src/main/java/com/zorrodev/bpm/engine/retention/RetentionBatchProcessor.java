@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -32,7 +33,7 @@ public class RetentionBatchProcessor {
             "AND NOT EXISTS (SELECT 1 FROM user_tasks ut WHERE ut.process_instance_id = pi.id AND ut.completed_at IS NULL) " +
             "AND NOT EXISTS (SELECT 1 FROM service_tasks st WHERE st.process_instance_id = pi.id AND st.completed_at IS NULL) " +
             "ORDER BY pi.completed_at ASC LIMIT ?";
-        return jdbc.queryForList(sql, UUID.class, cutoff, batchSize);
+        return jdbc.queryForList(sql, UUID.class, Timestamp.from(cutoff), batchSize);
     }
 
     @Transactional
@@ -46,8 +47,8 @@ public class RetentionBatchProcessor {
         total += jdbc.update("DELETE FROM signal_subscriptions WHERE process_instance_id IN (" + inClause + ")");
         total += jdbc.update("DELETE FROM parallel_gateways WHERE process_instance_id IN (" + inClause + ")");
         total += jdbc.update("DELETE FROM incidents WHERE activity_id IN (SELECT id FROM activities WHERE process_instance_id IN (" + inClause + "))");
-        total += jdbc.update("DELETE FROM service_tasks WHERE activity_id IN (SELECT id FROM activities WHERE process_instance_id IN (" + inClause + "))");
-        total += jdbc.update("DELETE FROM user_tasks WHERE activity_id IN (SELECT id FROM activities WHERE process_instance_id IN (" + inClause + "))");
+        total += jdbc.update("DELETE FROM service_tasks WHERE process_instance_id IN (" + inClause + ")");
+        total += jdbc.update("DELETE FROM user_tasks WHERE process_instance_id IN (" + inClause + ")");
         total += jdbc.update("DELETE FROM variables WHERE process_instance_id IN (" + inClause + ")");
         total += jdbc.update("DELETE FROM activities WHERE process_instance_id IN (" + inClause + ")");
         total += jdbc.update("DELETE FROM tokens WHERE id IN (SELECT DISTINCT token FROM activities WHERE process_instance_id IN (" + inClause + "))");
