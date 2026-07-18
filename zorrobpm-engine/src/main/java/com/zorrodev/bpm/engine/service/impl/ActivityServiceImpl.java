@@ -92,7 +92,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     private void registerExtractedHandlerBeans() {
         for (var bean : List.of(
-            new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNavigator)
+            new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNavigator),
+            new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNavigator)
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
@@ -217,7 +218,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         map.put(BpmnElementType.SEND_TASK, (ctx, bpmn, el) -> processSendTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.RECEIVE_TASK, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
         map.put(BpmnElementType.PARALLEL_GATEWAY, (ctx, bpmn, el) -> processParallelGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.EVENT_BASED_GATEWAY, (ctx, bpmn, el) -> processEventBasedGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.INCLUSIVE_GATEWAY, (ctx, bpmn, el) -> processInclusiveGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.CALL_ACTIVITY, (ctx, bpmn, el) -> processCallActivity(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.SUB_PROCESS, (ctx, bpmn, el) -> processSubProcess(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
@@ -822,14 +822,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * on the same token, letting them race. When the first one fires, {@link #signal} cancels the
      * losing siblings (see {@link #isBehindEventBasedGateway}).
      */
-    private void processEventBasedGateway(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        log.info("{}/{}: Entering and completing {}: {}/{} (arming {} event(s))", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), bpmnElement.getOutgoing().size());
-
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-    }
 
     /** True if {@code element} is a catch event whose (only) incoming flow comes from an event-based gateway. */
     private boolean isBehindEventBasedGateway(BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
