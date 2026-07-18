@@ -1,5 +1,8 @@
 package com.zorrodev.bpm.engine.handler;
 
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+
 import java.util.UUID;
 
 /**
@@ -8,15 +11,15 @@ import java.util.UUID;
  * Implemented by {@code ActivityServiceImpl}. Passed as a parameter to handlers
  * (not injected) to avoid Spring circular dependencies.
  */
-@FunctionalInterface
 public interface TokenExecutor {
 
     /**
-     * Execute a BPMN element.
-     *
-     * @param processInstanceId the process instance
-     * @param tokenId           the token to advance
-     * @param bpmnElementId     the element ID to execute
+     * Execute a BPMN element by its string ID (looks up the element from the process definition).
      */
     void execute(UUID processInstanceId, UUID tokenId, String bpmnElementId);
+
+    /**
+     * Execute a BPMN element that has already been resolved from the process definition.
+     */
+    void execute(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element);
 }
