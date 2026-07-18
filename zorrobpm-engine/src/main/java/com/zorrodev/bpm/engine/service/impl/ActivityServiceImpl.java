@@ -93,7 +93,9 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private void registerExtractedHandlerBeans() {
         for (var bean : List.of(
             new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNavigator)
+            new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNavigator),
+            new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNavigator),
+            new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNavigator, scriptService)
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
@@ -217,8 +219,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         // throw in task form. Receive task = message catch (wait state) in task form.
         map.put(BpmnElementType.SEND_TASK, (ctx, bpmn, el) -> processSendTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.RECEIVE_TASK, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.PARALLEL_GATEWAY, (ctx, bpmn, el) -> processParallelGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.INCLUSIVE_GATEWAY, (ctx, bpmn, el) -> processInclusiveGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.CALL_ACTIVITY, (ctx, bpmn, el) -> processCallActivity(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.SUB_PROCESS, (ctx, bpmn, el) -> processSubProcess(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Catch events are wait states: the token parks here until an external trigger
@@ -841,186 +841,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         return false;
     }
 
-    private void processParallelGateway(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        List<String> incomings = bpmnElement.getIncoming();
-        List<String> outgoings = bpmnElement.getOutgoing();
 
-        if (incomings.size() == 1) {
-            UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-            Token newToken = dbService.createToken(tokenId);
-            UUID newTokenId = newToken.getId();
-            for (String outgoing : outgoings) {
-                processFlow(processInstanceId, newTokenId, outgoing, false, null);
-                BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                String targetRef = flow.getTargetRef();
-                BpmnElementModel target = bpmn.getElement(targetRef);
-                execute(processInstanceId, newTokenId, bpmn, target);
-            }
-        } else if (incomings.size() > 1) {
-            // A join fires only once every incoming flow has arrived. Arrivals are recorded in
-            // processFlow and consumed here, so a process that loops back through the same join
-            // waits for a fresh set of arrivals instead of re-firing on stale ones.
-            Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, bpmnElement.getId());
-            boolean reached = arrived.containsAll(incomings);
-
-            if (reached) {
-                dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
-                Token token = dbService.getToken(tokenId);
-                UUID oldTokenId = token.getParentId();
-                UUID activityId = dbService.createActivity(processInstanceId, oldTokenId, bpmnElement);
-                dbService.completeActivity(activityId);
-                log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-                for (String outgoing : outgoings) {
-                    processFlow(processInstanceId, oldTokenId, outgoing, false, null);
-                    BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                    String targetRef = flow.getTargetRef();
-                    BpmnElementModel target = bpmn.getElement(targetRef);
-                    execute(processInstanceId, oldTokenId, bpmn, target);
-                }
-            } else {
-                log.info("{}/{}: Parallel Gateway Not ready yet {}: {}", processInstanceId, tokenId, bpmnElement.getType(), bpmnElement.getId());
-            }
-        }
-    }
-
-    /**
-     * Inclusive gateway. Split (1 in, &gt;1 out): activates every outgoing flow whose condition is true
-     * — or the default flow when none is — running all activated branches on one shared token (like a
-     * parallel split). It records, on the converging inclusive join, how many branches it activated, so
-     * the join waits for exactly that many arrivals (the count is dynamic, unlike a parallel join which
-     * waits for every incoming flow). Join (&gt;1 in): fires once the activated branches have all arrived.
-     *
-     * <p>Supports the canonical single-split → single-join diamond (with intermediate tasks/wait states):
-     * each activated branch must reach the join through its own incoming flow.
-     */
-    private void processInclusiveGateway(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        List<String> incomings = bpmnElement.getIncoming();
-        List<String> outgoings = bpmnElement.getOutgoing();
-
-        if (outgoings.size() > 1 && incomings.size() == 1) {
-            UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-            dbService.completeActivity(activityId);
-
-            String defaultFlowId = Optional.ofNullable(bpmnElement.getExtensions())
-                .map(BpmnElementExtensionModel::getExclusiveGatewayExtension)
-                .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
-                .orElse(null);
-
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-            List<String> activated = new ArrayList<>();
-            for (String outgoing : outgoings) {
-                if (outgoing.equals(defaultFlowId)) {
-                    continue; // the default flow is only taken if nothing else is
-                }
-                if (isFlowActive(bpmn, outgoing, variables)) {
-                    activated.add(outgoing);
-                }
-            }
-            if (activated.isEmpty() && defaultFlowId != null) {
-                activated.add(defaultFlowId);
-            }
-
-            log.info("{}/{}: Entering and completing {}: {}/{} (activating {} of {} branches)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), activated.size(), outgoings.size());
-
-            // tell the converging join how many branches to wait for (dynamic for inclusive gateways)
-            String joinId = findInclusiveJoin(bpmn, bpmnElement);
-            if (joinId != null) {
-                dbService.recordInclusiveExpected(processInstanceId, joinId, activated.size());
-            }
-
-            Token newToken = dbService.createToken(tokenId);
-            UUID newTokenId = newToken.getId();
-            for (String outgoing : activated) {
-                processFlow(processInstanceId, newTokenId, outgoing, false, null);
-                BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
-                execute(processInstanceId, newTokenId, bpmn, target);
-            }
-        } else if (incomings.size() > 1) {
-            Integer expected = dbService.getInclusiveExpected(processInstanceId, bpmnElement.getId());
-            Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, bpmnElement.getId());
-
-            if (expected != null && arrived.size() >= expected) {
-                dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
-                Token token = dbService.getToken(tokenId);
-                UUID oldTokenId = token.getParentId();
-                UUID activityId = dbService.createActivity(processInstanceId, oldTokenId, bpmnElement);
-                dbService.completeActivity(activityId);
-                log.info("{}/{}: Entering and completing {}: {}/{} (all {} branches arrived)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), expected);
-                for (String outgoing : outgoings) {
-                    processFlow(processInstanceId, oldTokenId, outgoing, false, null);
-                    BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                    BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
-                    execute(processInstanceId, oldTokenId, bpmn, target);
-                }
-            } else {
-                log.info("{}/{}: Inclusive gateway join not ready yet {}: {} of {} branches arrived", processInstanceId, tokenId, bpmnElement.getId(), arrived.size(), expected);
-            }
-        } else {
-            // 1-in-1-out inclusive gateway: a plain pass-through
-            UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-            proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-        }
-    }
-
-    /** True if the flow has no condition (always taken) or its FEEL condition evaluates to true. */
-    private boolean isFlowActive(BpmnProcessDefinitionModel bpmn, String flowId, List<ProcessVariable> variables) {
-        BpmnFlowModel flow = bpmn.getFlow(flowId);
-        String expression = Optional.ofNullable(flow)
-            .map(BpmnFlowModel::getConditionExpression)
-            .map(BpmnConditionExpressionModel::getExpression)
-            .filter(str -> !str.isEmpty())
-            .map(str -> str.substring(1))
-            .orElse(null);
-        if (expression == null) {
-            return true;
-        }
-        Boolean test = (Boolean) scriptService.evaluateScript(expression, variables);
-        return Boolean.TRUE.equals(test);
-    }
-
-    /**
-     * Forward-searches the graph from the split for the inclusive gateway its branches converge to (an
-     * inclusive gateway with more than one incoming flow). Returns {@code null} if none is reachable.
-     */
-    private String findInclusiveJoin(BpmnProcessDefinitionModel bpmn, BpmnElementModel split) {
-        Set<String> visited = new HashSet<>();
-        Deque<String> queue = new ArrayDeque<>();
-        for (String outgoing : split.getOutgoing()) {
-            BpmnFlowModel flow = bpmn.getFlow(outgoing);
-            if (flow != null) {
-                queue.add(flow.getTargetRef());
-            }
-        }
-        while (!queue.isEmpty()) {
-            String elementId = queue.poll();
-            if (elementId == null || !visited.add(elementId)) {
-                continue;
-            }
-            BpmnElementModel element = bpmn.getElement(elementId);
-            if (element == null) {
-                continue;
-            }
-            if (element.getType() == BpmnElementType.INCLUSIVE_GATEWAY
-                    && element.getIncoming() != null && element.getIncoming().size() > 1) {
-                return element.getId();
-            }
-            if (element.getOutgoing() != null) {
-                for (String outgoing : element.getOutgoing()) {
-                    BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                    if (flow != null) {
-                        queue.add(flow.getTargetRef());
-                    }
-                }
-            }
-        }
-        return null;
-    }
 
     /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */
     public ProcessVariable toProcessVariable(String name, Object result) {
