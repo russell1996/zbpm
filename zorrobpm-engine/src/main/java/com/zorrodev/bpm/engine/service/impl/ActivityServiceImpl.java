@@ -108,7 +108,10 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             new com.zorrodev.bpm.engine.handler.SignalThrowHandler(dbService, flowNavigator, this),
             new com.zorrodev.bpm.engine.handler.LinkThrowHandler(dbService, this),
             new com.zorrodev.bpm.engine.handler.SendTaskHandler(this,
-                new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNavigator, this))
+                new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNavigator, this)),
+            // SubProcess + CallActivity (WO-AUD-15)
+            new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService),
+            new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, this)
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
@@ -230,8 +233,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
         });
         map.put(BpmnElementType.USER_TASK, (ctx, bpmn, el) -> enterUserTask(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.CALL_ACTIVITY, (ctx, bpmn, el) -> processCallActivity(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.SUB_PROCESS, (ctx, bpmn, el) -> processSubProcess(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Catch events are wait states: the token parks here until an external trigger
         // (timer fires / message correlated) resumes it via signal(...). Until the timer
         // and message subsystems land, these elements at least park cleanly with an active
@@ -551,51 +552,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         }
     }
 
-    private void processCallActivity(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
 
-        log.info("{}/{}: Entering {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-
-        // null-safe: a malformed call activity (no zeebe:calledElement / processId) or an undeployed target
-        // becomes an informative incident (a non-EngineException is parked by execute()'s handler) instead of
-        // an NPE / NoSuchElementException — the operator can fix the model / deploy the child and retry.
-        String key = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getCallActivityExtension)
-            .map(ext -> ext.getProcessId())
-            .filter(s -> !s.isBlank())
-            .orElseThrow(() -> new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has no zeebe:calledElement processId"));
-
-        Integer version = dbService.getMaxProcessDefinitionVersionByKey(key);
-        if (version == null || version == 0) {
-            throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no deployed definition");
-        }
-        ProcessDefinition pd = dbService.getProcessDefinition(key, version);
-        UUID processDefinitionId = pd.getId();
-
-        startProcessInstance(activityId, processDefinitionId, variables);
-    }
-
-    /**
-     * Enters an embedded subprocess: records the subprocess container activity, creates a child
-     * token scoped to it, and starts the subprocess's nested start event. When the nested end
-     * event is reached (see {@link com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent}) the container completes and the parent token
-     * continues from the subprocess's outgoing flows.
-     */
-    private void processSubProcess(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-
-        String startEventId = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getSubProcessExtension)
-            .map(SubProcessExtensionModel::getStartEventId)
-            .orElseThrow(() -> new EngineException("Subprocess " + bpmnElement.getId() + " has no start event"));
-
-        Token childToken = dbService.createToken(tokenId, activityId);
-        log.info("{}/{}: Entering {}: {}/{} (scope token {})", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), childToken.getId());
-
-        execute(processInstanceId, childToken.getId(), bpmn, bpmn.getElement(startEventId));
-    }
 
     /**
      * Event-based gateway: a pass-through that arms every outgoing catch event (message/timer/signal)
