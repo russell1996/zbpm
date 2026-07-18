@@ -4,10 +4,8 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
-import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnConditionExpressionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
-import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
@@ -17,7 +15,6 @@ import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.bpmn.model.BusinessRuleExtensionModel;
-import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
@@ -41,7 +38,6 @@ import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import org.camunda.feel.api.FeelEngineApi;
-import org.camunda.feel.api.EvaluationResult;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +72,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final FeelEngineApi feelEngineApi;
     private final ExecutionContext executionContext;
     private final HandlerRegistry handlerRegistry;
+    private final com.zorrodev.bpm.engine.handler.MultiInstanceExecutor multiInstanceExecutor;
+    private final com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
     private FlowNavigator flowNavigator;
 
     private Map<BpmnElementType, ElementHandler> handlers;
@@ -202,7 +200,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             log.info("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
             String resultVariable = ext.getResultVariable();
             if (resultVariable != null && !resultVariable.isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(toProcessVariable(resultVariable, result)));
+                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(resultVariable, result)));
             }
             dbService.completeActivity(activityId);
             proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
@@ -227,7 +225,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             }
             log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
             if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(toProcessVariable(ext.getResultVariable(), result)));
+                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(ext.getResultVariable(), result)));
             }
             dbService.completeActivity(activityId);
             proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
@@ -578,112 +576,18 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         return false;
     }
 
-
-
-    /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */
-    public ProcessVariable toProcessVariable(String name, Object result) {
-        ProcessVariable variable = new ProcessVariable();
-        variable.setName(name);
-        if (result instanceof Boolean b) {
-            variable.setType(ProcessVariableType.BOOLEAN);
-            variable.setValue(b.toString());
-        } else if (result instanceof Number number && isIntegral(number)) {
-            variable.setType(ProcessVariableType.LONG);
-            variable.setValue(Long.toString(number.longValue()));
-        } else if (result instanceof Number number) {
-            // non-integral number (FEEL returns BigDecimal) -> DOUBLE, stored as a plain decimal string
-            java.math.BigDecimal bd = (number instanceof java.math.BigDecimal x)
-                ? x : java.math.BigDecimal.valueOf(number.doubleValue());
-            variable.setType(ProcessVariableType.DOUBLE);
-            variable.setValue(bd.toPlainString());
-        } else if (isStructuredResult(result)) {
-            // structured result: a Java Map/List (DMN output via FeelEngineApi) or a Scala collection (a FEEL
-            // context/list returned by ScriptService) -> normalised to a Java structure and stored as JSON
-            variable.setType(ProcessVariableType.JSON);
-            variable.setValue(objectMapper.writeValueAsString(toJavaStructure(result)));
-        } else {
-            variable.setType(ProcessVariableType.STRING);
-            variable.setValue(result == null ? "" : result.toString());
-        }
-        return variable;
-    }
-
-    /** Whether a FEEL result is a structured value (object/list) — Java or Scala collection. */
-    private boolean isStructuredResult(Object v) {
-        return v instanceof java.util.Map || v instanceof java.util.List
-            || v instanceof scala.collection.Map || v instanceof scala.collection.Iterable;
-    }
-
-    /**
-     * Normalises a FEEL result into a JSON-serializable Java structure. FEEL contexts/lists come back from
-     * {@code ScriptService} as Scala collections (and from {@code FeelEngineApi} as Java collections); both
-     * are converted recursively to {@link java.util.LinkedHashMap}/{@link java.util.ArrayList} with scalar
-     * leaves (BigDecimal/Boolean/String) left as-is.
-     */
-    private Object toJavaStructure(Object v) {
-        if (v instanceof scala.collection.Map<?, ?> sm) {
-            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
-            scala.collection.Iterator<?> it = sm.iterator();
-            while (it.hasNext()) {
-                scala.Tuple2<?, ?> entry = (scala.Tuple2<?, ?>) it.next();
-                out.put(String.valueOf(entry._1()), toJavaStructure(entry._2()));
-            }
-            return out;
-        }
-        if (v instanceof scala.collection.Iterable<?> si) {
-            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
-            scala.collection.Iterator<?> it = si.iterator();
-            while (it.hasNext()) {
-                out.add(toJavaStructure(it.next()));
-            }
-            return out;
-        }
-        if (v instanceof java.util.Map<?, ?> jm) {
-            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
-            jm.forEach((k, val) -> out.put(String.valueOf(k), toJavaStructure(val)));
-            return out;
-        }
-        if (v instanceof java.util.List<?> jl) {
-            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
-            for (Object e : jl) {
-                out.add(toJavaStructure(e));
-            }
-            return out;
-        }
-        return v;
-    }
-
-    private boolean isIntegral(Number number) {
-        if (number instanceof Long || number instanceof Integer || number instanceof Short || number instanceof Byte) {
-            return true;
-        }
-        if (number instanceof java.math.BigDecimal bd) {
-            return bd.stripTrailingZeros().scale() <= 0;
-        }
-        double d = number.doubleValue();
-        return d == Math.rint(d) && !Double.isInfinite(d);
-    }
-
     public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
-        if (isMultiInstance(bpmnElement)) {
-            enterMultiInstance(processInstanceId, token, bpmnElement);
+        if (multiInstanceExecutor.isMultiInstance(bpmnElement)) {
+            multiInstanceExecutor.enter(processInstanceId, token, bpmnElement, this);
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createServiceTask(activityId, serviceTaskRetries(bpmnElement));
-        applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+        dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement));
+        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         serviceTaskEnqueueService.enqueueAfterCommit(activityId);
-    }
-
-    /** Retry budget for a service task from {@code zeebe:taskDefinition retries}; default 3 when unset. */
-    private int serviceTaskRetries(BpmnElementModel element) {
-        return Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getServiceTaskExtension)
-            .map(ext -> ext.getRetries())
-            .orElse(3);
     }
 
     @Override
@@ -715,41 +619,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
         dbService.errorActivity(serviceTaskId);
         dbService.createIncident(serviceTaskId, message);
-    }
-
-    /**
-     * Applies a task's {@code zeebe:ioMapping} with scoped variables (Camunda 8 semantics). Inputs run on
-     * activation and write to the task's **local** scope ({@code activityId}); outputs run on completion and
-     * write to the **parent** (process-instance root). Both evaluate against the merged view (root + local),
-     * so the local input variables don't leak to the instance — they are dropped when the task completes
-     * (see the {@code deleteVariables} call in the complete* methods).
-     */
-    private void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {
-        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getIoMappingExtension)
-            .orElse(null);
-        if (io == null) {
-            return;
-        }
-        List<IoMappingExtensionModel.Mapping> mappings = inputs ? io.getInputs() : io.getOutputs();
-        if (mappings == null || mappings.isEmpty()) {
-            return;
-        }
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId, activityId);
-        List<ProcessVariable> results = new ArrayList<>();
-        for (IoMappingExtensionModel.Mapping mapping : mappings) {
-            if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
-                continue;
-            }
-            String expression = mapping.getSource().startsWith("=") ? mapping.getSource().substring(1) : mapping.getSource();
-            Object value = scriptService.evaluateExpression(expression, variables);
-            results.add(toProcessVariable(mapping.getTarget(), value));
-        }
-        if (!results.isEmpty()) {
-            // inputs -> local scope (activityId); outputs -> root scope (null)
-            dbService.setVariables(processInstanceId, inputs ? activityId : null, results);
-            log.info("{}: Applied {} {} mapping(s) at {} (scope {})", processInstanceId, results.size(), inputs ? "input" : "output", element.getId(), inputs ? activityId : "root");
-        }
     }
 
     /**
@@ -788,10 +657,10 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
-        aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
+        elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
+        multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, serviceTaskId);
-        if (isMultiInstance(bpmnElement) && !multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId)) {
+        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId)) {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
         }
@@ -800,17 +669,17 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     private void enterUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
-        if (isMultiInstance(bpmnElement)) {
-            enterMultiInstance(processInstanceId, token, bpmnElement);
+        if (multiInstanceExecutor.isMultiInstance(bpmnElement)) {
+            multiInstanceExecutor.enter(processInstanceId, token, bpmnElement, this);
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        String resolvedAssignee = resolveAssignee(processInstanceId, bpmnElement);
-        String resolvedGroups = resolveCandidateGroups(processInstanceId, bpmnElement);
+        String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
+        String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
         dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
-        applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
@@ -819,308 +688,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
     }
 
-    private boolean isMultiInstance(BpmnElementModel element) {
-        return Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
-            .isPresent();
-    }
-
-    private String extractAssignee(BpmnElementModel element) {
-        return Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getUserTaskExtension)
-            .map(UserTaskExtensionModel::getAssignee)
-            .orElse(null);
-    }
-
-    /**
-     * WO-INT-1: Resolve assignee from BPMN expression against process instance variables.
-     * Expressions: ${var} (MVEL-style) or =expr (FEEL). Plain strings returned as-is.
-     */
-    private String resolveAssignee(UUID processInstanceId, BpmnElementModel element) {
-        String raw = extractAssignee(element);
-        return resolveExpression(raw, processInstanceId);
-    }
-
-    /**
-     * WO-INT-1: Resolve candidateGroups from BPMN expression against process instance variables.
-     * Returns comma-separated resolved groups, or null if none defined.
-     */
-    private String resolveCandidateGroups(UUID processInstanceId, BpmnElementModel element) {
-        String raw = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getUserTaskExtension)
-            .map(UserTaskExtensionModel::getCandidateGroups)
-            .orElse(null);
-        if (raw == null || raw.isBlank()) return null;
-        return resolveExpression(raw, processInstanceId);
-    }
-
-    /**
-     * WO-INT-1: Resolve a raw BPMN expression string against process instance variables.
-     * - ${var} → extract var name from curly braces, look up in variables
-     * - =expr → evaluate as FEEL expression
-     * - plain string → return as-is (literal)
-     * - unresolvable → null + warn
-     */
-    private String resolveExpression(String raw, UUID processInstanceId) {
-        if (raw == null || raw.isBlank()) return null;
-
-        // ${var} syntax — extract variable name
-        if (raw.startsWith("${") && raw.endsWith("}")) {
-            String varName = raw.substring(2, raw.length() - 1).trim();
-            Map<String, Object> vars = variablesToMap(processInstanceId);
-            Object val = vars.get(varName);
-            if (val == null) {
-                log.warn("WO-INT-1: variable '{}' not found in instance {}, returning null", varName, processInstanceId);
-                return null;
-            }
-            return val.toString();
-        }
-
-        // FEEL expression — starts with =
-        if (raw.startsWith("=")) {
-            Map<String, Object> vars = variablesToMap(processInstanceId);
-            EvaluationResult result = feelEngineApi.evaluateExpression(raw.substring(1), vars);
-            if (!result.isSuccess()) {
-                log.warn("WO-INT-1: FEEL expression '{}' failed in instance {}: {}", raw, processInstanceId, result.failure());
-                return null;
-            }
-            Object val = result.result();
-            return val != null ? val.toString() : null;
-        }
-
-        // Plain string — return as-is
-        return raw;
-    }
-
-    /**
-     * WO-INT-1: Convert process instance variables to a Map for FEEL evaluation.
-     */
-    private Map<String, Object> variablesToMap(UUID processInstanceId) {
-        List<ProcessVariable> vars = dbService.getVariables(processInstanceId);
-        Map<String, Object> map = new java.util.HashMap<>();
-        for (ProcessVariable v : vars) {
-            map.put(v.getName(), v.getValue());
-        }
-        return map;
-    }
-
-    /**
-     * Multi-instance user task. Parallel: spawns all N user-task activities on the same token at once.
-     * Sequential: spawns only the first instance; the next is created as each completes (see
-     * {@link #multiInstanceContinue}). N comes from {@code loopCardinality}; the join is told to expect N
-     * (reusing the parallel/inclusive arrival mechanism).
-     *
-     * <p>Each instance gets its own scoped {@code inputElement} (the current {@code inputCollection} element)
-     * and {@code loopCounter} (1-based), isolated via scoped variables and dropped on completion. Output
-     * aggregation ({@code outputCollection}/{@code outputElement}) is not yet supported.
-     */
-    private void enterMultiInstance(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
-        MultiInstanceExtensionModel mi = bpmnElement.getExtensions().getMultiInstanceExtension();
-        int count = resolveCardinality(processInstanceId, bpmnElement);
-        if (count <= 0) {
-            log.info("{}/{}: Multi-instance {} has zero instances, skipping", processInstanceId, token, bpmnElement.getId());
-            proceedToOutgoing(processInstanceId, token, bpmnElement.getProcessDefinition(), bpmnElement);
-            return;
-        }
-        dbService.recordInclusiveExpected(processInstanceId, bpmnElement.getId(), count);
-        Object collection = miInputCollection(processInstanceId, mi);
-        int spawn = mi.isSequential() ? 1 : count;
-        for (int i = 0; i < spawn; i++) {
-            spawnMiInstance(processInstanceId, token, bpmnElement, mi, collection, i);
-        }
-        log.info("{}/{}: Entering multi-instance {}: {} {} instance(s)", processInstanceId, token, bpmnElement.getId(), count, mi.isSequential() ? "sequential" : "parallel");
-    }
-
-    /**
-     * Creates one multi-instance instance: a user-task instance parks for completion; any other (service /
-     * job-worker) task creates a service-task job, applies its input mappings (which may reference the
-     * per-instance {@code inputElement}) and enqueues it. Per-instance {@code inputElement}/{@code loopCounter}
-     * are bound into the instance scope first.
-     */
-    private void spawnMiInstance(UUID processInstanceId, UUID token, BpmnElementModel element, MultiInstanceExtensionModel mi, Object collection, int index) {
-        UUID activityId = dbService.createActivity(processInstanceId, token, element);
-        bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
-        if (element.getType() == BpmnElementType.USER_TASK) {
-            String resolvedAssignee = resolveAssignee(processInstanceId, element);
-            String resolvedGroups = resolveCandidateGroups(processInstanceId, element);
-            String formKey = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
-                ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
-            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
-        } else {
-            dbService.createServiceTask(activityId, serviceTaskRetries(element));
-            applyIoMappings(processInstanceId, activityId, element, true);
-            serviceTaskEnqueueService.enqueueAfterCommit(activityId);
-        }
-    }
-
-    /**
-     * Resolves a multi-instance activity's instance count: from the Camunda 8 {@code zeebe:loopCharacteristics
-     * inputCollection} (the collection's size) if present, otherwise from the BPMN {@code loopCardinality}
-     * (a literal or FEEL number).
-     */
-    private int resolveCardinality(UUID processInstanceId, BpmnElementModel element) {
-        MultiInstanceExtensionModel mi = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
-            .orElseThrow(() -> new EngineException("Multi-instance " + element.getId() + " has no loop characteristics"));
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-
-        if (mi.getInputCollection() != null && !mi.getInputCollection().isBlank()) {
-            Object collection = scriptService.evaluateExpression(mi.getInputCollection(), variables);
-            return collectionSize(collection, element.getId());
-        }
-
-        String expression = mi.getCardinality();
-        if (expression == null || expression.isBlank()) {
-            throw new EngineException("Multi-instance " + element.getId() + " has neither inputCollection nor loopCardinality");
-        }
-        if (expression.startsWith("=")) {
-            expression = expression.substring(1);
-        }
-        Object value = scriptService.evaluateExpression(expression, variables);
-        if (!(value instanceof Number number)) {
-            throw new EngineException("Multi-instance " + element.getId() + " cardinality did not evaluate to a number: " + value);
-        }
-        return number.intValue();
-    }
-
-    /**
-     * Size of a FEEL collection. Handles a {@link java.util.Collection} and, since the FEEL value mapper may
-     * return a Scala collection, falls back to its {@code size()} method reflectively (engine-agnostic).
-     */
-    private int collectionSize(Object collection, String elementId) {
-        if (collection instanceof java.util.Collection<?> c) {
-            return c.size();
-        }
-        if (collection != null) {
-            try {
-                Object n = collection.getClass().getMethod("size").invoke(collection);
-                if (n instanceof Integer size) {
-                    return size;
-                }
-            } catch (ReflectiveOperationException ignored) {
-                // not a collection-like value
-            }
-        }
-        throw new EngineException("Multi-instance " + elementId + " inputCollection did not evaluate to a list: " + collection);
-    }
-
-    /** Evaluates the multi-instance {@code inputCollection} once for per-instance binding, or null when there
-     *  is no {@code inputElement} to bind (avoids an unnecessary evaluation). */
-    private Object miInputCollection(UUID processInstanceId, MultiInstanceExtensionModel mi) {
-        if (mi.getInputElement() == null || mi.getInputElement().isBlank()
-            || mi.getInputCollection() == null || mi.getInputCollection().isBlank()) {
-            return null;
-        }
-        return scriptService.evaluateExpression(mi.getInputCollection(), dbService.getVariables(processInstanceId));
-    }
-
-    /** Writes a multi-instance instance's per-instance variables into its own (activity) scope: the current
-     *  collection element under {@code inputElement} (if configured) and the 1-based {@code loopCounter}.
-     *  Scoped variables don't leak to the instance and are dropped when the task completes. */
-    private void bindMiInstanceVariables(UUID processInstanceId, UUID scopeId, MultiInstanceExtensionModel mi, Object collection, int index) {
-        List<ProcessVariable> locals = new ArrayList<>();
-        if (collection != null && mi.getInputElement() != null && !mi.getInputElement().isBlank()) {
-            locals.add(toProcessVariable(mi.getInputElement(), collectionElement(collection, index)));
-        }
-        ProcessVariable loopCounter = new ProcessVariable();
-        loopCounter.setName("loopCounter");
-        loopCounter.setType(ProcessVariableType.LONG);
-        loopCounter.setValue(Long.toString(index + 1L));
-        locals.add(loopCounter);
-        dbService.setVariables(processInstanceId, scopeId, locals);
-    }
-
-    /** Appends a multi-instance instance's {@code outputElement} (a FEEL expression evaluated in the instance
-     *  scope) to the {@code outputCollection} (a root JSON list). No-op unless both are configured. */
-    private void aggregateMultiInstanceOutput(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
-        MultiInstanceExtensionModel mi = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
-            .orElse(null);
-        if (mi == null || mi.getOutputCollection() == null || mi.getOutputCollection().isBlank()
-            || mi.getOutputElement() == null || mi.getOutputElement().isBlank()) {
-            return;
-        }
-        Object value = scriptService.evaluateExpression(mi.getOutputElement(), dbService.getVariables(processInstanceId, scopeId));
-        appendToJsonList(processInstanceId, mi.getOutputCollection(), value);
-    }
-
-    /** Reads the named root variable as a JSON list (or starts a new one), appends {@code value} (normalised
-     *  to a Java structure), and writes it back as a JSON variable. */
-    private void appendToJsonList(UUID processInstanceId, String name, Object value) {
-        List<Object> list = new ArrayList<>();
-        ProcessVariable existing = dbService.getVariables(processInstanceId).stream()
-            .filter(v -> v.getName().equals(name))
-            .findFirst().orElse(null);
-        if (existing != null && existing.getType() == ProcessVariableType.JSON
-            && existing.getValue() != null && !existing.getValue().isBlank()
-            && objectMapper.readValue(existing.getValue(), Object.class) instanceof List<?> current) {
-            list.addAll(current);
-        }
-        list.add(toJavaStructure(value));
-
-        ProcessVariable out = new ProcessVariable();
-        out.setName(name);
-        out.setType(ProcessVariableType.JSON);
-        out.setValue(objectMapper.writeValueAsString(list));
-        dbService.setVariables(processInstanceId, List.of(out));
-    }
-
-    /** Element at {@code index} of a FEEL collection: a {@link java.util.List} (from a JSON list variable) or,
-     *  for a Scala collection returned by the FEEL value mapper, its {@code apply(int)} reflectively. */
-    private Object collectionElement(Object collection, int index) {
-        if (collection instanceof java.util.List<?> list) {
-            return index < list.size() ? list.get(index) : null;
-        }
-        if (collection != null) {
-            try {
-                return collection.getClass().getMethod("apply", int.class).invoke(collection, index);
-            } catch (ReflectiveOperationException ignored) {
-                // not an indexable Scala collection
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Records a multi-instance instance's completion and reports whether the whole multi-instance is done
-     * (so the flow should continue). The multi-instance completes when every instance has finished or the
-     * {@code completionCondition} holds. For a sequential multi-instance that is not yet done, the next
-     * instance is started here. Reuses the parallel/inclusive arrival counter, keyed by the unique activity id.
-     */
-    private boolean multiInstanceContinue(UUID processInstanceId, UUID token, BpmnElementModel element, UUID completedActivityId) {
-        String miId = element.getId();
-        MultiInstanceExtensionModel mi = element.getExtensions().getMultiInstanceExtension();
-        dbService.recordParallelGatewayArrival(processInstanceId, miId, completedActivityId.toString());
-        Integer expected = dbService.getInclusiveExpected(processInstanceId, miId);
-        int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, miId).size();
-
-        boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, mi);
-        if (done) {
-            dbService.clearParallelGatewayArrivals(processInstanceId, miId);
-            return true;
-        }
-        if (mi.isSequential()) {
-            // start the next sequential instance on the same token, bound to the next collection element
-            spawnMiInstance(processInstanceId, token, element, mi, miInputCollection(processInstanceId, mi), arrived);
-            log.info("{}/{}: Multi-instance {} starting next sequential instance ({} of {} done)", processInstanceId, token, miId, arrived, expected);
-        } else {
-            log.info("{}: Multi-instance {} not ready: {} of {} instances done", processInstanceId, miId, arrived, expected);
-        }
-        return false;
-    }
-
-    /** Evaluates a multi-instance {@code completionCondition} (a FEEL boolean), or false if none is set. */
-    private boolean completionConditionMet(UUID processInstanceId, MultiInstanceExtensionModel mi) {
-        String expression = mi.getCompletionCondition();
-        if (expression == null || expression.isBlank()) {
-            return false;
-        }
-        if (expression.startsWith("=")) {
-            expression = expression.substring(1);
-        }
-        Object result = scriptService.evaluateScript(expression, dbService.getVariables(processInstanceId));
-        return Boolean.TRUE.equals(result);
-    }
 
     /**
      * Registers a signal subscription for every signal boundary event attached to the given host
@@ -1250,12 +817,12 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
+        elementSupport.applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
         // multi-instance: append this instance's outputElement to the outputCollection before its scoped
         // variables (inputElement/loopCounter) are dropped
-        aggregateMultiInstanceOutput(processInstanceId, userTaskId, bpmnElement);
+        multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, userTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, userTaskId);
-        if (isMultiInstance(bpmnElement) && !multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId)) {
+        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId)) {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
         }
