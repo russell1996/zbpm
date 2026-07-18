@@ -1,329 +1,479 @@
-# ZorroBPM — Гайд по интеграции внешних систем
+# ZorroBPM — Полное руководство по интеграции
 
-Как подключить внешнюю систему (портал, KT Docs, любой сервис №2/3/4…) к движку ZorroBPM: запускать процессы,
-показывать формы, вести инбокс задач, получать события. Аудитория — интеграторы и фронт-команда.
-
-> **Главный принцип.** ZBPM — **headless BPM-движок за вашей системой**. Число систем движку безразлично:
-> новая система = ещё один сервис-ключ. **Per-system кода в движке нет.** Формы и их валидация живут в вашей
-> системе (external forms) — движок несёт только `formKey` + переменные.
+> Для тех, кто **впервые** слышит про BPMN. Читается сверху вниз: от «что это вообще» до рабочей интеграции
+> внешней системы (свой фронтенд, свои воркеры). Каждый шаг — с конкретными командами.
+>
+> Базовый URL API в примерах: `https://<ваш-хост>/api` (в проде nginx срезает префикс `/api` и проксирует в
+> движок). Локально без nginx — напрямую `http://localhost:8080` **без** `/api`.
 
 ---
 
-## 1. Модель аутентификации
+## 0. Что такое ZorroBPM простыми словами
 
-Два способа доступа, выбор — по тому, кто действует:
+ZorroBPM — «дирижёр» бизнес-процессов. Вы рисуете схему процесса (например, «согласование отпуска»): прямоугольники
+— это шаги, ромбы — развилки, стрелки — порядок. Движок берёт эту схему и **исполняет** её: ведёт каждую заявку по
+шагам, ждёт где надо людей, зовёт где надо внешние системы, помнит состояние даже после перезапуска.
 
-| Кто действует | Способ | Заголовок |
+Четыре роли, которые важно различать:
+
+| Роль | Кто это | Что делает |
 |---|---|---|
-| **Внешняя система** (машина, от лица многих сотрудников) | **сервис-ключ** (owner-scoped) | `Authorization: Bearer zbpm_sk_…` |
-| **Человек в вашем UI** (у него есть аккаунт ZBPM) | **JWT** (логин) | `Authorization: Bearer <jwt>` |
+| **Моделлер** | человек + редактор (Camunda Modeler) | рисует схему процесса в файле `.bpmn` |
+| **Движок** (ZorroBPM) | сервер | исполняет схему, хранит состояние, раздаёт работу |
+| **Воркер** | ваш код (сервис) | выполняет «машинную» работу шага (service task): отправить письмо, дёрнуть API |
+| **UI / фронтенд** | человек + приложение | человек видит свои задачи и нажимает кнопки (user task) |
 
-- Ключ имеет **гранты на процессы**: `START`, `COMPLETE_USER_TASK` (+ `CORRELATE_MESSAGE`,
-  `FETCH_LOCK`/`COMPLETE_SERVICE_TASK` для внешних воркеров). Заводит и раздаёт гранты **super-admin**.
-- **Ключ держит только backend вашей системы. Никогда — браузер.**
-- **Чтение открыто** любому аутентифицированному; **запись** гейтится грантом/ролью.
-- Все mutating-операции пишутся в **audit_log**.
-- Один ключ **на систему/тенанта** (границу доверия), **не** на процесс и **не** на сотрудника.
-  100 процессов под одной системой = один ключ с грантами на них.
-
-**CORS.** Если ваш UI ходит в движок **из браузера** напрямую — добавьте его origin в
-`ZORROBPM_CORS_ORIGINS` (прод), иначе запросы не пройдут. Для server-to-server (backend с ключом) CORS не нужен.
+ZorroBPM **сам ничего не рисует и не выполняет бизнес-логику** — он только оркеструет. Всю «настоящую» работу
+делают ваши воркеры и ваши люди через UI. Число внешних систем движку безразлично: новая система = ещё один
+API-ключ, **per-system кода в движке нет**.
 
 ---
 
-## 2. Две формы интеграции
+## 1. Ключевые понятия (запомнить 8 слов)
 
-### 2a. Система-за-порталом (пример: KT Docs) — рекомендуемая для «всё внешнее»
-Сотрудники — пользователи **вашей** системы, не ZBPM. Ваш backend держит **один сервис-ключ** и действует
-от их лица. Личность человека едет как **данные**, не как логин:
-- переменные процесса (`employeeId`, `managerId`…),
-- заголовок **`X-On-Behalf-Of: <externalUserId>`** (для аудита; на старте пишется в `initiator` инстанса).
-
-### 2b. Внешний человеческий UI (люди — пользователи ZBPM)
-Ваш SPA логинит человека: `POST /auth/login` → **JWT** (+ `POST /auth/refresh`). Браузер держит JWT, не ключ.
-- Добавьте origin в CORS.
-- Обработайте **`403 {"code":"PASSWORD_CHANGE_REQUIRED"}`** — показать форму смены пароля
-  (`/auth/me` и смена пароля exempt; данные-API закрыты до смены).
-
----
-
-## 3. Формы — external (движок ничего не рендерит)
-
-У user-task/стартового события в BPMN задаётся `formKey` (строка). Движок его **только хранит и отдаёт** —
-**не рендерит и не валидирует**. Это модель «external form» (паритет с Camunda external form).
-
-```
-GET /user-tasks/{id}  →  { formKey, variables, assignee, candidateGroups, … }
-```
-Ваша система по `formKey` находит свою форму, рисует её, **валидирует на своей стороне**, собирает данные,
-и завершает задачу. 100 процессов = 100 определений форм (данные у вас), **не** 100 приложений: один
-generic-рендерер, управляемый `formKey`.
-
-> Валидация стартовой формы — тоже на вашей стороне (движок переменные на старте не валидирует, как и любой
-> BPMN-движок). Для жёсткого серверного гейта на старте нужна отдельная фича (в бэклоге, не обязательна).
+- **Process Definition (определение процесса)** — задеплоенная схема `.bpmn`. У неё есть `key` (из атрибута
+  `id` процесса в файле) и `version` (растёт при каждом новом деплое того же ключа).
+- **Process Instance (экземпляр)** — одна конкретная «заявка», едущая по схеме. У неё свой `id` (UUID).
+- **Token (токен)** — «фишка», отмечающая, где сейчас находится экземпляр. Параллельный шлюз делает несколько
+  токенов, join их собирает.
+- **Variables (переменные)** — данные экземпляра (например `amount=1000`, `applicant="Ivan"`). Живут внутри
+  экземпляра, читаются в условиях (FEEL) и передаются воркерам.
+- **User Task (пользовательская задача)** — шаг, который ждёт **человека** (согласовать, заполнить форму).
+- **Service Task (сервисная задача)** — шаг, который ждёт **машину** (ваш воркер).
+- **Job (джоба)** — единица работы service task, которую забирает воркер по типу (`zeebe:taskDefinition type`).
+- **Incident (инцидент)** — «застряло»: воркер исчерпал попытки или в схеме ошибка данных. Требует вмешательства.
 
 ---
 
-## 4. Основные потоки (с примерами вызовов)
+## 2. Запуск ZorroBPM (5 минут)
 
-### 4.1. Старт процесса
-```http
-POST /process-instances
-Authorization: Bearer zbpm_sk_…
-X-On-Behalf-Of: emp42          # опционально — кто из людей инициировал
-Content-Type: application/json
+Нужен Docker. В корне репозитория:
 
-{ "processDefinitionKey": "vacation",
-  "variables": [
-    { "name": "employeeId", "type": "STRING", "value": "emp42" },
-    { "name": "managerId",  "type": "STRING", "value": "mgr-7" },
-    { "name": "days",       "type": "STRING", "value": "5" }
-  ] }
+```bash
+# 1. Создайте .env с обязательными секретами (прод-профиль без них не стартует):
+cat > .env <<'ENV'
+ZORROBPM_JWT_SECRET=замените_на_вывод_openssl_rand_base64_48
+ZORROBPM_DEFAULT_ADMIN_PASSWORD=ЗамениНаСвойСильныйПароль
+ENV
+
+# 2. Поднять postgres + rabbitmq + движок + фронтенд:
+docker compose up -d
+
+# 3. Открыть SPA (Operate/Tasklist/Cockpit в одном):
+#    http://localhost:8081/ui/
 ```
-`initiator` инстанса = `X-On-Behalf-Of` (если задан). Можно стартовать и по `processDefinitionId`.
 
-### 4.2. Инбокс задач
-```http
-GET /user-tasks?assignee=mgr-7          # мои задачи
-GET /user-tasks?candidateGroup=hr       # групповой инбокс
-GET /user-tasks?processInstanceId=…      # задачи инстанса
-```
-Фильтры `UserTaskQuery`: `assignee`, `candidateGroup`, `candidateUser`, `processInstanceId`, `completed`, `assigned`.
-Ответ — постраничный. Затем `GET /user-tasks/{id}` → `formKey` + `variables` для рендера формы.
-
-### 4.3. Завершение задачи
-```http
-POST /user-tasks/{id}/complete
-Authorization: Bearer zbpm_sk_…
-X-On-Behalf-Of: mgr-7          # кто согласовал → в audit_log
-Content-Type: application/json
-
-{ "variables": [ { "name": "approved", "type": "STRING", "value": "true" } ] }
-```
-Право закрыть: **assignee** задачи, **член её candidate group**, или super-admin. Иначе `403`.
-
-### 4.4. Уведомления «появилась задача» — поллинг
-- **Поллинг (просто):** периодически `GET /user-tasks?assignee=|candidateGroup=`. Годится для реконнекта/сверки.
-- **Push через события — НЕ РЕАЛИЗОВАНО.** Мёртвый eventing (WO-AUD-7) удалён. Актуальный механизм —
-  **поллинг** `GET /user-tasks`. (Транзакционный outbox → RabbitMQ работает только для диспетча
-  **service-task** воркерам.)
-- **Websocket** — на **вашей** стороне: пока — поверх поллинга.
-
-### 4.5. Внешняя работа (service-task) и корреляция
-- Внешний воркер: `fetch-lock` через RabbitMQ → работа → `POST /service-tasks/{id}/complete` (гранты
-  `FETCH_LOCK`/`COMPLETE_SERVICE_TASK`).
-- Возобновление процесса внешним событием (message catch): correlate-запрос (грант `CORRELATE_MESSAGE`).
+Первый вход: `admin` / пароль из `ZORROBPM_DEFAULT_ADMIN_PASSWORD`. **Смените его сразу.**
 
 ---
 
-## 5. Маршрутизация согласований
+## 3. Аутентификация — как получить доступ к API
 
-`assignee` и `candidateGroups` в BPMN могут быть **выражениями** — движок резолвит их из переменных инстанса
-при создании задачи (WO-INT-1):
+Есть два способа. Выберите по ситуации.
 
-| В BPMN | Резолв |
-|---|---|
-| `assignee="${managerId}"` | значение переменной `managerId` |
-| `assignee="=managerId + \"_lead\""` | FEEL-выражение (Camunda FEEL) |
-| `candidateGroups="${deptGroup}"` | значение переменной |
-| `assignee="user1"` | литерал (как есть) |
+### 3а. Люди (браузер / UI) → логин, JWT в cookie
 
-- **Членство в группах:** таблица `user_group` (user ↔ group). Член candidate group задачи может её закрыть
-  (WO-MT-3b). Раздаётся отдельно.
-- **Общий неймспейс id.** `assignee`/`candidateGroup` — строки. Чтобы задача показалась нужному человеку —
-  все системы должны договориться о **едином формате id** (напр. `employeeId`, имена групп). Если каждая
-  система владеет своими процессами и людьми — пересечений нет. Для **сквозных** процессов нужен общий
-  справочник id. Это **соглашение о данных**, не код движка.
+```bash
+curl -i -X POST https://<host>/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"ВашПароль"}'
+# Ответ ставит httpOnly-cookie с JWT. Браузер дальше сам его шлёт.
+```
+
+Прочие: `GET /api/auth/me` (кто я), `POST /api/auth/refresh` (продлить), `POST /api/auth/logout`.
+
+### 3б. Внешние системы (сервер↔сервер) → API-ключ
+
+Человек-владелец создаёт ключ (через UI «Мой профиль → API-ключи», или `POST /api/me/api-key`). Ключ выглядит как
+`zbpm_sk_XXXX…` и **показывается один раз** — сохраните его в секретах вашей системы.
+
+Дальше **каждый** запрос вашей системы шлёт его в заголовке:
+
+```
+Authorization: Bearer zbpm_sk_XXXXXXXXXXXXXXXX
+```
+
+> Bearer-заголовок имеет приоритет над cookie. Для машин используйте **только** API-ключ, не логин/пароль.
+
+Во всех примерах ниже подразумевается заголовок `-H "$AUTH"`, где `AUTH="Authorization: Bearer zbpm_sk_..."`.
 
 ---
 
-## 6. End-to-end пример: «Отпуск» через KT Docs
+## 4. Шаг за шагом: создать первую BPMN-модель
 
-```
-Старт (сотрудник):
-  1. Сотрудник в KT Docs заполняет форму «Отпуск» (форма + валидация — в KT Docs).
-  2. «Отправить» → backend KT Docs (сервис-ключ):
-       POST /process-instances  X-On-Behalf-Of: emp42
-       { processDefinitionKey:"vacation", variables:{ employeeId, managerId, days } }
-  3. Инстанс создан, initiator=emp42.
+### 4.1. Чем рисовать
 
-Согласование (руководитель):
-  4. Процесс дошёл до user-task «Согласование», assignee резолвится в managerId.
-  5. KT Docs узнаёт о задаче: поллинг GET /user-tasks?assignee=mgr-7 (RabbitMQ-события — план, F13).
-  6. В инбоксе руководителя всплывает задача → GET /user-tasks/{id} → formKey+vars → KT Docs рисует форму.
-  7. «Согласовать» → POST /user-tasks/{id}/complete  X-On-Behalf-Of: mgr-7  { approved:true }
-  8. Процесс идёт дальше (HR, приказ). audit_log: принципал=ключ, on_behalf_of=mgr-7.
-```
-Всё через **один** сервис-ключ KT Docs. Сотрудники движок не трогают.
+Скачайте бесплатный **Camunda Modeler** (desktop). Создайте новую диаграмму типа **BPMN (Camunda 8 / Cloud)** —
+важно именно C8-вариант, потому что ZorroBPM понимает Zeebe-расширения (`zeebe:*`), как Camunda 8.
+
+### 4.2. Минимальный процесс «на пальцах»
+
+Нарисуйте слева направо: **Start Event** → **User Task** → **End Event**, соедините стрелками.
+
+- Кликните по **процессу** (пустое поле) → задайте **Process ID** = `vacation` (это будущий `key`) и **Name**.
+- Кликните по **User Task** → **Name** = «Согласовать», в разделе **Assignment** задайте исполнителя (см. §7.1).
+- Сохраните файл `vacation.bpmn`.
+
+Всё. У вас есть исполняемая схема. Никакого кода пока не написано.
+
+### 4.3. Что такое `zeebe:*` расширения (важно)
+
+Внутри `.bpmn` — это XML. Camunda-8-элементы несут внутри `<extensionElements>` теги `zeebe:*`, которые говорят
+движку, *как* исполнять шаг:
+
+- Service task: `<zeebe:taskDefinition type="send-email" retries="3" />` — «это работа для воркера типа `send-email`».
+- User task: `<zeebe:userTask />` + `<zeebe:assignmentDefinition assignee="ivan" candidateGroups="hr" />`.
+- Форма: `<zeebe:formDefinition externalReference="vacation-form" />`.
+- IO mapping: `<zeebe:ioMapping>` — какие переменные подать на вход/выход шага.
+
+Modeler проставляет их за вас, когда вы заполняете панель справа. ZorroBPM читает ровно эти теги — поэтому реальные
+C8-модели исполняются **без правок файла**.
 
 ---
 
-## 7. Сравнение с Camunda 8
+## 5. Задеплоить схему в движок
 
-| Задача | Camunda 8 | ZorroBPM |
+Деплой = «загрузить `.bpmn` в движок, чтобы по нему можно было запускать экземпляры».
+
+**Через UI:** раздел «Process Schemas / Definitions» → Deploy → выберите файл.
+
+**Через REST** (multipart-загрузка `.bpmn`):
+
+```bash
+curl -X POST https://<host>/api/process-definitions/deployment \
+  -H "$AUTH" \
+  -F "file=@vacation.bpmn"
+```
+
+Повторный деплой того же `Process ID` создаёт **новую версию** (v1 → v2 …). Уже запущенные экземпляры доедут по
+своей версии; новые старты пойдут по последней. Посмотреть: `GET /api/process-definitions`.
+
+---
+
+## 6. Запустить экземпляр процесса
+
+По ключу (последняя версия) с начальными переменными:
+
+```bash
+curl -X POST https://<host>/api/process-instances \
+  -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{
+        "processDefinitionKey": "vacation",
+        "variables": [
+          {"name": "applicant", "type": "STRING", "value": "Ivan"},
+          {"name": "days",      "type": "LONG",   "value": "5"}
+        ]
+      }'
+# Ответ: {"id":"<UUID экземпляра>"}
+```
+
+Можно вместо `processDefinitionKey` указать точный `processDefinitionId` (UUID конкретной версии) или
+`processDefinitionKey` + `processDefinitionVersion`.
+
+**Формат переменной** везде одинаков — объект `{name, type, value}`, где `value` всегда **строка**, а `type`
+подсказывает движку, как её разобрать:
+
+| type | пример value | как читается в FEEL |
 |---|---|---|
-| Auth системы | OAuth2 client-credentials (Identity → JWT) | сервис-ключ `zbpm_sk_` (owner-scoped) |
-| Старт | `CreateProcessInstance` (gRPC/REST) | `POST /process-instances` |
-| **External form** | `zeebe:formDefinition externalReference` (строка) | `formKey` (строка) |
-| Рендер/валидация движком | нет | нет |
-| Инбокс | `/user-tasks/search`, native tasks | `GET /user-tasks?…` |
-| Динамический assignee | FEEL | `${var}` / FEEL |
-| Push событий | exporters → ES/Kafka | поллинг (домен-события в RabbitMQ — план, F13) |
-| Вход без кода | inbound Connectors (webhook/Kafka) | — (на будущее) |
-| Websocket в браузер | нет (Tasklist поллит) | нет (на стороне вашей системы) |
-
-По external-формам мы уже эквивалентны C8: `formKey`-passthrough + complete через API.
+| `STRING` | `"Ivan"` | текст |
+| `LONG` | `"5"` | целое |
+| `DOUBLE` | `"12.50"` | десятичное |
+| `BOOLEAN` | `"true"` | булево |
+| `UUID` | `"3fa8…"` | идентификатор |
+| `JSON` | `"{\"city\":\"Almaty\"}"` | объект/список (доступ к полям и итерация в FEEL/DMN) |
 
 ---
 
-## 8. Справочник эндпоинтов
+## 7. User Tasks — полный цикл (человек в процессе)
 
-| Метод | Путь | Назначение |
-|---|---|---|
-| POST | `/auth/login` | JWT для человека (внешний UI) |
-| POST | `/auth/refresh` | обновить JWT |
-| GET  | `/auth/me` | текущий пользователь (+ `forcePasswordChange`) |
-| POST | `/process-instances` | старт инстанса (+ `X-On-Behalf-Of`) |
-| POST | `/process-instances/{id}/cancel` | отмена инстанса |
-| GET  | `/process-instances` `/{id}` | список / один инстанс |
-| GET  | `/user-tasks` | инбокс (фильтры `UserTaskQuery`) |
-| GET  | `/user-tasks/{id}` | задача: `formKey` + `variables` |
-| POST | `/user-tasks/{id}/complete` | завершить задачу (+ `X-On-Behalf-Of`) |
-| GET  | `/process-definitions` `/{id}` | определения процессов |
-| POST | `/service-tasks/{id}/complete` | завершить внешнюю работу |
+User task — шаг, где процесс **останавливается и ждёт человека**. Внешняя система (ваш Tasklist/портал) показывает
+человеку его задачи и отправляет результат обратно.
 
-> Прод: внешний прокси отдаёт бэкенд в **корне** (`https://zorro.i-smet.kz/process-instances`), SPA — под `/ui/`.
+### 7.1. Как смоделировать (в Modeler)
 
----
+На User Task в панели справа:
+- **Assignment → Assignee** — конкретный пользователь (`ivan`), ИЛИ
+- **Candidate groups** — группа (`hr`), из которой кто-то возьмёт задачу, ИЛИ **Candidate users**.
+- **Form → External reference** (`externalReference`) — ключ формы, если форму рендерит ваш фронт (§11).
+- Поставьте маркер **User Task (Zeebe)** — движок исполняет задачи с `zeebe:userTask`.
 
-## 9. Что учесть (ограничения на сегодня)
+### 7.2. Внешняя система: получить список задач (инбокс)
 
-- **Websocket** — нет нативного; стройте на своей стороне поверх RabbitMQ-событий.
-- **`${a.b}`** (вложенный путь в `${}`) не резолвится — для богатых выражений используйте `=FEEL`.
-- **Self-service смена пароля** для forced non-admin — эндпоинта нет (forced-флаг ставится только
-  бутстрап-админу). Фронт `PASSWORD_CHANGE_REQUIRED` — в бэклоге (нужен до fresh-install).
-- **Серверная валидация стартовой формы** (400 на невалидный старт) — не реализована; валидируйте в своей форме.
-- **Секреты/значения переменных в аудит не пишутся** — только идентификатор действия и `on_behalf_of`.
+```bash
+# Все открытые задачи для группы hr:
+curl "https://<host>/api/user-tasks?candidateGroup=hr&state=CREATED&page=0&size=50" -H "$AUTH"
 
----
-
-## 10. Variable Model: контракт входных variables для внешнего BFF
-
-> **ADR-6**. Этот раздел описывает, как внешний BFF узнаёт, какие variables ожидает процесс, и как их валидировать
-> до вызова Runtime. Для рендеринга **визуальных форм** (form-js) — см. раздел 3.
-
-### 10.1. Модель ElementArtifact
-
-Артефакт привязан к элементу процесса (start event / user task) и хранит **описание ожидаемых variables**.
-
-| Поле | Описание |
-|---|---|
-| `key` | Уникальный ключ артефакта (как `formKey` для форм) |
-| `kind` | Тип артефакта: **`FORM_JS`** (визуальная форма) или **`VARIABLE_SCHEMA`** (JSON Schema для BFF) |
-| `version` | Номер версии (автоинкремент при каждом деплое) |
-| `schema` | Payload: form-js schema (для FORM_JS) или JSON Schema 2020-12 (для VARIABLE_SCHEMA) |
-
-### 10.2. Привязка к элементам процесса
-
-| Элемент | Механизм привязки | Где настраивается |
-|---|---|---|
-| **User Task** | `externalReference` (Camunda External Form Reference) | Camunda Modeler → `zeebe:formDefinition externalReference="artifactKey"` |
-| **Start Event** | `elementId`-привязка | ZorroBPM UI: Admin → Start Bindings (`POST /process-definitions/{key}/element-bindings`) |
-
-**User Task**: `externalReference` на BPMN-элементе — это `artifactKey`. Движок резолвит его как артефакт.
-**Start Event**: привязка задаётся через admin UI (пиннится к версии Process Definition).
-
-### 10.3. Резолв артефакта
-
-Три эндпоинта возвращают `{ kind, payload }`:
-
-| Эндпоинт | Когда | Что отдаёт |
-|---|---|---|
-| `GET /forms/{key}` | Прямой запрос по ключу | `{ key, version, kind, schema }` |
-| `GET /user-tasks/{id}/form` | Задача с `formKey`/`externalReference` | `{ type, kind, schema, data? }` |
-| `GET /process-definitions/{key}/start-form` | Старт формы (latest version) | `{ type, kind, schema }` |
-
-BFF получает `kind` и решает:
-- `kind=FORM_JS` → рендерить через form-js (визуальная форма)
-- `kind=VARIABLE_SCHEMA` → валидировать JSON через свою JSON-Schema-библиотеку, собрать variables, вызвать Runtime
-
-### 10.4. Пиннинг версии
-
-Артефакт **пиннится к версии Process Definition** (ADR-6 §D8):
-- Инстанс, стартованный на PD v3, резолвит артефакт, актуальный для v3 (не «последний»).
-- При новом деплое артефакта (v2) старые инстансы продолжают использовать v1.
-- Пиннинг автоматический: `POST /process-definitions/{key}/element-bindings` фиксирует `artifact_version`.
-
-### 10.5. Поток BFF (VARIABLE_SCHEMA)
-
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  1. РЕЗОЛВ   │────▶│  2. ВАЛИДАЦИЯ │────▶│  3. СТАРТ    │
-│  GET /forms  │     │  JSON Schema  │     │  POST /proc  │
-│  → {kind,    │     │  → variables  │     │  → variables │
-│    schema}   │     │  → 400/error  │     │              │
-└──────────────┘     └──────────────┘     └──────────────┘
+# Задачи конкретного пользователя:
+curl "https://<host>/api/user-tasks?assignee=ivan&state=CREATED" -H "$AUTH"
 ```
 
-1. **Резолв**: BFF запрашивает `GET /forms/{key}` или `GET /user-tasks/{id}/form` → получает `{ kind, schema }`.
-2. **Валидация**: BFF парсит `schema` как JSON Schema 2020-12. Пользователь заполняет форму → BFF валидирует
-   JSON-объект через библиотеку (ajv, json-schema-validator). Если невалидно → показать ошибку, не вызывать Runtime.
-3. **Старт/завершение**: BFF собирает variables из валидного JSON → `POST /process-instances` или
-   `POST /user-tasks/{id}/complete`.
+Ответ — страница (`PagedDataDTO`) с элементами `UserTask`: `id`, `processInstanceId`, `bpmnElementId`, `name`,
+`formKey`, `assignee`, `candidateGroups`, `createdAt`. Одна задача: `GET /api/user-tasks/{id}`.
 
-### 10.6. UI-метаданные `x-ui` (будущее)
+### 7.3. Показать форму и данные
 
-JSON Schema поддерживает **расширения через неизвестные ключи** — валидатор их игнорирует. BFF может добавить
-`x-ui`, `x-layout`, `x-component` для автогенерации UI-формы внешним фронтендом. **Ядро и BFF эти свойства
-не анализируют** — только для внешних Frontend-генераторов.
+- Текущие переменные экземпляра: `GET /api/variables?processInstanceId=<id>` — заполнить ими форму.
+- Какую форму показать — по `formKey` задачи (ваш фронт мапит ключ на свой компонент; §11 — про валидацию ввода
+  через Variable Schema).
 
-### 10.7. Пример: входящая корреспонденция (JSON Schema 2020-12)
+### 7.4. Завершить задачу (отправить результат)
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Входящая корреспонденция",
-  "type": "object",
-  "properties": {
-    "senderType": {
-      "type": "string",
-      "enum": ["LEGAL_ENTITY", "INDIVIDUAL"],
-      "description": "Тип отправителя"
-    },
-    "bin": {
-      "type": "string",
-      "pattern": "^[0-9]{12}$",
-      "description": "БИН юридического лица (12 цифр)"
-    },
-    "iin": {
-      "type": "string",
-      "pattern": "^[0-9]{12}$",
-      "description": "ИИН физического лица (12 цифр)"
-    },
-    "subject": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 500,
-      "description": "Тема корреспонденции"
-    },
-    "language": {
-      "type": "string",
-      "enum": ["RU", "KZ", "EN"],
-      "default": "RU"
+```bash
+curl -X POST https://<host>/api/user-tasks/<taskId>/complete \
+  -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{
+        "variables": [
+          {"name": "approved", "type": "BOOLEAN", "value": "true"},
+          {"name": "comment",  "type": "STRING",  "value": "OK, согласовано"}
+        ]
+      }'
+```
+
+После этого движок сам продвинет токен дальше (например, на шлюз, который по `approved` выберет ветку). Переданные
+переменные становятся переменными экземпляра.
+
+### 7.5. Уведомления «появилась задача»
+
+Отдельного webhook «новая задача» пока нет — внешний Tasklist **поллит** `GET /api/user-tasks?...&state=CREATED`
+раз в N секунд и показывает новые. (Для service task есть push через RabbitMQ — §8.)
+
+---
+
+## 8. Service Tasks + воркеры — полный цикл (машина в процессе)
+
+Service task — шаг, где процесс отдаёт работу **вашему коду** (воркеру): отправить письмо, вызвать чужой API,
+посчитать. Движок останавливает токен на этом шаге, публикует **джобу**, ждёт от воркера `complete` или `fail`.
+
+### 8.1. Как смоделировать
+
+На Service Task в Modeler:
+- **Task definition → Type** = `send-email` (это `zeebe:taskDefinition type`, «тип джобы»). Воркер объявит, что
+  берёт джобы этого типа.
+- **Retries** = `3` (бюджет попыток; на 0 создаётся инцидент).
+- Через **IO mapping** можно подать на вход только нужные переменные.
+
+### 8.2. Два способа получать работу
+
+| Способ | Кому | Модель | Как |
+|---|---|---|---|
+| **A. RabbitMQ push** | Java-сервисам | движок сам присылает джобу в очередь | реализовать `JobHandler` (стартер) |
+| **B. REST polling** | любому языку | ваш код спрашивает движок | `GET /service-tasks` → `complete`/`fail` |
+
+### 8.3. Способ A — воркер на Java (RabbitMQ push, рекомендуемый)
+
+Движок кладёт джобу в очередь `zorrobpm.jobs.<type>` (например `zorrobpm.jobs.send-email`). Подключите стартер
+`zorrobpm-job-handler-spring-boot-starter` и реализуйте интерфейс:
+
+```java
+@Component
+public class SendEmailWorker implements JobHandler {
+
+    @Override
+    public String getJob() {
+        return "send-email";               // тип джобы = zeebe:taskDefinition type
     }
-  },
-  "required": ["senderType", "subject"],
-  "if": {
-    "properties": { "senderType": { "const": "LEGAL_ENTITY" } }
-  },
-  "then": {
-    "required": ["senderType", "bin", "subject"]
-  },
-  "else": {
-    "required": ["senderType", "iin", "subject"]
-  }
+
+    @Override
+    public List<ProcessVariable> handleJob(JobDetailModel job) {
+        // job.getVariables() — переменные экземпляра (Map<String, ProcessVariable>)
+        // job.getProcessInstanceId(), job.getServiceTaskId() — контекст
+        String to = job.getVariables().get("applicant").getValue();
+        emailService.send(to, "Ваша заявка принята");
+
+        // Вернуть переменные-результат (попадут в экземпляр). Пустой список — если результата нет.
+        return List.of(var("emailSent", ProcessVariableType.BOOLEAN, "true"));
+    }
 }
 ```
 
-**Логика**: если `senderType=LEGAL_ENTITY` → обязателен `BIN`; если `INDIVIDUAL` → обязателен `ИИН`.
-BFF парсит эту схему и валидирует JSON пользователя.
+Стартер сам подпишется на очередь, вызовет `handleJob`, а возвращённые переменные и статус `complete` отправит
+обратно движку (через служебную очередь завершения). Исключение из `handleJob` → движок трактует как провал
+(уменьшает retries; на 0 — инцидент).
+
+`JobDetailModel`, который получает воркер: `serviceTaskId`, `processInstanceId`, `processDefinitionId`,
+`serviceTaskKey`, `job` (тип), `variables` (`Map<String, ProcessVariable>`).
+
+### 8.4. Способ B — воркер на любом языке (REST polling)
+
+Если воркер не на Java (Go, Python, Node…), поллите REST:
+
+```bash
+# 1. Забрать открытые джобы своего типа:
+curl "https://<host>/api/service-tasks?job=send-email&state=CREATED&size=20" -H "$AUTH"
+#   → элементы ServiceTask: id, processInstanceId, job, createdAt, retries_remaining
+
+# 2а. Успех — завершить, вернув переменные:
+curl -X POST https://<host>/api/service-tasks/<serviceTaskId>/complete \
+  -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"variables":[{"name":"emailSent","type":"BOOLEAN","value":"true"}]}'
+
+# 2б. Ошибка — сообщить о провале:
+curl -X POST https://<host>/api/service-tasks/<serviceTaskId>/fail \
+  -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"message":"SMTP timeout","retries":2}'
+```
+
+**Семантика `fail`:**
+- `retries` **не указан** → движок уменьшает бюджет на 1. Когда дойдёт до 0 — создаётся **инцидент**.
+- `retries: 0` → инцидент **сразу** (как `failJob` с 0 в Camunda), независимо от остатка.
+- `retries: N>0` → выставить бюджет в N (можно и повысить — «дать ещё попыток»).
+
+> Идемпотентность: если воркер выполнил работу, но не получил подтверждения — при повторе он снова `complete`-нет
+> уже завершённую задачу. Движок это переживает, но саму побочную работу (письмо) делайте идемпотентной у себя.
+
+---
+
+## 9. Инциденты — когда «застряло»
+
+Инцидент = экземпляр остановился на ошибке (воркер исчерпал retries, или в схеме ошибка данных — например условие
+шлюза не выбрало ни одной ветки и нет default).
+
+```bash
+curl "https://<host>/api/incidents?state=OPEN" -H "$AUTH"          # список
+curl "https://<host>/api/incidents/<id>" -H "$AUTH"                # детали
+# Разрешить (после того как починили причину/данные) — можно долить переменные:
+curl -X POST https://<host>/api/incidents/<id>/resolve \
+  -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"variables":[]}'
+```
+
+Разрешение идемпотентно (WO-REL-5): повторный вызов не выполнит шаг дважды.
+
+---
+
+## 10. Отмена экземпляра
+
+```bash
+curl -X POST https://<host>/api/process-instances/<id>/cancel -H "$AUTH"
+```
+
+---
+
+## 11. Свой внешний фронтенд (Tasklist/портал)
+
+Если вы строите собственный UI поверх ZorroBPM, минимальный набор:
+
+1. **Доступ** — API-ключ сервиса-бэкенда (§3б); UI ходит в API через ваш BFF, не напрямую с браузера с ключом.
+2. **Инбокс** — поллинг `GET /user-tasks?...&state=CREATED` (§7.2).
+3. **Форма** — по `formKey` показать свой компонент; данные — из `GET /variables`.
+4. **Отправка** — `POST /user-tasks/{id}/complete` (§7.4).
+5. **Старт нового процесса** — `POST /process-instances` (§6).
+
+**Variable Schema — валидация входных переменных (опционально, полезно).** Движок форм не рендерит, но умеет
+хранить **JSON Schema 2020-12** артефакты и привязывать их к элементам процесса. Ваш BFF может: получить схему
+входных переменных элемента, **провалидировать** ввод до отправки, а по расширению `x-ui`/`x-builder` — понять, как
+рисовать поля. Так фронт не хардкодит формы, а берёт контракт данных из движка. Детали — раздел «Variable Model».
+
+---
+
+## 12. End-to-end пример: «Отпуск»
+
+Схема: **Start** → **User Task «Согласовать»** → **Exclusive Gateway** (по `approved`) →
+[да] **Service Task «send-email»** → **End** ; [нет] **End «Отклонено»**.
+
+```bash
+AUTH="Authorization: Bearer zbpm_sk_..."
+
+# 1. Деплой
+curl -X POST https://<host>/api/process-definitions/deployment -H "$AUTH" -F "file=@vacation.bpmn"
+
+# 2. Старт
+PID=$(curl -s -X POST https://<host>/api/process-instances -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"processDefinitionKey":"vacation","variables":[{"name":"applicant","type":"STRING","value":"Ivan"}]}' \
+  | jq -r .id)
+
+# 3. HR видит задачу
+TASK=$(curl -s "https://<host>/api/user-tasks?candidateGroup=hr&state=CREATED" -H "$AUTH" | jq -r '.data[0].id')
+
+# 4. HR согласовал
+curl -X POST https://<host>/api/user-tasks/$TASK/complete -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"variables":[{"name":"approved","type":"BOOLEAN","value":"true"}]}'
+
+# 5. Движок сам дошёл до service task send-email → ваш воркер (§8) его выполнил → End.
+curl -s "https://<host>/api/process-instances/$PID" -H "$AUTH" | jq '{state, completedAt}'
+```
+
+---
+
+## 13. Справочник REST API
+
+Базовый префикс в проде: `/api` (nginx срезает его перед движком). Все запросы — с `Authorization: Bearer …` или
+cookie-JWT.
+
+### Runtime (действия)
+| Метод | Путь | Тело | Назначение |
+|---|---|---|---|
+| POST | `/process-instances` | `{processDefinitionKey\|Id\|Version, variables[]}` | запустить экземпляр |
+| POST | `/process-instances/{id}/cancel` | — | отменить экземпляр |
+| POST | `/user-tasks/{id}/complete` | `{variables[]}` | завершить user task |
+| POST | `/service-tasks/{id}/complete` | `{variables[]}` | завершить service task (успех) |
+| POST | `/service-tasks/{id}/fail` | `{message, retries?}` | провал service task |
+| POST | `/incidents/{id}/resolve` | `{variables[]}` | разрешить инцидент |
+
+### Query (чтение; пагинация `page`/`size` + фильтры)
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/user-tasks` , `/user-tasks/{id}` | задачи людей (`assignee`, `candidateGroup`, `state`, `processInstanceId`) |
+| GET | `/service-tasks` , `/service-tasks/{id}` | джобы (`job`, `state`, `processInstanceId`) |
+| GET | `/process-instances` , `/process-instances/{id}` | экземпляры |
+| GET | `/process-instances/{id}/activities` | история активностей экземпляра |
+| GET | `/variables` | переменные (по `processInstanceId`) |
+| GET | `/incidents` , `/incidents/{id}` | инциденты |
+| GET | `/timer-jobs` , `/message-subscriptions` | ожидающие таймеры / подписки |
+| GET | `/process-definitions` | задеплоенные определения |
+
+### Deploy / Auth / прочее
+| Метод | Путь | Назначение |
+|---|---|---|
+| POST | `/process-definitions/deployment` | загрузить `.bpmn` (multipart `file`) |
+| POST/GET | `/auth/login` `/auth/refresh` `/auth/logout` , GET `/auth/me` | сессия человека |
+| POST/GET/DELETE | `/me/api-key` | управление API-ключами |
+
+---
+
+## 14. Совместимость с Camunda 8 (что переносится «как есть»)
+
+ZorroBPM исполняет **реальные C8-BPMN-модели без правок файлов** (совместимость ≈95% исполняемого набора — см.
+корневой `README.md`). Переносятся: JSON-переменные, десятичные, multi-instance по коллекции, cron/`cycle`-таймеры,
+DMN с версионированием, `zeebe:ioMapping`, корреляция сообщений по ключу, FEEL-условия.
+
+Отличия, которые надо знать:
+- **Воркеры**: вместо gRPC job-workers Camunda 8 здесь — **RabbitMQ push** (`zorrobpm.jobs.<type>`) или **REST
+  polling**. Тип джобы (`zeebe:taskDefinition type`) — тот же механизм.
+- **Формы**: движок форм не рендерит — это делает ваш фронт (`externalReference` + Variable Schema, §11).
+- **Сверх C8**: движок дополнительно исполняет Conditional-события, Transaction-subprocess, Cancel-события
+  (BPMN-стандарт, но Zeebe их не исполняет).
+- **Масштабирование**: таймеры/ретенция безопасны при нескольких репликах (SKIP LOCKED); версионирование
+  определений — пока на одном экземпляре.
+
+---
+
+## 15. Частые ошибки (FAQ)
+
+- **401/403 на все запросы** — нет/просрочен токен. Для машин — `Authorization: Bearer zbpm_sk_…`. Читать может
+  любой аутентифицированный; энфорсмент прав записи по владельцу процесса ещё раскатывается (см. README «Ограничения»).
+- **Экземпляр «застрял» на service task** — воркер не подключён/не берёт джобы этого типа, либо исчерпал retries →
+  `GET /incidents`. Проверьте, что `getJob()` воркера == `zeebe:taskDefinition type` в схеме.
+- **User task не в инбоксе** — проверьте фильтр (`assignee` vs `candidateGroup`) и маркер `zeebe:userTask`.
+- **Шлюз выбрасывает инцидент** — ни одно условие не истинно и нет **default flow**. Задайте default или полное
+  покрытие условий.
+- **Переменная не читается в FEEL** — неверный `type` (число прислали как `STRING`). Число → `LONG`/`DOUBLE`,
+  объект → `JSON`.
+
+---
+
+## Variable Model (справочник для BFF)
+
+> Продвинутый раздел: контракт входных переменных элемента через **ElementArtifact** (JSON Schema 2020-12). Позволяет
+> внешнему BFF валидировать ввод и строить формы по схеме. Дизайн — в
+> `docs/adr/ADR-6-element-artifact-variable-schema.md`.
+
+- **ElementArtifact** — нейтральная сущность с явным `kind`: `FORM_JS` (форма) или `VARIABLE_SCHEMA` (JSON Schema
+  входных переменных). Хранит схему + версию.
+- **Привязка к элементу**: `GET/POST /process-definitions/{key}/element-bindings` — связывает `elementId` (start
+  event / user task) с артефактом и **пиннит версию** артефакта к версии определения (иммутабельный контракт).
+- **Резолв**: по `elementId` инстанса вернётся именно та версия артефакта, что была на момент деплоя — контракт не
+  «съезжает» при новых деплоях.
+- **Поток BFF**: получить `VARIABLE_SCHEMA` элемента → показать/собрать данные → **провалидировать** против JSON
+  Schema 2020-12 → `POST …/complete` с переменными. Расширения `x-ui`/`x-builder` в схеме несут метаданные для
+  рендера полей.
