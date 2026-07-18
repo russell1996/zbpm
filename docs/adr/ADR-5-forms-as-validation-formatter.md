@@ -1,7 +1,7 @@
 # ADR-5 — Формы = единый артефакт «рендер + форматтер валидации» (form-js) для external forms
 
 Статус: **ПРИНЯТ, уточнён** → финальная модель контракта входных variables в [ADR-6 (ElementArtifact + Variable Schema)](ADR-6-element-artifact-variable-schema.md). Этот ADR остаётся в силе в части «две дорожки form-js/внешние формы»; формат и хранение Variable Schema см. ADR-6.
-Автор: CTO / Architect. Связь: [ADR-3 (встроенные формы)](ADR-3-embedded-forms.md), [ADR-6](ADR-6-element-artifact-variable-schema.md), [integration-guide](../integration-guide.md).
+Автор: CTO / Architect. Связь: [ADR-3 (встроенные формы)](ADR-3-embedded-forms.md), [ADR-6](ADR-6-element-artifact-variable-schema.md), [integration-guide](../../README.md).
 
 ## Контекст
 ZBPM — headless-оркестратор (никто не логинится в ZBPM как end-user; SPA = админка). Внешние системы работают

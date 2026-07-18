@@ -3,7 +3,7 @@
 Статус: **ПРИНЯТ** (продукт-владелец, 2026-07-15)
 Автор: CTO / Architect. Связь: [ADR-1 (multi-tenant)](ADR-1-multi-tenant-authorization.md),
 [ADR-3 (встроенные формы)](ADR-3-embedded-forms.md), [ADR-5 (формы как валидатор)](ADR-5-forms-as-validation-formatter.md),
-[integration-guide](../integration-guide.md). ADR-5 уточняется настоящим ADR (финальная модель).
+[integration-guide](../../README.md). ADR-5 уточняется настоящим ADR (финальная модель).
 
 ## Контекст
 ZBPM — headless-оркестратор: end-user'ы живут во внешних системах + их BFF; ZBPM SPA — админка. Нужен механизм
