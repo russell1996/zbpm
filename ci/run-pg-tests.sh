@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-export PG_PORT="${PG_PORT:-5432}"
+export PG_PORT="${PG_PORT:-55432}"   # non-standard host port: never collide with a host-side PG on 5432 (P-23)
 export PG_DB="${PG_DB:-zorrobpm-db}"
 export PG_USER="${PG_USER:-zorrodev}"
 export PG_PASSWORD="${PG_PASSWORD:-zorrodev}"
