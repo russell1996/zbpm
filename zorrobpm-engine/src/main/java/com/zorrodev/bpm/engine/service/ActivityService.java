@@ -1,6 +1,8 @@
 package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 
 import java.util.List;
 import java.util.UUID;
@@ -60,4 +62,24 @@ public interface ActivityService {
      * triggers, which begin at their own start node).
      */
     UUID startProcessInstanceFromStartEvent(UUID processDefinitionId, String startElementId, List<ProcessVariable> variables);
+
+    /**
+     * Enters a service task: creates the activity, enqueues the job, and applies IO mappings.
+     */
+    void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement);
+
+    /**
+     * Broadcasts a signal to every active subscriber (1:N) and signal-started subscriptions.
+     */
+    void broadcastSignal(String signalName, List<ProcessVariable> variables);
+
+    /**
+     * Executes a BPMN element (dispatches to the appropriate handler).
+     */
+    void execute(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element);
+
+    /**
+     * Evaluates a message subscriber's correlation-key FEEL expression.
+     */
+    String evaluateCorrelationKey(BpmnElementModel element, UUID processInstanceId);
 }

@@ -95,10 +95,25 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNavigator),
             new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNavigator),
             new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNavigator, scriptService)
+            new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNavigator, scriptService),
+            // Catch event handlers (WO-AUD-13)
+            new com.zorrodev.bpm.engine.handler.WaitStateHandler(dbService),
+            new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, this),
+            new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService),
+            new com.zorrodev.bpm.engine.handler.SignalCatchHandler(dbService),
+            new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNavigator, scriptService),
+            // Throw event handlers (WO-AUD-14)
+            new com.zorrodev.bpm.engine.handler.IntermediateThrowEventHandler(dbService, flowNavigator),
+            new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNavigator, this),
+            new com.zorrodev.bpm.engine.handler.SignalThrowHandler(dbService, flowNavigator, this),
+            new com.zorrodev.bpm.engine.handler.LinkThrowHandler(dbService, this),
+            new com.zorrodev.bpm.engine.handler.SendTaskHandler(this,
+                new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNavigator, this))
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
+        // RECEIVE_TASK uses the same handler as MESSAGE_CATCH_EVENT
+        handlers.putIfAbsent(BpmnElementType.RECEIVE_TASK, handlers.get(BpmnElementType.MESSAGE_CATCH_EVENT));
     }
 
     private Map<BpmnElementType, ElementHandler> createHandlers() {
@@ -215,31 +230,12 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
         });
         map.put(BpmnElementType.USER_TASK, (ctx, bpmn, el) -> enterUserTask(ctx.processInstanceId(), ctx.tokenId(), el));
-        // Send task: a zeebe:taskDefinition makes it a job worker (Camunda 8), otherwise it is a message
-        // throw in task form. Receive task = message catch (wait state) in task form.
-        map.put(BpmnElementType.SEND_TASK, (ctx, bpmn, el) -> processSendTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.RECEIVE_TASK, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
         map.put(BpmnElementType.CALL_ACTIVITY, (ctx, bpmn, el) -> processCallActivity(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.SUB_PROCESS, (ctx, bpmn, el) -> processSubProcess(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Catch events are wait states: the token parks here until an external trigger
         // (timer fires / message correlated) resumes it via signal(...). Until the timer
         // and message subsystems land, these elements at least park cleanly with an active
         // activity instead of silently falling through to "Unsupported".
-        map.put(BpmnElementType.INTERMEDIATE_CATCH_EVENT, (ctx, bpmn, el) -> enterWaitState(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.MESSAGE_CATCH_EVENT, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.TIMER_CATCH_EVENT, (ctx, bpmn, el) -> enterTimerCatch(ctx.processInstanceId(), ctx.tokenId(), el));
-        // Conditional catch: passes through if its FEEL condition already holds, otherwise parks until a
-        // variable change re-evaluates it to true (see triggerConditionalEvents).
-        map.put(BpmnElementType.CONDITIONAL_CATCH_EVENT, (ctx, bpmn, el) -> enterConditionalCatch(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        // Throw events are pass-through: a plain intermediate throw has no side effect and simply
-        // continues. (Message throw publishing is added with the message subsystem.)
-        map.put(BpmnElementType.INTERMEDIATE_THROW_EVENT, (ctx, bpmn, el) -> processThrowEvent(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        map.put(BpmnElementType.MESSAGE_THROW_EVENT, (ctx, bpmn, el) -> processMessageThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        // Signal catch parks and subscribes; signal throw broadcasts to all active subscribers (1:N).
-        map.put(BpmnElementType.SIGNAL_CATCH_EVENT, (ctx, bpmn, el) -> enterSignalCatch(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.SIGNAL_THROW_EVENT, (ctx, bpmn, el) -> processSignalThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        // Link throw jumps to the matching link catch (an intra-process goto); the catch is a pass-through.
-        map.put(BpmnElementType.LINK_THROW_EVENT, (ctx, bpmn, el) -> processLinkThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.LINK_CATCH_EVENT, map.get(BpmnElementType.START_EVENT));
         // Compensation throw runs the compensation handlers of completed compensation-bounded activities.
         map.put(BpmnElementType.COMPENSATION_THROW_EVENT, (ctx, bpmn, el) -> processCompensationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
@@ -256,44 +252,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      */
     public void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, element, this);
-    }
-
-    /**
-     * Parks the token at a catch/wait element: records an active activity and stops. The token
-     * stays here until {@link #signal(UUID, List)} is called for the created activity.
-     */
-    private void processThrowEvent(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-    }
-
-    /**
-     * Link throw: an intra-process "goto". Completes the throw activity, then continues from the
-     * matching link catch (same link name) — there is exactly one catch per link name. A throw with
-     * no matching catch is an incident (raised by the {@code orElseThrow}).
-     */
-    private void processLinkThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        String linkName = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getEventDefinition)
-            .map(EventDefinitionExtensionModel::getName)
-            .orElse(null);
-
-        BpmnElementModel catchEvent = findLinkCatch(bpmn, linkName);
-        if (catchEvent == null) {
-            throw new IllegalStateException("Link throw '" + bpmnElement.getId()
-                + "' has no matching link catch for link '" + linkName + "'");
-        }
-        log.info("{}/{}: Link throw {} -> catch {} (link '{}')", processInstanceId, tokenId, bpmnElement.getId(), catchEvent.getId(), linkName);
-
-        // jump to the catch: execute it (records the catch activity and continues from its outgoing)
-        execute(processInstanceId, tokenId, bpmn, catchEvent);
     }
 
     /**
@@ -429,184 +387,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             }
         }
         return null;
-    }
-
-    private BpmnElementModel findLinkCatch(BpmnProcessDefinitionModel bpmn, String linkName) {
-        if (linkName == null) {
-            return null;
-        }
-        for (BpmnElementModel element : bpmn.getElements()) {
-            if (element.getType() != BpmnElementType.LINK_CATCH_EVENT) {
-                continue;
-            }
-            String name = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getEventDefinition)
-                .map(EventDefinitionExtensionModel::getName)
-                .orElse(null);
-            if (linkName.equals(name)) {
-                return element;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Send task: a Camunda-8 send task carries a {@code zeebe:taskDefinition} and runs as a job worker
-     * (like a service task); a BPMN-standard send task ({@code messageRef}) is a message throw.
-     */
-    private void processSendTask(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        boolean jobWorker = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getServiceTaskExtension)
-            .isPresent();
-        if (jobWorker) {
-            enterServiceTask(processInstanceId, tokenId, bpmnElement);
-        } else {
-            processMessageThrow(processInstanceId, tokenId, bpmn, bpmnElement);
-        }
-    }
-
-    /**
-     * Message throw: completes the activity, then delivers the message in-engine by correlating it
-     * to any instance waiting on it (so a process can wake another), and continues. Process
-     * variables are passed along as the message payload.
-     */
-    private void processMessageThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        String messageName = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getMessageEventExtension)
-            .map(MessageEventExtensionModel::getMessageName)
-            .orElse(null);
-
-        log.info("{}/{}: Throwing message '{}' at {}: {}/{}", processInstanceId, tokenId, messageName, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        if (messageName != null) {
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-            correlateMessage(messageName, null, variables);
-        }
-
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-    }
-
-    /**
-     * Signal throw: completes the activity, then broadcasts the signal to every active subscriber
-     * (1:N, in contrast to a message's 1:1 correlation), and continues. The signal name comes from the
-     * resolved event definition.
-     */
-    private void processSignalThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        String signalName = signalName(bpmnElement);
-        log.info("{}/{}: Throwing signal '{}' at {}: {}/{}", processInstanceId, tokenId, signalName, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        if (signalName != null) {
-            broadcastSignal(signalName, dbService.getVariables(processInstanceId));
-        }
-
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-    }
-
-    /**
-     * Parks the token at a signal catch event and registers a subscription. A later
-     * {@link #broadcastSignal(String, List)} for the same signal resumes the token.
-     */
-    private void enterSignalCatch(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        String signalName = signalName(bpmnElement);
-        if (signalName == null) {
-            throw new EngineException("Signal catch event " + bpmnElement.getId() + " has no signal name");
-        }
-        dbService.createSignalSubscription(processInstanceId, activityId, signalName);
-        log.info("{}/{}: Subscribed to signal '{}' at {}: {}/{}", processInstanceId, tokenId, signalName, bpmnElement.getType(), activityId, bpmnElement.getId());
-    }
-
-    private String signalName(BpmnElementModel element) {
-        return Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getEventDefinition)
-            .map(EventDefinitionExtensionModel::getName)
-            .orElse(null);
-    }
-
-    private void enterWaitState(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        log.info("{}/{}: Waiting at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-    }
-
-    /**
-     * Parks the token at a timer catch event and schedules a timer job for its due time. The
-     * timer scheduler later fires the job and resumes the token via {@link #signal(UUID, List)}.
-     */
-    private void enterTimerCatch(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        Instant dueAt = computeDueAt(bpmnElement);
-        Integer remainingCount = computeRemainingCount(bpmnElement);
-        dbService.createTimerJob(activityId, dueAt, null, remainingCount);
-        log.info("{}/{}: Timer scheduled for {} at {}: {}/{} (remaining={})", processInstanceId, tokenId, bpmnElement.getId(), dueAt, activityId, bpmnElement.getType(), remainingCount);
-    }
-
-    private Integer computeRemainingCount(BpmnElementModel bpmnElement) {
-        return Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getTimerEventExtension)
-            .filter(t -> t.getType() == com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE)
-            .map(t -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.repeatCount(t.getExpression()))
-            .filter(count -> count > 0)
-            .map(count -> count - 1) // first fire counts as 1
-            .orElse(null); // null = infinite
-    }
-
-    /**
-     * Parks the token at a message catch event and registers a subscription. A later
-     * {@link #correlateMessage(String, UUID, List)} for the same message resumes the token.
-     */
-    private void enterMessageCatch(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        String messageName = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getMessageEventExtension)
-            .map(MessageEventExtensionModel::getMessageName)
-            .orElseThrow(() -> new EngineException("Message catch event " + bpmnElement.getId() + " has no message name"));
-        String correlationKey = evaluateCorrelationKey(bpmnElement, processInstanceId);
-        dbService.createMessageSubscription(processInstanceId, activityId, messageName, null, correlationKey);
-        log.info("{}/{}: Subscribed to message '{}' (key {}) at {}: {}/{}", processInstanceId, tokenId, messageName, correlationKey, bpmnElement.getType(), activityId, bpmnElement.getId());
-    }
-
-    /**
-     * Evaluates a message subscriber's correlation-key FEEL expression (from its {@code zeebe:subscription})
-     * against the instance variables, producing the value the message is later matched on. Returns null when
-     * the message has no correlation key (name-only correlation).
-     */
-    private String evaluateCorrelationKey(BpmnElementModel element, UUID processInstanceId) {
-        String expression = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getMessageEventExtension)
-            .map(MessageEventExtensionModel::getCorrelationKeyExpression)
-            .filter(s -> !s.isBlank())
-            .orElse(null);
-        if (expression == null) {
-            return null;
-        }
-        if (expression.startsWith("=")) {
-            expression = expression.substring(1);
-        }
-        Object value = scriptService.evaluateExpression(expression, dbService.getVariables(processInstanceId));
-        return value == null ? null : value.toString();
-    }
-
-    /**
-     * Conditional catch event: if its FEEL condition already holds against the current variables it is a
-     * pass-through; otherwise the token parks here (an active activity) until a later variable change
-     * re-evaluates the condition to true (see {@link #triggerConditionalEvents}).
-     */
-    private void enterConditionalCatch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-        if (conditionHolds(bpmnElement, variables)) {
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Conditional catch {} already true, passing through: {}", processInstanceId, tokenId, bpmnElement.getId(), activityId);
-            proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-        } else {
-            log.info("{}/{}: Waiting on condition at {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
-        }
     }
 
     /** Evaluates a conditional event's FEEL condition against the given variables (a leading {@code =} is stripped). */
@@ -1405,7 +1185,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             if (!host.getId().equals(attachedTo)) {
                 continue;
             }
-            String signalName = signalName(element);
+            String signalName = com.zorrodev.bpm.engine.handler.SignalCatchHandler.signalName(element);
             if (signalName == null) {
                 throw new EngineException("Signal boundary " + element.getId() + " has no signal name");
             }
@@ -1442,6 +1222,27 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             dbService.createMessageSubscription(processInstanceId, hostActivityId, messageName, element.getId(), correlationKey);
             log.info("{}: Message boundary {} subscribed to '{}' (key {}) on host activity {}", processInstanceId, element.getId(), messageName, correlationKey, hostActivityId);
         }
+    }
+
+    /**
+     * Evaluates a message subscriber's correlation-key FEEL expression.
+     * Used by scheduleMessageBoundaries and MessageCatchHandler.
+     */
+    @Override
+    public String evaluateCorrelationKey(BpmnElementModel element, UUID processInstanceId) {
+        String expression = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getMessageEventExtension)
+            .map(MessageEventExtensionModel::getCorrelationKeyExpression)
+            .filter(s -> !s.isBlank())
+            .orElse(null);
+        if (expression == null) {
+            return null;
+        }
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        Object value = scriptService.evaluateExpression(expression, dbService.getVariables(processInstanceId));
+        return value == null ? null : value.toString();
     }
 
     /**
@@ -1739,7 +1540,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * instances (1:N). Each waiting activity is signalled under its own per-instance lock (via
      * {@link #signal}), so concurrent broadcasts/correlations stay isolated per instance.
      */
-    private void broadcastSignal(String signalName, List<ProcessVariable> variables) {
+    @Override
+    public void broadcastSignal(String signalName, List<ProcessVariable> variables) {
         List<SignalSubscription> subscriptions = dbService.findSignalSubscriptions(signalName);
         List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> startSubscriptions =
             dbService.findSignalStartSubscriptions(signalName);
