@@ -129,10 +129,59 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         });
         map.put(BpmnElementType.ESCALATION_THROW_EVENT, (ctx, bpmn, el) -> processEscalationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.SERVICE_TASK, (ctx, bpmn, el) -> enterServiceTask(ctx.processInstanceId(), ctx.tokenId(), el));
-        // Script task = synchronous inline FEEL evaluation; the result is written to a process variable.
-        map.put(BpmnElementType.SCRIPT_TASK, (ctx, bpmn, el) -> processScriptTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        // Business rule task = evaluate a DMN decision or an inline FEEL expression, store the result.
-        map.put(BpmnElementType.BUSINESS_RULE_TASK, (ctx, bpmn, el) -> processBusinessRuleTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.SCRIPT_TASK, (ctx, bpmn, el) -> {
+            UUID processInstanceId = ctx.processInstanceId();
+            UUID tokenId = ctx.tokenId();
+            boolean jobWorker = Optional.ofNullable(el.getExtensions())
+                .map(BpmnElementExtensionModel::getServiceTaskExtension)
+                .isPresent();
+            if (jobWorker) {
+                enterServiceTask(processInstanceId, tokenId, el);
+                return;
+            }
+            UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
+            ScriptTaskExtensionModel ext = Optional.ofNullable(el.getExtensions())
+                .map(BpmnElementExtensionModel::getScriptTaskExtension)
+                .orElseThrow(() -> new IllegalStateException("Script task '" + el.getId() + "' has no script"));
+            String script = ext.getScript();
+            if (script == null || script.isBlank()) {
+                throw new IllegalStateException("Script task '" + el.getId() + "' has an empty script");
+            }
+            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            Object result = scriptService.evaluateExpression(script, variables);
+            log.info("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
+            String resultVariable = ext.getResultVariable();
+            if (resultVariable != null && !resultVariable.isBlank()) {
+                dbService.setVariables(processInstanceId, List.of(toProcessVariable(resultVariable, result)));
+            }
+            dbService.completeActivity(activityId);
+            proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
+            triggerConditionalEvents(processInstanceId);
+        });
+        map.put(BpmnElementType.BUSINESS_RULE_TASK, (ctx, bpmn, el) -> {
+            UUID processInstanceId = ctx.processInstanceId();
+            UUID tokenId = ctx.tokenId();
+            UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
+            BusinessRuleExtensionModel ext = Optional.ofNullable(el.getExtensions())
+                .map(BpmnElementExtensionModel::getBusinessRuleExtension)
+                .orElseThrow(() -> new IllegalStateException("Business rule task '" + el.getId() + "' has no decision or expression"));
+            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            Object result;
+            if (ext.getDecisionId() != null && !ext.getDecisionId().isBlank()) {
+                result = dmnService.evaluate(ext.getDecisionId(), variables);
+            } else if (ext.getExpression() != null && !ext.getExpression().isBlank()) {
+                String expression = ext.getExpression().startsWith("=") ? ext.getExpression().substring(1) : ext.getExpression();
+                result = scriptService.evaluateExpression(expression, variables);
+            } else {
+                throw new IllegalStateException("Business rule task '" + el.getId() + "' has neither a decision nor an expression");
+            }
+            log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
+            if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
+                dbService.setVariables(processInstanceId, List.of(toProcessVariable(ext.getResultVariable(), result)));
+            }
+            dbService.completeActivity(activityId);
+            proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
+        });
         map.put(BpmnElementType.USER_TASK, (ctx, bpmn, el) -> enterUserTask(ctx.processInstanceId(), ctx.tokenId(), el));
         // Send task: a zeebe:taskDefinition makes it a job worker (Camunda 8), otherwise it is a message
         // throw in task form. Receive task = message catch (wait state) in task form.
@@ -177,7 +226,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * target of each. Shared "continue from here" step used by start events, completed tasks,
      * signalled wait states and parent continuation after a subprocess/call activity ends.
      */
-    private void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
+    public void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
         if (element.getOutgoing() == null) {
             return; // a dead end (e.g. a compensation handler off the main flow has no outgoing flow)
         }
@@ -566,7 +615,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * condition is now true is fired. A thread-local guard stops a fired event's own continuation (which
      * runs through {@link #signal}/{@link #fireBoundary}) from recursively re-triggering this pass.
      */
-    private void triggerConditionalEvents(UUID processInstanceId) {
+    public void triggerConditionalEvents(UUID processInstanceId) {
         if (executionContext.isEvaluatingConditionals()) {
             return;
         }
@@ -1020,80 +1069,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         }
     }
 
-    /**
-     * Script task: evaluates the inline FEEL script synchronously against the instance variables and, if a
-     * result variable is configured, writes the result back before continuing. A script error (bad FEEL,
-     * undefined variable, ...) leaves the activity un-completed and surfaces as an incident via the handler
-     * dispatch in {@link #execute}, like any other element failure.
-     */
-    private void processScriptTask(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        // Camunda 8: a script task with a zeebe:taskDefinition runs as a job worker (like a service task)
-        boolean jobWorker = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getServiceTaskExtension)
-            .isPresent();
-        if (jobWorker) {
-            enterServiceTask(processInstanceId, tokenId, bpmnElement);
-            return;
-        }
-
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-
-        ScriptTaskExtensionModel ext = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getScriptTaskExtension)
-            .orElseThrow(() -> new IllegalStateException("Script task '" + bpmnElement.getId() + "' has no script"));
-        String script = ext.getScript();
-        if (script == null || script.isBlank()) {
-            throw new IllegalStateException("Script task '" + bpmnElement.getId() + "' has an empty script");
-        }
-
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-        Object result = scriptService.evaluateExpression(script, variables);
-        log.info("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), result);
-
-        String resultVariable = ext.getResultVariable();
-        if (resultVariable != null && !resultVariable.isBlank()) {
-            dbService.setVariables(processInstanceId, List.of(toProcessVariable(resultVariable, result)));
-        }
-
-        dbService.completeActivity(activityId);
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-        triggerConditionalEvents(processInstanceId);
-    }
-
-    /**
-     * Business rule task: evaluates a DMN decision (by {@code decisionId}, via the DMN engine) or an inline
-     * FEEL expression, then writes the result to {@code resultVariable} before continuing. A bad decision /
-     * expression surfaces as an incident, like any other element failure.
-     */
-    private void processBusinessRuleTask(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-
-        BusinessRuleExtensionModel ext = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getBusinessRuleExtension)
-            .orElseThrow(() -> new IllegalStateException("Business rule task '" + bpmnElement.getId() + "' has no decision or expression"));
-
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-        Object result;
-        if (ext.getDecisionId() != null && !ext.getDecisionId().isBlank()) {
-            result = dmnService.evaluate(ext.getDecisionId(), variables);
-        } else if (ext.getExpression() != null && !ext.getExpression().isBlank()) {
-            String expression = ext.getExpression().startsWith("=") ? ext.getExpression().substring(1) : ext.getExpression();
-            result = scriptService.evaluateExpression(expression, variables);
-        } else {
-            throw new IllegalStateException("Business rule task '" + bpmnElement.getId() + "' has neither a decision nor an expression");
-        }
-        log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), result);
-
-        if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
-            dbService.setVariables(processInstanceId, List.of(toProcessVariable(ext.getResultVariable(), result)));
-        }
-
-        dbService.completeActivity(activityId);
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-    }
-
     /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */
-    private ProcessVariable toProcessVariable(String name, Object result) {
+    public ProcessVariable toProcessVariable(String name, Object result) {
         ProcessVariable variable = new ProcessVariable();
         variable.setName(name);
         if (result instanceof Boolean b) {
@@ -1176,7 +1153,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         return d == Math.rint(d) && !Double.isInfinite(d);
     }
 
-    private void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
+    public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         if (isMultiInstance(bpmnElement)) {
             enterMultiInstance(processInstanceId, token, bpmnElement);
             return;
