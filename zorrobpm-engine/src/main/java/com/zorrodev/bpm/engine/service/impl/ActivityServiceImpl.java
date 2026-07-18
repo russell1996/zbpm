@@ -31,6 +31,7 @@ import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.handler.ElementHandler;
 import com.zorrodev.bpm.engine.handler.ExecutionContext;
 import com.zorrodev.bpm.engine.handler.ExecutionCtx;
+import com.zorrodev.bpm.engine.handler.FlowNavigator;
 import com.zorrodev.bpm.engine.handler.HandlerRegistry;
 import com.zorrodev.bpm.engine.handler.TokenExecutor;
 import com.zorrodev.bpm.engine.service.ActivityService;
@@ -75,11 +76,13 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final FeelEngineApi feelEngineApi;
     private final ExecutionContext executionContext;
     private final HandlerRegistry handlerRegistry;
+    private FlowNavigator flowNavigator;
 
     private Map<BpmnElementType, ElementHandler> handlers;
 
     @PostConstruct
     void init() {
+        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService);
         handlers = createHandlers();
     }
 
@@ -241,21 +244,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * signalled wait states and parent continuation after a subprocess/call activity ends.
      */
     public void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
-        if (element.getOutgoing() == null) {
-            return; // a dead end (e.g. a compensation handler off the main flow has no outgoing flow)
-        }
-        for (String outgoing : element.getOutgoing()) {
-            processFlow(processInstanceId, tokenId, outgoing, false, null);
-            BpmnFlowModel flow = bpmn.getFlow(outgoing);
-            if (flow == null) {
-                throw new IllegalStateException("Sequence flow '" + outgoing + "' not found in the process definition");
-            }
-            BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
-            if (target == null) {
-                throw new IllegalStateException("Target element '" + flow.getTargetRef() + "' of sequence flow '" + outgoing + "' not found in the process definition");
-            }
-            execute(processInstanceId, tokenId, bpmn, target);
-        }
+        flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, element, this);
     }
 
     /**
@@ -732,7 +721,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         execute(processInstanceId, tokenId, bpmn, element);
     }
 
-    private void execute(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
+    public void execute(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
         if (element == null) {
             throw new IllegalStateException("Cannot execute a null element — a referenced element was not found in the process definition");
         }
@@ -2126,57 +2115,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         }
     }
 
-    private UUID processFlow(@NonNull UUID processInstanceId, @NonNull UUID tokenId, String flowId, @NonNull Boolean processExpression, Boolean defaultFlow) {
-        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
-        UUID processDefinitionId = processInstance.getProcessDefinitionId();
-
-        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
-        BpmnFlowModel flow = bpmn.getFlow(flowId);
-        if (flow == null) {
-            throw new IllegalStateException("Sequence flow '" + flowId + "' not found in the process definition");
-        }
-        String targetRef = flow.getTargetRef();
-        String sourceRef = flow.getSourceRef();
-        BpmnElementModel target = bpmn.getElement(targetRef);
-        BpmnElementModel source = bpmn.getElement(sourceRef);
-        if (target == null) {
-            throw new IllegalStateException("Target element '" + targetRef + "' of sequence flow '" + flowId + "' not found in the process definition");
-        }
-
-        UUID flowActivityId = null;
-
-        if (processExpression) {
-            String expression = Optional.ofNullable(flow)
-                .map(BpmnFlowModel::getConditionExpression)
-                .map(BpmnConditionExpressionModel::getExpression)
-                .filter(str -> !str.isEmpty())
-                .map(str -> str.substring(1))
-                .orElse(null);
-            if (!(Objects.isNull(expression) && defaultFlow)) {
-                List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-                Boolean test = (Boolean) scriptService.evaluateScript(expression, variables);
-                if (Boolean.TRUE.equals(test)) {
-                    flowActivityId = dbService.createActivity(processInstanceId, tokenId, flow);
-                }
-            }
-        } else {
-            flowActivityId = dbService.createActivity(processInstanceId, tokenId, flow);
-        }
-
-        if (flowActivityId != null) {
-            dbService.completeActivity(flowActivityId);
-            log.info("{}/{}: Flow: {}/{} => from {}/{} to {}/{}", processInstanceId, tokenId, flowActivityId, flowId, source.getType(), source.getId(), target.getType(), target.getId());
-
-            // Arriving at a parallel- or inclusive-gateway join: record this incoming flow so the join
-            // can tell when every (activated) branch has arrived. Recorded only for flows actually
-            // taken (conditional flows that evaluate false never reach here).
-            if ((target.getType() == BpmnElementType.PARALLEL_GATEWAY || target.getType() == BpmnElementType.INCLUSIVE_GATEWAY)
-                    && target.getIncoming().size() > 1) {
-                dbService.recordParallelGatewayArrival(processInstanceId, target.getId(), flowId);
-            }
-        }
-
-        return flowActivityId;
+    public UUID processFlow(@NonNull UUID processInstanceId, @NonNull UUID tokenId, String flowId, @NonNull Boolean processExpression, Boolean defaultFlow) {
+        return flowNavigator.processFlow(processInstanceId, tokenId, flowId, processExpression, defaultFlow);
     }
 
     /**
