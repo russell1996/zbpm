@@ -84,6 +84,18 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     void init() {
         flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService);
         handlers = createHandlers();
+        // Ensure extracted handler beans are available in the handlers map for test compatibility.
+        // In production, HandlerRegistry auto-discovers them; in tests (mocked registry), they must be
+        // registered directly so the handlers-map fallback works.
+        registerExtractedHandlerBeans();
+    }
+
+    private void registerExtractedHandlerBeans() {
+        for (var bean : List.of(
+            new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNavigator)
+        )) {
+            handlers.putIfAbsent(bean.elementType(), bean.handler());
+        }
     }
 
     private Map<BpmnElementType, ElementHandler> createHandlers() {
@@ -204,47 +216,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         // throw in task form. Receive task = message catch (wait state) in task form.
         map.put(BpmnElementType.SEND_TASK, (ctx, bpmn, el) -> processSendTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.RECEIVE_TASK, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.EXCLUSIVE_GATEWAY, (ctx, bpmn, el) -> {
-            UUID processInstanceId = ctx.processInstanceId();
-            UUID token = ctx.tokenId();
-            TokenExecutor executor = ctx.executor();
-            UUID activityId = dbService.createActivity(processInstanceId, token, el);
-            log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, token, el.getType(), activityId, el.getId());
-            List<String> outgoings = el.getOutgoing();
-            List<String> incoming = el.getIncoming();
-            if (outgoings.size() > 1 && incoming.size() == 1) {
-                String defaultFlowId = Optional.ofNullable(el.getExtensions())
-                    .map(BpmnElementExtensionModel::getExclusiveGatewayExtension)
-                    .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
-                    .orElse(null);
-                String matchedOutgoing = null;
-                for (String outgoing : outgoings) {
-                    Boolean defaultFlow = Objects.equals(outgoing, defaultFlowId);
-                    UUID flowActivityId = flowNavigator.processFlow(processInstanceId, token, outgoing, true, defaultFlow);
-                    if (flowActivityId != null) { matchedOutgoing = outgoing; break; }
-                }
-                if (matchedOutgoing == null) {
-                    if (defaultFlowId == null) {
-                        throw new IllegalStateException("Exclusive gateway '" + el.getId() + "' could not be evaluated: no outgoing sequence flow condition was true and no default flow is defined");
-                    }
-                    matchedOutgoing = defaultFlowId;
-                    flowNavigator.processFlow(processInstanceId, token, matchedOutgoing, false, null);
-                }
-                dbService.completeActivity(activityId);
-                BpmnFlowModel flow = bpmn.getFlow(matchedOutgoing);
-                String targetRef = flow.getTargetRef();
-                BpmnElementModel target = bpmn.getElement(targetRef);
-                executor.execute(processInstanceId, token, bpmn, target);
-            } else if (outgoings.size() == 1 && incoming.size() > 1) {
-                String outgoing = outgoings.get(0);
-                flowNavigator.processFlow(processInstanceId, token, outgoing, false, null);
-                dbService.completeActivity(activityId);
-                BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                String targetRef = flow.getTargetRef();
-                BpmnElementModel target = bpmn.getElement(targetRef);
-                executor.execute(processInstanceId, token, bpmn, target);
-            }
-        });
         map.put(BpmnElementType.PARALLEL_GATEWAY, (ctx, bpmn, el) -> processParallelGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.EVENT_BASED_GATEWAY, (ctx, bpmn, el) -> processEventBasedGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.INCLUSIVE_GATEWAY, (ctx, bpmn, el) -> processInclusiveGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
