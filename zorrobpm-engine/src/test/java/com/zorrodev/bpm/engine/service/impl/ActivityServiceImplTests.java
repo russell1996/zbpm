@@ -72,6 +72,9 @@ public class ActivityServiceImplTests {
     @Mock
     private HandlerRegistry handlerRegistry;
 
+    @Mock
+    private com.zorrodev.bpm.engine.handler.MultiInstanceExecutor multiInstanceExecutor;
+
     @InjectMocks
     private ActivityServiceImpl activityService;
 
