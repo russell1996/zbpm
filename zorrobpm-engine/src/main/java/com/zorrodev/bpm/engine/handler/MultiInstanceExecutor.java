@@ -4,7 +4,6 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.*;
-import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
@@ -12,14 +11,10 @@ import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.camunda.feel.api.EvaluationResult;
-import org.camunda.feel.api.FeelEngineApi;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,10 +30,10 @@ public class MultiInstanceExecutor {
 
     private final DBService dbService;
     private final ScriptService scriptService;
-    private final FeelEngineApi feelEngineApi;
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final BpmnService bpmnService;
+    private final ElementSupport elementSupport;
 
     private FlowNavigator flowNavigator;
 
@@ -120,14 +115,14 @@ public class MultiInstanceExecutor {
         UUID activityId = dbService.createActivity(processInstanceId, token, element);
         bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
         if (element.getType() == BpmnElementType.USER_TASK) {
-            String resolvedAssignee = resolveAssignee(processInstanceId, element);
-            String resolvedGroups = resolveCandidateGroups(processInstanceId, element);
+            String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, element);
+            String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, element);
             String formKey = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
                 ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
             dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
         } else {
-            dbService.createServiceTask(activityId, serviceTaskRetries(element));
-            applyIoMappings(processInstanceId, activityId, element, true);
+            dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(element));
+            elementSupport.applyIoMappings(processInstanceId, activityId, element, true);
             serviceTaskEnqueueService.enqueueAfterCommit(activityId);
         }
     }
@@ -184,7 +179,7 @@ public class MultiInstanceExecutor {
     private void bindMiInstanceVariables(UUID processInstanceId, UUID scopeId, MultiInstanceExtensionModel mi, Object collection, int index) {
         List<ProcessVariable> locals = new ArrayList<>();
         if (collection != null && mi.getInputElement() != null && !mi.getInputElement().isBlank()) {
-            locals.add(toProcessVariable(mi.getInputElement(), collectionElement(collection, index)));
+            locals.add(elementSupport.toProcessVariable(mi.getInputElement(), collectionElement(collection, index)));
         }
         ProcessVariable loopCounter = new ProcessVariable();
         loopCounter.setName("loopCounter");
@@ -204,7 +199,7 @@ public class MultiInstanceExecutor {
             && objectMapper.readValue(existing.getValue(), Object.class) instanceof List<?> current) {
             list.addAll(current);
         }
-        list.add(toJavaStructure(value));
+        list.add(elementSupport.toJavaStructure(value));
 
         ProcessVariable out = new ProcessVariable();
         out.setName(name);
@@ -236,169 +231,5 @@ public class MultiInstanceExecutor {
         }
         Object result = scriptService.evaluateScript(expression, dbService.getVariables(processInstanceId));
         return Boolean.TRUE.equals(result);
-    }
-
-    // ─── Shared utilities (same logic as ActivityServiceImpl, avoiding interface changes) ───
-
-    private String resolveAssignee(UUID processInstanceId, BpmnElementModel element) {
-        String raw = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getUserTaskExtension)
-            .map(UserTaskExtensionModel::getAssignee)
-            .orElse(null);
-        return resolveExpression(raw, processInstanceId);
-    }
-
-    private String resolveCandidateGroups(UUID processInstanceId, BpmnElementModel element) {
-        String raw = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getUserTaskExtension)
-            .map(UserTaskExtensionModel::getCandidateGroups)
-            .orElse(null);
-        if (raw == null || raw.isBlank()) return null;
-        return resolveExpression(raw, processInstanceId);
-    }
-
-    private String resolveExpression(String raw, UUID processInstanceId) {
-        if (raw == null || raw.isBlank()) return null;
-
-        if (raw.startsWith("${") && raw.endsWith("}")) {
-            String varName = raw.substring(2, raw.length() - 1).trim();
-            Map<String, Object> vars = variablesToMap(processInstanceId);
-            Object val = vars.get(varName);
-            if (val == null) {
-                log.warn("variable '{}' not found in instance {}, returning null", varName, processInstanceId);
-                return null;
-            }
-            return val.toString();
-        }
-
-        if (raw.startsWith("=")) {
-            Map<String, Object> vars = variablesToMap(processInstanceId);
-            EvaluationResult result = feelEngineApi.evaluateExpression(raw.substring(1), vars);
-            if (!result.isSuccess()) {
-                log.warn("FEEL expression '{}' failed in instance {}: {}", raw, processInstanceId, result.failure());
-                return null;
-            }
-            Object val = result.result();
-            return val != null ? val.toString() : null;
-        }
-
-        return raw;
-    }
-
-    private Map<String, Object> variablesToMap(UUID processInstanceId) {
-        List<ProcessVariable> vars = dbService.getVariables(processInstanceId);
-        Map<String, Object> map = new HashMap<>();
-        for (ProcessVariable v : vars) {
-            map.put(v.getName(), v.getValue());
-        }
-        return map;
-    }
-
-    private int serviceTaskRetries(BpmnElementModel element) {
-        return Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getServiceTaskExtension)
-            .map(ext -> ext.getRetries())
-            .filter(r -> r != null && r > 0)
-            .orElse(3);
-    }
-
-    private void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {
-        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getIoMappingExtension)
-            .orElse(null);
-        if (io == null) {
-            return;
-        }
-        List<IoMappingExtensionModel.Mapping> mappings = inputs ? io.getInputs() : io.getOutputs();
-        if (mappings == null || mappings.isEmpty()) {
-            return;
-        }
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId, activityId);
-        List<ProcessVariable> results = new ArrayList<>();
-        for (IoMappingExtensionModel.Mapping mapping : mappings) {
-            if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
-                continue;
-            }
-            String expression = mapping.getSource().startsWith("=") ? mapping.getSource().substring(1) : mapping.getSource();
-            Object value = scriptService.evaluateExpression(expression, variables);
-            results.add(toProcessVariable(mapping.getTarget(), value));
-        }
-        if (!results.isEmpty()) {
-            dbService.setVariables(processInstanceId, inputs ? activityId : null, results);
-            log.info("{}: Applied {} {} mapping(s) at {} (scope {})", processInstanceId, results.size(), inputs ? "input" : "output", element.getId(), inputs ? activityId : "root");
-        }
-    }
-
-    private ProcessVariable toProcessVariable(String name, Object result) {
-        ProcessVariable v = new ProcessVariable();
-        v.setName(name);
-        if (result instanceof Boolean b) {
-            v.setType(ProcessVariableType.BOOLEAN);
-            v.setValue(b.toString());
-        } else if (result instanceof Number number && isIntegral(number)) {
-            v.setType(ProcessVariableType.LONG);
-            v.setValue(Long.toString(number.longValue()));
-        } else if (result instanceof Number number) {
-            java.math.BigDecimal bd = (number instanceof java.math.BigDecimal x)
-                ? x : java.math.BigDecimal.valueOf(number.doubleValue());
-            v.setType(ProcessVariableType.DOUBLE);
-            v.setValue(bd.toPlainString());
-        } else if (isStructuredResult(result)) {
-            v.setType(ProcessVariableType.JSON);
-            v.setValue(objectMapper.writeValueAsString(toJavaStructure(result)));
-        } else {
-            v.setType(ProcessVariableType.STRING);
-            v.setValue(result == null ? "" : result.toString());
-        }
-        return v;
-    }
-
-    private boolean isIntegral(Number number) {
-        if (number instanceof Long || number instanceof Integer || number instanceof Short || number instanceof Byte) {
-            return true;
-        }
-        if (number instanceof java.math.BigDecimal bd) {
-            return bd.stripTrailingZeros().scale() <= 0;
-        }
-        double d = number.doubleValue();
-        return d == Math.rint(d) && !Double.isInfinite(d);
-    }
-
-    private boolean isStructuredResult(Object v) {
-        return v instanceof java.util.Map || v instanceof java.util.List
-            || v instanceof scala.collection.Map || v instanceof scala.collection.Iterable;
-    }
-
-    private Object toJavaStructure(Object v) {
-        if (v instanceof scala.collection.Map<?, ?> sm) {
-            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
-            scala.collection.Iterator<?> it = sm.iterator();
-            while (it.hasNext()) {
-                scala.Tuple2<?, ?> entry = (scala.Tuple2<?, ?>) it.next();
-                out.put(String.valueOf(entry._1()), toJavaStructure(entry._2()));
-            }
-            return out;
-        }
-        if (v instanceof scala.collection.Iterable<?> si) {
-            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
-            scala.collection.Iterator<?> it = si.iterator();
-            while (it.hasNext()) {
-                out.add(toJavaStructure(it.next()));
-            }
-            return out;
-        }
-        if (v instanceof java.util.Map<?, ?> jm) {
-            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
-            jm.forEach((k, val) -> out.put(String.valueOf(k), toJavaStructure(val)));
-            return out;
-        }
-        if (v instanceof java.util.List<?> jl) {
-            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
-            for (Object e : jl) {
-                out.add(toJavaStructure(e));
-            }
-            return out;
-        }
-        return v;
     }
 }

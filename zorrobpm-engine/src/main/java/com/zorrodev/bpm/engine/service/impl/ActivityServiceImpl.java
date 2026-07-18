@@ -4,10 +4,8 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
-import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnConditionExpressionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
-import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
@@ -17,7 +15,6 @@ import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.bpmn.model.BusinessRuleExtensionModel;
-import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
@@ -41,7 +38,6 @@ import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import org.camunda.feel.api.FeelEngineApi;
-import org.camunda.feel.api.EvaluationResult;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -77,6 +73,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final ExecutionContext executionContext;
     private final HandlerRegistry handlerRegistry;
     private final com.zorrodev.bpm.engine.handler.MultiInstanceExecutor multiInstanceExecutor;
+    private final com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
     private FlowNavigator flowNavigator;
 
     private Map<BpmnElementType, ElementHandler> handlers;
@@ -203,7 +200,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             log.info("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
             String resultVariable = ext.getResultVariable();
             if (resultVariable != null && !resultVariable.isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(toProcessVariable(resultVariable, result)));
+                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(resultVariable, result)));
             }
             dbService.completeActivity(activityId);
             proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
@@ -228,7 +225,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             }
             log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
             if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(toProcessVariable(ext.getResultVariable(), result)));
+                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(ext.getResultVariable(), result)));
             }
             dbService.completeActivity(activityId);
             proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
@@ -579,112 +576,18 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         return false;
     }
 
-
-
-    /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */
-    public ProcessVariable toProcessVariable(String name, Object result) {
-        ProcessVariable variable = new ProcessVariable();
-        variable.setName(name);
-        if (result instanceof Boolean b) {
-            variable.setType(ProcessVariableType.BOOLEAN);
-            variable.setValue(b.toString());
-        } else if (result instanceof Number number && isIntegral(number)) {
-            variable.setType(ProcessVariableType.LONG);
-            variable.setValue(Long.toString(number.longValue()));
-        } else if (result instanceof Number number) {
-            // non-integral number (FEEL returns BigDecimal) -> DOUBLE, stored as a plain decimal string
-            java.math.BigDecimal bd = (number instanceof java.math.BigDecimal x)
-                ? x : java.math.BigDecimal.valueOf(number.doubleValue());
-            variable.setType(ProcessVariableType.DOUBLE);
-            variable.setValue(bd.toPlainString());
-        } else if (isStructuredResult(result)) {
-            // structured result: a Java Map/List (DMN output via FeelEngineApi) or a Scala collection (a FEEL
-            // context/list returned by ScriptService) -> normalised to a Java structure and stored as JSON
-            variable.setType(ProcessVariableType.JSON);
-            variable.setValue(objectMapper.writeValueAsString(toJavaStructure(result)));
-        } else {
-            variable.setType(ProcessVariableType.STRING);
-            variable.setValue(result == null ? "" : result.toString());
-        }
-        return variable;
-    }
-
-    /** Whether a FEEL result is a structured value (object/list) — Java or Scala collection. */
-    private boolean isStructuredResult(Object v) {
-        return v instanceof java.util.Map || v instanceof java.util.List
-            || v instanceof scala.collection.Map || v instanceof scala.collection.Iterable;
-    }
-
-    /**
-     * Normalises a FEEL result into a JSON-serializable Java structure. FEEL contexts/lists come back from
-     * {@code ScriptService} as Scala collections (and from {@code FeelEngineApi} as Java collections); both
-     * are converted recursively to {@link java.util.LinkedHashMap}/{@link java.util.ArrayList} with scalar
-     * leaves (BigDecimal/Boolean/String) left as-is.
-     */
-    private Object toJavaStructure(Object v) {
-        if (v instanceof scala.collection.Map<?, ?> sm) {
-            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
-            scala.collection.Iterator<?> it = sm.iterator();
-            while (it.hasNext()) {
-                scala.Tuple2<?, ?> entry = (scala.Tuple2<?, ?>) it.next();
-                out.put(String.valueOf(entry._1()), toJavaStructure(entry._2()));
-            }
-            return out;
-        }
-        if (v instanceof scala.collection.Iterable<?> si) {
-            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
-            scala.collection.Iterator<?> it = si.iterator();
-            while (it.hasNext()) {
-                out.add(toJavaStructure(it.next()));
-            }
-            return out;
-        }
-        if (v instanceof java.util.Map<?, ?> jm) {
-            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
-            jm.forEach((k, val) -> out.put(String.valueOf(k), toJavaStructure(val)));
-            return out;
-        }
-        if (v instanceof java.util.List<?> jl) {
-            java.util.ArrayList<Object> out = new java.util.ArrayList<>();
-            for (Object e : jl) {
-                out.add(toJavaStructure(e));
-            }
-            return out;
-        }
-        return v;
-    }
-
-    private boolean isIntegral(Number number) {
-        if (number instanceof Long || number instanceof Integer || number instanceof Short || number instanceof Byte) {
-            return true;
-        }
-        if (number instanceof java.math.BigDecimal bd) {
-            return bd.stripTrailingZeros().scale() <= 0;
-        }
-        double d = number.doubleValue();
-        return d == Math.rint(d) && !Double.isInfinite(d);
-    }
-
     public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         if (multiInstanceExecutor.isMultiInstance(bpmnElement)) {
             multiInstanceExecutor.enter(processInstanceId, token, bpmnElement, this);
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createServiceTask(activityId, serviceTaskRetries(bpmnElement));
-        applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+        dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement));
+        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         serviceTaskEnqueueService.enqueueAfterCommit(activityId);
-    }
-
-    /** Retry budget for a service task from {@code zeebe:taskDefinition retries}; default 3 when unset. */
-    private int serviceTaskRetries(BpmnElementModel element) {
-        return Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getServiceTaskExtension)
-            .map(ext -> ext.getRetries())
-            .orElse(3);
     }
 
     @Override
@@ -716,41 +619,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
         dbService.errorActivity(serviceTaskId);
         dbService.createIncident(serviceTaskId, message);
-    }
-
-    /**
-     * Applies a task's {@code zeebe:ioMapping} with scoped variables (Camunda 8 semantics). Inputs run on
-     * activation and write to the task's **local** scope ({@code activityId}); outputs run on completion and
-     * write to the **parent** (process-instance root). Both evaluate against the merged view (root + local),
-     * so the local input variables don't leak to the instance — they are dropped when the task completes
-     * (see the {@code deleteVariables} call in the complete* methods).
-     */
-    private void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {
-        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getIoMappingExtension)
-            .orElse(null);
-        if (io == null) {
-            return;
-        }
-        List<IoMappingExtensionModel.Mapping> mappings = inputs ? io.getInputs() : io.getOutputs();
-        if (mappings == null || mappings.isEmpty()) {
-            return;
-        }
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId, activityId);
-        List<ProcessVariable> results = new ArrayList<>();
-        for (IoMappingExtensionModel.Mapping mapping : mappings) {
-            if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
-                continue;
-            }
-            String expression = mapping.getSource().startsWith("=") ? mapping.getSource().substring(1) : mapping.getSource();
-            Object value = scriptService.evaluateExpression(expression, variables);
-            results.add(toProcessVariable(mapping.getTarget(), value));
-        }
-        if (!results.isEmpty()) {
-            // inputs -> local scope (activityId); outputs -> root scope (null)
-            dbService.setVariables(processInstanceId, inputs ? activityId : null, results);
-            log.info("{}: Applied {} {} mapping(s) at {} (scope {})", processInstanceId, results.size(), inputs ? "input" : "output", element.getId(), inputs ? activityId : "root");
-        }
     }
 
     /**
@@ -789,7 +657,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
+        elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, serviceTaskId);
         if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId)) {
@@ -806,98 +674,18 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        String resolvedAssignee = resolveAssignee(processInstanceId, bpmnElement);
-        String resolvedGroups = resolveCandidateGroups(processInstanceId, bpmnElement);
+        String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
+        String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
         dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
-        applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
         scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
         scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
-    }
-
-
-    private String extractAssignee(BpmnElementModel element) {
-        return Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getUserTaskExtension)
-            .map(UserTaskExtensionModel::getAssignee)
-            .orElse(null);
-    }
-
-    /**
-     * WO-INT-1: Resolve assignee from BPMN expression against process instance variables.
-     * Expressions: ${var} (MVEL-style) or =expr (FEEL). Plain strings returned as-is.
-     */
-    private String resolveAssignee(UUID processInstanceId, BpmnElementModel element) {
-        String raw = extractAssignee(element);
-        return resolveExpression(raw, processInstanceId);
-    }
-
-    /**
-     * WO-INT-1: Resolve candidateGroups from BPMN expression against process instance variables.
-     * Returns comma-separated resolved groups, or null if none defined.
-     */
-    private String resolveCandidateGroups(UUID processInstanceId, BpmnElementModel element) {
-        String raw = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getUserTaskExtension)
-            .map(UserTaskExtensionModel::getCandidateGroups)
-            .orElse(null);
-        if (raw == null || raw.isBlank()) return null;
-        return resolveExpression(raw, processInstanceId);
-    }
-
-    /**
-     * WO-INT-1: Resolve a raw BPMN expression string against process instance variables.
-     * - ${var} → extract var name from curly braces, look up in variables
-     * - =expr → evaluate as FEEL expression
-     * - plain string → return as-is (literal)
-     * - unresolvable → null + warn
-     */
-    private String resolveExpression(String raw, UUID processInstanceId) {
-        if (raw == null || raw.isBlank()) return null;
-
-        // ${var} syntax — extract variable name
-        if (raw.startsWith("${") && raw.endsWith("}")) {
-            String varName = raw.substring(2, raw.length() - 1).trim();
-            Map<String, Object> vars = variablesToMap(processInstanceId);
-            Object val = vars.get(varName);
-            if (val == null) {
-                log.warn("WO-INT-1: variable '{}' not found in instance {}, returning null", varName, processInstanceId);
-                return null;
-            }
-            return val.toString();
-        }
-
-        // FEEL expression — starts with =
-        if (raw.startsWith("=")) {
-            Map<String, Object> vars = variablesToMap(processInstanceId);
-            EvaluationResult result = feelEngineApi.evaluateExpression(raw.substring(1), vars);
-            if (!result.isSuccess()) {
-                log.warn("WO-INT-1: FEEL expression '{}' failed in instance {}: {}", raw, processInstanceId, result.failure());
-                return null;
-            }
-            Object val = result.result();
-            return val != null ? val.toString() : null;
-        }
-
-        // Plain string — return as-is
-        return raw;
-    }
-
-    /**
-     * WO-INT-1: Convert process instance variables to a Map for FEEL evaluation.
-     */
-    private Map<String, Object> variablesToMap(UUID processInstanceId) {
-        List<ProcessVariable> vars = dbService.getVariables(processInstanceId);
-        Map<String, Object> map = new java.util.HashMap<>();
-        for (ProcessVariable v : vars) {
-            map.put(v.getName(), v.getValue());
-        }
-        return map;
     }
 
 
@@ -1029,7 +817,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
+        elementSupport.applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
         // multi-instance: append this instance's outputElement to the outputCollection before its scoped
         // variables (inputElement/loopCounter) are dropped
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, userTaskId, bpmnElement);

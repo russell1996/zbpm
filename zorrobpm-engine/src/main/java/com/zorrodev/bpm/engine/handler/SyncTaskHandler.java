@@ -29,6 +29,7 @@ public class SyncTaskHandler {
     public static class ScriptTask implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
         private final ScriptService scriptService;
+        private final ElementSupport elementSupport;
         @Lazy private final ActivityServiceImpl activityService;
 
         @Override
@@ -67,7 +68,7 @@ public class SyncTaskHandler {
 
             String resultVariable = ext.getResultVariable();
             if (resultVariable != null && !resultVariable.isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(activityService.toProcessVariable(resultVariable, result)));
+                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(resultVariable, result)));
             }
 
             dbService.completeActivity(activityId);
@@ -82,6 +83,7 @@ public class SyncTaskHandler {
         private final DBService dbService;
         private final ScriptService scriptService;
         private final DmnService dmnService;
+        private final ElementSupport elementSupport;
         @Lazy private final ActivityServiceImpl activityService;
 
         @Override
@@ -114,7 +116,7 @@ public class SyncTaskHandler {
             log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
 
             if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(activityService.toProcessVariable(ext.getResultVariable(), result)));
+                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(ext.getResultVariable(), result)));
             }
 
             dbService.completeActivity(activityId);
