@@ -36,6 +36,10 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- Tag groups excluded from failsafe. Default excludes the PG-only tests so the
+             standard build stays on H2. The test:pg CI job clears this (-Dzbpm.excludedGroups=)
+             and adds -Dgroups=pg to run the @Tag("pg") PG-IT against a real postgres. -->
+        <zbpm.excludedGroups>pg</zbpm.excludedGroups>
     </properties>
 
     <dependencies>
@@ -164,8 +168,11 @@
                         <include>**/*IntegrationTests.java</include>
                         <include>**/*PgIT.java</include>
                     </includes>
-                    <!-- Exclude PG-only tests by default; test:pg overrides with -Dgroups=pg -->
-                    <excludedGroups>pg</excludedGroups>
+                    <!-- Exclude PG-only tests by default (H2 build); test:pg clears this via
+                         -Dzbpm.excludedGroups= and selects them with -Dgroups=pg. A literal here
+                         is NOT overridable by -D, so it must be a property (proven: -Dgroups=pg
+                         alone left failsafe at "Tests run: 0"). -->
+                    <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
             <plugin>
