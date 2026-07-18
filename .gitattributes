@@ -1,0 +1,3 @@
+# Mimo→maintainer append-only channel: union merge keeps both sides automatically,
+# so maintainer never hand-resolves it on every feature-branch merge.
+docs/internal merge=union
