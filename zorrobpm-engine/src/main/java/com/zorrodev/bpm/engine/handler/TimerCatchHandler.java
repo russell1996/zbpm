@@ -1,0 +1,74 @@
+package com.zorrodev.bpm.engine.handler;
+
+import com.zorrodev.bpm.contract.exception.EngineException;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.TimerEventType;
+import com.zorrodev.bpm.engine.scheduler.TimerExpressions;
+import com.zorrodev.bpm.engine.service.DBService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Handler for TIMER_CATCH_EVENT elements.
+ * Parks the token and schedules a timer job.
+ * Literal transfer from ActivityServiceImpl — no logic changes.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class TimerCatchHandler implements ElementHandler, TypedElementHandler {
+
+    private final DBService dbService;
+
+    @Override
+    public BpmnElementType elementType() { return BpmnElementType.TIMER_CATCH_EVENT; }
+
+    @Override
+    public ElementHandler handler() { return this; }
+
+    @Override
+    public void handle(ExecutionCtx ctx, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
+        UUID processInstanceId = ctx.processInstanceId();
+        UUID tokenId = ctx.tokenId();
+
+        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+        Instant dueAt = computeDueAt(bpmnElement);
+        Integer remainingCount = computeRemainingCount(bpmnElement);
+        dbService.createTimerJob(activityId, dueAt, null, remainingCount);
+        log.info("{}/{}: Timer scheduled for {} at {}: {}/{} (remaining={})", processInstanceId, tokenId, bpmnElement.getId(), dueAt, activityId, bpmnElement.getType(), remainingCount);
+    }
+
+    private Instant computeDueAt(BpmnElementModel element) {
+        TimerEventExtensionModel timer = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .orElse(null);
+        if (timer == null || timer.getType() == null || timer.getExpression() == null) {
+            throw new EngineException("Timer event " + element.getId() + " has no timer definition");
+        }
+        return switch (timer.getType()) {
+            case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
+            case DATE -> Instant.parse(timer.getExpression());
+            case CYCLE -> TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
+        };
+    }
+
+    private Integer computeRemainingCount(BpmnElementModel bpmnElement) {
+        return Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .filter(t -> t.getType() == TimerEventType.CYCLE)
+            .map(t -> TimerExpressions.repeatCount(t.getExpression()))
+            .filter(count -> count > 0)
+            .map(count -> count - 1)
+            .orElse(null);
+    }
+}
