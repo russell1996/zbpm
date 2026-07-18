@@ -1,8 +1,6 @@
 package com.zorrodev.bpm.engine.retention;
 
 import com.zorrodev.bpm.engine.PostgresIT;
-import com.zorrodev.bpm.engine.entity.*;
-import com.zorrodev.bpm.engine.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,34 +19,34 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * Run locally:
  * <pre>
- * docker compose up -d postgres
+ * docker compose -f ci/docker-compose.pg.yml -p zbpm-pgci up -d
  * mvn test -pl zorrobpm-engine -Dgroups=pg -Dtest=RetentionBatchProcessorPgIT
- * docker compose down postgres
+ * docker compose -f ci/docker-compose.pg.yml -p zbpm-pgci down
  * </pre>
  */
 public class RetentionBatchProcessorPgIT extends PostgresIT {
 
-    @Autowired ProcessInstanceRepository processInstanceRepository;
-    @Autowired ActivityRepository activityRepository;
-    @Autowired VariableRepository variableRepository;
-    @Autowired TimerJobRepository timerJobRepository;
-    @Autowired MessageSubscriptionRepository messageSubscriptionRepository;
-    @Autowired JdbcTemplate jdbcTemplate;
-
+    @Autowired JdbcTemplate jdbc;
     @Autowired RetentionBatchProcessor batchProcessor;
 
-    // The real PostgreSQL JDBC driver cannot infer a SQL type for a bare java.time.Instant
-    // parameter ("Can't infer the SQL type ... for Instant"); H2 tolerated it. Bind timestamp
-    // columns as java.sql.Timestamp for these hand-written fixture INSERTs.
+    private UUID sharedPdId;
+
     private static Timestamp ago(long seconds) {
         return Timestamp.from(Instant.now().minusSeconds(seconds));
     }
 
     @BeforeEach
     void clean() {
-        jdbcTemplate.execute("TRUNCATE process_instances, activities, tokens, variables, " +
+        jdbc.execute("TRUNCATE process_instances, activities, tokens, variables, " +
             "timer_jobs, message_subscriptions, incidents, service_tasks, user_tasks, " +
-            "parallel_gateways RESTART IDENTITY CASCADE");
+            "parallel_gateways, process_definitions RESTART IDENTITY CASCADE");
+
+        // Insert a valid process_definitions row (FK target for process_instances)
+        sharedPdId = UUID.randomUUID();
+        jdbc.update(
+            "INSERT INTO process_definitions (id, code, version, name, sha256, created_at) " +
+            "VALUES (?, 'retention-test', 1, 'Retention Test', ?, ?)",
+            sharedPdId, UUID.randomUUID().toString(), ago(200));
     }
 
     // ==================== Criterion #1: terminal instance cascaded ====================
@@ -58,33 +56,28 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
         UUID piId = UUID.randomUUID();
         UUID actId = UUID.randomUUID();
 
-        // Insert process instance (completed, old enough)
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
-            piId, UUID.randomUUID(), ago(100), ago(50));
+            piId, sharedPdId, ago(100), ago(50));
 
-        // Insert activity
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'startEvent', ?, ?, 'START_EVENT', 'COMPLETED', ?)",
             actId, piId, ago(90), ago(80), UUID.randomUUID());
 
-        // Insert variable
         UUID varId = UUID.randomUUID();
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO variables (id, process_instance_id, scope_id, name, type, value) " +
             "VALUES (?, ?, ?, 'testVar', 'STRING', 'hello')",
             varId, piId, actId);
 
-        // Insert timer job
         UUID timerId = UUID.randomUUID();
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) " +
             "VALUES (?, ?, ?, false, ?)",
             timerId, actId, ago(10), ago(90));
 
-        // Run retention with TTL=1 day (cutoff = now - 86400s)
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
         assertThat(eligible).contains(piId);
 
@@ -92,13 +85,13 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
         assertThat(deleted).isGreaterThan(0);
 
         // Verify cascade: all child rows gone
-        assertThat(jdbcTemplate.queryForObject(
+        assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM process_instances WHERE id = ?", Integer.class, piId)).isEqualTo(0);
-        assertThat(jdbcTemplate.queryForObject(
+        assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM activities WHERE process_instance_id = ?", Integer.class, piId)).isEqualTo(0);
-        assertThat(jdbcTemplate.queryForObject(
+        assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM variables WHERE process_instance_id = ?", Integer.class, piId)).isEqualTo(0);
-        assertThat(jdbcTemplate.queryForObject(
+        assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM timer_jobs WHERE activity_id = ?", Integer.class, actId)).isEqualTo(0);
     }
 
@@ -107,13 +100,12 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
     @Test
     void activeInstance_notDeleted() {
         UUID piId = UUID.randomUUID();
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, NULL, false)",
-            piId, UUID.randomUUID(), ago(100));
+            piId, sharedPdId, ago(100));
 
-        // Active activity (completed_at IS NULL)
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'svc1', ?, NULL, 'SERVICE_TASK', 'CREATED', ?)",
             UUID.randomUUID(), piId, ago(90), UUID.randomUUID());
@@ -121,7 +113,7 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
         assertThat(eligible).doesNotContain(piId);
 
-        assertThat(jdbcTemplate.queryForObject(
+        assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM process_instances WHERE id = ?", Integer.class, piId)).isEqualTo(1);
     }
 
@@ -131,16 +123,15 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
     void inFlightUserTask_notDeleted() {
         UUID piId = UUID.randomUUID();
         UUID actId = UUID.randomUUID();
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
-            piId, UUID.randomUUID(), ago(100), ago(50));
-        jdbcTemplate.update(
+            piId, sharedPdId, ago(100), ago(50));
+        jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'usr1', ?, ?, 'USER_TASK', 'COMPLETED', ?)",
             actId, piId, ago(90), ago(80), UUID.randomUUID());
-        // Active user task (completed_at IS NULL)
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO user_tasks (id, activity_id, process_instance_id, created_at, completed_at) " +
             "VALUES (?, ?, ?, ?, NULL)",
             UUID.randomUUID(), actId, piId, ago(80));
@@ -153,16 +144,15 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
     void inFlightServiceTask_notDeleted() {
         UUID piId = UUID.randomUUID();
         UUID actId = UUID.randomUUID();
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
-            piId, UUID.randomUUID(), ago(100), ago(50));
-        jdbcTemplate.update(
+            piId, sharedPdId, ago(100), ago(50));
+        jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'svc1', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
             actId, piId, ago(90), ago(80), UUID.randomUUID());
-        // Active service task (completed_at IS NULL)
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO service_tasks (id, activity_id, process_instance_id, created_at, completed_at, retries) " +
             "VALUES (?, ?, ?, ?, NULL, 3)",
             UUID.randomUUID(), actId, piId, ago(80));
@@ -176,12 +166,11 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
     @Test
     void ttlZero_doesNothing() {
         UUID piId = UUID.randomUUID();
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
-            piId, UUID.randomUUID(), ago(100), ago(50));
+            piId, sharedPdId, ago(100), ago(50));
 
-        // With cutoff = now (no instances older than 0 seconds)
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now(), 100);
         assertThat(eligible).isEmpty();
     }
@@ -191,10 +180,10 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
     @Test
     void notOldEnough_notDeleted() {
         UUID piId = UUID.randomUUID();
-        jdbcTemplate.update(
+        jdbc.update(
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
-            piId, UUID.randomUUID(), ago(10), ago(5));
+            piId, sharedPdId, ago(10), ago(5));
 
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
         assertThat(eligible).doesNotContain(piId);

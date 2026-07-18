@@ -76,10 +76,6 @@ test:backend:
 test:pg:
   stage: test
   tags: [zbpm]
-  # NON-BLOCKING for now: the mechanism (real postgres:16) is proven, but REL-6/REL-7 PgIT
-  # were never validly run on PG and still fail on H2-vs-PG divergences. WO-PROC-8 (cont.)
-  # fixes those, then flips this to allow_failure: false so PG-IT becomes a hard gate.
-  allow_failure: true
   variables:
     # Non-standard host port so the ephemeral CI postgres never collides with any
     # 5432 already bound on the shared runner.
