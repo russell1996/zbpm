@@ -7,6 +7,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -28,12 +29,12 @@ class RetentionBatchProcessorTest {
     @Test
     void findEligible_passesCorrectParameters() {
         Instant cutoff = Instant.now().minusSeconds(86400);
-        when(jdbc.queryForList(anyString(), eq(UUID.class), eq(cutoff), eq(50)))
+        when(jdbc.queryForList(anyString(), eq(UUID.class), eq(Timestamp.from(cutoff)), eq(50)))
             .thenReturn(List.of(UUID.randomUUID()));
 
         List<UUID> result = processor.findEligibleInstances(cutoff, 50);
 
-        verify(jdbc).queryForList(anyString(), eq(UUID.class), eq(cutoff), eq(50));
+        verify(jdbc).queryForList(anyString(), eq(UUID.class), eq(Timestamp.from(cutoff)), eq(50));
     }
 
     @Test
