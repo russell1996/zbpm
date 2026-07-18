@@ -204,7 +204,47 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         // throw in task form. Receive task = message catch (wait state) in task form.
         map.put(BpmnElementType.SEND_TASK, (ctx, bpmn, el) -> processSendTask(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.RECEIVE_TASK, (ctx, bpmn, el) -> enterMessageCatch(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.EXCLUSIVE_GATEWAY, (ctx, bpmn, el) -> processExclusiveGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
+        map.put(BpmnElementType.EXCLUSIVE_GATEWAY, (ctx, bpmn, el) -> {
+            UUID processInstanceId = ctx.processInstanceId();
+            UUID token = ctx.tokenId();
+            TokenExecutor executor = ctx.executor();
+            UUID activityId = dbService.createActivity(processInstanceId, token, el);
+            log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, token, el.getType(), activityId, el.getId());
+            List<String> outgoings = el.getOutgoing();
+            List<String> incoming = el.getIncoming();
+            if (outgoings.size() > 1 && incoming.size() == 1) {
+                String defaultFlowId = Optional.ofNullable(el.getExtensions())
+                    .map(BpmnElementExtensionModel::getExclusiveGatewayExtension)
+                    .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
+                    .orElse(null);
+                String matchedOutgoing = null;
+                for (String outgoing : outgoings) {
+                    Boolean defaultFlow = Objects.equals(outgoing, defaultFlowId);
+                    UUID flowActivityId = flowNavigator.processFlow(processInstanceId, token, outgoing, true, defaultFlow);
+                    if (flowActivityId != null) { matchedOutgoing = outgoing; break; }
+                }
+                if (matchedOutgoing == null) {
+                    if (defaultFlowId == null) {
+                        throw new IllegalStateException("Exclusive gateway '" + el.getId() + "' could not be evaluated: no outgoing sequence flow condition was true and no default flow is defined");
+                    }
+                    matchedOutgoing = defaultFlowId;
+                    flowNavigator.processFlow(processInstanceId, token, matchedOutgoing, false, null);
+                }
+                dbService.completeActivity(activityId);
+                BpmnFlowModel flow = bpmn.getFlow(matchedOutgoing);
+                String targetRef = flow.getTargetRef();
+                BpmnElementModel target = bpmn.getElement(targetRef);
+                executor.execute(processInstanceId, token, bpmn, target);
+            } else if (outgoings.size() == 1 && incoming.size() > 1) {
+                String outgoing = outgoings.get(0);
+                flowNavigator.processFlow(processInstanceId, token, outgoing, false, null);
+                dbService.completeActivity(activityId);
+                BpmnFlowModel flow = bpmn.getFlow(outgoing);
+                String targetRef = flow.getTargetRef();
+                BpmnElementModel target = bpmn.getElement(targetRef);
+                executor.execute(processInstanceId, token, bpmn, target);
+            }
+        });
         map.put(BpmnElementType.PARALLEL_GATEWAY, (ctx, bpmn, el) -> processParallelGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.EVENT_BASED_GATEWAY, (ctx, bpmn, el) -> processEventBasedGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         map.put(BpmnElementType.INCLUSIVE_GATEWAY, (ctx, bpmn, el) -> processInclusiveGateway(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
@@ -1017,59 +1057,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             }
         }
         return null;
-    }
-
-    private void processExclusiveGateway(UUID processInstanceId, UUID token, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-
-        log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        List<String> outgoings = bpmnElement.getOutgoing();
-        List<String> incoming = bpmnElement.getIncoming();
-
-        if (outgoings.size() > 1 && incoming.size() == 1) {
-            // null-safe: a gateway without a <default> attribute has no extensions at all
-            String defaultFlowId = Optional.ofNullable(bpmnElement.getExtensions())
-                .map(BpmnElementExtensionModel::getExclusiveGatewayExtension)
-                .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
-                .orElse(null);
-
-            String matchedOutgoing = null;
-            for (String outgoing : outgoings) {
-                Boolean defaultFlow = Objects.equals(outgoing, defaultFlowId);
-                UUID flowActivityId = processFlow(processInstanceId, token, outgoing, true, defaultFlow);
-                if (flowActivityId != null) {
-                    matchedOutgoing = outgoing;
-                    break;
-                }
-            }
-
-            if (matchedOutgoing == null) {
-                if (defaultFlowId == null) {
-                    // BPMN: no outgoing condition evaluated true and no default flow is defined. Raise
-                    // an incident (not an NPE) so an operator can fix the data and re-run the gateway.
-                    throw new IllegalStateException("Exclusive gateway '" + bpmnElement.getId()
-                        + "' could not be evaluated: no outgoing sequence flow condition was true and no default flow is defined");
-                }
-                matchedOutgoing = defaultFlowId;
-                processFlow(processInstanceId, token, matchedOutgoing, false, null);
-            }
-
-            // routing decided successfully: the gateway is a pass-through, mark it completed
-            dbService.completeActivity(activityId);
-            BpmnFlowModel flow = bpmn.getFlow(matchedOutgoing);
-            String targetRef = flow.getTargetRef();
-            BpmnElementModel target = bpmn.getElement(targetRef);
-            execute(processInstanceId, token, bpmn, target);
-        } else if (outgoings.size() == 1 && incoming.size() > 1) {
-            String outgoing = outgoings.get(0);
-            processFlow(processInstanceId, token, outgoing, false, null);
-            dbService.completeActivity(activityId);
-            BpmnFlowModel flow = bpmn.getFlow(outgoing);
-            String targetRef = flow.getTargetRef();
-            BpmnElementModel target = bpmn.getElement(targetRef);
-            execute(processInstanceId, token, bpmn, target);
-        }
     }
 
     /** Maps a FEEL result to a {@link ProcessVariable}, picking the closest of the supported variable types. */
