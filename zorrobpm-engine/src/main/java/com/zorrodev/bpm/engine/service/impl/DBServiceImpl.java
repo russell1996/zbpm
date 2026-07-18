@@ -528,6 +528,23 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public List<TimerJob> findDueTimerJobsLocked(Instant now) {
+        return timerJobRepository.findDueLocked(now).stream()
+            .map(e -> {
+                TimerJob job = new TimerJob();
+                job.setId(e.getId());
+                job.setActivityId(e.getActivityId());
+                job.setDueAt(e.getDueAt());
+                job.setBoundaryElementId(e.getBoundaryElementId());
+                job.setProcessInstanceId(e.getProcessInstanceId());
+                job.setEventSubprocessId(e.getEventSubprocessId());
+                job.setRemainingCount(e.getRemainingCount());
+                return job;
+            })
+            .toList();
+    }
+
+    @Override
     public boolean claimTimerJob(UUID timerJobId) {
         return timerJobRepository.claimTimerJob(timerJobId) > 0;
     }
@@ -752,6 +769,21 @@ public class DBServiceImpl implements DBService {
     @Override
     public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobs(Instant now) {
         return timerStartJobRepository.findByFiredFalseAndDueAtLessThanEqual(now).stream()
+            .map(e -> {
+                com.zorrodev.bpm.engine.dto.TimerStartJob job = new com.zorrodev.bpm.engine.dto.TimerStartJob();
+                job.setId(e.getId());
+                job.setProcessKey(e.getProcessKey());
+                job.setProcessDefinitionId(e.getProcessDefinitionId());
+                job.setElementId(e.getElementId());
+                job.setDueAt(e.getDueAt());
+                return job;
+            })
+            .toList();
+    }
+
+    @Override
+    public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobsLocked(Instant now) {
+        return timerStartJobRepository.findDueLocked(now).stream()
             .map(e -> {
                 com.zorrodev.bpm.engine.dto.TimerStartJob job = new com.zorrodev.bpm.engine.dto.TimerStartJob();
                 job.setId(e.getId());

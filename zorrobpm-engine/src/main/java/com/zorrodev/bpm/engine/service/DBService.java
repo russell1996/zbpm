@@ -125,6 +125,9 @@ public interface DBService {
 
     List<com.zorrodev.bpm.engine.dto.TimerJob> findDueTimerJobs(java.time.Instant now);
 
+    /** L6: SELECT … FOR UPDATE SKIP LOCKED — atomically locks due rows for the calling transaction. */
+    List<com.zorrodev.bpm.engine.dto.TimerJob> findDueTimerJobsLocked(java.time.Instant now);
+
     /** Atomically claim a timer job: sets fired=true only if currently false. Returns true if claimed. */
     boolean claimTimerJob(UUID timerJobId);
 
@@ -183,6 +186,9 @@ public interface DBService {
     void deleteTimerStartJobsByKey(String processKey);
 
     List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobs(java.time.Instant now);
+
+    /** L6: SELECT … FOR UPDATE SKIP LOCKED — atomically locks due rows for the calling transaction. */
+    List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobsLocked(java.time.Instant now);
 
     /** Atomically claim a timer start job: sets fired=true only if currently false. Returns true if claimed. */
     boolean claimTimerStartJob(UUID timerStartJobId);
