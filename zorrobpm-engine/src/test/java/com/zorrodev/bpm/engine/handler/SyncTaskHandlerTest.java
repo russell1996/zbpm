@@ -33,14 +33,15 @@ class SyncTaskHandlerTest {
     @Mock private BpmnService bpmnService;
     @Mock private ActivityServiceImpl activityService;
     @Mock private ElementSupport elementSupport;
+    @Mock private FlowNavigator flowNavigator;
 
     private SyncTaskHandler.ScriptTask scriptTask;
     private SyncTaskHandler.BusinessRuleTask businessRuleTask;
 
     @BeforeEach
     void setUp() {
-        scriptTask = new SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, activityService);
-        businessRuleTask = new SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, activityService);
+        scriptTask = new SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNavigator, activityService);
+        businessRuleTask = new SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNavigator);
     }
 
     @Test
@@ -71,7 +72,7 @@ class SyncTaskHandlerTest {
         verify(dbService).createActivity(piId, tokenId, el);
         verify(dbService).setVariables(eq(piId), any());
         verify(dbService).completeActivity(activityId);
-        verify(activityService).proceedToOutgoing(piId, tokenId, bpmn, el);
+        verify(flowNavigator).proceedToOutgoing(eq(piId), eq(tokenId), eq(bpmn), eq(el), isNull());
         verify(activityService).triggerConditionalEvents(piId);
     }
 
@@ -104,6 +105,6 @@ class SyncTaskHandlerTest {
         verify(dmnService).evaluate("decision1", List.of());
         verify(dbService).setVariables(eq(piId), any());
         verify(dbService).completeActivity(activityId);
-        verify(activityService).proceedToOutgoing(piId, tokenId, bpmn, el);
+        verify(flowNavigator).proceedToOutgoing(eq(piId), eq(tokenId), eq(bpmn), eq(el), isNull());
     }
 }
