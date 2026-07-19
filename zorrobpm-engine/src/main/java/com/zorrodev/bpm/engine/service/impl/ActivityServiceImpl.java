@@ -110,7 +110,9 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
                 new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNavigator, this)),
             // SubProcess + CallActivity (WO-AUD-15)
             new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService),
-            new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, this)
+            new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, this),
+            // UserTask handler (WO-AUD-18)
+            new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler)
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
@@ -231,7 +233,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             dbService.completeActivity(activityId);
             proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
         });
-        map.put(BpmnElementType.USER_TASK, (ctx, bpmn, el) -> enterUserTask(ctx.processInstanceId(), ctx.tokenId(), el));
         // Catch events are wait states: the token parks here until an external trigger
         // (timer fires / message correlated) resumes it via signal(...). Until the timer
         // and message subsystems land, these elements at least park cleanly with an active
@@ -649,26 +650,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         }
         proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
         triggerConditionalEvents(processInstanceId);
-    }
-
-    private void enterUserTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
-        if (multiInstanceExecutor.isMultiInstance(bpmnElement)) {
-            multiInstanceExecutor.enter(processInstanceId, token, bpmnElement, this);
-            return;
-        }
-        UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
-        String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
-        String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
-            ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
-        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
-        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
-
-        log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
-        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
-        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
     }
 
 
