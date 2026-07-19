@@ -73,6 +73,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final com.zorrodev.bpm.engine.handler.BoundaryScheduler boundaryScheduler;
     private final EventTrigger eventTrigger;
     private final com.zorrodev.bpm.engine.handler.CompletionService completionService;
+    private final com.zorrodev.bpm.engine.handler.IncidentService incidentService;
     private final com.zorrodev.bpm.engine.handler.ErrorEscalationThrower errorEscalationThrower;
     private FlowNavigator flowNavigator;
 
@@ -175,19 +176,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * {@link #resolveIncident(UUID, List)}, which re-executes the element.
      */
     private void raiseIncident(UUID processInstanceId, UUID tokenId, BpmnElementModel element, Exception e) {
-        String message = e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : "");
-        log.error("{}/{}: Incident at {} {}: {}", processInstanceId, tokenId, element.getType(), element.getId(), message, e);
-
-        // the handler creates the element's activity before doing the risky work, so it is visible
-        // to this same-transaction query; pick the most recent one for this token + element
-        List<Activity> activities = dbService.getActivitiesByTokenAndBpmnElementId(tokenId, element.getId());
-        if (activities.isEmpty()) {
-            log.error("{}/{}: No activity found for failed element {}, incident not recorded", processInstanceId, tokenId, element.getId());
-            return;
-        }
-        UUID activityId = activities.get(activities.size() - 1).getId();
-        dbService.errorActivity(activityId);
-        dbService.createIncident(activityId, message);
+        incidentService.raiseIncident(processInstanceId, tokenId, element, e);
     }
 
     @Override
@@ -359,80 +348,12 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      */
     @Override
     public void broadcastSignal(String signalName, List<ProcessVariable> variables) {
-        List<SignalSubscription> subscriptions = dbService.findSignalSubscriptions(signalName);
-        List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> startSubscriptions =
-            dbService.findSignalStartSubscriptions(signalName);
-
-        if (subscriptions.isEmpty() && startSubscriptions.isEmpty()) {
-            log.info("No active subscription for signal '{}'", signalName);
-            return;
-        }
-
-        // signal start: every subscribed definition starts a fresh instance (broadcast)
-        for (com.zorrodev.bpm.engine.dto.SignalStartSubscription start : startSubscriptions) {
-            log.info("Signal '{}' starting a new instance of {} at {}", signalName, start.getProcessDefinitionId(), start.getElementId());
-            eventTrigger.startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables, this);
-        }
-
-        for (SignalSubscription subscription : subscriptions) {
-            if (subscription.getEventSubprocessId() != null) {
-                // signal-started event sub-process: consume only for interrupting handlers (it can re-fire otherwise)
-                log.info("Broadcasting signal '{}' to event sub-process {} on instance {}", signalName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
-                boolean interrupting = eventTrigger.triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, this);
-                if (interrupting) {
-                    dbService.consumeSignalSubscription(subscription.getId());
-                }
-                continue;
-            }
-            dbService.consumeSignalSubscription(subscription.getId());
-            if (subscription.getBoundaryElementId() != null) {
-                // signal boundary: fire the boundary (interrupt/non-interrupt the host)
-                log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
-                eventTrigger.fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, this);
-            } else {
-                // signal catch: signal the waiting activity
-                log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
-                signal(subscription.getActivityId(), variables);
-            }
-        }
+        eventTrigger.broadcastSignal(signalName, variables, this, this::signal);
     }
 
     @Override
     public void resolveIncident(UUID incidentId, List<ProcessVariable> variables) {
-        Incident incident = dbService.getIncident(incidentId);
-        Activity activity = dbService.getActivity(incident.getActivityId());
-        dbService.lockProcessInstance(activity.getProcessInstanceId());
-
-        // Idempotency: already resolved → no-op
-        if (incident.getCompletedAt() != null) {
-            log.info("{}/{}: Incident {} already resolved, no-op", activity.getProcessInstanceId(), activity.getToken(), incidentId);
-            return;
-        }
-
-        // Guard: if an active activity already exists for this (token, element), close incident without re-execution
-        if (dbService.hasActiveActivityOnTokenAndElement(activity.getToken(), activity.getBpmnElementId())) {
-            log.info("{}/{}: Active activity already exists for element {}, closing incident {} without re-execution",
-                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), incidentId);
-            dbService.completeIncident(incidentId);
-            return;
-        }
-
-        if (variables != null && !variables.isEmpty()) {
-            dbService.setVariables(activity.getProcessInstanceId(), variables);
-        }
-
-        // Auto-close stale incidents for this (token, element) before re-execution
-        List<Activity> sameElementActivities = dbService.getActivitiesByTokenAndBpmnElementId(activity.getToken(), activity.getBpmnElementId());
-        List<UUID> staleActivityIds = sameElementActivities.stream().map(Activity::getId).toList();
-        dbService.completeIncidentsByActivityIds(staleActivityIds);
-
-        // Cancel the parked (ERROR) activity before re-executing: re-execution creates a fresh active
-        // activity, and cancelling the old one ensures a late/duplicate worker completion of its in-flight
-        // job is ignored (completeServiceTask only acts on active tasks) instead of advancing the token again.
-        dbService.cancelActivity(incident.getActivityId());
-
-        log.info("{}/{}: Resolving incident {} at {}: re-executing", activity.getProcessInstanceId(), activity.getToken(), incidentId, activity.getBpmnElementId());
-        execute(activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId());
+        incidentService.resolveIncident(incidentId, variables, this);
     }
 
     @Override
@@ -461,56 +382,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * by plain and escalation end events.
      */
     public void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn) {
-        Token endToken = dbService.getToken(tokenId);
-        if (endToken != null && endToken.getScopeActivityId() != null) {
-            // end of an embedded subprocess scope: complete the container and continue the parent
-            // token from the subprocess's outgoing flows; the process instance stays running
-            UUID subProcessActivityId = endToken.getScopeActivityId();
-            dbService.completeActivity(subProcessActivityId);
-            Activity subProcessActivity = dbService.getActivity(subProcessActivityId);
-            BpmnElementModel subProcessElement = bpmn.getElement(subProcessActivity.getBpmnElementId());
-            UUID parentTokenId = endToken.getParentId();
-            log.info("{}/{}: Completing {}: {}/{}", processInstanceId, parentTokenId, subProcessElement.getType(), subProcessActivityId, subProcessElement.getId());
-            proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement);
-            return;
-        }
-
-        dbService.completeProcessInstance(processInstanceId);
-
-        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
-        UUID parentActivityId = pi.getParentActivityId();
-        if (parentActivityId != null) {
-            // a call activity finished: continuation mutates the *parent* instance, so lock it
-            // (consistent child→parent ordering keeps this deadlock-free) before advancing it
-            Activity parentActivity = dbService.getActivity(parentActivityId);
-            dbService.lockProcessInstance(parentActivity.getProcessInstanceId());
-            dbService.completeActivity(parentActivityId);
-
-            UUID parentProcessInstanceId = parentActivity.getProcessInstanceId();
-            ProcessInstance parentProcessInstance = dbService.getProcessInstance(parentActivity.getProcessInstanceId());
-            UUID parentProcessDefinitionId = parentProcessInstance.getProcessDefinitionId();
-            UUID parentToken = parentActivity.getToken();
-            BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentProcessDefinitionId);
-            BpmnElementModel parentBpmnElement = parentBpmn.getElement(parentActivity.getBpmnElementId());
-            if (parentBpmnElement == null) {
-                throw new IllegalStateException("Call activity element '" + parentActivity.getBpmnElementId() + "' not found in the parent process definition");
-            }
-
-            // Camunda 8: propagateAllChildVariables (default true) copies the child's variables up to the
-            // parent; when explicitly false, the child's variables are not propagated.
-            boolean propagate = Optional.ofNullable(parentBpmnElement)
-                .map(BpmnElementModel::getExtensions)
-                .map(BpmnElementExtensionModel::getCallActivityExtension)
-                .map(ext -> ext.getPropagateAllChildVariables())
-                .orElse(Boolean.TRUE);
-            if (propagate) {
-                dbService.setVariables(parentProcessInstanceId, dbService.getVariables(processInstanceId));
-            }
-
-            log.info("{}/{}: Completing {}: {}/{}", parentProcessInstanceId, parentToken, parentActivity.getType(), parentActivityId, parentActivity.getBpmnElementId());
-
-            proceedToOutgoing(parentProcessInstanceId, parentToken, parentBpmn, parentBpmnElement);
-        }
+        flowNavigator.finishBranch(processInstanceId, tokenId, bpmn, this);
     }
 
     /**
