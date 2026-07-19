@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
+import com.zorrodev.bpm.exchange.DomainEventPublished;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import com.zorrodev.bpm.exchange.ServiceTaskEnqueued;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Transactional batch processor for outbox entries.
@@ -36,13 +38,25 @@ public class OutboxBatchProcessor {
         List<OutboxEntry> pending = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
         for (OutboxEntry entry : pending) {
             try {
-                JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
-                publisher.publishEvent(new ServiceTaskEnqueued(detail));
-                outboxRepository.markPublished(entry.getId());
-                log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
+                if (isDomainEvent(entry.getPayload())) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> envelope = objectMapper.readValue(entry.getPayload(), Map.class);
+                    publisher.publishEvent(new DomainEventPublished(envelope));
+                    outboxRepository.markPublished(entry.getId());
+                    log.info("Published domain event outbox entry {}: type={}", entry.getId(), envelope.get("type"));
+                } else {
+                    JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
+                    publisher.publishEvent(new ServiceTaskEnqueued(detail));
+                    outboxRepository.markPublished(entry.getId());
+                    log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
+                }
             } catch (Exception e) {
                 log.error("Failed to publish outbox entry {} (will retry)", entry.getId(), e);
             }
         }
+    }
+
+    private boolean isDomainEvent(String payload) {
+        return payload != null && payload.contains("\"type\"") && payload.contains("\"eventId\"");
     }
 }
