@@ -15,6 +15,7 @@ import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import com.zorrodev.bpm.engine.handler.ExecutionContext;
+import com.zorrodev.bpm.engine.handler.ElementHandler;
 import com.zorrodev.bpm.engine.handler.HandlerRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -985,5 +987,23 @@ public class ActivityServiceImplTests {
         assertThatThrownBy(() -> activityService.execute(processInstanceId, tokenId, "parallel1"))
             .isInstanceOf(EngineException.class)
             .hasMessageContaining("Execution depth limit");
+    }
+
+    @Test
+    public void startScriptBusinessRuleHandlersRegistered() {
+        // WO-AUD-19: verify registerExtractedHandlerBeans wired START_EVENT, SCRIPT_TASK, BUSINESS_RULE_TASK (V5)
+        @SuppressWarnings("unchecked")
+        Map<BpmnElementType, ElementHandler> handlers =
+            (Map<BpmnElementType, ElementHandler>) ReflectionTestUtils.getField(activityService, "handlers");
+        assertThat(handlers).isNotNull();
+        assertThat(handlers).containsKey(BpmnElementType.START_EVENT);
+        assertThat(handlers.get(BpmnElementType.START_EVENT))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent.class);
+        assertThat(handlers).containsKey(BpmnElementType.SCRIPT_TASK);
+        assertThat(handlers.get(BpmnElementType.SCRIPT_TASK))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask.class);
+        assertThat(handlers).containsKey(BpmnElementType.BUSINESS_RULE_TASK);
+        assertThat(handlers.get(BpmnElementType.BUSINESS_RULE_TASK))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask.class);
     }
 }
