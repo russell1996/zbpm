@@ -3,11 +3,10 @@ package com.zorrodev.bpm.engine.handler;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DBService;
-import com.zorrodev.bpm.engine.service.impl.ActivityServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
@@ -46,7 +45,7 @@ public class StartThrowEventHandler {
     public static class EscalationThrowEvent implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
         private final FlowNavigator flowNavigator;
-        @Lazy private final ActivityServiceImpl activityService;
+        private final ActivityService activityService;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.ESCALATION_THROW_EVENT; }
