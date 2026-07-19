@@ -1,0 +1,256 @@
+package com.zorrodev.bpm.engine.handler;
+
+import com.zorrodev.bpm.contract.exception.EngineException;
+import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
+import com.zorrodev.bpm.engine.dto.Activity;
+import com.zorrodev.bpm.contract.model.ProcessInstance;
+import com.zorrodev.bpm.engine.dto.Token;
+import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.service.BpmnService;
+import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ScriptService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Collaborator extracted from ActivityServiceImpl (WO-AUD-22).
+ * Encapsulates the event-triggering machinery: boundary firing, conditional evaluation,
+ * event sub-process triggering, and instance bootstrapping at a specific start element.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class EventTrigger {
+
+    private final DBService dbService;
+    private final BpmnService bpmnService;
+    private final ScriptService scriptService;
+    private final FlowNavigator flowNavigator;
+    private final ElementSupport elementSupport;
+
+    /**
+     * Evaluates a conditional event's FEEL condition against the given variables (a leading {@code =} is stripped).
+     */
+    public boolean conditionHolds(BpmnElementModel element, List<ProcessVariable> variables) {
+        String expression = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getExpression)
+            .filter(s -> !s.isBlank())
+            .orElseThrow(() -> new EngineException("Conditional event " + element.getId() + " has no condition"));
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        Object result = scriptService.evaluateScript(expression, variables);
+        return Boolean.TRUE.equals(result);
+    }
+
+    /**
+     * Finds all conditional boundary events attached to the given host element.
+     */
+    public List<BpmnElementModel> findConditionalBoundaries(BpmnProcessDefinitionModel bpmn, String hostId) {
+        List<BpmnElementModel> boundaries = new ArrayList<>();
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.CONDITIONAL_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (hostId.equals(attached)) {
+                boundaries.add(element);
+            }
+        }
+        return boundaries;
+    }
+
+    /**
+     * Fires a boundary event (timer or message) on its host activity. Interrupting boundaries cancel
+     * the host and continue the host's token from the boundary; non-interrupting ones leave the host
+     * running and spawn a parallel branch on a new token. A no-op if the host already finished.
+     *
+     * @return {@code true} if the boundary actually fired (host was active), {@code false} if skipped
+     */
+    public boolean fireBoundary(UUID hostActivityId, String boundaryElementId, List<ProcessVariable> variables,
+                         TokenExecutor executor) {
+        Activity host = lockAndReload(hostActivityId);
+        if (host.getStatus() == ActivityStatus.COMPLETED || host.getStatus() == ActivityStatus.CANCELLED) {
+            log.info("Boundary {} fired but host activity {} is {}, ignoring", boundaryElementId, hostActivityId, host.getStatus());
+            return false;
+        }
+
+        UUID processInstanceId = host.getProcessInstanceId();
+        UUID tokenId = host.getToken();
+
+        if (variables != null && !variables.isEmpty()) {
+            dbService.setVariables(processInstanceId, variables);
+        }
+
+        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
+        BpmnElementModel boundary = bpmn.getElement(boundaryElementId);
+
+        boolean interrupting = Optional.ofNullable(boundary.getExtensions())
+            .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+            .map(BoundaryEventExtensionModel::isInterrupting)
+            .orElse(true);
+
+        if (interrupting) {
+            dbService.cancelActivity(hostActivityId);
+            log.info("{}/{}: Boundary {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
+            flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary, executor);
+        } else {
+            Token branch = dbService.createToken(tokenId);
+            log.info("{}/{}: Boundary {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
+            flowNavigator.proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary, executor);
+            rearmRepeatingBoundaryTimer(hostActivityId, boundary);
+        }
+        return true;
+    }
+
+    /**
+     * Re-arms a repeating non-interrupting boundary timer after it fires.
+     */
+    private void rearmRepeatingBoundaryTimer(UUID hostActivityId, BpmnElementModel boundary) {
+        if (boundary.getType() != BpmnElementType.BOUNDARY_TIMER_EVENT) {
+            return;
+        }
+        TimerEventExtensionModel timer = Optional.ofNullable(boundary.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .orElse(null);
+        if (timer == null || timer.getType() != com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE) {
+            return;
+        }
+        String expression = timer.getExpression();
+        boolean infinite = com.zorrodev.bpm.engine.scheduler.TimerExpressions.isInfiniteCycle(expression);
+        int repeatCount = com.zorrodev.bpm.engine.scheduler.TimerExpressions.repeatCount(expression);
+        if (!infinite && repeatCount <= 0) {
+            return;
+        }
+        Integer remaining = infinite ? null : repeatCount - 1;
+        if (!infinite && remaining != null && remaining <= 0) {
+            return;
+        }
+        dbService.createTimerJob(hostActivityId, elementSupport.computeDueAt(boundary), boundary.getId(), remaining);
+    }
+
+    /**
+     * Starts a message-triggered event sub-process within {@code processInstanceId}. An interrupting event
+     * sub-process consumes the subscription, cancels the instance's active activities (the main flow) and
+     * runs the handler on a fresh token so its end event completes the instance. A non-interrupting one
+     * keeps the subscription and the main flow, running the handler in its own subprocess scope (its end
+     * completes only the scope). A no-op if the instance has already completed.
+     *
+     * @return {@code true} if the event sub-process was interrupting, {@code false} otherwise
+     */
+    public boolean triggerEventSubprocess(UUID processInstanceId, String eventSubprocessId,
+                                   List<ProcessVariable> variables, TokenExecutor executor) {
+        dbService.lockProcessInstance(processInstanceId);
+        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+        if (pi.getCompletedAt() != null) {
+            log.info("{}: Event sub-process {} trigger ignored, instance already completed", processInstanceId, eventSubprocessId);
+            return false;
+        }
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+        BpmnElementModel eventSubProcess = bpmn.getElement(eventSubprocessId);
+        SubProcessExtensionModel ext = Optional.ofNullable(eventSubProcess.getExtensions())
+            .map(BpmnElementExtensionModel::getSubProcessExtension)
+            .orElseThrow(() -> new EngineException("Event sub-process " + eventSubprocessId + " has no metadata"));
+
+        if (variables != null && !variables.isEmpty()) {
+            dbService.setVariables(processInstanceId, variables);
+        }
+
+        if (ext.isInterrupting()) {
+            dbService.cancelActiveActivities(processInstanceId);
+            Token token = dbService.createToken(null);
+            log.info("{}/{}: Interrupting event sub-process {} starting at {}", processInstanceId, token.getId(), eventSubprocessId, ext.getStartEventId());
+            executor.execute(processInstanceId, token.getId(), ext.getStartEventId());
+            return true;
+        }
+        Token branchToken = dbService.createToken(null);
+        UUID containerActivityId = dbService.createActivity(processInstanceId, branchToken.getId(), eventSubProcess);
+        Token scopeToken = dbService.createToken(branchToken.getId(), containerActivityId);
+        log.info("{}/{}: Non-interrupting event sub-process {} starting at {} (scope {})", processInstanceId, scopeToken.getId(), eventSubprocessId, ext.getStartEventId(), containerActivityId);
+        executor.execute(processInstanceId, scopeToken.getId(), ext.getStartEventId());
+        return false;
+    }
+
+    /**
+     * Starts a process instance beginning at a specific start element (used by message/timer start
+     * events, which begin at their own start node rather than the plain start).
+     */
+    public UUID startProcessInstanceAt(UUID parentActivityId, UUID processDefinitionId, String startEventId,
+                                List<ProcessVariable> variables, TokenExecutor executor) {
+        UUID processInstanceId = dbService.createProcessInstance(parentActivityId, processDefinitionId, variables);
+
+        dbService.setVariables(processInstanceId, variables);
+
+        UUID parentTokenId = null;
+        if (parentActivityId != null) {
+            Activity activity = dbService.getActivity(parentActivityId);
+            Token token = dbService.getToken(activity.getToken());
+            parentTokenId = token.getId();
+        }
+        Token token = dbService.createToken(parentTokenId);
+
+        subscribeEventSubprocesses(processInstanceId, processDefinitionId);
+
+        executor.execute(processInstanceId, token.getId(), startEventId);
+
+        return processInstanceId;
+    }
+
+    /**
+     * Registers an instance-scoped message/signal/timer subscription for every triggered event sub-process
+     * in the definition.
+     */
+    private void subscribeEventSubprocesses(UUID processInstanceId, UUID processDefinitionId) {
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
+        for (BpmnElementModel element : bpmn.getEventSubProcesses()) {
+            SubProcessExtensionModel ext = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getSubProcessExtension)
+                .orElse(null);
+            if (ext == null) {
+                continue;
+            }
+            if (ext.getTriggerMessageName() != null) {
+                dbService.createEventSubprocessMessageSubscription(processInstanceId, ext.getTriggerMessageName(), element.getId());
+                log.info("{}: Event sub-process {} subscribed to message '{}'", processInstanceId, element.getId(), ext.getTriggerMessageName());
+            } else if (ext.getTriggerSignalName() != null) {
+                dbService.createEventSubprocessSignalSubscription(processInstanceId, ext.getTriggerSignalName(), element.getId());
+                log.info("{}: Event sub-process {} subscribed to signal '{}'", processInstanceId, element.getId(), ext.getTriggerSignalName());
+            } else if (ext.getTriggerTimer() != null) {
+                Instant dueAt = elementSupport.computeDueAt(ext.getTriggerTimer(), element.getId());
+                dbService.createEventSubprocessTimerJob(processInstanceId, dueAt, element.getId());
+                log.info("{}: Event sub-process {} scheduled timer for {}", processInstanceId, element.getId(), dueAt);
+            }
+        }
+    }
+
+    /**
+     * Reads the activity, takes a pessimistic write lock on its process instance, then re-reads the
+     * activity under that lock. Serialises all execution touching one instance so concurrent async
+     * branches cannot race on joins or double-advance a token.
+     */
+    private Activity lockAndReload(UUID activityId) {
+        Activity activity = dbService.getActivity(activityId);
+        dbService.lockProcessInstance(activity.getProcessInstanceId());
+        return dbService.getActivity(activityId);
+    }
+}
