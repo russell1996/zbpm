@@ -7,6 +7,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
+import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,19 @@ public class ElementSupport {
     private final ScriptService scriptService;
     private final FeelEngineApi feelEngineApi;
     private final tools.jackson.databind.ObjectMapper objectMapper;
+
+    /**
+     * Reads the activity, takes a pessimistic write lock on its process instance, then re-reads the
+     * activity under that lock. Serialises all execution touching one instance so concurrent async
+     * branches cannot race on joins or double-advance a token; the re-read returns a status that is
+     * consistent with the lock (a competing transaction has already committed by the time we hold it).
+     * <p>Shared by {@link CompletionService} and {@link EventTrigger} (WO-AUD-24 / P-24 dedup).</p>
+     */
+    public Activity lockAndReload(UUID activityId) {
+        Activity activity = dbService.getActivity(activityId);
+        dbService.lockProcessInstance(activity.getProcessInstanceId());
+        return dbService.getActivity(activityId);
+    }
 
     // ─── User task helpers ──────────────────────────────────────────────
 

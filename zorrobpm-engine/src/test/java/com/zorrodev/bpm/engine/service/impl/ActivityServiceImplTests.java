@@ -107,6 +107,24 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        // Stub elementSupport.lockAndReload to delegate to dbService (it's a real method on ElementSupport)
+        org.mockito.Mockito.lenient().when(elementSupport.lockAndReload(any(java.util.UUID.class))).thenAnswer(invocation -> {
+            java.util.UUID activityId = invocation.getArgument(0);
+            Activity act = dbService.getActivity(activityId);
+            dbService.lockProcessInstance(act.getProcessInstanceId());
+            return dbService.getActivity(activityId);
+        });
+        // Create real CompletionService with mocked dependencies and inject it (WO-AUD-24)
+        var completionService = new com.zorrodev.bpm.engine.handler.CompletionService(
+            dbService, bpmnService, serviceTaskEnqueueService, elementSupport, multiInstanceExecutor,
+            flowNavigator, eventTrigger, executionContext);
+        try {
+            var csField = ActivityServiceImpl.class.getDeclaredField("completionService");
+            csField.setAccessible(true);
+            csField.set(activityService, completionService);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         // Create real ErrorEscalationThrower with mocked dependencies and inject it (WO-AUD-23)
         var errorEscalationThrower = new com.zorrodev.bpm.engine.handler.ErrorEscalationThrower(dbService, bpmnService, flowNavigator, eventTrigger);
         try {
