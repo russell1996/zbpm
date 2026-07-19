@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
@@ -14,6 +15,8 @@ import org.camunda.feel.api.EvaluationResult;
 import org.camunda.feel.api.FeelEngineApi;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -181,6 +184,41 @@ public class ElementSupport {
     public boolean isStructuredResult(Object v) {
         return v instanceof java.util.Map || v instanceof java.util.List
             || v instanceof scala.collection.Map || v instanceof scala.collection.Iterable;
+    }
+
+    // ─── Boundary helpers ────────────────────────────────────────────
+
+    public Instant computeDueAt(BpmnElementModel element) {
+        return computeDueAt(Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .orElse(null), element.getId());
+    }
+
+    public Instant computeDueAt(com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel timer, String elementId) {
+        if (timer == null || timer.getType() == null || timer.getExpression() == null) {
+            throw new com.zorrodev.bpm.contract.exception.EngineException("Timer event " + elementId + " has no timer definition");
+        }
+        return switch (timer.getType()) {
+            case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
+            case DATE -> Instant.parse(timer.getExpression());
+            case CYCLE -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
+        };
+    }
+
+    public String evaluateCorrelationKey(BpmnElementModel element, UUID processInstanceId) {
+        String expression = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getMessageEventExtension)
+            .map(MessageEventExtensionModel::getCorrelationKeyExpression)
+            .filter(s -> !s.isBlank())
+            .orElse(null);
+        if (expression == null) {
+            return null;
+        }
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        Object value = scriptService.evaluateExpression(expression, dbService.getVariables(processInstanceId));
+        return value == null ? null : value.toString();
     }
 
     public Object toJavaStructure(Object v) {
