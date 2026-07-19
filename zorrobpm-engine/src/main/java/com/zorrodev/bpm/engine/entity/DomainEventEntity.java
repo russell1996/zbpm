@@ -50,7 +50,7 @@ public class DomainEventEntity {
     private String ownerScope;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(columnDefinition = "jsonb", updatable = false)
+    @Column(updatable = false)
     private Map<String, Object> data;
 
     public Long getSequence() { return sequence; }
