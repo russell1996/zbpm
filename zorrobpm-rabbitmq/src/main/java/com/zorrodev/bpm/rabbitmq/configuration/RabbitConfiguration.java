@@ -5,6 +5,7 @@ import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
+import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
@@ -22,6 +23,9 @@ public class RabbitConfiguration {
      *  redelivered forever (a poison message would otherwise block the queue). */
     public static final String COMPLETE_DLX = "zorrobpm.complete-service-task.dlx";
     public static final String COMPLETE_DLQ = "zorrobpm.complete-service-task.dlq";
+
+    /** Topic exchange for domain events (ADR-7, WO-EVT-2). Routing key = event type. */
+    public static final String EVENTS_EXCHANGE = "zorrobpm.events";
 
     @Bean
     MessageConverter messageConverter() {
@@ -49,6 +53,11 @@ public class RabbitConfiguration {
     @Bean
     Binding completeServiceTaskDlqBinding() {
         return BindingBuilder.bind(completeServiceTaskDlq()).to(completeServiceTaskDlx()).with(COMPLETE_DLQ);
+    }
+
+    @Bean
+    TopicExchange domainEventsExchange() {
+        return new TopicExchange(EVENTS_EXCHANGE, true, false);
     }
 
     @Bean
