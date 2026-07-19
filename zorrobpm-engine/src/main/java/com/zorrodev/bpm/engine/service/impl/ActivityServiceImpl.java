@@ -112,26 +112,29 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService),
             new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, this),
             // UserTask handler (WO-AUD-18)
-            new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler)
+            new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler),
+            // Start/Script/BusinessRule handlers (WO-AUD-19)
+            new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent(dbService, flowNavigator),
+            new com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNavigator, this),
+            new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNavigator)
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
+        // Start event aliases (WO-AUD-19): message/timer/signal start events behave like a plain start
+        handlers.putIfAbsent(BpmnElementType.MESSAGE_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
+        handlers.putIfAbsent(BpmnElementType.TIMER_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
+        handlers.putIfAbsent(BpmnElementType.SIGNAL_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
+        // LINK_CATCH_EVENT shares the handler with START_EVENT
+        handlers.putIfAbsent(BpmnElementType.LINK_CATCH_EVENT, handlers.get(BpmnElementType.START_EVENT));
         // RECEIVE_TASK uses the same handler as MESSAGE_CATCH_EVENT
         handlers.putIfAbsent(BpmnElementType.RECEIVE_TASK, handlers.get(BpmnElementType.MESSAGE_CATCH_EVENT));
     }
 
     private Map<BpmnElementType, ElementHandler> createHandlers() {
         Map<BpmnElementType, ElementHandler> map = new EnumMap<>(BpmnElementType.class);
-        map.put(BpmnElementType.START_EVENT, (ctx, bpmn, el) -> {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
-        });
-        // message/timer/signal start events behave like a plain start: complete and continue
-        map.put(BpmnElementType.MESSAGE_START_EVENT, map.get(BpmnElementType.START_EVENT));
-        map.put(BpmnElementType.TIMER_START_EVENT, map.get(BpmnElementType.START_EVENT));
-        map.put(BpmnElementType.SIGNAL_START_EVENT, map.get(BpmnElementType.START_EVENT));
+        // Start event types are handled by StartThrowEventHandler via registerExtractedHandlerBeans.
+        // message/timer/signal start events use putIfAbsent on StartEventHandler.
+        // LINK_CATCH_EVENT shares the handler with START_EVENT (added after registerExtractedHandlerBeans).
         map.put(BpmnElementType.END_EVENT, (ctx, bpmn, el) -> {
             UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
             dbService.completeActivity(activityId);
@@ -180,64 +183,10 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             }
         });
         map.put(BpmnElementType.SERVICE_TASK, (ctx, bpmn, el) -> enterServiceTask(ctx.processInstanceId(), ctx.tokenId(), el));
-        map.put(BpmnElementType.SCRIPT_TASK, (ctx, bpmn, el) -> {
-            UUID processInstanceId = ctx.processInstanceId();
-            UUID tokenId = ctx.tokenId();
-            boolean jobWorker = Optional.ofNullable(el.getExtensions())
-                .map(BpmnElementExtensionModel::getServiceTaskExtension)
-                .isPresent();
-            if (jobWorker) {
-                enterServiceTask(processInstanceId, tokenId, el);
-                return;
-            }
-            UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
-            ScriptTaskExtensionModel ext = Optional.ofNullable(el.getExtensions())
-                .map(BpmnElementExtensionModel::getScriptTaskExtension)
-                .orElseThrow(() -> new IllegalStateException("Script task '" + el.getId() + "' has no script"));
-            String script = ext.getScript();
-            if (script == null || script.isBlank()) {
-                throw new IllegalStateException("Script task '" + el.getId() + "' has an empty script");
-            }
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-            Object result = scriptService.evaluateExpression(script, variables);
-            log.info("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
-            String resultVariable = ext.getResultVariable();
-            if (resultVariable != null && !resultVariable.isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(resultVariable, result)));
-            }
-            dbService.completeActivity(activityId);
-            proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
-            triggerConditionalEvents(processInstanceId);
-        });
-        map.put(BpmnElementType.BUSINESS_RULE_TASK, (ctx, bpmn, el) -> {
-            UUID processInstanceId = ctx.processInstanceId();
-            UUID tokenId = ctx.tokenId();
-            UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
-            BusinessRuleExtensionModel ext = Optional.ofNullable(el.getExtensions())
-                .map(BpmnElementExtensionModel::getBusinessRuleExtension)
-                .orElseThrow(() -> new IllegalStateException("Business rule task '" + el.getId() + "' has no decision or expression"));
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-            Object result;
-            if (ext.getDecisionId() != null && !ext.getDecisionId().isBlank()) {
-                result = dmnService.evaluate(ext.getDecisionId(), variables);
-            } else if (ext.getExpression() != null && !ext.getExpression().isBlank()) {
-                String expression = ext.getExpression().startsWith("=") ? ext.getExpression().substring(1) : ext.getExpression();
-                result = scriptService.evaluateExpression(expression, variables);
-            } else {
-                throw new IllegalStateException("Business rule task '" + el.getId() + "' has neither a decision nor an expression");
-            }
-            log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
-            if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
-                dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(ext.getResultVariable(), result)));
-            }
-            dbService.completeActivity(activityId);
-            proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
-        });
         // Catch events are wait states: the token parks here until an external trigger
         // (timer fires / message correlated) resumes it via signal(...). Until the timer
         // and message subsystems land, these elements at least park cleanly with an active
         // activity instead of silently falling through to "Unsupported".
-        map.put(BpmnElementType.LINK_CATCH_EVENT, map.get(BpmnElementType.START_EVENT));
         // Compensation throw runs the compensation handlers of completed compensation-bounded activities.
         map.put(BpmnElementType.COMPENSATION_THROW_EVENT, (ctx, bpmn, el) -> processCompensationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
         // Cancel end (inside a transaction) compensates the transaction and routes to its cancel boundary.

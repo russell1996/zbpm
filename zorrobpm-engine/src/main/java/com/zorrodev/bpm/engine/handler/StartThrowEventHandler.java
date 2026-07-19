@@ -24,7 +24,7 @@ public class StartThrowEventHandler {
     @RequiredArgsConstructor
     public static class StartEvent implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
-        @Lazy private final ActivityServiceImpl activityService;
+        private final FlowNavigator flowNavigator;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.START_EVENT; }
@@ -37,70 +37,7 @@ public class StartThrowEventHandler {
             UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
             dbService.completeActivity(activityId);
             log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            activityService.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
-        }
-    }
-
-    @Component
-    @RequiredArgsConstructor
-    public static class MessageStartEvent implements ElementHandler, TypedElementHandler {
-        private final DBService dbService;
-        @Lazy private final ActivityServiceImpl activityService;
-
-        @Override
-        public BpmnElementType elementType() { return BpmnElementType.MESSAGE_START_EVENT; }
-
-        @Override
-        public ElementHandler handler() { return this; }
-
-        @Override
-        public void handle(ExecutionCtx ctx, BpmnProcessDefinitionModel bpmn, BpmnElementModel el) {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            activityService.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
-        }
-    }
-
-    @Component
-    @RequiredArgsConstructor
-    public static class TimerStartEvent implements ElementHandler, TypedElementHandler {
-        private final DBService dbService;
-        @Lazy private final ActivityServiceImpl activityService;
-
-        @Override
-        public BpmnElementType elementType() { return BpmnElementType.TIMER_START_EVENT; }
-
-        @Override
-        public ElementHandler handler() { return this; }
-
-        @Override
-        public void handle(ExecutionCtx ctx, BpmnProcessDefinitionModel bpmn, BpmnElementModel el) {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            activityService.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
-        }
-    }
-
-    @Component
-    @RequiredArgsConstructor
-    public static class SignalStartEvent implements ElementHandler, TypedElementHandler {
-        private final DBService dbService;
-        @Lazy private final ActivityServiceImpl activityService;
-
-        @Override
-        public BpmnElementType elementType() { return BpmnElementType.SIGNAL_START_EVENT; }
-
-        @Override
-        public ElementHandler handler() { return this; }
-
-        @Override
-        public void handle(ExecutionCtx ctx, BpmnProcessDefinitionModel bpmn, BpmnElementModel el) {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            activityService.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
+            flowNavigator.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el, ctx.executor());
         }
     }
 
@@ -108,6 +45,7 @@ public class StartThrowEventHandler {
     @RequiredArgsConstructor
     public static class EscalationThrowEvent implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
+        private final FlowNavigator flowNavigator;
         @Lazy private final ActivityServiceImpl activityService;
 
         @Override
@@ -126,7 +64,7 @@ public class StartThrowEventHandler {
 
             boolean interrupted = activityService.throwEscalation(ctx.processInstanceId(), ctx.tokenId(), escalationCode);
             if (!interrupted) {
-                activityService.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
+                flowNavigator.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el, ctx.executor());
             }
         }
     }
