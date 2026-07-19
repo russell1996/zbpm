@@ -116,7 +116,13 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             // Start/Script/BusinessRule handlers (WO-AUD-19)
             new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent(dbService, flowNavigator),
             new com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNavigator, this),
-            new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNavigator)
+            new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNavigator),
+            // End/Escalation handlers (WO-AUD-20)
+            new com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent(dbService, this),
+            new com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent(dbService),
+            new com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent(dbService, this),
+            new com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent(dbService, this),
+            new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent(dbService, flowNavigator, this)
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
@@ -135,53 +141,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         // Start event types are handled by StartThrowEventHandler via registerExtractedHandlerBeans.
         // message/timer/signal start events use putIfAbsent on StartEventHandler.
         // LINK_CATCH_EVENT shares the handler with START_EVENT (added after registerExtractedHandlerBeans).
-        map.put(BpmnElementType.END_EVENT, (ctx, bpmn, el) -> {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            finishBranch(ctx.processInstanceId(), ctx.tokenId(), bpmn);
-        });
-        map.put(BpmnElementType.TERMINATE_END_EVENT, (ctx, bpmn, el) -> {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            log.info("{}/{}: Terminating instance at {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            dbService.cancelActiveActivities(ctx.processInstanceId());
-            dbService.completeProcessInstance(ctx.processInstanceId());
-        });
-        map.put(BpmnElementType.ERROR_END_EVENT, (ctx, bpmn, el) -> {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            String errorCode = Optional.ofNullable(el.getExtensions())
-                .map(BpmnElementExtensionModel::getEventDefinition)
-                .map(EventDefinitionExtensionModel::getCode)
-                .orElse(null);
-            log.info("{}/{}: Error end {} thrown (code={}) at {}", ctx.processInstanceId(), ctx.tokenId(), el.getId(), errorCode, activityId);
-            boolean handled = throwError(ctx.processInstanceId(), ctx.tokenId(), errorCode);
-            if (!handled) {
-                dbService.errorActivity(activityId);
-                dbService.createIncident(activityId, "Unhandled BPMN error" + (errorCode != null ? " '" + errorCode + "'" : ""));
-            }
-        });
-        map.put(BpmnElementType.ESCALATION_END_EVENT, (ctx, bpmn, el) -> {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            String escalationCode = escalationCode(el);
-            log.info("{}/{}: Escalation end {} thrown (code={}) at {}", ctx.processInstanceId(), ctx.tokenId(), el.getId(), escalationCode, activityId);
-            boolean interrupted = throwEscalation(ctx.processInstanceId(), ctx.tokenId(), escalationCode);
-            if (!interrupted) {
-                finishBranch(ctx.processInstanceId(), ctx.tokenId(), bpmn);
-            }
-        });
-        map.put(BpmnElementType.ESCALATION_THROW_EVENT, (ctx, bpmn, el) -> {
-            UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
-            String escalationCode = escalationCode(el);
-            log.info("{}/{}: Escalation throw {} (code={}) at {}", ctx.processInstanceId(), ctx.tokenId(), el.getId(), escalationCode, activityId);
-            boolean interrupted = throwEscalation(ctx.processInstanceId(), ctx.tokenId(), escalationCode);
-            if (!interrupted) {
-                proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el);
-            }
-        });
+        // END_EVENT, TERMINATE_END_EVENT, ERROR_END_EVENT, ESCALATION_END_EVENT, ESCALATION_THROW_EVENT
+        // are registered via registerExtractedHandlerBeans (WO-AUD-20).
         map.put(BpmnElementType.SERVICE_TASK, (ctx, bpmn, el) -> enterServiceTask(ctx.processInstanceId(), ctx.tokenId(), el));
         // Catch events are wait states: the token parks here until an external trigger
         // (timer fires / message correlated) resumes it via signal(...). Until the timer

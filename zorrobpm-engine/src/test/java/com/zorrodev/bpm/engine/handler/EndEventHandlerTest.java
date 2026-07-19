@@ -4,9 +4,8 @@ import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
-import com.zorrodev.bpm.engine.service.BpmnService;
+import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DBService;
-import com.zorrodev.bpm.engine.service.impl.ActivityServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,8 +22,7 @@ import static org.mockito.Mockito.*;
 class EndEventHandlerTest {
 
     @Mock private DBService dbService;
-    @Mock private BpmnService bpmnService;
-    @Mock private ActivityServiceImpl activityService;
+    @Mock private ActivityService activityService;
 
     private EndEventHandler.EndEvent endEvent;
     private EndEventHandler.TerminateEndEvent terminateEndEvent;

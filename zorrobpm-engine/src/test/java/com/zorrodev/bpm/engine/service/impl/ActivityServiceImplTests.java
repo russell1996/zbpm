@@ -1006,4 +1006,28 @@ public class ActivityServiceImplTests {
         assertThat(handlers.get(BpmnElementType.BUSINESS_RULE_TASK))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask.class);
     }
+
+    @Test
+    public void endEscalationHandlersRegistered() {
+        // WO-AUD-20: verify registerExtractedHandlerBeans wired 5 end/escalation handler types (V5)
+        @SuppressWarnings("unchecked")
+        Map<BpmnElementType, ElementHandler> handlers =
+            (Map<BpmnElementType, ElementHandler>) ReflectionTestUtils.getField(activityService, "handlers");
+        assertThat(handlers).isNotNull();
+        assertThat(handlers).containsKey(BpmnElementType.END_EVENT);
+        assertThat(handlers.get(BpmnElementType.END_EVENT))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent.class);
+        assertThat(handlers).containsKey(BpmnElementType.TERMINATE_END_EVENT);
+        assertThat(handlers.get(BpmnElementType.TERMINATE_END_EVENT))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent.class);
+        assertThat(handlers).containsKey(BpmnElementType.ERROR_END_EVENT);
+        assertThat(handlers.get(BpmnElementType.ERROR_END_EVENT))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent.class);
+        assertThat(handlers).containsKey(BpmnElementType.ESCALATION_END_EVENT);
+        assertThat(handlers.get(BpmnElementType.ESCALATION_END_EVENT))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent.class);
+        assertThat(handlers).containsKey(BpmnElementType.ESCALATION_THROW_EVENT);
+        assertThat(handlers.get(BpmnElementType.ESCALATION_THROW_EVENT))
+            .isInstanceOf(com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent.class);
+    }
 }

@@ -87,4 +87,22 @@ public interface ActivityService {
      * Evaluates conditional event expressions and fires tokens for any satisfied conditions.
      */
     void triggerConditionalEvents(UUID processInstanceId);
+
+    /** Completes the current branch: finishes embedded subprocess scope or completes the process instance. */
+    void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn);
+
+    /**
+     * Propagates an error through enclosing scopes looking for a matching error boundary.
+     * @return true if an error boundary handled the error, false if unhandled.
+     */
+    boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode);
+
+    /** Extracts the escalation code from an element's event definition extensions. */
+    String escalationCode(BpmnElementModel element);
+
+    /**
+     * Propagates an escalation through enclosing scopes looking for a matching escalation boundary.
+     * @return true if an interrupting boundary fired, false otherwise.
+     */
+    boolean throwEscalation(UUID processInstanceId, UUID tokenId, String escalationCode);
 }

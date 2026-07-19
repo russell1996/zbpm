@@ -5,12 +5,10 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
+import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DBService;
-import com.zorrodev.bpm.engine.service.BpmnService;
-import com.zorrodev.bpm.engine.service.impl.ActivityServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -29,7 +27,7 @@ public class EndEventHandler {
     @RequiredArgsConstructor
     public static class EndEvent implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
-        @Lazy private final ActivityServiceImpl activityService;
+        private final ActivityService activityService;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.END_EVENT; }
@@ -71,7 +69,7 @@ public class EndEventHandler {
     @RequiredArgsConstructor
     public static class ErrorEndEvent implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
-        @Lazy private final ActivityServiceImpl activityService;
+        private final ActivityService activityService;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.ERROR_END_EVENT; }
@@ -103,7 +101,7 @@ public class EndEventHandler {
     @RequiredArgsConstructor
     public static class EscalationEndEvent implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
-        @Lazy private final ActivityServiceImpl activityService;
+        private final ActivityService activityService;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.ESCALATION_END_EVENT; }
