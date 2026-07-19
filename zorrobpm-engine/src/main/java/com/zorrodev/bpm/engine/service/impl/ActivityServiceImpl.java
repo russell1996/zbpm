@@ -21,6 +21,7 @@ import com.zorrodev.bpm.engine.dto.SignalSubscription;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
+import com.zorrodev.bpm.engine.handler.CompletionService;
 import com.zorrodev.bpm.engine.handler.ElementHandler;
 import com.zorrodev.bpm.engine.handler.ExecutionContext;
 import com.zorrodev.bpm.engine.handler.ExecutionCtx;
@@ -71,6 +72,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
     private final com.zorrodev.bpm.engine.handler.BoundaryScheduler boundaryScheduler;
     private final EventTrigger eventTrigger;
+    private final com.zorrodev.bpm.engine.handler.CompletionService completionService;
     private final com.zorrodev.bpm.engine.handler.ErrorEscalationThrower errorEscalationThrower;
     private FlowNavigator flowNavigator;
 
@@ -163,41 +165,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * runs through {@link #signal}/{@link #fireBoundary}) from recursively re-triggering this pass.
      */
     public void triggerConditionalEvents(UUID processInstanceId) {
-        if (executionContext.isEvaluatingConditionals()) {
-            return;
-        }
-        executionContext.setEvaluatingConditionals(true);
-        try {
-            ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
-            if (pi.getCompletedAt() != null) {
-                return;
-            }
-            BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
-            for (Activity activity : dbService.getActiveActivities(processInstanceId)) {
-                BpmnElementModel element = bpmn.getElement(activity.getBpmnElementId());
-                if (element == null) {
-                    continue;
-                }
-                if (element.getType() == BpmnElementType.CONDITIONAL_CATCH_EVENT) {
-                    if (eventTrigger.conditionHolds(element, variables)) {
-                        log.info("{}: Conditional catch {} satisfied, firing", processInstanceId, element.getId());
-                        signal(activity.getId(), List.of());
-                    }
-                } else {
-                    for (BpmnElementModel boundary : eventTrigger.findConditionalBoundaries(bpmn, element.getId())) {
-                        if (eventTrigger.conditionHolds(boundary, variables)) {
-                            log.info("{}: Conditional boundary {} satisfied, firing on host {}", processInstanceId, boundary.getId(), element.getId());
-                            if (eventTrigger.fireBoundary(activity.getId(), boundary.getId(), List.of(), this)) {
-                                triggerConditionalEvents(processInstanceId);
-                            }
-                        }
-                    }
-                }
-            }
-        } finally {
-            executionContext.setEvaluatingConditionals(false);
-        }
+        completionService.triggerConditionalEvents(processInstanceId, this);
     }
 
     /**
@@ -273,110 +241,18 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
 
 
-    /**
-     * Event-based gateway: a pass-through that arms every outgoing catch event (message/timer/signal)
-     * on the same token, letting them race. When the first one fires, {@link #signal} cancels the
-     * losing siblings (see {@link #isBehindEventBasedGateway}).
-     */
-
-    /** True if {@code element} is a catch event whose (only) incoming flow comes from an event-based gateway. */
-    private boolean isBehindEventBasedGateway(BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
-        if (element.getIncoming() == null) {
-            return false;
-        }
-        for (String incoming : element.getIncoming()) {
-            BpmnFlowModel flow = bpmn.getFlow(incoming);
-            if (flow == null) {
-                continue;
-            }
-            BpmnElementModel source = bpmn.getElement(flow.getSourceRef());
-            if (source != null && source.getType() == BpmnElementType.EVENT_BASED_GATEWAY) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         serviceTaskHandler.enter(processInstanceId, token, bpmnElement, this);
     }
 
     @Override
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries) {
-        Activity activity = lockAndReload(serviceTaskId);
-        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
-            // already finished (redelivered failure, or interrupted by a boundary) — ignore
-            log.info("Ignoring failure of service task {} in status {}", serviceTaskId, activity.getStatus());
-            return;
-        }
-        String message = (errorMessage == null || errorMessage.isBlank()) ? "Service task failed" : errorMessage;
-        // Camunda failJob semantics: an explicit retries value sets the budget (0 -> incident now); otherwise -1
-        int remaining;
-        if (retries != null) {
-            dbService.setServiceTaskRetries(serviceTaskId, retries);
-            remaining = retries;
-        } else {
-            remaining = dbService.decrementServiceTaskRetries(serviceTaskId);
-        }
-        if (remaining > 0) {
-            // retries left: re-dispatch the same job to a worker (the activity stays CREATED)
-            log.info("{}/{}: Service task {} failed ({} retries left), re-dispatching: {}",
-                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
-            serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-            return;
-        }
-        // retries exhausted: park the token and raise an incident carrying the worker's error message
-        log.info("{}/{}: Service task {} failed, retries exhausted — raising incident: {}",
-            activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
-        dbService.errorActivity(serviceTaskId);
-        dbService.createIncident(serviceTaskId, message);
-    }
-
-    /**
-     * Reads the activity, takes a pessimistic write lock on its process instance, then re-reads the
-     * activity under that lock. Serialises all execution touching one instance so concurrent async
-     * branches cannot race on joins or double-advance a token; the re-read returns a status that is
-     * consistent with the lock (a competing transaction has already committed by the time we hold it).
-     */
-    private Activity lockAndReload(UUID activityId) {
-        Activity activity = dbService.getActivity(activityId);
-        dbService.lockProcessInstance(activity.getProcessInstanceId());
-        return dbService.getActivity(activityId);
+        completionService.failServiceTask(serviceTaskId, errorMessage, retries);
     }
 
     @Override
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables) {
-        Activity activity = lockAndReload(serviceTaskId);
-        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
-            // only an active task may complete. Ignore anything else to avoid advancing the token twice:
-            // a redelivered/late RabbitMQ completion (broker is at-least-once), a boundary-timer
-            // interruption (CANCELLED), an already-COMPLETED task, or a task parked on an incident
-            // (ERROR) that was superseded by incident-resolve re-execution.
-            log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
-            return;
-        }
-        UUID processInstanceId = activity.getProcessInstanceId();
-        UUID tokenId = activity.getToken();
-
-        dbService.setVariables(processInstanceId, variables);
-        dbService.completeActivity(serviceTaskId);
-        dbService.completeServiceTask(serviceTaskId);
-
-        log.info("{}/{}: Completing {}: {}/{}", processInstanceId, tokenId, activity.getType(), serviceTaskId, activity.getBpmnElementId());
-
-        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
-        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
-        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
-
-        elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
-        multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
-        dbService.deleteVariables(processInstanceId, serviceTaskId);
-        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId)) {
-            // more instances are outstanding (parallel) or the next one was just started (sequential)
-            return;
-        }
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-        triggerConditionalEvents(processInstanceId);
+        completionService.completeServiceTask(serviceTaskId, variables, this);
     }
 
 
@@ -390,72 +266,12 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     @Override
     public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables) {
-        Activity activity = lockAndReload(userTaskId);
-        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
-            // only an active task may complete — ignore a duplicate/late completion, a boundary-timer
-            // interruption (CANCELLED) or a task superseded by incident-resolve (ERROR) to avoid double execution
-            log.info("Ignoring completion of user task {} in status {}", userTaskId, activity.getStatus());
-            return;
-        }
-        UUID processInstanceId = activity.getProcessInstanceId();
-        UUID token = activity.getToken();
-
-        dbService.setVariables(processInstanceId, variables);
-        dbService.completeActivity(userTaskId);
-        dbService.completeUserTask(userTaskId);
-
-        log.info("{}/{}: Completing {}: {}/{}", processInstanceId, token, activity.getType(), userTaskId, activity.getBpmnElementId());
-
-        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
-        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
-        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
-
-        elementSupport.applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
-        // multi-instance: append this instance's outputElement to the outputCollection before its scoped
-        // variables (inputElement/loopCounter) are dropped
-        multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, userTaskId, bpmnElement);
-        dbService.deleteVariables(processInstanceId, userTaskId);
-        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId)) {
-            // more instances are outstanding (parallel) or the next one was just started (sequential)
-            return;
-        }
-        proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement);
-        triggerConditionalEvents(processInstanceId);
+        completionService.completeUserTask(userTaskId, variables, this);
     }
 
     @Override
     public void signal(UUID activityId, List<ProcessVariable> variables) {
-        Activity activity = lockAndReload(activityId);
-        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
-            // only an active waiting element may be resumed — ignore a timer that fired twice, a
-            // concurrently-correlated message, or an element superseded by incident-resolve (ERROR)
-            log.info("Ignoring signal of {} in status {}", activityId, activity.getStatus());
-            return;
-        }
-        UUID processInstanceId = activity.getProcessInstanceId();
-        UUID tokenId = activity.getToken();
-
-        if (variables != null && !variables.isEmpty()) {
-            dbService.setVariables(processInstanceId, variables);
-        }
-        dbService.completeActivity(activityId);
-
-        log.info("{}/{}: Signalling {}: {}/{}", processInstanceId, tokenId, activity.getType(), activityId, activity.getBpmnElementId());
-
-        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
-        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
-        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
-
-        if (isBehindEventBasedGateway(bpmn, bpmnElement)) {
-            // event-based gateway race: this catch won. Cancel the losing sibling catches still parked
-            // on this token (the winner is already COMPLETED, so it is not cancelled). Any later trigger
-            // for a cancelled sibling is ignored by the status guard above.
-            dbService.cancelActiveActivitiesForToken(tokenId);
-            log.info("{}/{}: event-based gateway: {} won, losing siblings cancelled", processInstanceId, tokenId, bpmnElement.getId());
-        }
-
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-        triggerConditionalEvents(processInstanceId);
+        completionService.signal(activityId, variables, this);
     }
 
     @Override
