@@ -88,7 +88,7 @@ public class EventTrigger {
      */
     public boolean fireBoundary(UUID hostActivityId, String boundaryElementId, List<ProcessVariable> variables,
                          TokenExecutor executor) {
-        Activity host = lockAndReload(hostActivityId);
+        Activity host = elementSupport.lockAndReload(hostActivityId);
         if (host.getStatus() == ActivityStatus.COMPLETED || host.getStatus() == ActivityStatus.CANCELLED) {
             log.info("Boundary {} fired but host activity {} is {}, ignoring", boundaryElementId, hostActivityId, host.getStatus());
             return false;
@@ -243,14 +243,4 @@ public class EventTrigger {
         }
     }
 
-    /**
-     * Reads the activity, takes a pessimistic write lock on its process instance, then re-reads the
-     * activity under that lock. Serialises all execution touching one instance so concurrent async
-     * branches cannot race on joins or double-advance a token.
-     */
-    private Activity lockAndReload(UUID activityId) {
-        Activity activity = dbService.getActivity(activityId);
-        dbService.lockProcessInstance(activity.getProcessInstanceId());
-        return dbService.getActivity(activityId);
-    }
 }
