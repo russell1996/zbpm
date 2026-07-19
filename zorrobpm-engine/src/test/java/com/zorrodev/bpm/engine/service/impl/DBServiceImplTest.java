@@ -69,6 +69,7 @@ class DBServiceImplTest {
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
+    @Mock private com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
 
     @InjectMocks
     private DBServiceImpl dbService;
@@ -89,6 +90,7 @@ class DBServiceImplTest {
         ArgumentCaptor<List<ProcessVariableEntity>> captor = ArgumentCaptor.forClass(List.class);
         verify(variableRepository).saveAll(captor.capture());
         assertThat(captor.getValue()).hasSize(2);
+        verify(domainEventEmitter).emitProcessInstanceStarted(id, processDefinitionId);
     }
 
     @Test
@@ -142,10 +144,23 @@ class DBServiceImplTest {
     @Test
     void completeActivity_marksCompleted() {
         UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+
+        ActivityEntity activityEntity = new ActivityEntity();
+        activityEntity.setId(activityId);
+        activityEntity.setProcessInstanceId(processInstanceId);
+        activityEntity.setBpmnElementId("element1");
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activityEntity));
+
+        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
+        piEntity.setId(processInstanceId);
+        piEntity.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(piEntity));
 
         dbService.completeActivity(activityId);
 
         verify(activityRepository).setStatusAndCompletedAt(eq(activityId), eq(ActivityStatus.COMPLETED), any(Instant.class));
+        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("element1"));
     }
 
     @Test
@@ -228,6 +243,7 @@ class DBServiceImplTest {
         assertThat(saved.getBpmnElementId()).isEqualTo("ut1");
         assertThat(saved.getProcessInstanceId()).isEqualTo(processInstanceId);
         assertThat(saved.getProcessDefinitionId()).isEqualTo(processDefinitionId);
+        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut1", activityId);
     }
 
     @Test
@@ -240,8 +256,19 @@ class DBServiceImplTest {
     @Test
     void completeUserTask_callsRepository() {
         UUID id = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+
+        UserTaskEntity utEntity = new UserTaskEntity();
+        utEntity.setId(id);
+        utEntity.setProcessInstanceId(processInstanceId);
+        utEntity.setProcessDefinitionId(processDefinitionId);
+        utEntity.setBpmnElementId("userTask1");
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(utEntity));
+
         dbService.completeUserTask(id);
         verify(userTaskRepository).setCompletedAt(eq(id), any(Instant.class));
+        verify(domainEventEmitter).emitUserTaskCompleted(processInstanceId, processDefinitionId, "userTask1", id);
     }
 
     @Test
@@ -396,16 +423,32 @@ class DBServiceImplTest {
     @Test
     void completeProcessInstance_callsRepository() {
         UUID id = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+
+        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
+        piEntity.setId(id);
+        piEntity.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(piEntity));
+
         dbService.completeProcessInstance(id);
         verify(processInstanceRepository).setCompletedAt(eq(id), any(Instant.class));
+        verify(domainEventEmitter).emitProcessInstanceCompleted(id, pdId);
     }
 
     @Test
     void createIncident_savesAndReturnsId() {
         UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
         ActivityEntity activity = new ActivityEntity();
         activity.setId(activityId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId("element1");
         when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+
+        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
+        piEntity.setId(processInstanceId);
+        piEntity.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(piEntity));
 
         UUID id = dbService.createIncident(activityId, "boom");
 
@@ -414,6 +457,7 @@ class DBServiceImplTest {
         verify(incidentRepository).save(captor.capture());
         assertThat(captor.getValue().getActivityId()).isEqualTo(activityId);
         assertThat(captor.getValue().getMessage()).isEqualTo("boom");
+        verify(domainEventEmitter).emitIncidentRaised(eq(processInstanceId), any(UUID.class), eq("element1"), eq(id), eq("boom"));
     }
 
     @Test
@@ -436,15 +480,31 @@ class DBServiceImplTest {
     @Test
     void completeIncident_setsCompletedAt() {
         UUID incidentId = UUID.randomUUID();
+        UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+
         IncidentEntity entity = new IncidentEntity();
         entity.setId(incidentId);
+        entity.setActivityId(activityId);
         when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(entity));
+
+        ActivityEntity activityEntity = new ActivityEntity();
+        activityEntity.setId(activityId);
+        activityEntity.setProcessInstanceId(processInstanceId);
+        activityEntity.setBpmnElementId("element1");
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activityEntity));
+
+        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
+        piEntity.setId(processInstanceId);
+        piEntity.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(piEntity));
 
         dbService.completeIncident(incidentId);
 
         ArgumentCaptor<IncidentEntity> captor = ArgumentCaptor.forClass(IncidentEntity.class);
         verify(incidentRepository).save(captor.capture());
         assertThat(captor.getValue().getCompletedAt()).isNotNull();
+        verify(domainEventEmitter).emitIncidentResolved(eq(processInstanceId), any(UUID.class), eq("element1"), eq(incidentId));
     }
 
     @Test

@@ -79,6 +79,7 @@ public class DBServiceImpl implements DBService {
     private final TimerStartJobRepository timerStartJobRepository;
     private final ParallelGatewayRepository parallelGatewayRepository;
     private final ProcessInstanceMapper processInstanceMapper;
+    private final com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -100,6 +101,7 @@ public class DBServiceImpl implements DBService {
             vs.add(v);
         }
         variableRepository.saveAll(vs);
+        domainEventEmitter.emitProcessInstanceStarted(id, processDefinitionId);
         return id;
     }
 
@@ -135,7 +137,10 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeActivity(UUID activityId) {
+        ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
+        ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
+        domainEventEmitter.emitActivityCompleted(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId());
     }
 
     @Override
@@ -245,6 +250,7 @@ public class DBServiceImpl implements DBService {
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
 
         serviceTaskRepository.save(entity);
+        domainEventEmitter.emitServiceTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId);
     }
 
     @Override
@@ -279,6 +285,7 @@ public class DBServiceImpl implements DBService {
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
 
         userTaskRepository.save(entity);
+        domainEventEmitter.emitUserTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId);
     }
 
     @Override
@@ -288,7 +295,9 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeUserTask(UUID userTaskId) {
+        UserTaskEntity ut = userTaskRepository.findById(userTaskId).orElseThrow();
         userTaskRepository.setCompletedAt(userTaskId, Instant.now());
+        domainEventEmitter.emitUserTaskCompleted(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), userTaskId);
     }
 
     @Override
@@ -417,13 +426,17 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeProcessInstance(UUID processInstanceId) {
+        ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
+        domainEventEmitter.emitProcessInstanceCompleted(processInstanceId, pi.getProcessDefinitionId());
     }
 
     @Override
     public void cancelProcessInstance(UUID processInstanceId) {
+        ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCancelled(processInstanceId, true);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
+        domainEventEmitter.emitProcessInstanceCancelled(processInstanceId, pi.getProcessDefinitionId());
     }
 
     @Override
@@ -448,6 +461,9 @@ public class DBServiceImpl implements DBService {
         entity.setMessage(message);
         incidentRepository.save(entity);
 
+        ProcessInstanceEntity pi = processInstanceRepository.findById(activityEntity.getProcessInstanceId()).orElseThrow();
+        domainEventEmitter.emitIncidentRaised(activityEntity.getProcessInstanceId(), pi.getProcessDefinitionId(), activityEntity.getBpmnElementId(), id, message);
+
         return id;
     }
 
@@ -468,6 +484,10 @@ public class DBServiceImpl implements DBService {
         IncidentEntity entity = incidentRepository.findById(incidentId).orElseThrow();
         entity.setCompletedAt(Instant.now());
         incidentRepository.save(entity);
+
+        ActivityEntity activity = activityRepository.findById(entity.getActivityId()).orElseThrow();
+        ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
+        domainEventEmitter.emitIncidentResolved(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), incidentId);
     }
 
     @Override
