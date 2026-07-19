@@ -107,6 +107,15 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        // Create real ErrorEscalationThrower with mocked dependencies and inject it (WO-AUD-23)
+        var errorEscalationThrower = new com.zorrodev.bpm.engine.handler.ErrorEscalationThrower(dbService, bpmnService, flowNavigator, eventTrigger);
+        try {
+            var eetField = ActivityServiceImpl.class.getDeclaredField("errorEscalationThrower");
+            eetField.setAccessible(true);
+            eetField.set(activityService, errorEscalationThrower);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         // Simulate @PostConstruct — initialize handler map and register in registry
         activityService.init();
     }
