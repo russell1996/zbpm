@@ -78,11 +78,23 @@ public class ActivityServiceImplTests {
     @Mock
     private com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
 
+    private com.zorrodev.bpm.engine.handler.BoundaryScheduler boundaryScheduler;
+
     @InjectMocks
     private ActivityServiceImpl activityService;
 
     @BeforeEach
     void setUp() {
+        // Create real BoundaryScheduler with mocked dependencies
+        boundaryScheduler = new com.zorrodev.bpm.engine.handler.BoundaryScheduler(dbService, elementSupport);
+        // Inject it into activityService via reflection (since @InjectMocks creates it before we have the real instance)
+        try {
+            var field = ActivityServiceImpl.class.getDeclaredField("boundaryScheduler");
+            field.setAccessible(true);
+            field.set(activityService, boundaryScheduler);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         // Simulate @PostConstruct — initialize handler map and register in registry
         activityService.init();
     }
