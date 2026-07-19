@@ -82,4 +82,9 @@ public interface ActivityService {
      * Evaluates a message subscriber's correlation-key FEEL expression.
      */
     String evaluateCorrelationKey(BpmnElementModel element, UUID processInstanceId);
+
+    /**
+     * Evaluates conditional event expressions and fires tokens for any satisfied conditions.
+     */
+    void triggerConditionalEvents(UUID processInstanceId);
 }

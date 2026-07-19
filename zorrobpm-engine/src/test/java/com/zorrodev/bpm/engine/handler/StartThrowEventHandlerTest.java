@@ -23,14 +23,15 @@ class StartThrowEventHandlerTest {
     @Mock private DBService dbService;
     @Mock private BpmnService bpmnService;
     @Mock private ActivityServiceImpl activityService;
+    @Mock private FlowNavigator flowNavigator;
 
     private StartThrowEventHandler.StartEvent startEvent;
     private StartThrowEventHandler.EscalationThrowEvent escalationThrowEvent;
 
     @BeforeEach
     void setUp() {
-        startEvent = new StartThrowEventHandler.StartEvent(dbService, activityService);
-        escalationThrowEvent = new StartThrowEventHandler.EscalationThrowEvent(dbService, activityService);
+        startEvent = new StartThrowEventHandler.StartEvent(dbService, flowNavigator);
+        escalationThrowEvent = new StartThrowEventHandler.EscalationThrowEvent(dbService, flowNavigator, activityService);
     }
 
     @Test
@@ -50,7 +51,7 @@ class StartThrowEventHandlerTest {
 
         verify(dbService).createActivity(piId, tokenId, el);
         verify(dbService).completeActivity(activityId);
-        verify(activityService).proceedToOutgoing(piId, tokenId, bpmn, el);
+        verify(flowNavigator).proceedToOutgoing(eq(piId), eq(tokenId), eq(bpmn), eq(el), isNull());
     }
 
     @Test
@@ -73,7 +74,7 @@ class StartThrowEventHandlerTest {
         verify(dbService).createActivity(piId, tokenId, el);
         verify(dbService).completeActivity(activityId);
         verify(activityService).throwEscalation(piId, tokenId, "E-200");
-        verify(activityService).proceedToOutgoing(piId, tokenId, bpmn, el);
+        verify(flowNavigator).proceedToOutgoing(eq(piId), eq(tokenId), eq(bpmn), eq(el), isNull());
     }
 
     @Test
@@ -96,6 +97,6 @@ class StartThrowEventHandlerTest {
         verify(dbService).createActivity(piId, tokenId, el);
         verify(dbService).completeActivity(activityId);
         verify(activityService).throwEscalation(piId, tokenId, "E-300");
-        verify(activityService, never()).proceedToOutgoing(any(), any(), any(), any());
+        verify(flowNavigator, never()).proceedToOutgoing(any(), any(), any(), any(), any());
     }
 }

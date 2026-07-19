@@ -2,14 +2,12 @@ package com.zorrodev.bpm.engine.handler;
 
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.*;
-import com.zorrodev.bpm.engine.service.BpmnService;
+import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
-import com.zorrodev.bpm.engine.service.impl.ActivityServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -30,7 +28,8 @@ public class SyncTaskHandler {
         private final DBService dbService;
         private final ScriptService scriptService;
         private final ElementSupport elementSupport;
-        @Lazy private final ActivityServiceImpl activityService;
+        private final FlowNavigator flowNavigator;
+        private final ActivityService activityService;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.SCRIPT_TASK; }
@@ -72,7 +71,7 @@ public class SyncTaskHandler {
             }
 
             dbService.completeActivity(activityId);
-            activityService.proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
+            flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, el, ctx.executor());
             activityService.triggerConditionalEvents(processInstanceId);
         }
     }
@@ -84,7 +83,7 @@ public class SyncTaskHandler {
         private final ScriptService scriptService;
         private final DmnService dmnService;
         private final ElementSupport elementSupport;
-        @Lazy private final ActivityServiceImpl activityService;
+        private final FlowNavigator flowNavigator;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.BUSINESS_RULE_TASK; }
@@ -120,7 +119,7 @@ public class SyncTaskHandler {
             }
 
             dbService.completeActivity(activityId);
-            activityService.proceedToOutgoing(processInstanceId, tokenId, bpmn, el);
+            flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, el, ctx.executor());
         }
     }
 }
