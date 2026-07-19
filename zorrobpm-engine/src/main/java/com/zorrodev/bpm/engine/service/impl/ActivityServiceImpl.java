@@ -78,6 +78,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private FlowNavigator flowNavigator;
 
     private Map<BpmnElementType, ElementHandler> handlers;
+    private com.zorrodev.bpm.engine.handler.ServiceTaskHandler serviceTaskHandler;
 
     @PostConstruct
     void init() {
@@ -122,10 +123,17 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             new com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent(dbService),
             new com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent(dbService, this),
             new com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent(dbService, this),
-            new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent(dbService, flowNavigator, this)
+            new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent(dbService, flowNavigator, this),
+            // Compensation/Cancel/ServiceTask handlers (WO-AUD-21)
+            new com.zorrodev.bpm.engine.handler.ServiceTaskHandler(dbService, elementSupport, multiInstanceExecutor, serviceTaskEnqueueService),
+            new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNavigator),
+            new com.zorrodev.bpm.engine.handler.CancelEndHandler(dbService, flowNavigator, this,
+                new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNavigator))
         )) {
             handlers.putIfAbsent(bean.elementType(), bean.handler());
         }
+        // Store the ServiceTaskHandler for delegation from enterServiceTask
+        serviceTaskHandler = (com.zorrodev.bpm.engine.handler.ServiceTaskHandler) handlers.get(BpmnElementType.SERVICE_TASK);
         // Start event aliases (WO-AUD-19): message/timer/signal start events behave like a plain start
         handlers.putIfAbsent(BpmnElementType.MESSAGE_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
         handlers.putIfAbsent(BpmnElementType.TIMER_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
@@ -138,21 +146,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     private Map<BpmnElementType, ElementHandler> createHandlers() {
         Map<BpmnElementType, ElementHandler> map = new EnumMap<>(BpmnElementType.class);
-        // Start event types are handled by StartThrowEventHandler via registerExtractedHandlerBeans.
-        // message/timer/signal start events use putIfAbsent on StartEventHandler.
-        // LINK_CATCH_EVENT shares the handler with START_EVENT (added after registerExtractedHandlerBeans).
-        // END_EVENT, TERMINATE_END_EVENT, ERROR_END_EVENT, ESCALATION_END_EVENT, ESCALATION_THROW_EVENT
-        // are registered via registerExtractedHandlerBeans (WO-AUD-20).
-        map.put(BpmnElementType.SERVICE_TASK, (ctx, bpmn, el) -> enterServiceTask(ctx.processInstanceId(), ctx.tokenId(), el));
-        // Catch events are wait states: the token parks here until an external trigger
-        // (timer fires / message correlated) resumes it via signal(...). Until the timer
-        // and message subsystems land, these elements at least park cleanly with an active
-        // activity instead of silently falling through to "Unsupported".
-        // Compensation throw runs the compensation handlers of completed compensation-bounded activities.
-        map.put(BpmnElementType.COMPENSATION_THROW_EVENT, (ctx, bpmn, el) -> processCompensationThrow(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-        // Cancel end (inside a transaction) compensates the transaction and routes to its cancel boundary.
-        map.put(BpmnElementType.CANCEL_END_EVENT, (ctx, bpmn, el) -> processCancelEnd(ctx.processInstanceId(), ctx.tokenId(), bpmn, el));
-
+        // All handler beans are registered via registerExtractedHandlerBeans (WO-AUD-13..21).
         return map;
     }
 
@@ -163,141 +157,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      */
     public void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, element, this);
-    }
-
-    /**
-     * Compensation throw: completes its own activity, then runs the compensation handler of every completed
-     * compensation-bounded activity in the instance, in reverse order, before continuing down its outgoing
-     * flow. Order is by activity creation time descending — for a sequential flow this is the reverse of the
-     * completion order, as BPMN requires. Each handler (off the main flow, linked by an {@code <association>})
-     * is executed synchronously on the throw's token.
-     *
-     * <p>Scope: "compensate all in the process scope" via an intermediate compensation throw, with
-     * synchronously-executable handlers. Targeted (activityRef) compensation, compensation end events and
-     * compensation within a subprocess scope are not yet supported.
-     */
-    private void processCompensationThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        // activityRef targets a single activity to compensate; null = compensate every completed activity
-        String activityRef = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getEventDefinition)
-            .map(EventDefinitionExtensionModel::getReference)
-            .orElse(null);
-        log.info("{}/{}: Compensation throw {} at {} (target {})", processInstanceId, tokenId, bpmnElement.getId(), activityId, activityRef == null ? "all" : activityRef);
-
-        List<Activity> targets = dbService.getCompletedActivities(processInstanceId);
-        if (activityRef != null) {
-            targets = targets.stream().filter(a -> activityRef.equals(a.getBpmnElementId())).toList();
-        }
-        runCompensation(processInstanceId, tokenId, bpmn, targets);
-
-        proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement);
-    }
-
-    /**
-     * Runs the compensation handler of every candidate activity that has a compensation boundary, in
-     * reverse order (by activity creation time descending — the reverse of completion order for a
-     * sequential flow). Each handler runs synchronously on {@code runToken}. Shared by the compensation
-     * throw event and transaction cancellation.
-     */
-    private void runCompensation(UUID processInstanceId, UUID runToken, BpmnProcessDefinitionModel bpmn, List<Activity> candidates) {
-        List<Activity> completed = new ArrayList<>(candidates);
-        completed.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
-        for (Activity activity : completed) {
-            BpmnElementModel boundary = findCompensationBoundary(bpmn, activity.getBpmnElementId());
-            if (boundary == null) {
-                continue;
-            }
-            String handlerId = Optional.ofNullable(boundary.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getCompensationHandlerId)
-                .orElse(null);
-            BpmnElementModel handler = handlerId == null ? null : bpmn.getElement(handlerId);
-            if (handler == null) {
-                continue;
-            }
-            log.info("{}/{}: Compensating {} via handler {}", processInstanceId, runToken, activity.getBpmnElementId(), handlerId);
-            execute(processInstanceId, runToken, bpmn, handler);
-        }
-    }
-
-    /**
-     * Cancel end event inside a transaction: compensates the transaction's completed activities (in reverse
-     * order), cancels the transaction scope, and continues from the transaction's cancel boundary. A cancel
-     * end outside a transaction scope falls back to a plain end.
-     *
-     * <p>Scope: cancel end + cancel boundary on a top-level transaction sub-process. Cancel propagation
-     * across nested transactions is not yet supported.
-     */
-    private void processCancelEnd(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement) {
-        UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
-
-        Token endToken = dbService.getToken(tokenId);
-        if (endToken == null || endToken.getScopeActivityId() == null) {
-            log.info("{}/{}: Cancel end {} outside a transaction scope, ending branch", processInstanceId, tokenId, bpmnElement.getId());
-            finishBranch(processInstanceId, tokenId, bpmn);
-            return;
-        }
-
-        UUID scopeActivityId = endToken.getScopeActivityId();
-        Activity scope = dbService.getActivity(scopeActivityId);
-        BpmnElementModel transaction = bpmn.getElement(scope.getBpmnElementId());
-        UUID parentToken = endToken.getParentId();
-        log.info("{}/{}: Cancel end {} cancelling transaction {}", processInstanceId, tokenId, bpmnElement.getId(), transaction.getId());
-
-        // compensate the transaction's completed activities (those carried by this scope token)
-        List<Activity> scopeCompleted = dbService.getCompletedActivities(processInstanceId).stream()
-            .filter(a -> tokenId.equals(a.getToken()))
-            .toList();
-        runCompensation(processInstanceId, tokenId, bpmn, scopeCompleted);
-
-        // cancel the transaction scope, then continue from the (interrupting) cancel boundary
-        dbService.cancelActiveActivitiesForToken(tokenId);
-        dbService.cancelActivity(scopeActivityId);
-
-        BpmnElementModel cancelBoundary = findCancelBoundary(bpmn, transaction.getId());
-        if (cancelBoundary != null) {
-            proceedToOutgoing(processInstanceId, parentToken, bpmn, cancelBoundary);
-        } else {
-            log.warn("{}/{}: Transaction {} cancelled but has no cancel boundary", processInstanceId, tokenId, transaction.getId());
-        }
-    }
-
-    /** Finds the cancel boundary attached to {@code hostId} (a transaction), or null if none. */
-    private BpmnElementModel findCancelBoundary(BpmnProcessDefinitionModel bpmn, String hostId) {
-        for (BpmnElementModel element : bpmn.getElements()) {
-            if (element.getType() != BpmnElementType.CANCEL_BOUNDARY_EVENT) {
-                continue;
-            }
-            String attached = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getAttachedToRef)
-                .orElse(null);
-            if (hostId.equals(attached)) {
-                return element;
-            }
-        }
-        return null;
-    }
-
-    /** Finds the compensation boundary attached to {@code hostId}, or null if none. */
-    private BpmnElementModel findCompensationBoundary(BpmnProcessDefinitionModel bpmn, String hostId) {
-        for (BpmnElementModel element : bpmn.getElements()) {
-            if (element.getType() != BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
-                continue;
-            }
-            String attached = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getAttachedToRef)
-                .orElse(null);
-            if (hostId.equals(attached)) {
-                return element;
-            }
-        }
-        return null;
     }
 
     /** Evaluates a conditional event's FEEL condition against the given variables (a leading {@code =} is stripped). */
@@ -471,17 +330,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
-        if (multiInstanceExecutor.isMultiInstance(bpmnElement)) {
-            multiInstanceExecutor.enter(processInstanceId, token, bpmnElement, this);
-            return;
-        }
-        UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement));
-        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
-
-        log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
-
-        serviceTaskEnqueueService.enqueueAfterCommit(activityId);
+        serviceTaskHandler.enter(processInstanceId, token, bpmnElement, this);
     }
 
     @Override
