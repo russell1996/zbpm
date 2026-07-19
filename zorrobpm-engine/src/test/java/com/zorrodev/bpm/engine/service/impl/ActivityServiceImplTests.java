@@ -125,6 +125,15 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        // Create real IncidentService with mocked dependencies and inject it (WO-AUD-25)
+        var incidentService = new com.zorrodev.bpm.engine.handler.IncidentService(dbService);
+        try {
+            var isField = ActivityServiceImpl.class.getDeclaredField("incidentService");
+            isField.setAccessible(true);
+            isField.set(activityService, incidentService);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         // Create real ErrorEscalationThrower with mocked dependencies and inject it (WO-AUD-23)
         var errorEscalationThrower = new com.zorrodev.bpm.engine.handler.ErrorEscalationThrower(dbService, bpmnService, flowNavigator, eventTrigger);
         try {

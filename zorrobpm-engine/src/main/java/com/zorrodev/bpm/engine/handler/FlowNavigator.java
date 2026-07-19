@@ -3,6 +3,8 @@ package com.zorrodev.bpm.engine.handler;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.*;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
+import com.zorrodev.bpm.engine.dto.Activity;
+import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
@@ -109,5 +111,64 @@ public class FlowNavigator {
         }
 
         return flowActivityId;
+    }
+
+    /**
+     * Ends the current branch at an end event: if the token is inside an embedded subprocess scope,
+     * completes the container and continues the parent token from the subprocess's outgoing flows;
+     * otherwise completes the process instance and continues the parent call activity (if any). Shared
+     * by plain and escalation end events.
+     */
+    public void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, TokenExecutor executor) {
+        Token endToken = dbService.getToken(tokenId);
+        if (endToken != null && endToken.getScopeActivityId() != null) {
+            // end of an embedded subprocess scope: complete the container and continue the parent
+            // token from the subprocess's outgoing flows; the process instance stays running
+            UUID subProcessActivityId = endToken.getScopeActivityId();
+            dbService.completeActivity(subProcessActivityId);
+            Activity subProcessActivity = dbService.getActivity(subProcessActivityId);
+            BpmnElementModel subProcessElement = bpmn.getElement(subProcessActivity.getBpmnElementId());
+            UUID parentTokenId = endToken.getParentId();
+            log.info("{}/{}: Completing {}: {}/{}", processInstanceId, parentTokenId, subProcessElement.getType(), subProcessActivityId, subProcessElement.getId());
+            proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement, executor);
+            return;
+        }
+
+        dbService.completeProcessInstance(processInstanceId);
+
+        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+        UUID parentActivityId = pi.getParentActivityId();
+        if (parentActivityId != null) {
+            // a call activity finished: continuation mutates the *parent* instance, so lock it
+            // (consistent child→parent ordering keeps this deadlock-free) before advancing it
+            Activity parentActivity = dbService.getActivity(parentActivityId);
+            dbService.lockProcessInstance(parentActivity.getProcessInstanceId());
+            dbService.completeActivity(parentActivityId);
+
+            UUID parentProcessInstanceId = parentActivity.getProcessInstanceId();
+            ProcessInstance parentProcessInstance = dbService.getProcessInstance(parentActivity.getProcessInstanceId());
+            UUID parentProcessDefinitionId = parentProcessInstance.getProcessDefinitionId();
+            UUID parentToken = parentActivity.getToken();
+            BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentProcessDefinitionId);
+            BpmnElementModel parentBpmnElement = parentBpmn.getElement(parentActivity.getBpmnElementId());
+            if (parentBpmnElement == null) {
+                throw new IllegalStateException("Call activity element '" + parentActivity.getBpmnElementId() + "' not found in the parent process definition");
+            }
+
+            // Camunda 8: propagateAllChildVariables (default true) copies the child's variables up to the
+            // parent; when explicitly false, the child's variables are not propagated.
+            boolean propagate = Optional.ofNullable(parentBpmnElement)
+                .map(BpmnElementModel::getExtensions)
+                .map(BpmnElementExtensionModel::getCallActivityExtension)
+                .map(ext -> ext.getPropagateAllChildVariables())
+                .orElse(Boolean.TRUE);
+            if (propagate) {
+                dbService.setVariables(parentProcessInstanceId, dbService.getVariables(processInstanceId));
+            }
+
+            log.info("{}/{}: Completing {}: {}/{}", parentProcessInstanceId, parentToken, parentActivity.getType(), parentActivityId, parentActivity.getBpmnElementId());
+
+            proceedToOutgoing(parentProcessInstanceId, parentToken, parentBpmn, parentBpmnElement, executor);
+        }
     }
 }

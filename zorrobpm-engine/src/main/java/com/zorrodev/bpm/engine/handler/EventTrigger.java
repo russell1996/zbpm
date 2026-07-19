@@ -11,6 +11,7 @@ import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.SubProcessExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
+import com.zorrodev.bpm.engine.dto.SignalSubscription;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
@@ -239,6 +240,53 @@ public class EventTrigger {
                 Instant dueAt = elementSupport.computeDueAt(ext.getTriggerTimer(), element.getId());
                 dbService.createEventSubprocessTimerJob(processInstanceId, dueAt, element.getId());
                 log.info("{}: Event sub-process {} scheduled timer for {}", processInstanceId, element.getId(), dueAt);
+            }
+        }
+    }
+
+    /**
+     * Broadcasts a signal: wakes every active subscription with the matching name, across process
+     * instances (1:N). Each waiting activity is signalled under its own per-instance lock, so
+     * concurrent broadcasts/correlations stay isolated per instance.
+     *
+     * @param signalFn callback to signal a waiting activity (avoids circular dependency with CompletionService)
+     */
+    public void broadcastSignal(String signalName, List<ProcessVariable> variables, TokenExecutor executor,
+                                java.util.function.BiConsumer<UUID, List<ProcessVariable>> signalFn) {
+        List<SignalSubscription> subscriptions = dbService.findSignalSubscriptions(signalName);
+        List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> startSubscriptions =
+            dbService.findSignalStartSubscriptions(signalName);
+
+        if (subscriptions.isEmpty() && startSubscriptions.isEmpty()) {
+            log.info("No active subscription for signal '{}'", signalName);
+            return;
+        }
+
+        // signal start: every subscribed definition starts a fresh instance (broadcast)
+        for (com.zorrodev.bpm.engine.dto.SignalStartSubscription start : startSubscriptions) {
+            log.info("Signal '{}' starting a new instance of {} at {}", signalName, start.getProcessDefinitionId(), start.getElementId());
+            startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables, executor);
+        }
+
+        for (SignalSubscription subscription : subscriptions) {
+            if (subscription.getEventSubprocessId() != null) {
+                // signal-started event sub-process: consume only for interrupting handlers (it can re-fire otherwise)
+                log.info("Broadcasting signal '{}' to event sub-process {} on instance {}", signalName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
+                boolean interrupting = triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, executor);
+                if (interrupting) {
+                    dbService.consumeSignalSubscription(subscription.getId());
+                }
+                continue;
+            }
+            dbService.consumeSignalSubscription(subscription.getId());
+            if (subscription.getBoundaryElementId() != null) {
+                // signal boundary: fire the boundary (interrupt/non-interrupt the host)
+                log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, executor);
+            } else {
+                // signal catch: signal the waiting activity
+                log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                signalFn.accept(subscription.getActivityId(), variables);
             }
         }
     }
