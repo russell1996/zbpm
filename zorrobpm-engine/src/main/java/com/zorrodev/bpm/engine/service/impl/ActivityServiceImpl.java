@@ -74,6 +74,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final HandlerRegistry handlerRegistry;
     private final com.zorrodev.bpm.engine.handler.MultiInstanceExecutor multiInstanceExecutor;
     private final com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
+    private final com.zorrodev.bpm.engine.handler.BoundaryScheduler boundaryScheduler;
     private FlowNavigator flowNavigator;
 
     private Map<BpmnElementType, ElementHandler> handlers;
@@ -461,24 +462,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         return boundaries;
     }
 
-    private Instant computeDueAt(BpmnElementModel element) {
-        return computeDueAt(Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getTimerEventExtension)
-            .orElse(null), element.getId());
-    }
-
-    private Instant computeDueAt(TimerEventExtensionModel timer, String elementId) {
-        if (timer == null || timer.getType() == null || timer.getExpression() == null) {
-            throw new EngineException("Timer event " + elementId + " has no timer definition");
-        }
-        return switch (timer.getType()) {
-            case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
-            case DATE -> Instant.parse(timer.getExpression());
-            // timeCycle: first occurrence of an ISO repeating interval (R[n]/<duration>) or a cron expression
-            case CYCLE -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
-        };
-    }
-
     /**
      * Parks the token at the failing element as an incident instead of propagating the exception
      * (which would roll back the whole process transaction). Marks the element's activity ERROR
@@ -683,116 +666,18 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
-        scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
-        scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
-        scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
     }
 
-
-    /**
-     * Registers a signal subscription for every signal boundary event attached to the given host
-     * activity. When such a signal is later broadcast the boundary fires (see {@link #broadcastSignal}).
-     */
-    private void scheduleSignalBoundaries(UUID processInstanceId, UUID hostActivityId, BpmnElementModel host) {
-        BpmnProcessDefinitionModel pd = host.getProcessDefinition();
-        if (pd == null) {
-            return;
-        }
-        for (BpmnElementModel element : pd.getElements()) {
-            if (element.getType() != BpmnElementType.SIGNAL_BOUNDARY_EVENT) {
-                continue;
-            }
-            String attachedTo = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getAttachedToRef)
-                .orElse(null);
-            if (!host.getId().equals(attachedTo)) {
-                continue;
-            }
-            String signalName = com.zorrodev.bpm.engine.handler.SignalCatchHandler.signalName(element);
-            if (signalName == null) {
-                throw new EngineException("Signal boundary " + element.getId() + " has no signal name");
-            }
-            dbService.createSignalSubscription(processInstanceId, hostActivityId, signalName, element.getId());
-            log.info("{}: Signal boundary {} subscribed to '{}' on host activity {}", processInstanceId, element.getId(), signalName, hostActivityId);
-        }
-    }
-
-    /**
-     * Registers a message subscription for every message boundary event attached to the given host
-     * activity. When such a message is later correlated the boundary fires (see {@link #correlateMessage}).
-     */
-    private void scheduleMessageBoundaries(UUID processInstanceId, UUID hostActivityId, BpmnElementModel host) {
-        BpmnProcessDefinitionModel pd = host.getProcessDefinition();
-        if (pd == null) {
-            return;
-        }
-        for (BpmnElementModel element : pd.getElements()) {
-            if (element.getType() != BpmnElementType.MESSAGE_BOUNDARY_EVENT) {
-                continue;
-            }
-            String attachedTo = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getAttachedToRef)
-                .orElse(null);
-            if (!host.getId().equals(attachedTo)) {
-                continue;
-            }
-            String messageName = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getMessageEventExtension)
-                .map(MessageEventExtensionModel::getMessageName)
-                .orElseThrow(() -> new EngineException("Message boundary " + element.getId() + " has no message name"));
-            String correlationKey = evaluateCorrelationKey(element, processInstanceId);
-            dbService.createMessageSubscription(processInstanceId, hostActivityId, messageName, element.getId(), correlationKey);
-            log.info("{}: Message boundary {} subscribed to '{}' (key {}) on host activity {}", processInstanceId, element.getId(), messageName, correlationKey, hostActivityId);
-        }
-    }
 
     /**
      * Evaluates a message subscriber's correlation-key FEEL expression.
-     * Used by scheduleMessageBoundaries and MessageCatchHandler.
      */
     @Override
     public String evaluateCorrelationKey(BpmnElementModel element, UUID processInstanceId) {
-        String expression = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getMessageEventExtension)
-            .map(MessageEventExtensionModel::getCorrelationKeyExpression)
-            .filter(s -> !s.isBlank())
-            .orElse(null);
-        if (expression == null) {
-            return null;
-        }
-        if (expression.startsWith("=")) {
-            expression = expression.substring(1);
-        }
-        Object value = scriptService.evaluateExpression(expression, dbService.getVariables(processInstanceId));
-        return value == null ? null : value.toString();
-    }
-
-    /**
-     * Schedules interrupting timer boundary jobs for any timer boundary event attached to the
-     * given host activity. When such a timer fires before the host completes, the host is cancelled
-     * and flow continues from the boundary's outgoing (see {@link #fireBoundaryTimer}).
-     */
-    private void scheduleBoundaryTimers(UUID processInstanceId, UUID hostActivityId, BpmnElementModel host) {
-        BpmnProcessDefinitionModel pd = host.getProcessDefinition();
-        if (pd == null) {
-            return;
-        }
-        for (BpmnElementModel element : pd.getElements()) {
-            if (element.getType() != BpmnElementType.BOUNDARY_TIMER_EVENT) {
-                continue;
-            }
-            String attachedTo = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getAttachedToRef)
-                .orElse(null);
-            if (host.getId().equals(attachedTo)) {
-                Instant dueAt = computeDueAt(element);
-                dbService.createTimerJob(hostActivityId, dueAt, element.getId());
-                log.info("{}: Boundary timer {} scheduled for {} on host activity {}", processInstanceId, element.getId(), dueAt, hostActivityId);
-            }
-        }
+        return elementSupport.evaluateCorrelationKey(element, processInstanceId);
     }
 
     @Override
@@ -945,7 +830,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         if (!infinite && remaining != null && remaining <= 0) {
             return; // done
         }
-        dbService.createTimerJob(hostActivityId, computeDueAt(boundary), boundary.getId(), remaining);
+        dbService.createTimerJob(hostActivityId, elementSupport.computeDueAt(boundary), boundary.getId(), remaining);
     }
 
     @Override
@@ -1204,7 +1089,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
                 dbService.createEventSubprocessSignalSubscription(processInstanceId, ext.getTriggerSignalName(), element.getId());
                 log.info("{}: Event sub-process {} subscribed to signal '{}'", processInstanceId, element.getId(), ext.getTriggerSignalName());
             } else if (ext.getTriggerTimer() != null) {
-                Instant dueAt = computeDueAt(ext.getTriggerTimer(), element.getId());
+                Instant dueAt = elementSupport.computeDueAt(ext.getTriggerTimer(), element.getId());
                 dbService.createEventSubprocessTimerJob(processInstanceId, dueAt, element.getId());
                 log.info("{}: Event sub-process {} scheduled timer for {}", processInstanceId, element.getId(), dueAt);
             }
