@@ -97,6 +97,16 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        // Create real EventTrigger with mocked dependencies and inject it
+        var flowNavigator = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService);
+        var eventTrigger = new com.zorrodev.bpm.engine.handler.EventTrigger(dbService, bpmnService, scriptService, flowNavigator, elementSupport);
+        try {
+            var etField = ActivityServiceImpl.class.getDeclaredField("eventTrigger");
+            etField.setAccessible(true);
+            etField.set(activityService, eventTrigger);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         // Simulate @PostConstruct — initialize handler map and register in registry
         activityService.init();
     }
