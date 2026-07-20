@@ -6,8 +6,10 @@
 > Общая механика (exchange/queue/binding, фильтр по assignee) — в [event-notifications-guide.md](event-notifications-guide.md).
 
 ## Как читать
-- **routing-key** ставит **движок** на каждое письмо. Сейчас `routing-key = <type>` (столбец 1).
-  После **EVT-7** формат станет `process.<processDefinitionKey>.<type>.<elementId>`.
+- **routing-key** ставит **движок** на каждое письмо. Формат (EVT-7, в проде):
+  `process.<processDefinitionKey>.<type>[.<elementId>]`, напр. `process.vacation.user-task.created.Approve`.
+  Если pdKey не удалось разрезолвить — fallback на `<type>` (столбец 1 таблицы). pdKey/elementId санитизируются
+  (символы вне `[A-Za-z0-9_-]` → `_`).
 - **binding-key** пишешь **ты** при привязке своей очереди (паттерн; `*` = один сегмент, `#` = хвост).
 - Exchange один: `zorrobpm.events` (topic, durable).
 
@@ -40,19 +42,20 @@
 | `processDefinitionId` | uuid определения | ✅ |
 | `elementId` | id элемента BPMN (где применимо) | ✅ |
 | `data` | тип-специфичная нагрузка (таблица выше) | ✅ |
-| `processDefinitionKey` | человекочитаемый ключ процесса | ⏳ EVT-7 |
-| `sequence` | сквозной курсор (докачка, Контракт B) | в таблице `events` есть; в AMQP-конверт добавит EVT-7 |
+| `processDefinitionKey` | человекочитаемый ключ процесса | ✅ (EVT-7) |
+| `sequence` | сквозной курсор (докачка, Контракт B) | в таблице `events` есть; в AMQP-конверт пока НЕ кладётся (бери через Контракт B) |
 
 ## Примеры binding-key (что писать при подписке)
 
-| Хочешь получать | binding-key (сейчас) | binding-key (после EVT-7) |
-|---|---|---|
-| только созданные задачи | `user-task.created` | `process.*.user-task.created.#` |
-| все задачи (created+completed) | `user-task.#` | `process.*.user-task.#` |
-| всё по процессу `vacation` | *(нельзя, ключ без pdKey)* | `process.vacation.#` |
-| все инциденты | `incident.#` | `process.*.incident.#` |
-| завершения инстансов | `process-instance.completed` | `process.*.process-instance.completed.#` |
-| вообще всё | `#` | `process.#` |
+| Хочешь получать | binding-key |
+|---|---|
+| всё по процессу `vacation` | `process.vacation.#` |
+| все задачи (created+completed) в vacation | `process.vacation.user-task.#` |
+| только созданные задачи в vacation | `process.vacation.user-task.created.#` |
+| конкретный элемент | `process.vacation.user-task.created.Approve` |
+| все инциденты по всем процессам | `process.*.incident.#` |
+| завершения инстансов | `process.*.process-instance.completed.#` |
+| вообще всё | `process.#` |
 
 ## Правила потребления (кратко)
 - Доставка **at-least-once** → дедуп по `eventId` обязателен.

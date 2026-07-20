@@ -4,9 +4,9 @@
 > что-то произошло (появилась задача, завершился процесс, поднялся инцидент), и как отфильтровать это
 > «до конкретного сотрудника». Читай как будто ты видишь RabbitMQ впервые.
 >
-> Что здесь описано — это **целевая схема** (routing-key `process.<pdKey>...` + assignee в событии). Часть
-> её уже в проде (таблица событий, outbox, topic-exchange), часть — в работе (EVT-7/EVT-8). В конце есть
-> раздел «Что уже есть, а что доделывается» — честная граница.
+> Почти вся схема уже в проде (события, outbox, topic-exchange, обогащённый routing-key `process.<pdKey>...`,
+> SSE-мост). Осталось только обогащение `data` события полем assignee (EVT-8). В конце — раздел «Что уже есть,
+> а что доделывается» с честной границей.
 
 ---
 
@@ -290,21 +290,23 @@ public void onEvent(EventEnvelope e) {
 - topic-exchange `zorrobpm.events`;
 - каталог событий: `process-instance.started/completed/cancelled`, `activity.completed`,
   `user-task.created/completed`, `service-task.created`, `incident.raised/resolved`;
+- **обогащённый routing-key** `process.<pdKey>.<type>[.<elementId>]` + `processDefinitionKey` в конверте +
+  санитизация (EVT-7) — можно биндиться `process.vacation.#`;
 - запрос-снапшот `GET /user-tasks?assignee=…` со всеми фильтрами;
-- Контракт B (`GET /api/events`) с authz по grants.
+- Контракт B (`GET /api/events`) с authz по grants;
+- **Контракт C** — SSE-мост `GET /api/events/stream` + `EventAuthzResolver` (authz DENY-by-default) + фронт-
+  интеграция `handleEvent` в Pinia-сторах (EVT-4/EVT-5).
 
-**В работе / нужно доделать, чтобы эта схема заработала целиком:**
+**В работе / нужно доделать:**
 
 | WO | Что | Без этого… |
 |---|---|---|
-| **EVT-7** | routing-key `process.<pdKey>.<domain>.<action>.<element>` + `processDefinitionKey` в конверте + санитизация точек/пробелов в pdKey/elementId | сейчас адрес = только `type`; биндиться `process.vacation.#` пока нельзя |
-| **EVT-8a** | добавить в `data` события `assignee`, `candidateUsers`, `candidateGroups` | сейчас в `data` только `activityId`; BFF вынужден доспрашивать `GET /user-tasks/{id}` на каждое событие |
-| **EVT-8b** | эмитить `user-task.assigned`/`unassigned` при claim/reassign | claim из пула не убирает задачу у остальных вживую |
-| **EVT-4/5** | SSE-мост (Контракт C) + фронт-интеграция | нет push в браузер напрямую (сейчас на доработке) |
+| **EVT-8a** | добавить в `data` события `assignee`, `candidateGroups` (`candidateUsers` если есть в модели) | сейчас в `data` только `activityId`; BFF вынужден доспрашивать `GET /user-tasks/{id}` на каждое событие |
+| **EVT-8b** | эмитить `user-task.assigned`/`unassigned` при claim/reassign (условно — если шов появится) | claim из пула не убирает задачу у остальных вживую |
 
-> Текущее состояние конверта в коде: [DomainEventEmitter.java:60-67](../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventEmitter.java#L60-L67)
-> кладёт `eventId, type, occurredAt, processInstanceId, processDefinitionId, elementId, data`. `processDefinitionKey`
-> и обогащённый routing-key добавляет EVT-7; assignee в `data` — EVT-8a.
+> Состояние конверта в коде: [DomainEventEmitter.java](../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventEmitter.java)
+> кладёт `eventId, type, occurredAt, processInstanceId, processDefinitionId, processDefinitionKey, elementId, data`.
+> assignee в `data` — добавит EVT-8a.
 
 ---
 
