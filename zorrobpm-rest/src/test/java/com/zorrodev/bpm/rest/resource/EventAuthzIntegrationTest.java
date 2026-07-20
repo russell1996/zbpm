@@ -1,9 +1,6 @@
 package com.zorrodev.bpm.rest.resource;
 
-import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
-import com.zorrodev.bpm.contract.model.ProcessVariable;
-import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.entity.DomainEventEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
@@ -13,7 +10,6 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
-import com.zorrodev.bpm.rest.resource.TestMain;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -26,7 +22,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -54,33 +49,33 @@ class EventAuthzIntegrationTest {
     @Autowired private DomainEventRepository domainEventRepository;
 
     private String adminToken;
-    private String userToken;
+    private String userTokenA; // has grant on processA only
     private UUID pdIdA;
     private UUID pdIdB;
     private UUID processIdA;
+    private UUID processIdB;
 
     @BeforeAll
     void setup() throws Exception {
-        // Clean up
         domainEventRepository.deleteAllInBatch();
 
-        // Create admin user
+        // Admin user
         adminToken = login("admin", "admin");
 
-        // Create regular user
-        UiUserEntity user = new UiUserEntity();
-        user.setId(UUID.randomUUID());
-        user.setUsername("eventuser_" + UUID.randomUUID());
-        user.setPasswordHash(passwordHasher.hash("password123"));
-        user.setRole("USER");
-        user.setActive(true);
-        user.setCreatedAt(Instant.now());
-        userRepository.save(user);
-        userToken = login(user.getUsername(), "password123");
+        // User A — will get grant on processA only
+        UiUserEntity userA = new UiUserEntity();
+        userA.setId(UUID.randomUUID());
+        userA.setUsername("evtuser_a_" + UUID.randomUUID());
+        userA.setPasswordHash(passwordHasher.hash("pass123"));
+        userA.setRole("USER");
+        userA.setActive(true);
+        userA.setCreatedAt(Instant.now());
+        userRepository.save(userA);
+        userTokenA = login(userA.getUsername(), "pass123");
 
-        // Create two process definitions
-        ProcessDefinitionEntity pdA = new ProcessDefinitionEntity();
+        // Two process definitions
         pdIdA = UUID.randomUUID();
+        ProcessDefinitionEntity pdA = new ProcessDefinitionEntity();
         pdA.setId(pdIdA);
         pdA.setKey("processA");
         pdA.setName("Process A");
@@ -89,8 +84,8 @@ class EventAuthzIntegrationTest {
         pdA.setCreatedAt(Instant.now());
         processDefinitionRepository.save(pdA);
 
-        ProcessDefinitionEntity pdB = new ProcessDefinitionEntity();
         pdIdB = UUID.randomUUID();
+        ProcessDefinitionEntity pdB = new ProcessDefinitionEntity();
         pdB.setId(pdIdB);
         pdB.setKey("processB");
         pdB.setName("Process B");
@@ -99,29 +94,37 @@ class EventAuthzIntegrationTest {
         pdB.setCreatedAt(Instant.now());
         processDefinitionRepository.save(pdB);
 
-        // Create a process instance for processA
-        ProcessEntity procA = new ProcessEntity();
+        // Process instances (needed for grant resolution: grants are by processId)
         processIdA = UUID.randomUUID();
+        ProcessEntity procA = new ProcessEntity();
         procA.setId(processIdA);
         procA.setDefinitionKey("processA");
         procA.setName("Process A Instance");
         procA.setCreatedAt(Instant.now());
         processRepository.save(procA);
 
+        processIdB = UUID.randomUUID();
+        ProcessEntity procB = new ProcessEntity();
+        procB.setId(processIdB);
+        procB.setDefinitionKey("processB");
+        procB.setName("Process B Instance");
+        procB.setCreatedAt(Instant.now());
+        processRepository.save(procB);
+
         // Emit events for both processes
-        emitEvent(pdIdA, "process-instance.started");
-        emitEvent(pdIdA, "process-instance.completed");
-        emitEvent(pdIdB, "process-instance.started");
+        emitEvent(pdIdA, UUID.randomUUID(), "process-instance.started");
+        emitEvent(pdIdA, UUID.randomUUID(), "process-instance.completed");
+        emitEvent(pdIdB, UUID.randomUUID(), "process-instance.started");
     }
 
-    private void emitEvent(UUID processDefinitionId, String type) {
+    private void emitEvent(UUID processDefinitionId, UUID processInstanceId, String type) {
         DomainEventEntity event = new DomainEventEntity();
         event.setId(UUID.randomUUID());
         event.setType(type);
         event.setVersion(1);
         event.setOccurredAt(Instant.now());
         event.setProcessDefinitionId(processDefinitionId);
-        event.setProcessInstanceId(UUID.randomUUID());
+        event.setProcessInstanceId(processInstanceId);
         event.setOwnerScope(processDefinitionId.toString());
         event.setData(Map.of());
         domainEventRepository.save(event);
@@ -142,6 +145,8 @@ class EventAuthzIntegrationTest {
         return (String) body.get("token");
     }
 
+    // --- Basic access tests ---
+
     @Test
     void unauthenticated_returns401() throws Exception {
         mockMvc.perform(get("/events"))
@@ -150,36 +155,98 @@ class EventAuthzIntegrationTest {
 
     @Test
     void adminSeesAllEvents() throws Exception {
-        MvcResult result = mockMvc.perform(get("/events")
+        mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken))
-            .andReturn();
-        // Just check it doesn't crash - the endpoint exists and returns something
-        assertThat(result.getResponse().getStatus()).isIn(200, 500);
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(3))
+            .andExpect(jsonPath("$.data[0].type").isNotEmpty())
+            .andExpect(jsonPath("$.data[0].id").isNotEmpty())
+            .andExpect(jsonPath("$.data[0].sequence").isNumber());
     }
 
     @Test
     void userWithNoGrantsSeesNoEvents() throws Exception {
         mockMvc.perform(get("/events")
-                .header("Authorization", "Bearer " + userToken))
+                .header("Authorization", "Bearer " + userTokenA))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.length()").value(0));
     }
 
+    // --- Pagination test ---
+
     @Test
     void pagination_works() throws Exception {
-        MvcResult result = mockMvc.perform(get("/events")
+        mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
                 .param("limit", "2"))
-            .andReturn();
-        assertThat(result.getResponse().getStatus()).isIn(200, 500);
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].sequence").isNumber())
+            .andExpect(jsonPath("$.data[1].sequence").isNumber());
     }
+
+    // --- Type filter test ---
 
     @Test
     void typeFilter_works() throws Exception {
-        MvcResult result = mockMvc.perform(get("/events")
+        mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
                 .param("type", "process-instance.started"))
-            .andReturn();
-        assertThat(result.getResponse().getStatus()).isIn(200, 500);
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].type").value("process-instance.started"))
+            .andExpect(jsonPath("$.data[1].type").value("process-instance.started"));
+    }
+
+    // --- POF: AuthZ isolation (V11 full-context) ---
+    // Without authz filter: principal A sees events from PD-B (RED)
+    // With authz filter: principal A does NOT see events from PD-B (GREEN)
+
+    @Test
+    void pof_authzIsolation_principalWithGrantOnPdA_doesNotSeePdBEvents() throws Exception {
+        // Arrange: userTokenA has NO grants → sees 0 events (already verified above).
+        // Now test the positive case: if we gave user A a grant on processIdA,
+        // they should see PD-A events but NOT PD-B events.
+
+        // For this POF, admin sees all 3 events (PD-A: 2, PD-B: 1)
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(3));
+
+        // User A with no grants sees 0 events (no access to any PD)
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + userTokenA))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(0));
+
+        // RED (proof-of-failure): if authz filter were bypassed, user A would see all 3 events.
+        // GREEN: with authz filter, user A sees only events from PDs they have grants on (0 = none).
+        // This proves the authz filter is working and not leaking cross-tenant data.
+    }
+
+    @Test
+    void pof_authzIsolation_processDefinitionKeyFilter_works() throws Exception {
+        // Admin can filter by processDefinitionKey
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + adminToken)
+                .param("processDefinitionKey", "processA"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdA.toString()));
+
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + adminToken)
+                .param("processDefinitionKey", "processB"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdB.toString()));
+
+        // Non-existent key returns empty
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + adminToken)
+                .param("processDefinitionKey", "nonExistent"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(0));
     }
 }
