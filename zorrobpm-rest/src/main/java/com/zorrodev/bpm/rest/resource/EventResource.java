@@ -48,6 +48,16 @@ public class EventResource {
             return ResponseEntity.status(401).build();
         }
 
+        // Validate processInstanceId UUID
+        UUID piId = null;
+        if (processInstanceId != null && !processInstanceId.isBlank()) {
+            try {
+                piId = UUID.fromString(processInstanceId);
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().build();
+            }
+        }
+
         // Resolve allowed processDefinitionIds based on grants (null = see all)
         Collection<UUID> allowedPdIds = eventAuthzResolver.resolve(principal, processDefinitionKey);
         if (allowedPdIds != null && allowedPdIds.isEmpty()) {
@@ -61,7 +71,14 @@ public class EventResource {
         int maxResults = limit != null ? Math.min(limit, 100) : 50;
 
         List<DomainEventEntity> events;
-        if (allowedPdIds == null) {
+        if (piId != null) {
+            // ProcessInstanceId filter — SQL-level
+            if (allowedPdIds == null) {
+                events = domainEventRepository.findSinceByProcessInstanceId(cursor, piId, maxResults + 100);
+            } else {
+                events = domainEventRepository.findSinceForPrincipalByProcessInstanceId(cursor, allowedPdIds, piId, maxResults + 100);
+            }
+        } else if (allowedPdIds == null) {
             // Full access — no filter
             events = domainEventRepository.findSince(cursor, maxResults + 100);
         } else {
