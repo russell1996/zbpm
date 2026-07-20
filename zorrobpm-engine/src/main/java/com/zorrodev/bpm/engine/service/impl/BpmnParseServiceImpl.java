@@ -26,10 +26,8 @@ import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
-import jakarta.xml.bind.JAXB;
+import com.zorrodev.bpm.engine.xml.SecureXmlParser;
 import org.springframework.stereotype.Service;
-
-import java.io.StringReader;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +39,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     @Override
     public com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel parse(String bpmn) throws BpmnParseException {
         try {
-            BpmnDefinitionsModel definitions = JAXB.unmarshal(new StringReader(bpmn), BpmnDefinitionsModel.class);
+            BpmnDefinitionsModel definitions = SecureXmlParser.unmarshal(bpmn, BpmnDefinitionsModel.class);
             BpmnProcessDefinitionModel process = definitions.getProcess();
 
             checkBpmn(process);
