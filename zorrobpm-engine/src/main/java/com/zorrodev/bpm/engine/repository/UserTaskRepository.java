@@ -57,6 +57,19 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
     @Query("UPDATE UserTaskEntity e SET e.completedAt = :completedAt WHERE e.id = :taskId")
     void setCompletedAt(UUID taskId, Instant completedAt);
 
+    @Modifying
+    @Query("UPDATE UserTaskEntity e SET e.assignee = :assignee WHERE e.id = :taskId")
+    void setAssignee(UUID taskId, String assignee);
+
+    /**
+     * Atomic claim: assigns only if currently unassigned. Returns the number of rows updated
+     * (1 = claimed, 0 = already claimed by someone else). Closes the read-check-write race:
+     * two concurrent claims cannot both succeed, the second sees 0 rows.
+     */
+    @Modifying
+    @Query("UPDATE UserTaskEntity e SET e.assignee = :assignee WHERE e.id = :taskId AND e.assignee IS NULL")
+    int claimAssignee(UUID taskId, String assignee);
+
     List<UserTaskEntity> findByProcessInstanceId(UUID processInstanceId);
 
     @Query("SELECT e.bpmnElementId AS bpmnElementId, COUNT(e.id) AS count FROM UserTaskEntity e WHERE e.processDefinitionId = :processDefinitionId AND e.completedAt IS NULL GROUP BY e.bpmnElementId")

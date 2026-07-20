@@ -301,6 +301,40 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void claimUserTask(UUID taskId, String assignee) {
+        UserTaskEntity ut = userTaskRepository.findById(taskId).orElseThrow();
+        if (ut.getCompletedAt() != null) {
+            throw new IllegalStateException("User task is already completed");
+        }
+        // Atomic claim: only one concurrent claimant wins (WHERE assignee IS NULL).
+        int updated = userTaskRepository.claimAssignee(taskId, assignee);
+        if (updated == 0) {
+            throw new IllegalStateException("User task is already assigned");
+        }
+        domainEventEmitter.emitUserTaskAssigned(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), taskId, assignee);
+    }
+
+    @Override
+    public void unclaimUserTask(UUID taskId) {
+        UserTaskEntity ut = userTaskRepository.findById(taskId).orElseThrow();
+        if (ut.getCompletedAt() != null) {
+            throw new IllegalStateException("User task is already completed");
+        }
+        userTaskRepository.setAssignee(taskId, null);
+        domainEventEmitter.emitUserTaskUnassigned(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), taskId);
+    }
+
+    @Override
+    public void assignUserTask(UUID taskId, String assignee) {
+        UserTaskEntity ut = userTaskRepository.findById(taskId).orElseThrow();
+        if (ut.getCompletedAt() != null) {
+            throw new IllegalStateException("User task is already completed");
+        }
+        userTaskRepository.setAssignee(taskId, assignee);
+        domainEventEmitter.emitUserTaskAssigned(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), taskId, assignee);
+    }
+
+    @Override
     public Activity getActivity(UUID activityId) {
         ActivityEntity activityEntity = activityRepository.findById(activityId).orElseThrow();
         return getActivity(activityEntity);

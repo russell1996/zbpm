@@ -11,6 +11,8 @@ public enum DomainEventType {
     ACTIVITY_COMPLETED("activity.completed"),
     USER_TASK_CREATED("user-task.created"),
     USER_TASK_COMPLETED("user-task.completed"),
+    USER_TASK_ASSIGNED("user-task.assigned"),
+    USER_TASK_UNASSIGNED("user-task.unassigned"),
     SERVICE_TASK_CREATED("service-task.created"),
     INCIDENT_RAISED("incident.raised"),
     INCIDENT_RESOLVED("incident.resolved");
