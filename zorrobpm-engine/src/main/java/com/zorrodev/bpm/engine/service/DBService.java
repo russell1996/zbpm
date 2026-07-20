@@ -73,6 +73,12 @@ public interface DBService {
 
     void completeUserTask(UUID serviceTaskId);
 
+    void claimUserTask(UUID taskId, String assignee);
+
+    void unclaimUserTask(UUID taskId);
+
+    void assignUserTask(UUID taskId, String assignee);
+
     Activity getActivity(UUID activityId);
 
     List<ProcessVariable> getVariables(@NonNull UUID processInstanceId);

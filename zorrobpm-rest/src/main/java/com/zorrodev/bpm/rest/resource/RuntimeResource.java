@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.RuntimeContract;
+import com.zorrodev.bpm.contract.dto.AssignUserTaskDTO;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
@@ -210,6 +211,109 @@ public class RuntimeResource implements RuntimeContract {
         IdDTO result = Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
         auditLogService.record(getPrincipal(), "COMPLETE_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), onBehalfOf);
         return result;
+    }
+
+    @Transactional
+    @Override
+    public IdDTO claimUserTask(@PathVariable UUID id) {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+
+        UserTaskEntity task = userTaskRepository.findById(id).orElse(null);
+        if (task == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found");
+        }
+        if (task.getCompletedAt() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User task is already completed");
+        }
+        if (task.getAssignee() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User task is already assigned");
+        }
+
+        if (!authorizationService.canClaimUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+        }
+
+        // Assignee: X-On-Behalf-Of header, otherwise principal id
+        String assignee = readOnBehalfOf();
+        if (assignee == null || assignee.isBlank()) {
+            assignee = resolvePrincipalId(principal);
+        }
+
+        dbService.claimUserTask(id, assignee);
+        auditLogService.record(getPrincipal(), "CLAIM_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), assignee);
+
+        IdDTO result = new IdDTO();
+        result.setId(id);
+        return result;
+    }
+
+    @Transactional
+    @Override
+    public IdDTO unclaimUserTask(@PathVariable UUID id) {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+
+        UserTaskEntity task = userTaskRepository.findById(id).orElse(null);
+        if (task == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found");
+        }
+        if (task.getCompletedAt() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User task is already completed");
+        }
+
+        if (!authorizationService.canClaimUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+        }
+
+        dbService.unclaimUserTask(id);
+        auditLogService.record(getPrincipal(), "UNCLAIM_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString());
+
+        IdDTO result = new IdDTO();
+        result.setId(id);
+        return result;
+    }
+
+    @Transactional
+    @Override
+    public IdDTO assignUserTask(@PathVariable UUID id, @RequestBody AssignUserTaskDTO dto) {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+
+        UserTaskEntity task = userTaskRepository.findById(id).orElse(null);
+        if (task == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found");
+        }
+        if (task.getCompletedAt() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User task is already completed");
+        }
+
+        if (!authorizationService.canClaimUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+        }
+
+        dbService.assignUserTask(id, dto.getAssignee());
+        auditLogService.record(getPrincipal(), "ASSIGN_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), dto.getAssignee());
+
+        IdDTO result = new IdDTO();
+        result.setId(id);
+        return result;
+    }
+
+    private String resolvePrincipalId(Principal principal) {
+        if (principal instanceof Principal.UserPrincipal user) {
+            return user.username();
+        }
+        if (principal instanceof Principal.ServicePrincipal sa) {
+            return sa.apiKeyId().toString();
+        }
+        return principal.toString();
     }
 
     @Transactional

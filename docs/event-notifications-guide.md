@@ -5,8 +5,7 @@
 > «до конкретного сотрудника». Читай как будто ты видишь RabbitMQ впервые.
 >
 > Почти вся схема уже в проде (события, outbox, topic-exchange, обогащённый routing-key `process.<pdKey>...`,
-> SSE-мост). Осталось только обогащение `data` события полем assignee (EVT-8). В конце — раздел «Что уже есть,
-> а что доделывается» с честной границей.
+> SSE-мост, assignee/candidateGroups в data, claim/unclaim/reassign с user-task.assigned/unassigned).
 
 ---
 
@@ -253,9 +252,8 @@ public void onEvent(EventEnvelope e) {
 
 - Задача создана на группу (`candidateGroups: ["managers"]`, assignee пуст) → по E3 её видят ВСЕ онлайн-
   менеджеры — правильно.
-- Один менеджер **забрал** задачу (claim) → у остальных она должна **исчезнуть**. Для этого нужно отдельное
-  событие `user-task.assigned` (кто-то стал assignee). Сегодня движок такого **не эмитит** — это часть EVT-8.
-  Без него список у остальных останется устаревшим до ручного обновления.
+- Один менеджер **забрал** задачу (claim) → у остальных она должна **исчезнуть**. Движок эмитит
+  `user-task.assigned` (кто-то стал assignee) — см. `user-task.assigned` в каталоге событий.
 
 ### Для нашего встроенного SPA (без своего бэкенда) — через SSE
 
@@ -297,16 +295,16 @@ public void onEvent(EventEnvelope e) {
 - **Контракт C** — SSE-мост `GET /events/stream` + `EventAuthzResolver` (authz DENY-by-default) + фронт-
   интеграция `handleEvent` в Pinia-сторах (EVT-4/EVT-5).
 
-**В работе / нужно доделать:**
+**Выполнено:**
 
-| WO | Что | Без этого… |
+| WO | Что | Статус |
 |---|---|---|
-| **EVT-8a** | добавить в `data` события `assignee`, `candidateGroups` (`candidateUsers` если есть в модели) | сейчас в `data` только `activityId`; BFF вынужден доспрашивать `GET /user-tasks/{id}` на каждое событие |
-| **EVT-8b** | эмитить `user-task.assigned`/`unassigned` при claim/reassign (условно — если шов появится) | claim из пула не убирает задачу у остальных вживую |
+| **EVT-8a** | добавить в `data` события `assignee`, `candidateGroups` | ✅ В проде |
+| **EVT-8b** | эмитить `user-task.assigned`/`unassigned` при claim/reassign | ✅ В проде (INT-5) |
 
 > Состояние конверта в коде: [DomainEventEmitter.java](../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventEmitter.java)
 > кладёт `eventId, type, occurredAt, processInstanceId, processDefinitionId, processDefinitionKey, elementId, data`.
-> assignee в `data` — добавит EVT-8a.
+> assignee и candidateGroups в `data` — EVT-8a. user-task.assigned/unassigned — INT-5.
 
 ---
 

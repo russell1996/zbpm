@@ -90,4 +90,35 @@ public class AuthorizationService {
         }
         return false;
     }
+
+    /**
+     * Checks if the principal can claim/unclaim/assign a user task.
+     * Mirrors canCompleteUserTask + additionally checks candidate group membership for claim.
+     */
+    public boolean canClaimUserTask(Principal principal, UUID processInstanceId, String candidateGroups) {
+        if (principal.isSuperAdmin()) return true;
+
+        // Resolve instance → definition → key → registry processId
+        ProcessInstanceEntity instance = processInstanceRepository.findById(processInstanceId).orElse(null);
+        if (instance == null) return false;
+        ProcessDefinitionEntity definition = processDefinitionRepository.findById(instance.getProcessDefinitionId()).orElse(null);
+        if (definition == null) return false;
+        ProcessEntity process = processRepository.findByDefinitionKey(definition.getKey()).orElse(null);
+        if (process == null) return false;
+        UUID registryProcessId = process.getId();
+
+        if (principal instanceof Principal.ServicePrincipal sa) {
+            Principal.Grant grant = sa.grants().get(registryProcessId);
+            if (grant == null) return false;
+            return grant.isFull() || grant.permissions().contains("COMPLETE_USER_TASK");
+        }
+        if (principal instanceof Principal.UserPrincipal user) {
+            // Must be a process member
+            ProcessMemberEntity membership = processMemberRepository.findById(
+                new ProcessMemberId(registryProcessId, user.userId())).orElse(null);
+            if (membership == null) return false;
+            return true; // member can claim/assign
+        }
+        return false;
+    }
 }
