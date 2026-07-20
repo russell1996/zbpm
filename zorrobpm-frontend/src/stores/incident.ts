@@ -5,6 +5,7 @@ import type {
   PagedData,
   IncidentQuery,
   ProcessVariable,
+  EventEnvelope,
 } from '@/types/api'
 import * as incidentService from '@/services/incidentService'
 
@@ -55,6 +56,15 @@ export const useIncidentStore = defineStore('incident', () => {
     currentIncident.value = null
   }
 
+  function handleEvent(envelope: EventEnvelope) {
+    switch (envelope.type) {
+      case 'incident.raised':
+      case 'incident.resolved':
+        fetchIncidents()
+        break
+    }
+  }
+
   return {
     incidents,
     currentIncident,
@@ -64,5 +74,6 @@ export const useIncidentStore = defineStore('incident', () => {
     fetchIncident,
     resolveIncident,
     clearCurrent,
+    handleEvent,
   }
 })
