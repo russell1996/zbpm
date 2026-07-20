@@ -334,7 +334,7 @@ externalReference="…"/>`. Поэтому реальные C8-модели ид
    ключ на компонент; валидация ввода — через Variable Schema, ниже).
 3. **Завершить** — вернуть результат:
    ```bash
-   curl -X POST https://<host>/api/user-tasks/<taskId>/complete -H "$AUTH" -H 'Content-Type: application/json' \
+   curl -X POST https://<host>/user-tasks/<taskId>/complete -H "$AUTH" -H 'Content-Type: application/json' \
      -d '{"variables":[{"name":"approved","type":"BOOLEAN","value":"true"}]}'
    ```
    Движок сам продвинет токен (например, шлюз по `approved` выберет ветку).
@@ -357,8 +357,8 @@ UI ходит в API через ваш BFF (ключ на бэкенде, не �
 ```bash
 AUTH="Authorization: Bearer zbpm_sk_…"
 # деплой и старт — см. REST API; затем:
-TASK=$(curl -s "https://<host>/api/user-tasks?candidateGroup=hr&state=CREATED" -H "$AUTH" | jq -r '.data[0].id')
-curl -X POST https://<host>/api/user-tasks/$TASK/complete -H "$AUTH" -H 'Content-Type: application/json' \
+TASK=$(curl -s "https://<host>/user-tasks?candidateGroup=hr&state=CREATED" -H "$AUTH" | jq -r '.data[0].id')
+curl -X POST https://<host>/user-tasks/$TASK/complete -H "$AUTH" -H 'Content-Type: application/json' \
   -d '{"variables":[{"name":"approved","type":"BOOLEAN","value":"true"}]}'
 # движок дошёл до service task send-email → ваш воркер выполнил → End.
 ```
@@ -382,8 +382,8 @@ outbox в той же транзакции**, что и изменение (at-l
 | Контракт | Транспорт | Кому |
 |---|---|---|
 | **A** exchange `zorrobpm.events` | RabbitMQ topic | внешние **системы** с AMQP |
-| **B** `GET /api/events?since=cursor` | HTTP pull | любая система/UI без AMQP (firewall-friendly) |
-| **C** `GET /api/events/stream` | HTTP SSE | браузерные UI (push) |
+| **B** `GET /events?since=cursor` | HTTP pull | любая система/UI без AMQP (firewall-friendly) |
+| **C** `GET /events/stream` | HTTP SSE | браузерные UI (push) |
 
 **Каталог типов событий (routing key):** `process-instance.started` · `process-instance.completed` ·
 `process-instance.cancelled` · `activity.completed` · `user-task.created` · `user-task.completed` ·
@@ -432,7 +432,7 @@ public class EventConsumer {
 - **At-least-once, не exactly-once** — возможен дубликат при ретрае. Дедуп по `id`/`sequence`, обработка идемпотентна.
 - **Порядок** — монотонный `sequence` (глобальный); в рамках одного `processInstanceId` порядок сохранён.
 - **Догон после простоя** — если консюмер лежал, события копились в его durable-очереди (не потеряются). Либо
-  добрать пропущенное через Контракт B: `GET /api/events?since=<последний_обработанный_sequence>`.
+  добрать пропущенное через Контракт B: `GET /events?since=<последний_обработанный_sequence>`.
 - **Не подтверждайте (ack) до успешной обработки** — при падении сообщение вернётся (requeue) или уйдёт в DLQ по
   вашей настройке.
 
@@ -442,7 +442,7 @@ public class EventConsumer {
 
 ### Контракт B (HTTP pull) — без RabbitMQ
 ```bash
-curl "https://<host>/api/events?since=<sequence>&type=incident.raised&limit=100" \
+curl "https://<host>/events?since=<sequence>&type=incident.raised&limit=100" \
   -H "Authorization: Bearer zbpm_sk_..."
 # → события после курсора (только те process-definition, на которые у ключа есть grant); в ответе — следующий курсор.
 ```
@@ -450,7 +450,7 @@ curl "https://<host>/api/events?since=<sequence>&type=incident.raised&limit=100"
 process-definition (кросс-тенант события не отдаются).
 
 ### Контракт C (SSE push) — для браузерных UI
-`GET /api/events/stream` (`text/event-stream`, JWT-auth, `Last-Event-ID`=sequence для докачки) — живой поток в браузер/
+`GET /events/stream` (`text/event-stream`, JWT-auth, `Last-Event-ID`=sequence для докачки) — живой поток в браузер/
 BFF. Тот же authz-фильтр. Встроенный SPA использует его для realtime без поллинга.
 
 ## Авторизация веб-консоли (UI)

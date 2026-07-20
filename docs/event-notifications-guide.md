@@ -191,7 +191,7 @@ public void onEvent(EventEnvelope e) {
 - **Задеплоили новый процесс в движке?** Если ты биндился с `#` (напр. `process.*.user-task.#`) — новые
   процессы ловятся **сами**, ничего менять не надо.
 - **Твой сервис лежал дольше, чем очередь хранит письма (или ты только что развернулся с нуля)?** Догони
-  пропущенное **запросом** (Контракт B): `GET /api/events?since=<последний_известный_sequence>`. То есть
+  пропущенное **запросом** (Контракт B): `GET /events?since=<последний_известный_sequence>`. То есть
   подписка — статический конфиг, а «дыры» закрывает курсор.
 
 **Итого подписка = 3 бина (очередь + exchange + биндинг) один раз при старте. Всё.**
@@ -261,7 +261,7 @@ public void onEvent(EventEnvelope e) {
 
 Тот же принцип, но «последний хоп» — наш SSE-мост (Контракт C). Тогда SPA:
 1. грузит `GET /user-tasks?assignee=me&completed=false`;
-2. открывает `new EventSource('/api/events/stream?processInstanceId=<Y>')` (или по типу) и на событие
+2. открывает `new EventSource('/events/stream?processInstanceId=<Y>')` (или по типу) и на событие
    перечитывает/патчит.
 
 **Важно для безопасности:** если добавляем в SSE фильтр `?assignee=`, значение брать из
@@ -275,8 +275,8 @@ public void onEvent(EventEnvelope e) {
 | Контракт | Что это | Кому |
 |---|---|---|
 | **A — AMQP** (`zorrobpm.events`) | подписка на очередь RabbitMQ (Части 2-3) | внешние системы со своим бэкендом; надёжно, масштабируемо |
-| **B — HTTP pull** (`GET /api/events?since=cursor`) | «дай всё, что случилось после курсора» | любой, кто не хочет AMQP; **докачка** пропущенного |
-| **C — SSE push** (`GET /api/events/stream`) | сервер сам шлёт события в браузер (одностор.) | внешние UI и наш встроенный SPA |
+| **B — HTTP pull** (`GET /events?since=cursor`) | «дай всё, что случилось после курсора» | любой, кто не хочет AMQP; **докачка** пропущенного |
+| **C — SSE push** (`GET /events/stream`) | сервер сам шлёт события в браузер (одностор.) | внешние UI и наш встроенный SPA |
 
 Правило выбора: **система-система с очередью → A** (+ B для докачки). **Браузер → C** (через свой бэкенд или
 напрямую наш SPA). B — универсальный запасной для всех.
@@ -293,8 +293,8 @@ public void onEvent(EventEnvelope e) {
 - **обогащённый routing-key** `process.<pdKey>.<type>[.<elementId>]` + `processDefinitionKey` в конверте +
   санитизация (EVT-7) — можно биндиться `process.vacation.#`;
 - запрос-снапшот `GET /user-tasks?assignee=…` со всеми фильтрами;
-- Контракт B (`GET /api/events`) с authz по grants;
-- **Контракт C** — SSE-мост `GET /api/events/stream` + `EventAuthzResolver` (authz DENY-by-default) + фронт-
+- Контракт B (`GET /events`) с authz по grants;
+- **Контракт C** — SSE-мост `GET /events/stream` + `EventAuthzResolver` (authz DENY-by-default) + фронт-
   интеграция `handleEvent` в Pinia-сторах (EVT-4/EVT-5).
 
 **В работе / нужно доделать:**
@@ -316,4 +316,4 @@ public void onEvent(EventEnvelope e) {
 2. **Подписка = 1 очередь + биндинг**, один раз при старте: `process.vacation.user-task.#`.
 3. **Адрес события** = `process.<pdKey>.<domain>.<action>.<element>`. Всё ограниченное — в адрес.
 4. **assignee — НЕ в адрес.** Он в `data`; кому показать — решает твой бэкенд по assignee + карте сессий.
-5. **Дедуп по `eventId`** обязателен (at-least-once). Пропущенное догоняешь `GET /api/events?since=cursor`.
+5. **Дедуп по `eventId`** обязателен (at-least-once). Пропущенное догоняешь `GET /events?since=cursor`.
