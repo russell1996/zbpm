@@ -32,4 +32,30 @@ public interface DomainEventRepository extends JpaRepository<DomainEventEntity, 
         @Param("since") long since,
         @Param("pdIds") Collection<UUID> processDefinitionIds,
         @Param("limit") int limit);
+
+    /**
+     * Cursor-based query with processInstanceId filter.
+     */
+    @Query(value = "SELECT * FROM events " +
+        "WHERE sequence > :since " +
+        "AND process_instance_id = :processInstanceId " +
+        "ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
+    List<DomainEventEntity> findSinceByProcessInstanceId(
+        @Param("since") long since,
+        @Param("processInstanceId") UUID processInstanceId,
+        @Param("limit") int limit);
+
+    /**
+     * Cursor-based query with AuthZ + processInstanceId filter.
+     */
+    @Query(value = "SELECT * FROM events " +
+        "WHERE sequence > :since " +
+        "AND process_definition_id IN :pdIds " +
+        "AND process_instance_id = :processInstanceId " +
+        "ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
+    List<DomainEventEntity> findSinceForPrincipalByProcessInstanceId(
+        @Param("since") long since,
+        @Param("pdIds") Collection<UUID> processDefinitionIds,
+        @Param("processInstanceId") UUID processInstanceId,
+        @Param("limit") int limit);
 }
