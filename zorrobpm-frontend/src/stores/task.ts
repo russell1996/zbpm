@@ -7,6 +7,7 @@ import type {
   PagedData,
   UserTaskQuery,
   ServiceTaskQuery,
+  EventEnvelope,
 } from '@/types/api'
 import * as taskService from '@/services/taskService'
 import * as variableService from '@/services/variableService'
@@ -117,6 +118,18 @@ export const useTaskStore = defineStore('task', () => {
     currentTaskVariables.value = []
   }
 
+  function handleEvent(envelope: EventEnvelope) {
+    switch (envelope.type) {
+      case 'user-task.created':
+      case 'user-task.completed':
+        fetchUserTasks()
+        break
+      case 'service-task.created':
+        fetchServiceTasks()
+        break
+    }
+  }
+
   return {
     userTasks,
     serviceTasks,
@@ -133,5 +146,6 @@ export const useTaskStore = defineStore('task', () => {
     fetchServiceTask,
     completeServiceTask,
     clearCurrent,
+    handleEvent,
   }
 })

@@ -262,3 +262,18 @@ export interface CompleteTaskDTO {
 export interface ResolveIncidentDTO {
   variables: ProcessVariable[]
 }
+
+/** SSE domain event envelope (ADR-7, WO-EVT-5) */
+export interface EventEnvelope {
+  sequence: number
+  id: string
+  type: string
+  version: number
+  occurredAt: string
+  processDefinitionId?: string
+  processDefinitionKey?: string
+  processInstanceId?: string
+  elementId?: string
+  ownerScope?: string
+  data: Record<string, unknown>
+}
