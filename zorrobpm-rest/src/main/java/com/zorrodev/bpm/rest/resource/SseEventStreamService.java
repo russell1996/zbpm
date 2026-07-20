@@ -37,12 +37,15 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class SseEventStreamService {
 
     private final DomainEventRepository domainEventRepository;
+    private final EventAuthzResolver eventAuthzResolver;
     private final RabbitAdmin rabbitAdmin;
 
     @Autowired
     public SseEventStreamService(DomainEventRepository domainEventRepository,
+                                  EventAuthzResolver eventAuthzResolver,
                                   @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin) {
         this.domainEventRepository = domainEventRepository;
+        this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
     }
 
@@ -52,13 +55,32 @@ public class SseEventStreamService {
     /** RabbitMQ listener container for this instance */
     private volatile SimpleMessageListenerContainer listenerContainer;
 
+    /** Functional interface for test event capture: receives clientId + envelope. */
+    @FunctionalInterface
+    public interface EventDispatchListener {
+        void onEventSent(String clientId, Map<String, Object> envelope);
+    }
+
+    /** Test/observability hook: called when an event is sent to a client */
+    private final List<EventDispatchListener> eventListeners = new CopyOnWriteArrayList<>();
+
+    /** Register a listener that receives each event dispatch (clientId + envelope). */
+    public void addEventListener(EventDispatchListener listener) {
+        eventListeners.add(listener);
+    }
+
+    /** Remove all event listeners (for test cleanup). */
+    public void clearEventListeners() {
+        eventListeners.clear();
+    }
+
     /**
      * Registers an SSE client and starts RabbitMQ subscription if this is the first client.
      */
     public String registerClient(SseEmitter emitter, Principal principal, String typeFilter,
                                   String processInstanceIdFilter, String processDefinitionKeyFilter) {
         String clientId = UUID.randomUUID().toString();
-        Collection<UUID> allowedPdIds = resolveAllowedProcessDefinitionIds(principal, processDefinitionKeyFilter);
+        Collection<UUID> allowedPdIds = eventAuthzResolver.resolve(principal, processDefinitionKeyFilter);
 
         SseClientInfo info = new SseClientInfo(clientId, emitter, principal, allowedPdIds,
             typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
@@ -146,6 +168,15 @@ public class SseEventStreamService {
                     .data(envelope)
                     .reconnectTime(3000);
 
+                // Notify listeners (test/observability hook)
+                for (EventDispatchListener listener : eventListeners) {
+                    try {
+                        listener.onEventSent(client.clientId, envelope);
+                    } catch (Exception ex) {
+                        log.warn("Event listener error", ex);
+                    }
+                }
+
                 client.emitter.send(event);
             } catch (IOException e) {
                 log.warn("Failed to send event to client {}: {}", client.clientId, e.getMessage());
@@ -161,7 +192,7 @@ public class SseEventStreamService {
      */
     public void sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
                                    String processDefinitionKeyFilter) {
-        Collection<UUID> allowedPdIds = resolveAllowedProcessDefinitionIds(principal, processDefinitionKeyFilter);
+        Collection<UUID> allowedPdIds = eventAuthzResolver.resolve(principal, processDefinitionKeyFilter);
 
         int limit = 100;
         List<DomainEventEntity> events;
@@ -237,23 +268,6 @@ public class SseEventStreamService {
             listenerContainer = null;
             log.info("SSE bridge: stopped RabbitMQ listener (no clients)");
         }
-    }
-
-    private Collection<UUID> resolveAllowedProcessDefinitionIds(Principal principal, String processDefinitionKey) {
-        if (principal.isSuperAdmin()) {
-            return null; // see all
-        }
-        if (principal instanceof Principal.ServicePrincipal sp) {
-            boolean hasFullAccess = sp.grants().values().stream()
-                .anyMatch(Principal.Grant::isFull);
-            if (hasFullAccess) {
-                return null; // see all
-            }
-            // For simplicity, return null (see all) — full grant-based filtering
-            // would require resolving processIds → processDefinitionIds like EventResource
-            return null;
-        }
-        return Set.of();
     }
 
     private record SseClientInfo(
