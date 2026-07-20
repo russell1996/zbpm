@@ -3,8 +3,10 @@ package com.zorrodev.bpm.engine.event;
 import com.zorrodev.bpm.contract.dto.event.DomainEventType;
 import com.zorrodev.bpm.engine.entity.DomainEventEntity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -27,6 +29,7 @@ public class DomainEventEmitter {
 
     private final DomainEventRepository domainEventRepository;
     private final OutboxRepository outboxRepository;
+    private final ProcessDefinitionRepository processDefinitionRepository;
     private final tools.jackson.databind.ObjectMapper objectMapper;
 
     /**
@@ -55,6 +58,14 @@ public class DomainEventEmitter {
         event.setData(data != null ? data : Map.of());
         domainEventRepository.save(event);
 
+        // Resolve processDefinitionKey from the definition entity (for routing key, WO-EVT-7)
+        String[] pdKeyHolder = {null};
+        if (processDefinitionId != null) {
+            processDefinitionRepository.findById(processDefinitionId)
+                .ifPresent(pd -> pdKeyHolder[0] = pd.getKey());
+        }
+        String processDefinitionKey = pdKeyHolder[0];
+
         // Write to outbox for async delivery (reuse existing OutboxEntry pattern)
         try {
             Map<String, Object> envelope = new HashMap<>();
@@ -63,6 +74,7 @@ public class DomainEventEmitter {
             envelope.put("occurredAt", occurredAt.toString());
             envelope.put("processInstanceId", processInstanceId != null ? processInstanceId.toString() : null);
             envelope.put("processDefinitionId", processDefinitionId != null ? processDefinitionId.toString() : null);
+            envelope.put("processDefinitionKey", processDefinitionKey);
             envelope.put("elementId", elementId);
             envelope.put("data", data != null ? data : Map.of());
 

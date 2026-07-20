@@ -11,8 +11,8 @@ import org.springframework.stereotype.Service;
 import java.util.Map;
 
 /**
- * Publishes domain event envelopes to the zorrobpm.events topic exchange (ADR-7, WO-EVT-2).
- * Routing key = event type (e.g. "process-instance.completed").
+ * Publishes domain event envelopes to the zorrobpm.events topic exchange (ADR-7, WO-EVT-2, WO-EVT-7).
+ * Routing key = process.{pdKey}.{type}[.{elementId}] with sanitization.
  */
 @Slf4j
 @Service
@@ -25,13 +25,39 @@ public class DomainEventOutboxListener {
     public void on(DomainEventPublished event) {
         Map<String, Object> envelope = event.getEnvelope();
         String type = (String) envelope.get("type");
+        String pdKey = (String) envelope.get("processDefinitionKey");
+        String elementId = (String) envelope.get("elementId");
+
+        String routingKey = buildRoutingKey(type, pdKey, elementId);
 
         rabbitTemplate.convertAndSend(
             RabbitConfiguration.EVENTS_EXCHANGE,
-            type,
+            routingKey,
             envelope);
 
-        log.info("Published domain event to {}: type={}, eventId={}",
-            RabbitConfiguration.EVENTS_EXCHANGE, type, envelope.get("eventId"));
+        log.info("Published domain event to {}: routingKey={}, eventId={}",
+            RabbitConfiguration.EVENTS_EXCHANGE, routingKey, envelope.get("eventId"));
+    }
+
+    /**
+     * Builds hierarchical routing key: process.{pdKey}.{type}[.{elementId}]
+     * Sanitizes pdKey and elementId: any char outside [A-Za-z0-9_-] → _.
+     * If pdKey is null, falls back to type only (backward compat).
+     */
+    static String buildRoutingKey(String type, String pdKey, String elementId) {
+        if (pdKey == null || pdKey.isBlank()) {
+            return type; // backward compat: no pdKey → type-only routing
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("process.").append(sanitize(pdKey)).append('.').append(type);
+        if (elementId != null && !elementId.isBlank()) {
+            sb.append('.').append(sanitize(elementId));
+        }
+        return sb.toString();
+    }
+
+    /** Replace any char outside [A-Za-z0-9_-] with _ (WO-EVT-7 sanitization). */
+    static String sanitize(String value) {
+        return value.replaceAll("[^A-Za-z0-9_-]", "_");
     }
 }
