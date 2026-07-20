@@ -243,7 +243,74 @@ class DBServiceImplTest {
         assertThat(saved.getBpmnElementId()).isEqualTo("ut1");
         assertThat(saved.getProcessInstanceId()).isEqualTo(processInstanceId);
         assertThat(saved.getProcessDefinitionId()).isEqualTo(processDefinitionId);
-        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut1", activityId);
+        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut1", activityId, "test-assignee", null);
+    }
+
+    @Test
+    void createUserTask_withAssigneeAndCandidateGroups_passesToEmitter() {
+        UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+
+        ActivityEntity activity = new ActivityEntity();
+        activity.setId(activityId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId("ut1");
+        activity.setCreatedAt(Instant.now());
+
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
+
+        dbService.createUserTask(activityId, "ivanov", "managers,admins", null);
+
+        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut1", activityId, "ivanov", "managers,admins");
+    }
+
+    @Test
+    void createUserTask_nullAssignee_candidateGroupsOnly_passesToEmitter() {
+        UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+
+        ActivityEntity activity = new ActivityEntity();
+        activity.setId(activityId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId("ut-pool");
+        activity.setCreatedAt(Instant.now());
+
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
+
+        dbService.createUserTask(activityId, null, "managers", null);
+
+        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut-pool", activityId, null, "managers");
+    }
+
+    @Test
+    void completeUserTask_withAssignee_passesAssigneeToEmitter() {
+        UUID id = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+
+        UserTaskEntity utEntity = new UserTaskEntity();
+        utEntity.setId(id);
+        utEntity.setProcessInstanceId(processInstanceId);
+        utEntity.setProcessDefinitionId(processDefinitionId);
+        utEntity.setBpmnElementId("userTask1");
+        utEntity.setAssignee("petrov");
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(utEntity));
+
+        dbService.completeUserTask(id);
+        verify(userTaskRepository).setCompletedAt(eq(id), any(Instant.class));
+        verify(domainEventEmitter).emitUserTaskCompleted(processInstanceId, processDefinitionId, "userTask1", id, "petrov");
     }
 
     @Test
@@ -268,7 +335,7 @@ class DBServiceImplTest {
 
         dbService.completeUserTask(id);
         verify(userTaskRepository).setCompletedAt(eq(id), any(Instant.class));
-        verify(domainEventEmitter).emitUserTaskCompleted(processInstanceId, processDefinitionId, "userTask1", id);
+        verify(domainEventEmitter).emitUserTaskCompleted(processInstanceId, processDefinitionId, "userTask1", id, null);
     }
 
     @Test
