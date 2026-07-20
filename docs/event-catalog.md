@@ -21,15 +21,13 @@
 | `process-instance.completed` | инстанс завершился нормально | — | `{}` |
 | `process-instance.cancelled` | инстанс отменён | — | `{}` |
 | `activity.completed` | завершилась активность (шаг процесса) | ✅ `bpmnElementId` | `{}` |
-| `user-task.created` | создана пользовательская задача | ✅ | `{ activityId }` |
-| `user-task.completed` | пользовательская задача завершена | ✅ | `{ activityId }` |
+| `user-task.created` | создана пользовательская задача | ✅ | `{ activityId, assignee?, candidateGroups? }` |
+| `user-task.completed` | пользовательская задача завершена | ✅ | `{ activityId, assignee? }` |
+| `user-task.assigned` | задача назначена (claim или reassign) | ✅ | `{ activityId, assignee }` |
+| `user-task.unassigned` | задача возвращена в пул (unclaim) | ✅ | `{ activityId }` |
 | `service-task.created` | создан джоб сервис-таска | ✅ | `{ activityId }` |
 | `incident.raised` | поднят инцидент (ошибка на шаге) | ✅ | `{ incidentId, message }` |
 | `incident.resolved` | инцидент разрешён | ✅ | `{ incidentId }` |
-
-> ⚠️ Планируется (EVT-8): в `user-task.created/completed` добавятся `assignee`, `candidateGroups`
-> (`candidateUsers` — если есть в модели). Сейчас в `data` только `activityId` — чтобы узнать исполнителя,
-> потребитель доспрашивает `GET /user-tasks/{activityId}`.
 
 ## Поля конверта (одинаковы у всех событий)
 

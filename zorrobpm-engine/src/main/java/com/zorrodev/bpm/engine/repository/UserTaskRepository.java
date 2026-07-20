@@ -57,6 +57,10 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
     @Query("UPDATE UserTaskEntity e SET e.completedAt = :completedAt WHERE e.id = :taskId")
     void setCompletedAt(UUID taskId, Instant completedAt);
 
+    @Modifying
+    @Query("UPDATE UserTaskEntity e SET e.assignee = :assignee WHERE e.id = :taskId")
+    void setAssignee(UUID taskId, String assignee);
+
     List<UserTaskEntity> findByProcessInstanceId(UUID processInstanceId);
 
     @Query("SELECT e.bpmnElementId AS bpmnElementId, COUNT(e.id) AS count FROM UserTaskEntity e WHERE e.processDefinitionId = :processDefinitionId AND e.completedAt IS NULL GROUP BY e.bpmnElementId")

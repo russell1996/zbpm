@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.contract.dto.AssignUserTaskDTO;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.service.annotation.PostExchange;
@@ -25,6 +26,15 @@ public interface RuntimeContract {
 
     @PostExchange("/user-tasks/{id}/complete")
     IdDTO completeUserTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto);
+
+    @PostExchange("/user-tasks/{id}/claim")
+    IdDTO claimUserTask(@PathVariable UUID id);
+
+    @PostExchange("/user-tasks/{id}/unclaim")
+    IdDTO unclaimUserTask(@PathVariable UUID id);
+
+    @PostExchange("/user-tasks/{id}/assign")
+    IdDTO assignUserTask(@PathVariable UUID id, @RequestBody AssignUserTaskDTO dto);
 
     @PostExchange("/incidents/{id}/resolve")
     IdDTO resolveIncident(@PathVariable UUID id, @RequestBody ResolveIncidentDTO dto);
