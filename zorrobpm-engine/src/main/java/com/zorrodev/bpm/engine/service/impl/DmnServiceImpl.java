@@ -17,7 +17,7 @@ import com.zorrodev.bpm.engine.dmn.xml.DmnTextModel;
 import com.zorrodev.bpm.engine.entity.DmnDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.DmnDefinitionRepository;
 import com.zorrodev.bpm.engine.service.DmnService;
-import jakarta.xml.bind.JAXB;
+import com.zorrodev.bpm.engine.xml.SecureXmlParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
@@ -25,7 +25,6 @@ import org.camunda.feel.api.FeelEngineApi;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
-import java.io.StringReader;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -48,7 +47,7 @@ public class DmnServiceImpl implements DmnService {
 
     @Override
     public void deploy(String dmnXml) {
-        DmnDefinitionsModel model = JAXB.unmarshal(new StringReader(dmnXml), DmnDefinitionsModel.class);
+        DmnDefinitionsModel model = SecureXmlParser.unmarshal(dmnXml, DmnDefinitionsModel.class);
         if (model.getDecisions() == null || model.getDecisions().isEmpty()) {
             throw new EngineException("DMN resource has no decisions");
         }
@@ -71,7 +70,7 @@ public class DmnServiceImpl implements DmnService {
     public Object evaluate(String decisionId, List<ProcessVariable> variables) {
         DmnDefinitionEntity entity = dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decisionId)
             .orElseThrow(() -> new EngineException("No deployed DMN decision '" + decisionId + "'"));
-        DmnDefinitionsModel model = JAXB.unmarshal(new StringReader(entity.getDmn()), DmnDefinitionsModel.class);
+        DmnDefinitionsModel model = SecureXmlParser.unmarshal(entity.getDmn(), DmnDefinitionsModel.class);
         DmnDecisionModel decision = model.getDecisions().stream()
             .filter(d -> decisionId.equals(d.getId()))
             .findFirst()
@@ -236,7 +235,7 @@ public class DmnServiceImpl implements DmnService {
     }
 
     private DmnDecision toDecisionDTO(DmnDefinitionEntity entity) {
-        DmnDefinitionsModel model = JAXB.unmarshal(new StringReader(entity.getDmn()), DmnDefinitionsModel.class);
+        DmnDefinitionsModel model = SecureXmlParser.unmarshal(entity.getDmn(), DmnDefinitionsModel.class);
         DmnDecisionModel decision = model.getDecisions().stream()
             .filter(d -> entity.getDecisionId().equals(d.getId()))
             .findFirst()
