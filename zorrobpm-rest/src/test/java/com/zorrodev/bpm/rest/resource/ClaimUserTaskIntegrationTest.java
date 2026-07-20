@@ -52,7 +52,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class ClaimUserTaskIT {
+class ClaimUserTaskIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private UiUserRepository userRepository;
