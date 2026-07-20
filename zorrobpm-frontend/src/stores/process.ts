@@ -10,6 +10,7 @@ import type {
   ProcessDefinitionsQuery,
   ProcessInstanceQuery,
   VariableQuery,
+  EventEnvelope,
 } from '@/types/api'
 import * as processService from '@/services/processService'
 import * as instanceService from '@/services/instanceService'
@@ -142,6 +143,16 @@ export const useProcessStore = defineStore('process', () => {
     currentSubprocesses.value = []
   }
 
+  function handleEvent(envelope: EventEnvelope) {
+    switch (envelope.type) {
+      case 'process-instance.started':
+      case 'process-instance.completed':
+      case 'process-instance.cancelled':
+        fetchInstances()
+        break
+    }
+  }
+
   return {
     definitions,
     instances,
@@ -165,5 +176,6 @@ export const useProcessStore = defineStore('process', () => {
     fetchVariables,
     startInstance,
     clearCurrent,
+    handleEvent,
   }
 })
