@@ -74,10 +74,18 @@ public class RuntimeResource implements RuntimeContract {
         return attr instanceof Principal p ? p : null;
     }
 
-    /** Read optional X-On-Behalf-Of header (WO-INT-2). null if absent. */
+    /**
+     * Read optional X-On-Behalf-Of header (WO-INT-2, WO-SEC-28).
+     * Returns null if absent. Value is marked as "[claimed]" (unverified) in audit log
+     * to prevent spoofed attribution from appearing as confirmed fact.
+     * Maximum 255 chars to prevent abuse.
+     */
     private String readOnBehalfOf() {
         String val = request.getHeader("X-On-Behalf-Of");
-        return (val != null && !val.isBlank()) ? val.trim() : null;
+        if (val == null || val.isBlank()) return null;
+        String trimmed = val.trim();
+        if (trimmed.length() > 255) trimmed = trimmed.substring(0, 255);
+        return "[claimed] " + trimmed;
     }
 
     private void requireOperate(String definitionKey, AuthorizationService.Action action) {

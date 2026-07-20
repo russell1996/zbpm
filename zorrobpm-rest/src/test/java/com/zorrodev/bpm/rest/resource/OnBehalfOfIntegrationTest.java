@@ -133,7 +133,8 @@ class OnBehalfOfIntegrationTest {
             mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(instanceId).orElseThrow();
-        assertThat(pi.getInitiator()).isEqualTo("emp42");
+        assertThat(pi.getInitiator()).startsWith("[claimed]");
+        assertThat(pi.getInitiator()).contains("emp42");
     }
 
     // --- Criterion #2: Start with key + header → audit has principal + on_behalf_of ---
@@ -157,7 +158,8 @@ class OnBehalfOfIntegrationTest {
         AuditLogEntity latest = audits.get(0); // findByFilters orders by at desc
         assertThat(latest.getAction()).isEqualTo("START");
         assertThat(latest.getPrincipalType()).isNotNull();
-        assertThat(latest.getOnBehalfOf()).isEqualTo("emp99");
+        assertThat(latest.getOnBehalfOf()).startsWith("[claimed]");
+        assertThat(latest.getOnBehalfOf()).contains("emp99");
     }
 
     // --- Criterion #3: Complete with header → audit has on_behalf_of ---
@@ -196,7 +198,8 @@ class OnBehalfOfIntegrationTest {
         AuditLogEntity completeAudit = audits.stream()
             .filter(a -> "COMPLETE_USER_TASK".equals(a.getAction()))
             .findFirst().orElseThrow();
-        assertThat(completeAudit.getOnBehalfOf()).isEqualTo("emp77");
+        assertThat(completeAudit.getOnBehalfOf()).startsWith("[claimed]");
+        assertThat(completeAudit.getOnBehalfOf()).contains("emp77");
     }
 
     // --- Criterion #4: No header → backward compatible ---
@@ -221,13 +224,32 @@ class OnBehalfOfIntegrationTest {
         assertThat(latest.getOnBehalfOf()).isNull();
     }
 
+    // --- WO-SEC-28 POF: arbitrary X-On-Behalf-Of → marked as claimed ---
+
+    @Test
+    void pof_arbitraryOnBehalfOf_markedAsClaimed() throws Exception {
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(processDefinitionId);
+        mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .header("X-On-Behalf-Of", "ceo@company.com")
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        AuditLogEntity latest = auditLogRepository.findByFilters(null, null, null, null).get(0);
+        // POF: without fix, this would be "ceo@company.com" (looks like confirmed identity)
+        // With fix: "[claimed] ceo@company.com" (explicitly unverified)
+        assertThat(latest.getOnBehalfOf()).startsWith("[claimed]");
+        assertThat(latest.getOnBehalfOf()).contains("ceo@company.com");
+    }
+
     // --- Criterion #6: proof-of-failure ---
 
     @Test
     void criterion6_proofOfFailure() throws Exception {
-        // GREEN: with header → onBehalfOf is set
+        // GREEN: with header → onBehalfOf is set with [claimed] prefix
         criterion2_startWithHeader_auditHasKeyAndOnBehalfOf();
-        // RED proof: before fix, onBehalfOf was always null because the field didn't exist
-        // and AuditLogService didn't accept it. The test above proves GREEN.
+        // RED proof: before fix, onBehalfOf was "emp77" without [claimed] marker
     }
 }
