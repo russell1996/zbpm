@@ -108,14 +108,21 @@ public class DomainEventEmitter {
         emit(DomainEventType.ACTIVITY_COMPLETED, processInstanceId, processDefinitionId, elementId, Map.of());
     }
 
-    public void emitUserTaskCreated(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID activityId) {
-        emit(DomainEventType.USER_TASK_CREATED, processInstanceId, processDefinitionId, elementId,
-            Map.of("activityId", activityId.toString()));
+    public void emitUserTaskCreated(UUID processInstanceId, UUID processDefinitionId, String elementId,
+                                     UUID activityId, String assignee, String candidateGroups) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("activityId", activityId.toString());
+        if (assignee != null) data.put("assignee", assignee);
+        if (candidateGroups != null) data.put("candidateGroups", candidateGroups);
+        emit(DomainEventType.USER_TASK_CREATED, processInstanceId, processDefinitionId, elementId, data);
     }
 
-    public void emitUserTaskCompleted(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID activityId) {
-        emit(DomainEventType.USER_TASK_COMPLETED, processInstanceId, processDefinitionId, elementId,
-            Map.of("activityId", activityId.toString()));
+    public void emitUserTaskCompleted(UUID processInstanceId, UUID processDefinitionId, String elementId,
+                                       UUID activityId, String assignee) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("activityId", activityId.toString());
+        if (assignee != null) data.put("assignee", assignee);
+        emit(DomainEventType.USER_TASK_COMPLETED, processInstanceId, processDefinitionId, elementId, data);
     }
 
     public void emitServiceTaskCreated(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID activityId) {
