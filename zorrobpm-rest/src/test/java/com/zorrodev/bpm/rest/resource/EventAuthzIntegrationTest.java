@@ -249,4 +249,40 @@ class EventAuthzIntegrationTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.length()").value(0));
     }
+
+    // --- WO-SEC-24 POF: processInstanceId filter ---
+
+    @Test
+    void processInstanceIdFilter_onlyReturnsEventsForThatInstance() throws Exception {
+        // Emit events for specific process instances
+        UUID piId1 = UUID.randomUUID();
+        UUID piId2 = UUID.randomUUID();
+        emitEvent(pdIdA, piId1, "user-task.created");
+        emitEvent(pdIdA, piId2, "user-task.created");
+        emitEvent(pdIdA, piId1, "user-task.completed");
+
+        // Filter by piId1 — should get only 2 events
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + adminToken)
+                .param("processInstanceId", piId1.toString()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].processInstanceId").value(piId1.toString()));
+
+        // Filter by piId2 — should get only 1 event
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + adminToken)
+                .param("processInstanceId", piId2.toString()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].processInstanceId").value(piId2.toString()));
+    }
+
+    @Test
+    void invalidProcessInstanceId_returns400() throws Exception {
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + adminToken)
+                .param("processInstanceId", "not-a-uuid"))
+            .andExpect(status().isBadRequest());
+    }
 }

@@ -154,9 +154,9 @@ public class SseEventStreamService {
                     continue;
                 }
 
-                // Check AuthZ: processDefinitionId must be in allowed set
-                if (client.allowedPdIds != null && processDefinitionId != null) {
-                    if (!client.allowedPdIds.contains(UUID.fromString(processDefinitionId))) {
+                // Check AuthZ: processDefinitionId must be in allowed set (fail-closed: G-L)
+                if (client.allowedPdIds != null) {
+                    if (processDefinitionId == null || !client.allowedPdIds.contains(UUID.fromString(processDefinitionId))) {
                         continue;
                     }
                 }
