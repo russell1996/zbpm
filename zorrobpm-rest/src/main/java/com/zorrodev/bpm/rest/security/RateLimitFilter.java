@@ -11,8 +11,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Rate-limits POST /auth/login per client IP.
@@ -25,6 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
     private final ConcurrentHashMap<String, RateBucket> buckets = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RateBucket> dataEndpointBuckets = new ConcurrentHashMap<>();
 
     private boolean enabled;
 
@@ -32,9 +31,15 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
     private int windowSeconds;
 
+    private int dataCapacity;
+
+    private int dataWindowSeconds;
+
     void setRateLimitEnabled(boolean enabled) { this.enabled = enabled; }
     void setCapacity(int capacity) { this.capacity = capacity; }
     void setWindowSeconds(int windowSeconds) { this.windowSeconds = windowSeconds; }
+    void setDataCapacity(int dataCapacity) { this.dataCapacity = dataCapacity; }
+    void setDataWindowSeconds(int dataWindowSeconds) { this.dataWindowSeconds = dataWindowSeconds; }
 
     @Override
     public int getOrder() {
@@ -46,25 +51,55 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
         throws ServletException, IOException {
-        String path = PathNormalizer.normalize(request.getRequestURI());
-        if (!enabled || !"POST".equalsIgnoreCase(request.getMethod()) || !"/auth/login".equals(path)) {
+        if (!enabled) {
             chain.doFilter(request, response);
             return;
         }
 
+        String path = PathNormalizer.normalize(request.getRequestURI());
+        String method = request.getMethod();
         String clientIp = getClientIp(request);
-        RateBucket bucket = buckets.computeIfAbsent(clientIp, k -> new RateBucket(capacity, windowSeconds));
 
-        long retryAfter = bucket.tryConsume();
-        if (retryAfter == 0) {
-            chain.doFilter(request, response);
-        } else {
-            response.setStatus(429);
-            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            response.setHeader("Retry-After", String.valueOf(retryAfter));
-            response.getWriter().write(
-                "{\"code\":\"RATE_LIMITED\",\"message\":\"Too many attempts, retry after " + retryAfter + "s\"}");
+        // Login endpoint: strict limit
+        if ("POST".equalsIgnoreCase(method) && "/auth/login".equals(path)) {
+            String key = "login:" + clientIp;
+            RateBucket bucket = buckets.computeIfAbsent(key, k -> new RateBucket(capacity, windowSeconds));
+            long retryAfter = bucket.tryConsume();
+            if (retryAfter > 0) {
+                send429(response, retryAfter);
+                return;
+            }
         }
+
+        // Data endpoints: generous limit (prevents brute-force enumeration, DoS via heavy queries)
+        if (isDataEndpoint(method, path)) {
+            String key = "data:" + clientIp;
+            RateBucket bucket = dataEndpointBuckets.computeIfAbsent(key, k -> new RateBucket(dataCapacity, dataWindowSeconds));
+            long retryAfter = bucket.tryConsume();
+            if (retryAfter > 0) {
+                send429(response, retryAfter);
+                return;
+            }
+        }
+
+        chain.doFilter(request, response);
+    }
+
+    private boolean isDataEndpoint(String method, String path) {
+        if ("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method)) {
+            return path.startsWith("/events") || path.startsWith("/variables")
+                || path.startsWith("/process-instances") || path.startsWith("/user-tasks")
+                || path.startsWith("/service-tasks") || path.startsWith("/incidents");
+        }
+        return false;
+    }
+
+    private void send429(HttpServletResponse response, long retryAfter) throws IOException {
+        response.setStatus(429);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setHeader("Retry-After", String.valueOf(retryAfter));
+        response.getWriter().write(
+            "{\"code\":\"RATE_LIMITED\",\"message\":\"Too many attempts, retry after " + retryAfter + "s\"}");
     }
 
     private String getClientIp(HttpServletRequest request) {
@@ -74,36 +109,35 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     /** Clears all buckets — for tests only. */
     public void reset() {
         buckets.clear();
+        dataEndpointBuckets.clear();
     }
 
     private static class RateBucket {
         private final int capacity;
         private final long windowMillis;
-        private final AtomicInteger tokens;
-        private final AtomicLong windowStart;
+        private long windowStart;
+        private int tokens;
 
         RateBucket(int capacity, int windowSeconds) {
             this.capacity = capacity;
             this.windowMillis = windowSeconds * 1000L;
-            this.tokens = new AtomicInteger(capacity);
-            this.windowStart = new AtomicLong(System.currentTimeMillis());
+            this.tokens = capacity;
+            this.windowStart = System.currentTimeMillis();
         }
 
         /** @return 0 if allowed, else seconds to wait */
-        long tryConsume() {
+        synchronized long tryConsume() {
             long now = System.currentTimeMillis();
-            long elapsed = now - windowStart.get();
+            long elapsed = now - windowStart;
             if (elapsed >= windowMillis) {
-                if (windowStart.compareAndSet(windowStart.get(), now)) {
-                    tokens.set(capacity);
-                }
+                windowStart = now;
+                tokens = capacity;
             }
-            int remaining = tokens.decrementAndGet();
-            if (remaining >= 0) {
+            if (tokens > 0) {
+                tokens--;
                 return 0;
             }
-            tokens.incrementAndGet();
-            long waitMillis = windowMillis - (System.currentTimeMillis() - windowStart.get());
+            long waitMillis = windowMillis - (now - windowStart);
             return Math.max(1, waitMillis / 1000);
         }
     }
