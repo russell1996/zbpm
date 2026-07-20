@@ -35,7 +35,7 @@ class ScriptServicePiiLogInfoTest {
     private ScriptService service() {
         ScriptEngine unary = new FeelUnaryTestsScriptEngineFactory().getScriptEngine();
         ScriptEngine expression = new FeelScriptEngineFactory().getScriptEngine();
-        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper());
+        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper(), 10);
     }
 
     private ProcessVariable var(String name, ProcessVariableType type, String value) {
