@@ -191,7 +191,7 @@ public class RuntimeResource implements RuntimeContract {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found");
         }
 
-        if (!authorizationService.canCompleteUserTask(principal, task.getProcessInstanceId())) {
+        if (!authorizationService.canCompleteUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
 

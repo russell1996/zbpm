@@ -121,7 +121,7 @@ class RuntimeResourceTest {
 
         Principal.UserPrincipal admin = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
         when(request.getAttribute("principal")).thenReturn(admin);
-        when(authorizationService.canCompleteUserTask(any(), any())).thenReturn(true);
+        when(authorizationService.canCompleteUserTask(any(), any(), any())).thenReturn(true);
 
         UserTaskEntity task = new UserTaskEntity();
         task.setId(id);

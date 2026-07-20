@@ -72,6 +72,19 @@ public class AuthorizationService {
     }
 
     public boolean canCompleteUserTask(Principal principal, UUID processInstanceId) {
+        return canCompleteUserTask(principal, processInstanceId, null);
+    }
+
+    /**
+     * Checks if the principal can complete a user task. Authz default is DENY.
+     * <ul>
+     *   <li>SUPER_ADMIN — allowed.</li>
+     *   <li>ServicePrincipal — needs a grant with COMPLETE_USER_TASK (or full) on the process.</li>
+     *   <li>UserPrincipal, task HAS candidateGroups — allowed only if the user belongs to one of them.</li>
+     *   <li>UserPrincipal, task has NO candidateGroups — allowed only if the user is a process member.</li>
+     * </ul>
+     */
+    public boolean canCompleteUserTask(Principal principal, UUID processInstanceId, String candidateGroups) {
         if (principal.isSuperAdmin()) return true;
 
         // Resolve instance → definition → key → registry processId
@@ -89,10 +102,15 @@ public class AuthorizationService {
             return grant.isFull() || grant.permissions().contains("COMPLETE_USER_TASK");
         }
         if (principal instanceof Principal.UserPrincipal user) {
-            // WO-AUD-5 F18: cross-tenant check — user must be a process member
-            ProcessMemberEntity membership = processMemberRepository.findById(
-                new ProcessMemberId(registryProcessId, user.userId())).orElse(null);
-            return membership != null;
+            Set<String> taskGroups = parseCandidateGroups(candidateGroups);
+            if (!taskGroups.isEmpty()) {
+                // Task restricted to candidate groups → user must be in one of them.
+                List<String> userGroups = userGroupRepository.findGroupNamesByUserId(user.userId());
+                return userGroups.stream().anyMatch(taskGroups::contains);
+            }
+            // No candidate groups → open to process members only (cross-tenant guard).
+            return processMemberRepository.findById(
+                new ProcessMemberId(registryProcessId, user.userId())).orElse(null) != null;
         }
         return false;
     }
