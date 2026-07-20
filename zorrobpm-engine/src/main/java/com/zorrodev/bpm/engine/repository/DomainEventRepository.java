@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -18,4 +19,17 @@ public interface DomainEventRepository extends JpaRepository<DomainEventEntity, 
 
     @Query(value = "SELECT COALESCE(MAX(sequence), 0) FROM events", nativeQuery = true)
     long getMaxSequence();
+
+    /**
+     * Cursor-based query with AuthZ filtering: only events whose process_definition_id
+     * is in the allowed set. Used by GET /events (WO-EVT-3).
+     */
+    @Query(value = "SELECT * FROM events " +
+        "WHERE sequence > :since " +
+        "AND process_definition_id IN :pdIds " +
+        "ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
+    List<DomainEventEntity> findSinceForPrincipal(
+        @Param("since") long since,
+        @Param("pdIds") Collection<UUID> processDefinitionIds,
+        @Param("limit") int limit);
 }
