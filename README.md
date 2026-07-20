@@ -372,6 +372,87 @@ curl -X POST https://<host>/api/user-tasks/$TASK/complete -H "$AUTH" -H 'Content
 - **Шлюз → инцидент** — ни одно условие не истинно и нет **default flow**. Задайте default.
 - **Переменная не читается в FEEL** — неверный `type` (число как `STRING`). Число → `LONG`/`DOUBLE`, объект → `JSON`.
 
+## События (event notifications) — как узнать, что что-то изменилось
+
+Движок эмитит **доменные события** на каждом изменении состояния (старт/завершение/отмена инстанса, создание/
+завершение user-task, создание service-task, инцидент, завершение активности). Событие пишется в **транзакционный
+outbox в той же транзакции**, что и изменение (at-least-once, не теряется), затем публикуется. Три способа получить
+(ADR-7, `docs/adr/ADR-7-event-notification-architecture.md`):
+
+| Контракт | Транспорт | Кому |
+|---|---|---|
+| **A** exchange `zorrobpm.events` | RabbitMQ topic | внешние **системы** с AMQP |
+| **B** `GET /api/events?since=cursor` | HTTP pull | любая система/UI без AMQP (firewall-friendly) |
+| **C** `GET /api/events/stream` | HTTP SSE | браузерные UI (push) |
+
+**Каталог типов событий (routing key):** `process-instance.started` · `process-instance.completed` ·
+`process-instance.cancelled` · `activity.completed` · `user-task.created` · `user-task.completed` ·
+`service-task.created` · `incident.raised` · `incident.resolved`.
+
+**Envelope (JSON):** `{ sequence, id, type, version, occurredAt, processDefinitionKey, processDefinitionId,
+processInstanceId, elementId, ownerScope, data }`.
+
+### Ловля через RabbitMQ (Контракт A) — пошагово
+
+Движок сам объявляет durable topic-exchange `zorrobpm.events` при старте и публикует туда каждое событие с
+routing-key = тип. **Очередь создаёт потребитель:** topic-exchange без привязанной очереди роняет сообщения (стандарт
+AMQP) — поэтому подпишитесь, создав СВОЮ очередь и привязав её.
+
+**Шаг 1. Проверьте, что exchange есть** (на хосте с RabbitMQ):
+```bash
+rabbitmqctl list_exchanges | grep zorrobpm.events      # → zorrobpm.events   topic
+```
+
+**Шаг 2. Создайте свою durable-очередь и привяжите к exchange** (паттерн routing-key под ваши нужды):
+```bash
+# все события:
+rabbitmqadmin declare queue name=my-app.events durable=true
+rabbitmqadmin declare binding source=zorrobpm.events destination=my-app.events routing_key="#"
+# ИЛИ только инциденты:      routing_key="incident.*"
+# ИЛИ конкретный тип:        routing_key="user-task.created"
+```
+> Один потребитель = одна durable-очередь. Несколько потребителей — каждый свою очередь (каждый получит копию по
+> своему паттерну). Не биндите к общей очереди, если хотите независимую доставку.
+
+**Шаг 3. Читайте из своей очереди** (пример — Spring Boot воркер):
+```java
+@Component
+public class EventConsumer {
+    @RabbitListener(queues = "my-app.events")
+    public void onEvent(String envelopeJson) {
+        // envelopeJson — JSON envelope (type, sequence, processInstanceId, data, …)
+        // РАЗБЕРИТЕ и реагируйте. Обработка ДОЛЖНА быть идемпотентной:
+        //   доставка at-least-once → возможен повтор; дедуп по полю "id" или "sequence".
+    }
+}
+```
+Пример на любом языке — консюмер AMQP 0-9-1 к очереди `my-app.events` (Go/Python/Node — любой клиент RabbitMQ).
+
+**Шаг 4. Гарантии и правила:**
+- **At-least-once, не exactly-once** — возможен дубликат при ретрае. Дедуп по `id`/`sequence`, обработка идемпотентна.
+- **Порядок** — монотонный `sequence` (глобальный); в рамках одного `processInstanceId` порядок сохранён.
+- **Догон после простоя** — если консюмер лежал, события копились в его durable-очереди (не потеряются). Либо
+  добрать пропущенное через Контракт B: `GET /api/events?since=<последний_обработанный_sequence>`.
+- **Не подтверждайте (ack) до успешной обработки** — при падении сообщение вернётся (requeue) или уйдёт в DLQ по
+  вашей настройке.
+
+**Быстрая проверка «вживую»:** привяжите очередь с `routing_key="#"`, запустите любой процесс (см. [Руководство по
+интеграции](#руководство-по-интеграции--пошагово-для-новичка)) — в очереди появятся `process-instance.started`,
+`user-task.created` и т.д.
+
+### Контракт B (HTTP pull) — без RabbitMQ
+```bash
+curl "https://<host>/api/events?since=<sequence>&type=incident.raised&limit=100" \
+  -H "Authorization: Bearer zbpm_sk_..."
+# → события после курсора (только те process-definition, на которые у ключа есть grant); в ответе — следующий курсор.
+```
+Курсор `since` — последний обработанный `sequence`; реплеится, firewall-friendly. **AuthZ:** видны только свои
+process-definition (кросс-тенант события не отдаются).
+
+### Контракт C (SSE push) — для браузерных UI
+`GET /api/events/stream` (`text/event-stream`, JWT-auth, `Last-Event-ID`=sequence для докачки) — живой поток в браузер/
+BFF. Тот же authz-фильтр. Встроенный SPA использует его для realtime без поллинга.
+
 ## Авторизация веб-консоли (UI)
 
 Простой self-contained вход в UI по логину/паролю (без Keycloak):
