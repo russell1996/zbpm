@@ -139,4 +139,16 @@ public class DomainEventEmitter {
         emit(DomainEventType.INCIDENT_RESOLVED, processInstanceId, processDefinitionId, elementId,
             Map.of("incidentId", incidentId.toString()));
     }
+
+    public void emitUserTaskAssigned(UUID processInstanceId, UUID processDefinitionId, String elementId,
+                                      UUID activityId, String assignee) {
+        emit(DomainEventType.USER_TASK_ASSIGNED, processInstanceId, processDefinitionId, elementId,
+            Map.of("activityId", activityId.toString(), "assignee", assignee));
+    }
+
+    public void emitUserTaskUnassigned(UUID processInstanceId, UUID processDefinitionId, String elementId,
+                                        UUID activityId) {
+        emit(DomainEventType.USER_TASK_UNASSIGNED, processInstanceId, processDefinitionId, elementId,
+            Map.of("activityId", activityId.toString()));
+    }
 }

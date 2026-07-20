@@ -23,14 +23,16 @@
 | `activity.completed` | завершилась активность (шаг процесса) | ✅ `bpmnElementId` | `{}` |
 | `user-task.created` | создана пользовательская задача | ✅ | `{ activityId, assignee?, candidateGroups? }` |
 | `user-task.completed` | пользовательская задача завершена | ✅ | `{ activityId, assignee? }` |
+| `user-task.assigned` | задача назначена (claim или reassign) | ✅ | `{ activityId, assignee }` |
+| `user-task.unassigned` | задача возвращена в пул (unclaim) | ✅ | `{ activityId }` |
 | `service-task.created` | создан джоб сервис-таска | ✅ | `{ activityId }` |
 | `incident.raised` | поднят инцидент (ошибка на шаге) | ✅ | `{ incidentId, message }` |
 | `incident.resolved` | инцидент разрешён | ✅ | `{ incidentId }` |
 
-> **assignee/candidateGroups (EVT-8, в проде):** `assignee` кладётся только если задача назначена (иначе ключа нет);
+> **assignee/candidateGroups (в проде):** `assignee` кладётся только если задача назначена (иначе ключа нет);
 > `candidateGroups` — строка через запятую (`"managers,admins"`), НЕ массив. `candidateUsers` НЕ эмитится (в модели
 > user-task такого поля нет). Так внешний бэкенд роутит событие сотруднику без доспроса `GET /user-tasks/{id}`.
-> Смены assignee после создания (claim/reassign) движок пока не эмитит — шва нет (см. WO-EVT-8, 8b отложен).
+> Смена assignee после создания (claim/reassign/unclaim) эмитит `user-task.assigned`/`user-task.unassigned` (WO-INT-5).
 
 ## Поля конверта (одинаковы у всех событий)
 
