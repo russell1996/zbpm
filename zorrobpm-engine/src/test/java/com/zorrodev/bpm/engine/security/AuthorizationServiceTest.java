@@ -9,6 +9,7 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -29,6 +30,7 @@ class AuthorizationServiceTest {
     private ProcessMemberRepository processMemberRepository;
     private ProcessInstanceRepository processInstanceRepository;
     private ProcessDefinitionRepository processDefinitionRepository;
+    private UserGroupRepository userGroupRepository;
     private AuthorizationService auth;
 
     @BeforeEach
@@ -37,7 +39,8 @@ class AuthorizationServiceTest {
         processMemberRepository = mock(ProcessMemberRepository.class);
         processInstanceRepository = mock(ProcessInstanceRepository.class);
         processDefinitionRepository = mock(ProcessDefinitionRepository.class);
-        auth = new AuthorizationService(processRepository, processMemberRepository, processInstanceRepository, processDefinitionRepository);
+        userGroupRepository = mock(UserGroupRepository.class);
+        auth = new AuthorizationService(processRepository, processMemberRepository, processInstanceRepository, processDefinitionRepository, userGroupRepository);
     }
 
     // --- SuperAdmin bypass ---
