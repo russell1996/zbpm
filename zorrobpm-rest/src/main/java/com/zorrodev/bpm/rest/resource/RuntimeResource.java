@@ -242,7 +242,13 @@ public class RuntimeResource implements RuntimeContract {
             assignee = resolvePrincipalId(principal);
         }
 
-        dbService.claimUserTask(id, assignee);
+        // Atomic claim can still lose the race to a concurrent claimant between the check above
+        // and the update → surface as 409, not a 500.
+        try {
+            dbService.claimUserTask(id, assignee);
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
         auditLogService.record(getPrincipal(), "CLAIM_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), assignee);
 
         IdDTO result = new IdDTO();

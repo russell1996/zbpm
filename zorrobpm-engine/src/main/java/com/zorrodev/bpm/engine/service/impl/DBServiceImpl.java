@@ -306,10 +306,11 @@ public class DBServiceImpl implements DBService {
         if (ut.getCompletedAt() != null) {
             throw new IllegalStateException("User task is already completed");
         }
-        if (ut.getAssignee() != null) {
+        // Atomic claim: only one concurrent claimant wins (WHERE assignee IS NULL).
+        int updated = userTaskRepository.claimAssignee(taskId, assignee);
+        if (updated == 0) {
             throw new IllegalStateException("User task is already assigned");
         }
-        userTaskRepository.setAssignee(taskId, assignee);
         domainEventEmitter.emitUserTaskAssigned(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), taskId, assignee);
     }
 
