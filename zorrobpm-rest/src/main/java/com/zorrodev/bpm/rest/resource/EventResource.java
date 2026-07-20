@@ -3,10 +3,8 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.engine.entity.DomainEventEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
-import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +32,7 @@ public class EventResource {
 
     private final DomainEventRepository domainEventRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
-    private final ProcessRepository processRepository;
+    private final EventAuthzResolver eventAuthzResolver;
     private final HttpServletRequest request;
 
     @GetMapping
@@ -51,7 +49,7 @@ public class EventResource {
         }
 
         // Resolve allowed processDefinitionIds based on grants (null = see all)
-        Collection<UUID> allowedPdIds = resolveAllowedProcessDefinitionIds(principal, processDefinitionKey);
+        Collection<UUID> allowedPdIds = eventAuthzResolver.resolve(principal, processDefinitionKey);
         if (allowedPdIds != null && allowedPdIds.isEmpty()) {
             PagedDataDTO<Map<String, Object>> empty = new PagedDataDTO<>();
             empty.setData(List.of());
@@ -100,53 +98,6 @@ public class EventResource {
         result.setData(envelopes);
         result.setTotalElements((long) envelopes.size());
         return ResponseEntity.ok(result);
-    }
-
-    private Collection<UUID> resolveAllowedProcessDefinitionIds(Principal principal, String processDefinitionKey) {
-        // SuperAdmin sees all — return null to bypass filter
-        if (principal.isSuperAdmin()) {
-            return null;
-        }
-
-        // ServicePrincipal with full access sees all
-        if (principal instanceof Principal.ServicePrincipal sp) {
-            boolean hasFullAccess = sp.grants().values().stream()
-                .anyMatch(Principal.Grant::isFull);
-            if (hasFullAccess) {
-                return null;
-            }
-
-            // Get definitionKeys from granted processIds
-            Set<UUID> processIds = sp.grants().keySet();
-            if (processIds.isEmpty()) {
-                return Set.of();
-            }
-
-            List<ProcessEntity> processes = processRepository.findAllById(processIds);
-            Set<String> allKeys = processes.stream()
-                .map(ProcessEntity::getDefinitionKey)
-                .collect(Collectors.toSet());
-
-            // If processDefinitionKey filter is provided, narrow further
-            Set<String> definitionKeys = (processDefinitionKey != null && !processDefinitionKey.isBlank())
-                ? allKeys.stream().filter(k -> processDefinitionKey.equals(k)).collect(Collectors.toSet())
-                : allKeys;
-
-            if (definitionKeys.isEmpty()) {
-                return Set.of();
-            }
-
-            // Find processDefinitionIds for these keys
-            List<ProcessDefinitionEntity> defs = processDefinitionRepository.findAll(
-                (root, query, cb) -> root.get("key").in(definitionKeys));
-
-            return defs.stream()
-                .map(ProcessDefinitionEntity::getId)
-                .collect(Collectors.toSet());
-        }
-
-        // UserPrincipal — simplified: no access unless we add membership check
-        return Set.of();
     }
 
     private Map<String, Object> toEnvelope(DomainEventEntity event) {
