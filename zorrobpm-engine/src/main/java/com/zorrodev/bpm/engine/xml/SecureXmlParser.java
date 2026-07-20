@@ -7,12 +7,10 @@ import jakarta.xml.bind.JAXBContext;
 import java.io.StringReader;
 
 /**
- * Secure XML unmarshalling helper. Blocks XXE (CWE-611) by:
- * <ul>
- *   <li>Rejecting XML containing DOCTYPE declarations (external entity vector)</li>
- *   <li>Setting JVM-wide accessExternalDTD="" property</li>
- *   <li>Delegating to JAXB with FEATURE_SECURE_PROCESSING enabled internally</li>
- * </ul>
+ * Secure XML unmarshalling helper. Blocks XXE (CWE-611) by <b>rejecting any XML that contains a
+ * DOCTYPE declaration</b> before it reaches the parser — DOCTYPE is the required vector for entity
+ * declarations, and legitimate BPMN/DMN never uses it. This allowlist approach means no external
+ * entity ever gets a chance to resolve, regardless of the underlying JAXP configuration.
  * All BPMN/DMN parsing must go through this class.
  */
 public final class SecureXmlParser {
