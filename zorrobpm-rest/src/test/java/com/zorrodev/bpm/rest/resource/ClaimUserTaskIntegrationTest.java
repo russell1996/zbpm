@@ -197,7 +197,7 @@ class ClaimUserTaskIntegrationTest {
                         .header("Authorization", "Bearer " + candidateToken)
                         .header("X-On-Behalf-Of", "petrov"))
                 .andExpect(status().isOk());
-        assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("petrov");
+        assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("[claimed] petrov");
     }
 
     // --- super-admin claims → 200 ---
