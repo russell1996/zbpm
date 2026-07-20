@@ -292,6 +292,10 @@ public class RuntimeResource implements RuntimeContract {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
 
+        if (dto == null || dto.getAssignee() == null || dto.getAssignee().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "assignee is required");
+        }
+
         UserTaskEntity task = userTaskRepository.findById(id).orElse(null);
         if (task == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found");
@@ -300,7 +304,8 @@ public class RuntimeResource implements RuntimeContract {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "User task is already completed");
         }
 
-        if (!authorizationService.canClaimUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())) {
+        // Reassign is administrative: requires owner/admin (stricter than claim's candidate check).
+        if (!authorizationService.canReassignUserTask(principal, task.getProcessInstanceId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
 

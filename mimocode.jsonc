@@ -8,6 +8,11 @@
   "instructions": [
     "governance/mimo-standing-prompt.md",
     "governance/cto-to-mimo.md"
+  ],
+
+  // G-M enforcement: mechanical pre-done checklist injected every turn
+  "plugin": [
+    "./.mimocode/plugins/done-gate.js"
   ]
 
   // Recommended for higher code quality (set to a strong model available to you):

@@ -157,6 +157,40 @@ public class AuthorizationService {
         return false;
     }
 
+    /**
+     * Checks if the principal can REASSIGN a user task to someone else (administrative action).
+     * Stricter than claim: default DENY, candidate membership is NOT enough.
+     * <ul>
+     *   <li>SUPER_ADMIN — allowed.</li>
+     *   <li>ServicePrincipal — needs a grant with COMPLETE_USER_TASK (or full) on the process.</li>
+     *   <li>UserPrincipal — only a process OWNER/DESIGNER (a plain member/candidate is denied).</li>
+     * </ul>
+     */
+    public boolean canReassignUserTask(Principal principal, UUID processInstanceId) {
+        if (principal.isSuperAdmin()) return true;
+
+        ProcessInstanceEntity instance = processInstanceRepository.findById(processInstanceId).orElse(null);
+        if (instance == null) return false;
+        ProcessDefinitionEntity definition = processDefinitionRepository.findById(instance.getProcessDefinitionId()).orElse(null);
+        if (definition == null) return false;
+        ProcessEntity process = processRepository.findByDefinitionKey(definition.getKey()).orElse(null);
+        if (process == null) return false;
+        UUID registryProcessId = process.getId();
+
+        if (principal instanceof Principal.ServicePrincipal sa) {
+            Principal.Grant grant = sa.grants().get(registryProcessId);
+            if (grant == null) return false;
+            return grant.isFull() || grant.permissions().contains("COMPLETE_USER_TASK");
+        }
+        if (principal instanceof Principal.UserPrincipal user) {
+            ProcessMemberEntity membership = processMemberRepository.findById(
+                new ProcessMemberId(registryProcessId, user.userId())).orElse(null);
+            if (membership == null) return false;
+            return "OWNER".equals(membership.getRole()) || "DESIGNER".equals(membership.getRole());
+        }
+        return false;
+    }
+
     /** Parses a comma-separated candidate-groups string into a trimmed, non-blank set. */
     private static Set<String> parseCandidateGroups(String candidateGroups) {
         if (candidateGroups == null || candidateGroups.isBlank()) return Set.of();
