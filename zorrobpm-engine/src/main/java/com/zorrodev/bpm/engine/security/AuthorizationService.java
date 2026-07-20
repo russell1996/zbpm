@@ -9,10 +9,15 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -22,6 +27,7 @@ public class AuthorizationService {
     private final ProcessMemberRepository processMemberRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
+    private final UserGroupRepository userGroupRepository;
 
     public enum Action {
         // Management actions — SUPER_ADMIN only (ADR-2)
@@ -92,8 +98,15 @@ public class AuthorizationService {
     }
 
     /**
-     * Checks if the principal can claim/unclaim/assign a user task.
-     * Mirrors canCompleteUserTask + additionally checks candidate group membership for claim.
+     * Checks if the principal can claim/unclaim/assign a user task. Authz default is DENY.
+     * <ul>
+     *   <li>SUPER_ADMIN — allowed.</li>
+     *   <li>ServicePrincipal — needs a grant with COMPLETE_USER_TASK (or full) on the process.</li>
+     *   <li>UserPrincipal, task HAS candidateGroups — allowed only if the user belongs to one of them
+     *       (candidate eligibility, mirrors Camunda). A process member who is not a candidate is denied.</li>
+     *   <li>UserPrincipal, task has NO candidateGroups — open to the team: allowed only if the user is a
+     *       process member (blocks cross-tenant claims).</li>
+     * </ul>
      */
     public boolean canClaimUserTask(Principal principal, UUID processInstanceId, String candidateGroups) {
         if (principal.isSuperAdmin()) return true;
@@ -113,12 +126,25 @@ public class AuthorizationService {
             return grant.isFull() || grant.permissions().contains("COMPLETE_USER_TASK");
         }
         if (principal instanceof Principal.UserPrincipal user) {
-            // Must be a process member
-            ProcessMemberEntity membership = processMemberRepository.findById(
-                new ProcessMemberId(registryProcessId, user.userId())).orElse(null);
-            if (membership == null) return false;
-            return true; // member can claim/assign
+            Set<String> taskGroups = parseCandidateGroups(candidateGroups);
+            if (!taskGroups.isEmpty()) {
+                // Task restricted to candidate groups → user must be in one of them.
+                List<String> userGroups = userGroupRepository.findGroupNamesByUserId(user.userId());
+                return userGroups.stream().anyMatch(taskGroups::contains);
+            }
+            // No candidate groups → open to process members only (cross-tenant guard).
+            return processMemberRepository.findById(
+                new ProcessMemberId(registryProcessId, user.userId())).orElse(null) != null;
         }
         return false;
+    }
+
+    /** Parses a comma-separated candidate-groups string into a trimmed, non-blank set. */
+    private static Set<String> parseCandidateGroups(String candidateGroups) {
+        if (candidateGroups == null || candidateGroups.isBlank()) return Set.of();
+        return Arrays.stream(candidateGroups.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .collect(Collectors.toSet());
     }
 }

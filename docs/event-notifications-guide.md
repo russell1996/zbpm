@@ -50,9 +50,8 @@
   "elementId": "Approve",                  // КАКОЙ элемент BPMN
   "data": {                                // тип-специфичная нагрузка
     "activityId": "...-uuid",
-    "assignee": "ivanov",                  // КОМУ назначено (может быть null)
-    "candidateUsers": ["petrov"],          // кто может забрать (может быть пусто)
-    "candidateGroups": ["managers"]        // какая группа может забрать
+    "assignee": "ivanov",                  // КОМУ назначено (ключа нет, если не назначена)
+    "candidateGroups": "managers,admins"   // какие группы могут забрать — строка через запятую (не массив)
   }
 }
 ```
@@ -237,7 +236,7 @@ public void onEvent(EventEnvelope e) {
 - **E2.** Твой `@RabbitListener` получил письмо. Дедуп по `eventId`.
 - **E3.** Бэкенд смотрит в тело и вычисляет **множество заинтересованных сотрудников**:
   - если `data.assignee` задан → `{ "ivanov" }`;
-  - иначе разворачивает `data.candidateUsers ∪ (все члены data.candidateGroups)` → напр. `{ все managers }`.
+  - иначе разворачивает `data.candidateGroups` (строка через запятую) в членов групп → напр. `{ все managers }`.
 - **E4.** Пересекает это множество с картой сессий (кто из них **сейчас онлайн**). Для Иванова находит его
   WebSocket.
 - **E5.** Пушит Иванову в его WebSocket **крохотное** сообщение: `{action:"task-created", taskId,
