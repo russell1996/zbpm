@@ -285,7 +285,7 @@ public class DBServiceImpl implements DBService {
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
 
         userTaskRepository.save(entity);
-        domainEventEmitter.emitUserTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId);
+        domainEventEmitter.emitUserTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId, assignee, candidateGroups);
     }
 
     @Override
@@ -297,7 +297,7 @@ public class DBServiceImpl implements DBService {
     public void completeUserTask(UUID userTaskId) {
         UserTaskEntity ut = userTaskRepository.findById(userTaskId).orElseThrow();
         userTaskRepository.setCompletedAt(userTaskId, Instant.now());
-        domainEventEmitter.emitUserTaskCompleted(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), userTaskId);
+        domainEventEmitter.emitUserTaskCompleted(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), userTaskId, ut.getAssignee());
     }
 
     @Override
