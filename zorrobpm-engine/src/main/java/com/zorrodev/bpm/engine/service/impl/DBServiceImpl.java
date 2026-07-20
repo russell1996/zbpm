@@ -97,7 +97,7 @@ public class DBServiceImpl implements DBService {
             v.setProcessInstanceId(id);
             v.setName(variable.getName());
             v.setType(variable.getType());
-            v.setTextValue(variable.getValue());
+            v.setTextValue(variable.getValue() != null ? variable.getValue() : "");
             vs.add(v);
         }
         variableRepository.saveAll(vs);
@@ -390,7 +390,7 @@ public class DBServiceImpl implements DBService {
                     return e;
                 });
             entity.setType(variable.getType());
-            entity.setTextValue(variable.getValue());
+            entity.setTextValue(variable.getValue() != null ? variable.getValue() : "");
             entities.add(entity);
         }
         variableRepository.saveAll(entities);
