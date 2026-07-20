@@ -51,9 +51,8 @@
   "elementId": "Approve",                  // КАКОЙ элемент BPMN
   "data": {                                // тип-специфичная нагрузка
     "activityId": "...-uuid",
-    "assignee": "ivanov",                  // КОМУ назначено (может быть null)
-    "candidateUsers": ["petrov"],          // кто может забрать (может быть пусто)
-    "candidateGroups": ["managers"]        // какая группа может забрать
+    "assignee": "ivanov",                  // КОМУ назначено (ключа нет, если не назначена)
+    "candidateGroups": "managers,admins"   // какие группы могут забрать — строка через запятую (не массив)
   }
 }
 ```
@@ -297,16 +296,18 @@ public void onEvent(EventEnvelope e) {
 - **Контракт C** — SSE-мост `GET /events/stream` + `EventAuthzResolver` (authz DENY-by-default) + фронт-
   интеграция `handleEvent` в Pinia-сторах (EVT-4/EVT-5).
 
-**В работе / нужно доделать:**
+- **assignee/candidateGroups в `data`** события `user-task.created/completed` (EVT-8a) — BFF роутит событие
+  сотруднику без доспроса `GET /user-tasks/{id}`.
 
-| WO | Что | Без этого… |
+**Отложено (осознанно):**
+
+| WO | Что | Почему отложено |
 |---|---|---|
-| **EVT-8a** | добавить в `data` события `assignee`, `candidateGroups` (`candidateUsers` если есть в модели) | сейчас в `data` только `activityId`; BFF вынужден доспрашивать `GET /user-tasks/{id}` на каждое событие |
-| **EVT-8b** | эмитить `user-task.assigned`/`unassigned` при claim/reassign (условно — если шов появится) | claim из пула не убирает задачу у остальных вживую |
+| **EVT-8b** | `user-task.assigned` при claim/reassign | в движке нет шва смены assignee после создания (задача назначается только при createUserTask). Появится claim-операция — добавим |
 
 > Состояние конверта в коде: [DomainEventEmitter.java](../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventEmitter.java)
-> кладёт `eventId, type, occurredAt, processInstanceId, processDefinitionId, processDefinitionKey, elementId, data`.
-> assignee в `data` — добавит EVT-8a.
+> кладёт `eventId, type, occurredAt, processInstanceId, processDefinitionId, processDefinitionKey, elementId, data`
+> (+ `assignee`/`candidateGroups` в `data` для user-task).
 
 ---
 
