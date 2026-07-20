@@ -21,15 +21,16 @@
 | `process-instance.completed` | инстанс завершился нормально | — | `{}` |
 | `process-instance.cancelled` | инстанс отменён | — | `{}` |
 | `activity.completed` | завершилась активность (шаг процесса) | ✅ `bpmnElementId` | `{}` |
-| `user-task.created` | создана пользовательская задача | ✅ | `{ activityId }` |
-| `user-task.completed` | пользовательская задача завершена | ✅ | `{ activityId }` |
+| `user-task.created` | создана пользовательская задача | ✅ | `{ activityId, assignee?, candidateGroups? }` |
+| `user-task.completed` | пользовательская задача завершена | ✅ | `{ activityId, assignee? }` |
 | `service-task.created` | создан джоб сервис-таска | ✅ | `{ activityId }` |
 | `incident.raised` | поднят инцидент (ошибка на шаге) | ✅ | `{ incidentId, message }` |
 | `incident.resolved` | инцидент разрешён | ✅ | `{ incidentId }` |
 
-> ⚠️ Планируется (EVT-8): в `user-task.created/completed` добавятся `assignee`, `candidateGroups`
-> (`candidateUsers` — если есть в модели). Сейчас в `data` только `activityId` — чтобы узнать исполнителя,
-> потребитель доспрашивает `GET /user-tasks/{activityId}`.
+> **assignee/candidateGroups (EVT-8, в проде):** `assignee` кладётся только если задача назначена (иначе ключа нет);
+> `candidateGroups` — строка через запятую (`"managers,admins"`), НЕ массив. `candidateUsers` НЕ эмитится (в модели
+> user-task такого поля нет). Так внешний бэкенд роутит событие сотруднику без доспроса `GET /user-tasks/{id}`.
+> Смены assignee после создания (claim/reassign) движок пока не эмитит — шва нет (см. WO-EVT-8, 8b отложен).
 
 ## Поля конверта (одинаковы у всех событий)
 
