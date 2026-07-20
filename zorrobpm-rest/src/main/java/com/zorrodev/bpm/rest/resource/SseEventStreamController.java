@@ -41,21 +41,26 @@ public class SseEventStreamController {
 
         SseEmitter emitter = new SseEmitter(0L); // no timeout
 
-        // Send catchup events if Last-Event-ID is provided
-        if (lastEventId != null && !lastEventId.isBlank()) {
-            try {
-                long sinceSequence = Long.parseLong(lastEventId);
-                sseEventStreamService.sendCatchupEvents(emitter, sinceSequence, principal, processDefinitionKey);
-            } catch (NumberFormatException e) {
-                log.warn("Invalid Last-Event-ID: {}", lastEventId);
+        try {
+            // Send catchup events if Last-Event-ID is provided
+            if (lastEventId != null && !lastEventId.isBlank()) {
+                try {
+                    long sinceSequence = Long.parseLong(lastEventId);
+                    sseEventStreamService.sendCatchupEvents(emitter, sinceSequence, principal, processDefinitionKey);
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid Last-Event-ID: {}", lastEventId);
+                }
             }
+
+            // Register client for future events
+            String clientId = sseEventStreamService.registerClient(emitter, principal, type, processInstanceId, processDefinitionKey);
+
+            log.info("SSE stream opened: clientId={}, type={}, processInstanceId={}, processDefinitionKey={}, lastEventId={}",
+                clientId, type, processInstanceId, processDefinitionKey, lastEventId);
+        } catch (Exception e) {
+            log.error("Error setting up SSE stream", e);
+            emitter.completeWithError(e);
         }
-
-        // Register client for future events
-        String clientId = sseEventStreamService.registerClient(emitter, principal, type, processInstanceId, processDefinitionKey);
-
-        log.info("SSE stream opened: clientId={}, type={}, processInstanceId={}, processDefinitionKey={}, lastEventId={}",
-            clientId, type, processInstanceId, processDefinitionKey, lastEventId);
 
         return emitter;
     }

@@ -204,6 +204,10 @@ public class SseEventStreamService {
         if (listenerContainer != null && listenerContainer.isRunning()) {
             return;
         }
+        if (rabbitAdmin == null) {
+            log.warn("RabbitAdmin not available — SSE bridge not started (no RabbitMQ)");
+            return;
+        }
 
         String queueName = "zorrobpm.sse-bridge." + UUID.randomUUID();
         Queue queue = new Queue(queueName, false, true, true); // exclusive, auto-delete
