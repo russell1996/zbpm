@@ -10,12 +10,11 @@ import com.zorrodev.bpm.engine.bpmn.xml.*;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
-import jakarta.xml.bind.JAXB;
+import com.zorrodev.bpm.engine.xml.SecureXmlParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,7 +57,7 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
             throw new BpmnParseException(e);
         }
 
-        BpmnDefinitionsModel definitions = JAXB.unmarshal(new StringReader(xml), BpmnDefinitionsModel.class);
+        BpmnDefinitionsModel definitions = SecureXmlParser.unmarshal(xml, BpmnDefinitionsModel.class);
         BpmnProcessDefinitionModel process = definitions.getProcess();
 
         Refs refs = buildRefs(definitions);
