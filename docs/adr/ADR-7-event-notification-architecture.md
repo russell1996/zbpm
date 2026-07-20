@@ -46,14 +46,14 @@ auth, плохо масштабируются, привязывают ядро �
 Outbox-poller публикует envelope в **topic-exchange** `zorrobpm.events` с routing-key = `type` (`incident.raised`,
 `user-task.created`, …). Потребитель биндит очередь с нужными паттернами. Durable, multi-consumer, scale-out-safe.
 
-### Контракт B — HTTP pull (универсальный, firewall-friendly): `GET /api/events`
-`GET /api/events?since=<sequence>&type=&processInstanceId=&processDefinitionKey=&limit=` — курсор-пагинация по
+### Контракт B — HTTP pull (универсальный, firewall-friendly): `GET /events`
+`GET /events?since=<sequence>&type=&processInstanceId=&processDefinitionKey=&limit=` — курсор-пагинация по
 `sequence`. Для ЛЮБОЙ внешней системы/UI, кто не хочет AMQP (большинство): «дай всё, что случилось после курсора».
 Реплеится (курсор в БД). **Authz: фильтр по grants принципала (ADR-2)** — потребитель видит только события своих
 process-definition (full-access — все). Никаких кросс-тенант утечек.
 
-### Контракт C — HTTP push (SSE) для внешних UI и встроенного SPA: `GET /api/events/stream`
-`GET /api/events/stream?type=&processInstanceId=&processDefinitionKey=` — **Server-Sent Events** (не WebSocket:
+### Контракт C — HTTP push (SSE) для внешних UI и встроенного SPA: `GET /events/stream`
+`GET /events/stream?type=&processInstanceId=&processDefinitionKey=` — **Server-Sent Events** (не WebSocket:
 одностороннее «фронт принимает изменения» = ровно SSE; HTTP + JWT-cookie + nginx без апгрейд-возни; авто-реконнект;
 `Last-Event-ID` = sequence для докачки пропущенного). JWT-auth, тот же authz-фильтр по grants. В каждой реплике
 SSE-мост подписан на `zorrobpm.events` (эксклюзивная очередь) → пушит своим подключённым клиентам (multi-replica-safe).
@@ -76,7 +76,7 @@ SSE-мост подписан на `zorrobpm.events` (эксклюзивная �
 ## Фазы (пул работ)
 - **EVT-1** (engine): event-модель + envelope + таблица `events` + эмиссия в outbox на сеймах DBService. Фундамент.
 - **EVT-2** (rabbitmq): publisher outbox → topic-exchange `zorrobpm.events` (Контракт A).  ∥ EVT-3.
-- **EVT-3** (rest): `GET /api/events?since=cursor` pull-API + authz-фильтр (Контракт B).  ∥ EVT-2.
-- **EVT-4** (rest): SSE `GET /api/events/stream` + JWT-auth + authz-фильтр + мост от exchange (Контракт C).
+- **EVT-3** (rest): `GET /events?since=cursor` pull-API + authz-фильтр (Контракт B).  ∥ EVT-2.
+- **EVT-4** (rest): SSE `GET /events/stream` + JWT-auth + authz-фильтр + мост от exchange (Контракт C).
 - **EVT-5** (frontend): SSE-клиент + интеграция Pinia-stores (task/process/incident).
 - **EVT-6** (опц., позже): webhooks (регистрация + ретраи + HMAC).
