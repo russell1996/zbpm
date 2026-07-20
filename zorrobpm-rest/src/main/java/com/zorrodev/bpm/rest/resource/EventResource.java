@@ -65,9 +65,26 @@ public class EventResource {
         List<DomainEventEntity> events;
         if (allowedPdIds == null) {
             // Full access — no filter
-            events = domainEventRepository.findSince(cursor, maxResults + 1);
+            events = domainEventRepository.findSince(cursor, maxResults + 100);
         } else {
-            events = domainEventRepository.findSinceForPrincipal(cursor, allowedPdIds, maxResults + 1);
+            events = domainEventRepository.findSinceForPrincipal(cursor, allowedPdIds, maxResults + 100);
+        }
+
+        // Apply type filter in memory (not in SQL for simplicity)
+        if (type != null && !type.isBlank()) {
+            events = events.stream()
+                .filter(e -> type.equals(e.getType()))
+                .collect(Collectors.toList());
+        }
+
+        // Apply processDefinitionKey filter in memory if needed (for superAdmin/full-access)
+        if (processDefinitionKey != null && !processDefinitionKey.isBlank() && allowedPdIds == null) {
+            List<UUID> filteredPdIds = processDefinitionRepository.findAll(
+                (root, query, cb) -> cb.equal(root.get("key"), processDefinitionKey))
+                .stream().map(ProcessDefinitionEntity::getId).collect(Collectors.toList());
+            events = events.stream()
+                .filter(e -> filteredPdIds.contains(e.getProcessDefinitionId()))
+                .collect(Collectors.toList());
         }
 
         boolean hasMore = events.size() > maxResults;
@@ -133,18 +150,18 @@ public class EventResource {
     }
 
     private Map<String, Object> toEnvelope(DomainEventEntity event) {
-        return Map.of(
-            "sequence", event.getSequence(),
-            "id", event.getId().toString(),
-            "type", event.getType(),
-            "version", event.getVersion(),
-            "occurredAt", event.getOccurredAt().toString(),
-            "processDefinitionId", event.getProcessDefinitionId() != null ? event.getProcessDefinitionId().toString() : null,
-            "processInstanceId", event.getProcessInstanceId() != null ? event.getProcessInstanceId().toString() : null,
-            "elementId", event.getElementId() != null ? event.getElementId() : null,
-            "ownerScope", event.getOwnerScope() != null ? event.getOwnerScope() : null,
-            "data", event.getData() != null ? event.getData() : Map.of()
-        );
+        Map<String, Object> envelope = new java.util.LinkedHashMap<>();
+        envelope.put("sequence", event.getSequence());
+        envelope.put("id", event.getId().toString());
+        envelope.put("type", event.getType());
+        envelope.put("version", event.getVersion());
+        envelope.put("occurredAt", event.getOccurredAt().toString());
+        if (event.getProcessDefinitionId() != null) envelope.put("processDefinitionId", event.getProcessDefinitionId().toString());
+        if (event.getProcessInstanceId() != null) envelope.put("processInstanceId", event.getProcessInstanceId().toString());
+        if (event.getElementId() != null) envelope.put("elementId", event.getElementId());
+        if (event.getOwnerScope() != null) envelope.put("ownerScope", event.getOwnerScope());
+        envelope.put("data", event.getData() != null ? event.getData() : Map.of());
+        return envelope;
     }
 
     private Principal getPrincipal() {
