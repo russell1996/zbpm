@@ -96,6 +96,13 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- WO-OPS-1: actuator for /actuator/health integration test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
