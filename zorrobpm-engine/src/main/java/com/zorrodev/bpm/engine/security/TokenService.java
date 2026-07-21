@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.security;
 
 import tools.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
@@ -20,6 +21,7 @@ import java.util.UUID;
  * Minimal stateless bearer token (JWT-like, HS256) issued on login and verified on each request.
  * Self-contained: HMAC-SHA256 via the JDK, JSON via Jackson — no extra dependencies, no Keycloak.
  */
+@Slf4j
 @Component
 public class TokenService {
 
@@ -72,6 +74,15 @@ public class TokenService {
         try {
             String[] parts = token.split("\\.");
             if (parts.length != 3) return null;
+
+            // WO-SEC-31b: reject tokens with alg != HS256 (alg-confusion attack prevention)
+            Map<String, Object> header = mapper.readValue(b64d.decode(parts[0]), Map.class);
+            String alg = (String) header.get("alg");
+            if (!"HS256".equals(alg)) {
+                log.debug("Rejected token with unsupported alg: {}", alg);
+                return null;
+            }
+
             String signingInput = parts[0] + "." + parts[1];
             if (!constantTimeEquals(b64.encodeToString(hmac(signingInput)), parts[2])) return null;
             Map<String, Object> payload = mapper.readValue(b64d.decode(parts[1]), Map.class);
