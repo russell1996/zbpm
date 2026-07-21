@@ -59,6 +59,17 @@
                     <tagNameFormat>v@{project.version}</tagNameFormat>
                 </configuration>
             </plugin>
+            <!-- WO-SEC-32: OWASP dependency-check — invoked via CLI in CI security job -->
+            <plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>12.1.1</version>
+                <configuration>
+                    <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <suppressionFiles/>
+                    <nodeAuditSkipDevDependencies>true</nodeAuditSkipDevDependencies>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 

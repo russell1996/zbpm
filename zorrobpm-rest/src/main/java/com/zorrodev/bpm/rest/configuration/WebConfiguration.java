@@ -16,7 +16,8 @@ public class WebConfiguration implements WebMvcConfigurer {
         registry.addMapping("/**")
             .allowedOrigins(allowedOrigins.split(","))
             .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-            .allowedHeaders("*")
+            // WO-SEC-31a: explicit header list instead of "*" — narrower surface with credentials
+            .allowedHeaders("Authorization", "Content-Type", "X-On-Behalf-Of", "Last-Event-ID")
             .allowCredentials(true);
     }
 }
