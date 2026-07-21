@@ -12,8 +12,12 @@ import org.springframework.stereotype.Component;
 import java.util.Set;
 
 /**
- * WO-SEC-14: In prod, reject startup if ZORROBPM_DEFAULT_ADMIN_PASSWORD
- * is missing or equals the default "admin".
+ * WO-SEC-14 + WO-SEC-31c: In prod, reject startup if admin password is weak.
+ *
+ * Checks:
+ *  - Password must differ from default "admin"
+ *  - Password must be >= 12 characters
+ *  - Password must not be in a blocklist of commonly weak passwords
  *
  * Uses BeanFactoryPostProcessor to run BEFORE bean instantiation,
  * ensuring the check happens before any other bean can fail.
@@ -24,6 +28,15 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
 
     private static final String DEFAULT_ADMIN_PASSWORD = "admin";
     private static final Set<String> PROD_REQUIRED_PROFILES = Set.of("prod");
+    private static final int MIN_PASSWORD_LENGTH = 12;
+
+    /** WO-SEC-31c: blocklist of commonly weak passwords that must be rejected. */
+    private static final Set<String> WEAK_PASSWORD_BLOCKLIST = Set.of(
+        "admin", "password", "zorrodev", "123456",
+        "qwerty", "letmein", "welcome", "monkey", "dragon",
+        "master", "abc123", "passw0rd", "changeme", "default",
+        "root", "toor", "test", "demo", "sample"
+    );
 
     @Override
     public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
@@ -43,6 +56,28 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
                 + "in production (default 'admin' is not allowed). "
                 + "Set ZORROBPM_DEFAULT_ADMIN_PASSWORD or application-prod.yml.");
         }
-        log.info("Admin password configured for production");
+
+        // WO-SEC-31c: minimum length
+        if (password.length() < MIN_PASSWORD_LENGTH) {
+            throw new IllegalStateException(
+                "FATAL: zorrobpm.security.default-admin-password must be at least "
+                + MIN_PASSWORD_LENGTH + " characters (got " + password.length() + ").");
+        }
+
+        // WO-SEC-31c: blocklist check
+        if (WEAK_PASSWORD_BLOCKLIST.contains(password.toLowerCase())) {
+            throw new IllegalStateException(
+                "FATAL: zorrobpm.security.default-admin-password is a known weak password. "
+                + "Choose a strong, unique password for production.");
+        }
+
+        log.info("Admin password configured for production (length={})", password.length());
+    }
+
+    // Visible for testing
+    static boolean isWeak(String password) {
+        if (password == null) return true;
+        if (password.length() < MIN_PASSWORD_LENGTH) return true;
+        return WEAK_PASSWORD_BLOCKLIST.contains(password.toLowerCase());
     }
 }
