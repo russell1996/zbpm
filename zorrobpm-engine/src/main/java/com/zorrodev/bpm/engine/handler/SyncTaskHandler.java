@@ -63,7 +63,7 @@ public class SyncTaskHandler {
 
             List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
             Object result = scriptService.evaluateExpression(script, variables);
-            log.info("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
+            log.debug("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
 
             String resultVariable = ext.getResultVariable();
             if (resultVariable != null && !resultVariable.isBlank()) {
@@ -112,7 +112,7 @@ public class SyncTaskHandler {
             } else {
                 throw new IllegalStateException("Business rule task '" + el.getId() + "' has neither a decision nor an expression");
             }
-            log.info("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
+            log.debug("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
 
             if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
                 dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(ext.getResultVariable(), result)));
