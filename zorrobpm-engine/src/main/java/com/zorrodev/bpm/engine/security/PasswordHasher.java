@@ -50,10 +50,12 @@ public class PasswordHasher {
     }
 
     private static boolean constantTimeEquals(byte[] a, byte[] b) {
-        if (a.length != b.length) return false;
-        int result = 0;
-        for (int i = 0; i < a.length; i++) result |= a[i] ^ b[i];
-        return result == 0;
+        // WO-SEC-30a: constant-time comparison with no early return by length.
+        // Accumulate XOR of length difference + all byte differences.
+        int diff = a.length ^ b.length;
+        int len = Math.min(a.length, b.length);
+        for (int i = 0; i < len; i++) diff |= a[i] ^ b[i];
+        return diff == 0;
     }
 
     private static String b64(byte[] data) {
