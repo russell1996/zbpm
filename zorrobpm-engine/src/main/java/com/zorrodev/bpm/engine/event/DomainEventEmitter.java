@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Emits domain events to the events table + outbox in the same transaction (ADR-7, WO-EVT-1).
@@ -31,6 +32,9 @@ public class DomainEventEmitter {
     private final OutboxRepository outboxRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final tools.jackson.databind.ObjectMapper objectMapper;
+
+    // WO-PERF-1 N3: immutable process definitions → cache pdId→pdKey to avoid DB hit per event
+    private final ConcurrentHashMap<UUID, String> pdKeyCache = new ConcurrentHashMap<>();
 
     /**
      * Emits a domain event: writes to events table + outbox entry in the same transaction.
@@ -62,13 +66,14 @@ public class DomainEventEmitter {
         event.setData(safeData);
         domainEventRepository.save(event);
 
-        // Resolve processDefinitionKey from the definition entity (for routing key, WO-EVT-7)
-        String[] pdKeyHolder = {null};
+        // WO-PERF-1 N3: resolve pdKey from cache (immutable process definitions)
+        String processDefinitionKey = null;
         if (processDefinitionId != null) {
-            processDefinitionRepository.findById(processDefinitionId)
-                .ifPresent(pd -> pdKeyHolder[0] = pd.getKey());
+            processDefinitionKey = pdKeyCache.computeIfAbsent(processDefinitionId,
+                id -> processDefinitionRepository.findById(id)
+                    .map(ProcessDefinitionEntity::getKey)
+                    .orElse(null));
         }
-        String processDefinitionKey = pdKeyHolder[0];
 
         // Write to outbox for async delivery (reuse existing OutboxEntry pattern)
         try {
