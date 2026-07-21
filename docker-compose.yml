@@ -33,9 +33,15 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     ports:
-      # WO-SEC-27: loopback only — external systems publish/consume via the app, not the broker host port.
-      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"        # AMQP
-      - "127.0.0.1:${RABBITMQ_MGMT_PORT:-9300}:15672"  # management UI
+      # INTENDED / NORMAL — publish on all host interfaces. DO NOT re-restrict to 127.0.0.1.
+      # The host lives inside a protected network perimeter (not reachable from the public
+      # internet), and LAN consumers depend on these ports: the test k8s app connects to
+      # 192.0.2.111:5672 (AMQP) and the management UI is used at 192.0.2.111:9300.
+      # This reverts SEC-27a, whose loopback lockdown broke those consumers and whose
+      # internet-exposure premise did not hold. Any future "harden broker ports" WO must
+      # first confirm the host is actually internet-exposed — it is not.
+      - "${RABBITMQ_PORT:-5672}:5672"        # AMQP
+      - "${RABBITMQ_MGMT_PORT:-9300}:15672"  # management UI
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
