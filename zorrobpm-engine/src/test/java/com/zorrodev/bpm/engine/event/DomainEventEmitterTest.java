@@ -196,4 +196,28 @@ class DomainEventEmitterTest {
         assertThat(result.get("id")).isEqualTo(id.toString());
         assertThat(result.get("name")).isEqualTo("test");
     }
+
+    // ==================== WO-PERF-1 N3: pdKey cache ====================
+
+    /**
+     * POF (G-N): two emits with same pdId → findById called ONLY ONCE (from cache).
+     * RED (without cache): findById called twice.
+     */
+    @Test
+    void emit_samePdId_findByIdCalledOnlyOnce() throws Exception {
+        UUID piId = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+        com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity pd =
+            new com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity();
+        pd.setKey("myProcess");
+
+        doReturn("{}").when(objectMapper).writeValueAsString(any());
+        doReturn(java.util.Optional.of(pd)).when(processDefinitionRepository).findById(pdId);
+
+        emitter.emit(DomainEventType.PROCESS_INSTANCE_STARTED, piId, pdId, null, Map.of());
+        emitter.emit(DomainEventType.PROCESS_INSTANCE_COMPLETED, piId, pdId, null, Map.of());
+
+        // findById should be called only once (second call hits cache)
+        verify(processDefinitionRepository, org.mockito.Mockito.atMost(1)).findById(pdId);
+    }
 }
