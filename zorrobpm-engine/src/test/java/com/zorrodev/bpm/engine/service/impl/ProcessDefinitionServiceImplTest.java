@@ -55,6 +55,9 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private com.zorrodev.bpm.engine.repository.FormRepository formRepository;
 
+    @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
@@ -68,7 +71,8 @@ class ProcessDefinitionServiceImplTest {
             fileService,
             dbService,
             bindingRepository,
-            formRepository
+            formRepository,
+            jdbcTemplate
         );
     }
 
