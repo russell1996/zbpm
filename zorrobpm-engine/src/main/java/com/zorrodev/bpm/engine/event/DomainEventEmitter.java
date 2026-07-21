@@ -45,6 +45,10 @@ public class DomainEventEmitter {
         // Determine ownerScope (processDefinitionId for authz filtering per ADR-2)
         String ownerScope = processDefinitionId != null ? processDefinitionId.toString() : null;
 
+        // WO-REL-8a: sanitize data values to String — guarantees Jackson serialization never fails.
+        // All emit* methods already produce String values, but this is the structural safety net.
+        Map<String, Object> safeData = sanitizeData(data);
+
         // Write to events table (append-only, monotonic sequence)
         DomainEventEntity event = new DomainEventEntity();
         event.setId(eventId);
@@ -55,7 +59,7 @@ public class DomainEventEmitter {
         event.setProcessInstanceId(processInstanceId);
         event.setElementId(elementId);
         event.setOwnerScope(ownerScope);
-        event.setData(data != null ? data : Map.of());
+        event.setData(safeData);
         domainEventRepository.save(event);
 
         // Resolve processDefinitionKey from the definition entity (for routing key, WO-EVT-7)
@@ -76,7 +80,7 @@ public class DomainEventEmitter {
             envelope.put("processDefinitionId", processDefinitionId != null ? processDefinitionId.toString() : null);
             envelope.put("processDefinitionKey", processDefinitionKey);
             envelope.put("elementId", elementId);
-            envelope.put("data", data != null ? data : Map.of());
+            envelope.put("data", safeData);
 
             OutboxEntry outboxEntry = new OutboxEntry();
             outboxEntry.setId(UUID.randomUUID());
@@ -150,5 +154,20 @@ public class DomainEventEmitter {
                                         UUID activityId) {
         emit(DomainEventType.USER_TASK_UNASSIGNED, processInstanceId, processDefinitionId, elementId,
             Map.of("activityId", activityId.toString()));
+    }
+
+    /**
+     * WO-REL-8a: convert all data values to String for guaranteed Jackson serialization.
+     * Null values are preserved. This makes the catch block in emit() unreachable
+     * for any data that passes through this method.
+     */
+    static Map<String, Object> sanitizeData(Map<String, Object> data) {
+        if (data == null || data.isEmpty()) return Map.of();
+        Map<String, Object> safe = new HashMap<>(data.size());
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            Object val = entry.getValue();
+            safe.put(entry.getKey(), val != null ? val.toString() : null);
+        }
+        return safe;
     }
 }

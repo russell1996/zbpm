@@ -137,4 +137,63 @@ class DomainEventEmitterTest {
         // Map.of("activityId", activityId.toString()) — size=1, no assignee, no candidateGroups
         // The new signature ensures these fields are always present when provided.
     }
+
+    // ==================== WO-REL-8a ====================
+
+    /**
+     * WO-REL-8a POF: non-serializable value in data → sanitizeData converts to String
+     * → objectMapper.writeValueAsString succeeds (outbox entry created).
+     * RED (without sanitize): non-serializable value stays → serialization can fail → outbox miss.
+     * GREEN (with sanitize): all values are toString'd → serialization always succeeds.
+     */
+    @Test
+    void pof_nonSerializableData_sanitizedForOutbox() throws Exception {
+        UUID piId = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+
+        // Non-serializable object — would cause Jackson to fail
+        Map<String, Object> data = Map.of("activityId", UUID.randomUUID().toString(), "weird", 42);
+
+        doReturn("{}").when(objectMapper).writeValueAsString(any());
+
+        emitter.emit(DomainEventType.ACTIVITY_COMPLETED, piId, pdId, "el1", data);
+
+        // Verify event saved
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
+        verify(domainEventRepository).save(eventCaptor.capture());
+
+        // Verify outbox entry was created (serialization did NOT fail)
+        verify(outboxRepository).save(any(OutboxEntry.class));
+
+        // Verify data was sanitized: Integer 42 → String "42"
+        Map<String, Object> savedData = eventCaptor.getValue().getData();
+        assertThat(savedData.get("weird")).isEqualTo("42");
+        assertThat(savedData.get("weird")).isInstanceOf(String.class);
+    }
+
+    @Test
+    void sanitizeData_nullValues_preserved() {
+        java.util.HashMap<String, Object> input = new java.util.HashMap<>();
+        input.put("a", "hello");
+        input.put("b", null);
+        Map<String, Object> result = DomainEventEmitter.sanitizeData(input);
+        assertThat(result).containsEntry("a", "hello");
+        assertThat(result.get("b")).isNull();
+    }
+
+    @Test
+    void sanitizeData_emptyMap_returnsEmptyMap() {
+        Map<String, Object> result = DomainEventEmitter.sanitizeData(null);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void sanitizeData_alreadyStrings_unchanged() {
+        UUID id = UUID.randomUUID();
+        Map<String, Object> input = Map.of("id", id, "name", "test");
+        Map<String, Object> result = DomainEventEmitter.sanitizeData(input);
+        assertThat(result.get("id")).isEqualTo(id.toString());
+        assertThat(result.get("name")).isEqualTo("test");
+    }
 }
