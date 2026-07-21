@@ -145,7 +145,7 @@ public class RetroPgIT extends PostgresIT {
                 ready.countDown();
                 go.await();
                 Integer count = transactionTemplate.execute(status -> {
-                    List<OutboxEntry> picked = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
+                    List<OutboxEntry> picked = outboxRepository.findPendingBatch(100);
                     for (OutboxEntry e : picked) {
                         outboxRepository.markPublished(e.getId());
                     }
@@ -162,7 +162,7 @@ public class RetroPgIT extends PostgresIT {
                 ready.countDown();
                 go.await();
                 Integer count = transactionTemplate.execute(status -> {
-                    List<OutboxEntry> picked = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
+                    List<OutboxEntry> picked = outboxRepository.findPendingBatch(100);
                     for (OutboxEntry e : picked) {
                         outboxRepository.markPublished(e.getId());
                     }
@@ -186,7 +186,7 @@ public class RetroPgIT extends PostgresIT {
             .as("Two pollers must pick all entries without duplicates (FOR UPDATE SKIP LOCKED)")
             .isEqualTo(entryCount);
 
-        List<OutboxEntry> remaining = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
+        List<OutboxEntry> remaining = outboxRepository.findPendingBatch(100);
         assertThat(remaining).isEmpty();
     }
 
@@ -232,7 +232,7 @@ public class RetroPgIT extends PostgresIT {
                 ready.countDown();
                 ready.await(5, TimeUnit.SECONDS);
                 // SELECT in autocommit → locks acquired then released immediately on commit
-                List<OutboxEntry> picked = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
+                List<OutboxEntry> picked = outboxRepository.findPendingBatch(100);
                 poller1Count.set(picked.size());
                 t1SelectDone.countDown();
                 // Wait for T2 to also SELECT before either marks
@@ -253,7 +253,7 @@ public class RetroPgIT extends PostgresIT {
                 // Wait for T1's SELECT to finish (autocommit committed → locks released)
                 t1SelectDone.await(5, TimeUnit.SECONDS);
                 // SELECT in autocommit → sees same rows (no locks, markPublished not done yet)
-                List<OutboxEntry> picked = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
+                List<OutboxEntry> picked = outboxRepository.findPendingBatch(100);
                 poller2Count.set(picked.size());
                 // markPublished (no-op on already-marked, but T2 "processed" them)
                 for (OutboxEntry e : picked) {
