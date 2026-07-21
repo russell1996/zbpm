@@ -13,6 +13,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -35,6 +37,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class ProcessDefinitionServiceImplTest {
 
     @Mock
@@ -55,12 +58,23 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private com.zorrodev.bpm.engine.repository.FormRepository formRepository;
 
+    @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Mock
+    private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
 
     @BeforeEach
     void setUp() {
+        // TransactionTemplate.execute runs the callback directly in unit tests
+        when(transactionTemplate.execute(any())).thenAnswer(inv -> {
+            org.springframework.transaction.support.TransactionCallback<?> callback = inv.getArgument(0);
+            return callback.doInTransaction(null);
+        });
         service = new ProcessDefinitionServiceImpl(
             processDefinitionRepository,
             bpmnService,
@@ -68,7 +82,9 @@ class ProcessDefinitionServiceImplTest {
             fileService,
             dbService,
             bindingRepository,
-            formRepository
+            formRepository,
+            jdbcTemplate,
+            transactionTemplate
         );
     }
 
