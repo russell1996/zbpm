@@ -45,6 +45,12 @@ public class RetentionBatchProcessor {
         if (instanceIds.isEmpty()) return 0;
         MapSqlParameterSource params = new MapSqlParameterSource("ids", instanceIds);
 
+        // WO-REL-9: collect token IDs BEFORE deleting activities (activities.token has no FK,
+        // and the old code deleted activities first, so the subquery returned empty).
+        List<UUID> tokenIds = jdbc.queryForList(
+            "SELECT DISTINCT token FROM activities WHERE process_instance_id IN (:ids) AND token IS NOT NULL",
+            params, UUID.class);
+
         int total = 0;
         total += jdbc.update("DELETE FROM timer_jobs WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM message_subscriptions WHERE process_instance_id IN (:ids)", params);
@@ -55,10 +61,13 @@ public class RetentionBatchProcessor {
         total += jdbc.update("DELETE FROM user_tasks WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM variables WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM activities WHERE process_instance_id IN (:ids)", params);
-        total += jdbc.update("DELETE FROM tokens WHERE id IN (SELECT DISTINCT token FROM activities WHERE process_instance_id IN (:ids))", params);
+        if (!tokenIds.isEmpty()) {
+            MapSqlParameterSource tokenParams = new MapSqlParameterSource("ids", tokenIds);
+            total += jdbc.update("DELETE FROM tokens WHERE id IN (:ids)", tokenParams);
+        }
         total += jdbc.update("DELETE FROM process_instances WHERE id IN (:ids)", params);
 
-        log.info("Retention: deleted {} rows for {} instances", total, instanceIds.size());
+        log.info("Retention: deleted {} rows for {} instances (incl. {} tokens)", total, instanceIds.size(), tokenIds.size());
         return total;
     }
 }

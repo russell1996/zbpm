@@ -93,7 +93,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     static boolean isPublicPath(String path) {
         return isAuthLogin(path)
             || "/auth/refresh".equals(path)
-            || "/error".equals(path);
+            || "/error".equals(path)
+            || path.startsWith("/actuator/health");
     }
 
     @Override

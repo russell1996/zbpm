@@ -1,0 +1,24 @@
+databaseChangeLog:
+  - logicalFilePath: 20260721-064
+  - changeSet:
+      id: 20260721-064
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: outbox
+            columns:
+              - column:
+                  name: attempts
+                  type: int
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_error
+                  type: text
+              - column:
+                  name: status
+                  type: varchar(20)
+                  defaultValue: 'PENDING'
+                  constraints:
+                    nullable: false

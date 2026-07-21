@@ -7,22 +7,18 @@ import com.zorrodev.bpm.exchange.JobDetailModel;
 import com.zorrodev.bpm.exchange.ServiceTaskEnqueued;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
-import java.util.List;
 import java.util.Map;
 
 /**
- * Transactional batch processor for outbox entries.
- * Separated from OutboxPollerService to avoid self-invocation proxy issue (P-18):
- * @Transactional only works when called through a Spring proxy (i.e. from a different bean).
- *
- * At-least-once delivery: publish FIRST, then markPublished.
- * SELECT … FOR UPDATE SKIP LOCKED + @Transactional = row locks held until commit,
- * preventing two pollers from picking the same entries (AUD-1 F1 fix).
+ * WO-REL-10: Transactional batch processor for outbox entries.
+ * - LIMIT :batchSize on fetch to avoid unbounded locking.
+ * - After maxRetries failed attempts, entry is quarantined (status=FAILED).
  */
 @Slf4j
 @Component
@@ -33,9 +29,15 @@ public class OutboxBatchProcessor {
     private final ApplicationEventPublisher publisher;
     private final ObjectMapper objectMapper;
 
+    @Value("${zorrobpm.outbox.batch-size:100}")
+    private int batchSize;
+
+    @Value("${zorrobpm.outbox.max-retries:5}")
+    private int maxRetries;
+
     @Transactional
     public void processBatch() {
-        List<OutboxEntry> pending = outboxRepository.findByPublishedFalseOrderByCreatedAtAsc();
+        var pending = outboxRepository.findPendingBatch(batchSize);
         for (OutboxEntry entry : pending) {
             try {
                 if (isDomainEvent(entry.getPayload())) {
@@ -51,12 +53,27 @@ public class OutboxBatchProcessor {
                     log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
                 }
             } catch (Exception e) {
-                log.error("Failed to publish outbox entry {} (will retry)", entry.getId(), e);
+                int nextAttempt = entry.getAttempts() + 1;
+                String errorSummary = truncate(e.getMessage(), 500);
+                if (nextAttempt >= maxRetries) {
+                    outboxRepository.markFailed(entry.getId());
+                    log.error("Outbox entry {} quarantined after {} attempts (max={}): {}",
+                        entry.getId(), nextAttempt, maxRetries, errorSummary);
+                } else {
+                    outboxRepository.recordFailure(entry.getId(), nextAttempt, errorSummary);
+                    log.warn("Outbox entry {} failed (attempt {}/{}): {}",
+                        entry.getId(), nextAttempt, maxRetries, errorSummary);
+                }
             }
         }
     }
 
     private boolean isDomainEvent(String payload) {
         return payload != null && payload.contains("\"type\"") && payload.contains("\"eventId\"");
+    }
+
+    private static String truncate(String s, int maxLen) {
+        if (s == null) return null;
+        return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
     }
 }
