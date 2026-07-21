@@ -3,7 +3,9 @@ package com.zorrodev.bpm.rest.resource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.*;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,10 +25,28 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class VariableSchemaGeneratorIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    private String adminToken;
+
+    @BeforeAll
+    void login() throws Exception {
+        LoginDTO loginDTO = new LoginDTO();
+        loginDTO.setUsername("admin");
+        loginDTO.setPassword("admin");
+
+        MvcResult result = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(loginDTO))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        AuthResponse authResponse = mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class);
+        adminToken = authResponse.getToken();
+    }
 
     // ── criterion #1: generates valid JSON Schema 2020-12 ──
 
@@ -43,6 +63,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -70,6 +91,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -93,6 +115,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -114,6 +137,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -133,6 +157,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -152,6 +177,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -172,6 +198,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -194,6 +221,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -223,6 +251,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f1, f2));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -252,6 +281,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         MvcResult result = mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -278,6 +308,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of());
 
         mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
@@ -288,6 +319,7 @@ class VariableSchemaGeneratorIntegrationTest {
         GenerateSchemaDTO dto = new GenerateSchemaDTO();
 
         mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
@@ -303,6 +335,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
@@ -318,6 +351,7 @@ class VariableSchemaGeneratorIntegrationTest {
         dto.setFields(List.of(f));
 
         mockMvc.perform(post("/variable-schemas/generate")
+                        .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
