@@ -229,4 +229,43 @@ class JwtAuthFilterIntegrationTest {
                         .content("{\"key\":\"test\",\"schema\":\"{}\"}"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // ==================== WO-SEC-26: deny-by-default ====================
+
+    /** POF: /variable-schemas/generate was anonymous (400 from controller), now 401 */
+    @Test
+    void sec26_variableSchemasGenerate_withoutToken_returns401() throws Exception {
+        mockMvc.perform(post("/variable-schemas/generate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fields\":[{\"name\":\"x\",\"type\":\"string\"}]}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    /** Public paths must STILL work without token */
+    @Test
+    void sec26_authLogin_withoutToken_stillWorks() throws Exception {
+        LoginDTO loginDTO = new LoginDTO();
+        loginDTO.setUsername("admin");
+        loginDTO.setPassword("admin");
+        mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(loginDTO))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void sec26_authRefresh_withoutToken_stillWorks() throws Exception {
+        // Refresh with empty body — controller returns its own error (not filter's "Unauthorized")
+        mockMvc.perform(post("/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(result -> {
+                    String body = result.getResponse().getContentAsString();
+                    // Filter returns "Unauthorized" as plain text; controller returns JSON error
+                    // The key: the request REACHED the controller, it wasn't blocked by the filter
+                    org.assertj.core.api.Assertions.assertThat(body)
+                        .as("Refresh endpoint must pass through filter (controller processes it)")
+                        .isNotEqualTo("Unauthorized");
+                });
+    }
 }
