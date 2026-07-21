@@ -44,10 +44,6 @@ public interface ProcessDefinitionRepository extends JpaRepository<ProcessDefini
     @Query("SELECT MAX(pd.version) FROM ProcessDefinitionEntity pd WHERE pd.key = :key")
     Optional<Integer> findMaxByKey(String key);
 
-    /** WO-ARCH-2: PostgreSQL advisory lock scoped to transaction, keyed by processDefinitionKey. */
-    @Query(value = "SELECT pg_advisory_xact_lock(hashtext(:key))", nativeQuery = true)
-    void advisoryLock(String key);
-
     Optional<ProcessDefinitionEntity> findByKeyAndVersion(String key, Integer version);
 
     @Query("SELECT pd1 FROM ProcessDefinitionEntity pd1 JOIN (SELECT pd2.key AS key, MAX(pd2.version) AS version FROM ProcessDefinitionEntity pd2 GROUP BY pd2.key) AS pd3 ON pd1.key = pd3.key AND pd1.version = pd3.version")

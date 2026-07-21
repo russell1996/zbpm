@@ -23,7 +23,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -46,6 +46,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository bindingRepository;
     private final com.zorrodev.bpm.engine.repository.FormRepository formRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final TransactionTemplate transactionTemplate;
 
     @Override
     public Optional<ProcessDefinition> getProcessDefinitionById(UUID id) {
@@ -93,38 +94,37 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
 
     /**
      * WO-ARCH-2: Creates a new process definition version inside a transaction
-     * protected by pg_advisory_xact_lock(hashtext(key)).
-     * The lock is auto-released on commit/rollback (session-level, transaction-scoped).
-     * Different keys get different locks — parallel deploys of different keys proceed.
+     * protected by pg_advisory_xact_lock(key.hashCode()).
+     * Uses TransactionTemplate (not @Transactional) to avoid self-invocation proxy bypass.
+     * Lock auto-released on commit/rollback. Different keys → different locks.
      */
-    @Transactional
-    public ProcessDefinitionEntity createNewVersionWithAdvisoryLock(
+    ProcessDefinitionEntity createNewVersionWithAdvisoryLock(
             String key, String name, String sha256, UUID id, String startFormKey) {
-        // WO-ARCH-2: pg_advisory_xact_lock on PG; silently skip on H2.
-        // Uses JdbcTemplate directly to avoid Hibernate poising the transaction on H2.
-        // Hash computed in Java (equivalent to hashtext() in PG) for parameterized query.
-        long lockKey = key.hashCode();
-        try {
-            jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) conn -> {
-                try (var ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
-                    ps.setLong(1, lockKey);
-                    ps.execute();
-                }
-                return null;
-            });
-        } catch (Exception e) {
-            // H2 doesn't support pg_advisory_xact_lock — proceed without DB-level lock
-        }
-        Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
-        ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
-        entity.setId(id);
-        entity.setKey(key);
-        entity.setName(name);
-        entity.setVersion(maxVersion + 1);
-        entity.setSha256(sha256);
-        entity.setCreatedAt(Instant.now());
-        entity.setStartFormKey(startFormKey);
-        return processDefinitionRepository.save(entity);
+        return transactionTemplate.execute(status -> {
+            // Advisory lock on PG; silently no-op on H2 (function not found)
+            long lockKey = key.hashCode();
+            try {
+                jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) conn -> {
+                    try (var ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+                        ps.setLong(1, lockKey);
+                        ps.execute();
+                    }
+                    return null;
+                });
+            } catch (Exception e) {
+                // H2 doesn't support pg_advisory_xact_lock — proceed without DB-level lock
+            }
+            Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
+            ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
+            entity.setId(id);
+            entity.setKey(key);
+            entity.setName(name);
+            entity.setVersion(maxVersion + 1);
+            entity.setSha256(sha256);
+            entity.setCreatedAt(Instant.now());
+            entity.setStartFormKey(startFormKey);
+            return processDefinitionRepository.save(entity);
+        });
     }
 
     /**
