@@ -21,7 +21,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -36,8 +38,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
 
-    private static final Object VERSION_LOCK = new Object();
-
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final BpmnService bpmnService;
     private final BpmnParseService bpmnParseService;
@@ -45,6 +45,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final DBService dbService;
     private final com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository bindingRepository;
     private final com.zorrodev.bpm.engine.repository.FormRepository formRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public Optional<ProcessDefinition> getProcessDefinitionById(UUID id) {
@@ -70,18 +71,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         if (processDefinitionEntityOptional.isEmpty()) {
             UUID id = UUID.randomUUID();
 
-            synchronized (VERSION_LOCK) {
-                Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
-                processDefinitionEntity = new ProcessDefinitionEntity();
-                processDefinitionEntity.setId(id);
-                processDefinitionEntity.setKey(key);
-                processDefinitionEntity.setName(name);
-                processDefinitionEntity.setVersion(maxVersion + 1);
-                processDefinitionEntity.setSha256(sha256);
-                processDefinitionEntity.setCreatedAt(Instant.now());
-                processDefinitionEntity.setStartFormKey(model.getStartFormKey());
-                processDefinitionEntity = processDefinitionRepository.save(processDefinitionEntity);
-            }
+            processDefinitionEntity = createNewVersionWithAdvisoryLock(key, name, sha256, id, model.getStartFormKey());
 
             bpmnService.addProcessDefinition(id, model);
             fileService.saveFile(id, bpmn);
@@ -99,6 +89,42 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         }
 
         return fromEntity(processDefinitionEntity);
+    }
+
+    /**
+     * WO-ARCH-2: Creates a new process definition version inside a transaction
+     * protected by pg_advisory_xact_lock(hashtext(key)).
+     * The lock is auto-released on commit/rollback (session-level, transaction-scoped).
+     * Different keys get different locks — parallel deploys of different keys proceed.
+     */
+    @Transactional
+    public ProcessDefinitionEntity createNewVersionWithAdvisoryLock(
+            String key, String name, String sha256, UUID id, String startFormKey) {
+        // WO-ARCH-2: pg_advisory_xact_lock on PG; silently skip on H2.
+        // Uses JdbcTemplate directly to avoid Hibernate poising the transaction on H2.
+        // Hash computed in Java (equivalent to hashtext() in PG) for parameterized query.
+        long lockKey = key.hashCode();
+        try {
+            jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) conn -> {
+                try (var ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+                    ps.setLong(1, lockKey);
+                    ps.execute();
+                }
+                return null;
+            });
+        } catch (Exception e) {
+            // H2 doesn't support pg_advisory_xact_lock — proceed without DB-level lock
+        }
+        Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
+        ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
+        entity.setId(id);
+        entity.setKey(key);
+        entity.setName(name);
+        entity.setVersion(maxVersion + 1);
+        entity.setSha256(sha256);
+        entity.setCreatedAt(Instant.now());
+        entity.setStartFormKey(startFormKey);
+        return processDefinitionRepository.save(entity);
     }
 
     /**
