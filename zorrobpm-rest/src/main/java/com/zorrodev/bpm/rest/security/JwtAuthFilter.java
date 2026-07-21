@@ -82,28 +82,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     }
 
     private boolean isProtected(String path) {
-        if (isAuthLogin(path) || "/auth/refresh".equals(path)) return false;
-        // WO-SEC-18 L6: logout accessible without valid access token (refresh token identifies user)
+        // WO-SEC-26: deny-by-default — only explicitly public paths are unprotected
+        if (isPublicPath(path)) return false;
+        // /auth/me and /users/* always require auth, even when requireApiAuth=false
         if (path.equals("/auth/me") || isUsersPath(path)) return true;
         if (!requireApiAuth) return false;
-        return isDataApiPath(path);
+        return true;
     }
 
-    private static boolean isDataApiPath(String path) {
-        return path.startsWith("/process-instances")
-            || path.startsWith("/user-tasks")
-            || path.startsWith("/variables")
-            || path.startsWith("/incidents")
-            || path.equals("/dmn") || path.startsWith("/dmn/")
-            || path.startsWith("/timer-jobs")
-            || path.startsWith("/message-subscriptions")
-            || path.startsWith("/process-definitions")
-            || path.startsWith("/service-tasks")
-            || path.startsWith("/processes/")
-            || path.startsWith("/admin/")
-            || path.equals("/forms") || path.startsWith("/forms/")
-            || path.equals("/me/api-key") || path.startsWith("/me/api-key/")
-            || path.equals("/events") || path.startsWith("/events/");
+    static boolean isPublicPath(String path) {
+        return isAuthLogin(path)
+            || "/auth/refresh".equals(path)
+            || "/error".equals(path);
     }
 
     @Override
