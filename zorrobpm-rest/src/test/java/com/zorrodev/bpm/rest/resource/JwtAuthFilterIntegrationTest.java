@@ -268,4 +268,25 @@ class JwtAuthFilterIntegrationTest {
                         .isNotEqualTo("Unauthorized");
                 });
     }
+
+    // ==================== WO-OPS-1: /actuator/health public ====================
+
+    @Test
+    void ops1_actuatorHealth_withoutToken_notBlockedByFilter() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(result -> {
+                    int status = result.getResponse().getStatus();
+                    // Filter must NOT return 401. 200=UP, 503=DOWN (components unavailable in test)
+                    // — both mean the request reached actuator, not blocked by filter.
+                    org.assertj.core.api.Assertions.assertThat(status)
+                        .as("actuator/health must pass through filter (not 401)")
+                        .isNotEqualTo(401);
+                });
+    }
+
+    @Test
+    void ops1_actuatorEnv_withoutToken_returns401() throws Exception {
+        mockMvc.perform(get("/actuator/env"))
+                .andExpect(status().isUnauthorized());
+    }
 }
