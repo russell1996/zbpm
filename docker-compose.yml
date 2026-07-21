@@ -33,14 +33,15 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     ports:
-      # WO-SEC-27a-fix: publish on a configurable interface, NOT hardcoded loopback.
-      # SEC-27a bound these to 127.0.0.1, which broke (a) the management UI accessed via the host's
-      # LAN address (http://192.0.2.111:9300) and (b) external AMQP consumers of zorrobpm.events.*
-      # subscribing over the broker port — both legitimate per the event-notification epic.
-      # Set RABBITMQ_BIND to the INTERNAL LAN interface (e.g. 192.0.2.111) in prod .env:
-      # reachable on the LAN, still NOT exposed on the public NIC (192.0.2.9). Default stays loopback.
-      - "${RABBITMQ_BIND:-127.0.0.1}:${RABBITMQ_PORT:-5672}:5672"        # AMQP
-      - "${RABBITMQ_BIND:-127.0.0.1}:${RABBITMQ_MGMT_PORT:-9300}:15672"  # management UI
+      # INTENDED / NORMAL — publish on all host interfaces. DO NOT re-restrict to 127.0.0.1.
+      # The host lives inside a protected network perimeter (not reachable from the public
+      # internet), and LAN consumers depend on these ports: the test k8s app connects to
+      # 192.0.2.111:5672 (AMQP) and the management UI is used at 192.0.2.111:9300.
+      # This reverts SEC-27a, whose loopback lockdown broke those consumers and whose
+      # internet-exposure premise did not hold. Any future "harden broker ports" WO must
+      # first confirm the host is actually internet-exposed — it is not.
+      - "${RABBITMQ_PORT:-5672}:5672"        # AMQP
+      - "${RABBITMQ_MGMT_PORT:-9300}:15672"  # management UI
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
