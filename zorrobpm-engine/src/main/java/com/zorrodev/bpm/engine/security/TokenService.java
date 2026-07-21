@@ -94,10 +94,14 @@ public class TokenService {
     }
 
     private static boolean constantTimeEquals(String a, String b) {
-        if (a.length() != b.length()) return false;
-        int result = 0;
-        for (int i = 0; i < a.length(); i++) result |= a.charAt(i) ^ b.charAt(i);
-        return result == 0;
+        // WO-SEC-30a: constant-time comparison with no early return by length.
+        // Accumulate XOR of length difference + all byte differences.
+        byte[] aBytes = a.getBytes(StandardCharsets.UTF_8);
+        byte[] bBytes = b.getBytes(StandardCharsets.UTF_8);
+        int diff = aBytes.length ^ bBytes.length;
+        int len = Math.min(aBytes.length, bBytes.length);
+        for (int i = 0; i < len; i++) diff |= aBytes[i] ^ bBytes[i];
+        return diff == 0;
     }
 
     /** Generates a cryptographically random refresh token (not JWT — revocable). */
