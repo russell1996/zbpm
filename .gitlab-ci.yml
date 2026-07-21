@@ -11,6 +11,7 @@
 
 stages:
   - test
+  - security
   - build
   - deploy
   - rollback
@@ -90,6 +91,54 @@ test:frontend:
     # `--target builder` runs `npm ci && npm run build` (tsc typecheck + Vite build), stops before nginx
     - docker build --target builder -f zorrobpm-frontend/Dockerfile -t zorrobpm-frontend-build:$IMAGE_TAG zorrobpm-frontend
     - docker image rm zorrobpm-frontend-build:$IMAGE_TAG || true
+
+# ---------------------------------------------------------------------------
+# Security — CVE scan (WO-SEC-32)
+# Runs OWASP dependency-check (NVD) + npm audit separately from main verify.
+# allow_failure while baseline is established; remove once clean.
+# ---------------------------------------------------------------------------
+
+cve:scan:
+  stage: security
+  tags: [zbpm]
+  allow_failure: true
+  cache:
+    # WO-SEC-32 FIX: fixed key so NVD DB persists across pipelines.
+    # dependency-check updates incrementally — no full re-download.
+    key: nvd-db
+    paths:
+      - .nvd-cache
+  script:
+    # NVD cache — dependency-check stores DB in its data dir; map to runner cache
+    - mkdir -p .nvd-cache
+    # Backend CVE scan: OWASP dependency-check against the built JARs
+    - >-
+      docker run --rm
+      -v "$CI_PROJECT_DIR":/build -w /build
+      -v "$CI_PROJECT_DIR/.nvd-cache":/root/.m2/repository/org/owasp/dependency-check-data
+      -v zbpm_m2:/root/.m2
+      maven:3.9.9-eclipse-temurin-21
+      mvn -B -ntp org.owasp:dependency-check-maven:check
+      -DfailBuildOnCVSS=7
+      -DsuppressionFile=
+      -DnvdApiKey=$NVD_API_KEY
+      -DnodeAuditSkipDevDependencies=true
+      --no-transfer-progress
+    - echo "Backend CVE scan complete (CVSS>=7 = fail)"
+    # Frontend CVE scan: npm audit
+    - cd zorrobpm-frontend
+    - npm ci --ignore-scripts
+    - npm audit --audit-level=high --omit=dev || echo "npm audit found vulnerabilities (non-blocking)"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-rest/target/dependency-check-report.html
+      - zorrobpm-engine/target/dependency-check-report.html
+    expire_in: 30 days
+    name: cve-reports-$CI_COMMIT_SHORT_SHA
 
 # ---------------------------------------------------------------------------
 # Build — versioned runtime images (commit SHA + latest)
