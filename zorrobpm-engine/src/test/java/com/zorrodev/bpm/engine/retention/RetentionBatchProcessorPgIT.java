@@ -188,4 +188,48 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
         assertThat(eligible).doesNotContain(piId);
     }
+
+    // ==================== WO-REL-9: orphaned tokens are deleted ====================
+
+    /**
+     * POF (G-N): calls REAL RetentionBatchProcessor.deleteInstances().
+     * Inserts a process_instance, activity with token reference, and the token itself.
+     * After retention, token count must be 0.
+     *
+     * RED (before fix): activities deleted first → subquery returns empty → tokens survive.
+     * GREEN (after fix): token IDs collected before activities delete → tokens removed.
+     */
+    @Test
+    void tokensDeleted_afterRetention() {
+        UUID piId = UUID.randomUUID();
+        UUID actId = UUID.randomUUID();
+        UUID tokenId = UUID.randomUUID();
+
+        jdbc.update(
+            "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
+            "VALUES (?, ?, ?, ?, false)",
+            piId, sharedPdId, ago(100), ago(50));
+
+        jdbc.update(
+            "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
+            "VALUES (?, ?, 'startEvent', ?, ?, 'START_EVENT', 'COMPLETED', ?)",
+            actId, piId, ago(90), ago(80), tokenId);
+
+        jdbc.update(
+            "INSERT INTO tokens (id) VALUES (?)",
+            tokenId);
+
+        List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now(), 100);
+        assertThat(eligible).contains(piId);
+
+        batchProcessor.deleteInstances(eligible);
+
+        // POF: token must be deleted
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM tokens WHERE id = ?", Integer.class, tokenId)).isEqualTo(0);
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM activities WHERE process_instance_id = ?", Integer.class, piId)).isEqualTo(0);
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM process_instances WHERE id = ?", Integer.class, piId)).isEqualTo(0);
+    }
 }
