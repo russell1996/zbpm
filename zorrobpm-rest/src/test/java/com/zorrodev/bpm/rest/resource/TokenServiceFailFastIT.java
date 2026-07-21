@@ -26,7 +26,7 @@ class TokenServiceFailFastIT {
                     "spring.datasource.driver-class-name=org.h2.Driver",
                     "spring.rabbitmq.host=localhost",
                     "spring.liquibase.enabled=false",
-                    "zorrobpm.security.default-admin-password=not-admin"
+                    "zorrobpm.security.default-admin-password=not-admin-but-long"
                 )
                 .run();
             ctx.close();

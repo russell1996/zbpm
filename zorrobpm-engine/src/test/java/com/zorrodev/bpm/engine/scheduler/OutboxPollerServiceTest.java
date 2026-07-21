@@ -41,6 +41,8 @@ class OutboxPollerServiceTest {
     void setUp() {
         batchProcessor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper);
         poller = new OutboxPollerService(batchProcessor);
+        org.springframework.test.util.ReflectionTestUtils.setField(batchProcessor, "batchSize", 100);
+        org.springframework.test.util.ReflectionTestUtils.setField(batchProcessor, "maxRetries", 5);
     }
 
     private OutboxEntry entry(String jobId) throws Exception {
@@ -60,7 +62,7 @@ class OutboxPollerServiceTest {
         OutboxEntry entry = entry("job1");
 
         // First poll: publish throws → entry stays pending
-        when(outboxRepository.findByPublishedFalseOrderByCreatedAtAsc()).thenReturn(List.of(entry));
+        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
         when(objectMapper.readValue(entry.getPayload(), JobDetailModel.class)).thenReturn(new JobDetailModel());
         doThrow(new RuntimeException("MQ down")).when(publisher).publishEvent(any(ServiceTaskEnqueued.class));
 
@@ -69,7 +71,7 @@ class OutboxPollerServiceTest {
 
         // Second poll: publish succeeds → entry marked
         reset(outboxRepository, publisher, objectMapper);
-        when(outboxRepository.findByPublishedFalseOrderByCreatedAtAsc()).thenReturn(List.of(entry));
+        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
         when(objectMapper.readValue(entry.getPayload(), JobDetailModel.class)).thenReturn(new JobDetailModel());
 
         poller.pollOnce();
@@ -82,7 +84,7 @@ class OutboxPollerServiceTest {
     @Test
     void criterion4_successfulPublishThenMark_noDoublePublish() throws Exception {
         OutboxEntry entry = entry("job1");
-        when(outboxRepository.findByPublishedFalseOrderByCreatedAtAsc()).thenReturn(List.of(entry));
+        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
 
         poller.pollOnce();
 
@@ -91,7 +93,7 @@ class OutboxPollerServiceTest {
 
         // Second poll: entry is published → not in pending list
         reset(outboxRepository, publisher, objectMapper);
-        when(outboxRepository.findByPublishedFalseOrderByCreatedAtAsc()).thenReturn(List.of());
+        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of());
 
         poller.pollOnce();
 
@@ -105,7 +107,7 @@ class OutboxPollerServiceTest {
     @Test
     void criterion5_proofOfFailure_publishFails_entryStaysPending() throws Exception {
         OutboxEntry entry = entry("job5");
-        when(outboxRepository.findByPublishedFalseOrderByCreatedAtAsc()).thenReturn(List.of(entry));
+        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
 
         // Simulate MQ failure on first publish
         doThrow(new RuntimeException("MQ down")).when(publisher).publishEvent(any(ServiceTaskEnqueued.class));
@@ -122,11 +124,11 @@ class OutboxPollerServiceTest {
     @Test
     void aud1_pollOnce_delegatesToBatchProcessor() throws Exception {
         OutboxEntry entry = entry("job-delegate");
-        when(outboxRepository.findByPublishedFalseOrderByCreatedAtAsc()).thenReturn(List.of(entry));
+        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
 
         poller.pollOnce();
 
-        verify(outboxRepository).findByPublishedFalseOrderByCreatedAtAsc();
+        verify(outboxRepository).findPendingBatch(100);
         verify(publisher).publishEvent(any(ServiceTaskEnqueued.class));
         verify(outboxRepository).markPublished(entry.getId());
     }
