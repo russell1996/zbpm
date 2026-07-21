@@ -39,14 +39,18 @@ public class SseEventStreamService {
     private final DomainEventRepository domainEventRepository;
     private final EventAuthzResolver eventAuthzResolver;
     private final RabbitAdmin rabbitAdmin;
+    // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
     @Autowired
     public SseEventStreamService(DomainEventRepository domainEventRepository,
                                   EventAuthzResolver eventAuthzResolver,
-                                  @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin) {
+                                  @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
+                                  tools.jackson.databind.ObjectMapper objectMapper) {
         this.domainEventRepository = domainEventRepository;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
+        this.objectMapper = objectMapper;
     }
 
     /** Connected SSE clients: emitterId → client info */
@@ -128,7 +132,7 @@ public class SseEventStreamService {
     public void onDomainEvent(String messageBody) {
         Map<String, Object> envelope;
         try {
-            envelope = new com.fasterxml.jackson.databind.ObjectMapper().readValue(messageBody, Map.class);
+            envelope = objectMapper.readValue(messageBody, Map.class);
         } catch (Exception e) {
             log.error("Failed to parse domain event envelope", e);
             return;
