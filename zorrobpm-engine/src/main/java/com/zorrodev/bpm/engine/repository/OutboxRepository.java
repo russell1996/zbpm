@@ -12,14 +12,25 @@ import java.util.UUID;
 public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
 
     /**
-     * L2 FIX: FOR UPDATE SKIP LOCKED prevents two pollers from picking up the same entries.
-     * When two pollers run concurrently, one gets the rows locked, the other skips them.
+     * WO-REL-10: LIMIT :batchSize to avoid unbounded locking.
+     * Skips FAILED entries (quarantined after N retries).
+     * FOR UPDATE SKIP LOCKED prevents two pollers from picking the same entries.
      */
-    @Query(value = "SELECT * FROM outbox WHERE published = false ORDER BY created_at ASC FOR UPDATE SKIP LOCKED",
-           nativeQuery = true)
-    List<OutboxEntry> findByPublishedFalseOrderByCreatedAtAsc();
+    @Query(value = "SELECT * FROM outbox " +
+        "WHERE published = false AND status != 'FAILED' " +
+        "ORDER BY created_at ASC LIMIT :batchSize FOR UPDATE SKIP LOCKED",
+        nativeQuery = true)
+    List<OutboxEntry> findPendingBatch(@Param("batchSize") int batchSize);
 
     @Modifying
     @Query("UPDATE OutboxEntry o SET o.published = true WHERE o.id = :id AND o.published = false")
     int markPublished(@Param("id") UUID id);
+
+    @Modifying
+    @Query("UPDATE OutboxEntry o SET o.attempts = :attempts, o.lastError = :error WHERE o.id = :id")
+    int recordFailure(@Param("id") UUID id, @Param("attempts") int attempts, @Param("error") String error);
+
+    @Modifying
+    @Query("UPDATE OutboxEntry o SET o.status = 'FAILED' WHERE o.id = :id")
+    int markFailed(@Param("id") UUID id);
 }
