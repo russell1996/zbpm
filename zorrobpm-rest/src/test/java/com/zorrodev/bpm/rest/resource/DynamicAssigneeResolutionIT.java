@@ -139,7 +139,7 @@ class DynamicAssigneeResolutionIT {
         query.setProcessInstanceId(processInstanceId);
         query.setPageIndex(0);
         query.setPageSize(100);
-        var tasks = queryService.findUserTasks(query);
+        var tasks = queryService.findUserTasks(query, null);
         assertThat(tasks.getData()).hasSize(1);
         return userTaskRepository.findById(tasks.getData().get(0).getId()).orElseThrow();
     }
