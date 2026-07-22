@@ -17,6 +17,7 @@ import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -25,8 +26,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.DatabaseMetaData;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedList;
@@ -34,6 +37,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
@@ -47,6 +51,10 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final com.zorrodev.bpm.engine.repository.FormRepository formRepository;
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
+    private final DataSource dataSource;
+
+    /** Cached database product name — detected once on first use. */
+    private volatile String databaseProduct;
 
     @Override
     public Optional<ProcessDefinition> getProcessDefinitionById(UUID id) {
@@ -93,27 +101,19 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     }
 
     /**
-     * WO-ARCH-2: Creates a new process definition version inside a transaction
+     * WO-ARCH-2 + WO-A-03: Creates a new process definition version inside a transaction
      * protected by pg_advisory_xact_lock(key.hashCode()).
      * Uses TransactionTemplate (not @Transactional) to avoid self-invocation proxy bypass.
      * Lock auto-released on commit/rollback. Different keys → different locks.
+     *
+     * WO-A-03 FAIL-CLOSED: PG advisory lock failure propagates (rollback),
+     * no broad catch. H2: lock is skipped (function not supported).
      */
     ProcessDefinitionEntity createNewVersionWithAdvisoryLock(
             String key, String name, String sha256, UUID id, String startFormKey) {
         return transactionTemplate.execute(status -> {
-            // Advisory lock on PG; silently no-op on H2 (function not found)
-            long lockKey = key.hashCode();
-            try {
-                jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) conn -> {
-                    try (var ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
-                        ps.setLong(1, lockKey);
-                        ps.execute();
-                    }
-                    return null;
-                });
-            } catch (Exception e) {
-                // H2 doesn't support pg_advisory_xact_lock — proceed without DB-level lock
-            }
+            // WO-A-03: acquire advisory lock based on database dialect
+            acquireAdvisoryLock(key);
             Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
             ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
             entity.setId(id);
@@ -125,6 +125,41 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             entity.setStartFormKey(startFormKey);
             return processDefinitionRepository.save(entity);
         });
+    }
+
+    /**
+     * WO-A-03: DB-dialect-aware advisory lock.
+     * - PG: execute pg_advisory_xact_lock; ANY exception propagates (fail-closed, rollback).
+     * - H2: skip (function not supported), log once.
+     */
+    private void acquireAdvisoryLock(String key) {
+        String product = getDatabaseProduct();
+        if ("PostgreSQL".equals(product)) {
+            long lockKey = key.hashCode();
+            jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) conn -> {
+                try (var ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+                    ps.setLong(1, lockKey);
+                    ps.execute();
+                }
+                return null;
+            });
+            // WO-A-03: no catch — any exception propagates and rolls back the transaction
+        } else {
+            log.debug("Advisory lock skipped for database product: {}", product);
+        }
+    }
+
+    /** Detect and cache database product name once. */
+    private String getDatabaseProduct() {
+        if (databaseProduct == null) {
+            try {
+                databaseProduct = dataSource.getConnection().getMetaData().getDatabaseProductName();
+            } catch (Exception e) {
+                log.warn("Could not detect database product, assuming PostgreSQL", e);
+                databaseProduct = "PostgreSQL";
+            }
+        }
+        return databaseProduct;
     }
 
     /**
