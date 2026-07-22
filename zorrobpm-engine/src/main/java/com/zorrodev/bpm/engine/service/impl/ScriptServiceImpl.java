@@ -15,9 +15,9 @@ import javax.script.ScriptContext;
 import javax.script.ScriptEngine;
 import javax.script.SimpleScriptContext;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -28,7 +28,7 @@ public class ScriptServiceImpl implements ScriptService {
     private final ScriptEngine feelExpressionScriptEngine;
     private final ObjectMapper objectMapper;
     private final long timeoutMs;
-    private final ExecutorService executor;
+    private volatile ThreadPoolExecutor executor;
 
     public ScriptServiceImpl(@Qualifier("feelScriptEngine") ScriptEngine scriptEngine,
                              @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine,
@@ -38,11 +38,19 @@ public class ScriptServiceImpl implements ScriptService {
         this.feelExpressionScriptEngine = feelExpressionScriptEngine;
         this.objectMapper = objectMapper;
         this.timeoutMs = timeoutSeconds * 1000;
-        this.executor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "script-eval");
-            t.setDaemon(true);
-            return t;
-        });
+        // WO-A-02: bounded bulkhead — bounded pool + bounded queue + abort policy
+        int poolSize = 2; // default: 2 concurrent script evaluations
+        int queueCapacity = 10; // small buffer for queued expressions
+        this.executor = new ThreadPoolExecutor(
+            poolSize, poolSize, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(queueCapacity),
+            r -> {
+                Thread t = new Thread(r, "script-eval");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+        );
     }
 
     @Override
@@ -57,23 +65,72 @@ public class ScriptServiceImpl implements ScriptService {
 
     private Object evalWithTimeout(ScriptEngine engine, String code, List<ProcessVariable> variables) {
         ScriptContext ctx = buildContext(variables);
-        Future<Object> future = executor.submit(() -> engine.eval(code, ctx));
+
+        // WO-A-02: bulkhead — bounded queue rejects if pool is full (AbortPolicy)
+        java.util.concurrent.Future<Object> future;
+        try {
+            future = executor.submit(() -> engine.eval(code, ctx));
+        } catch (RejectedExecutionException e) {
+            // WO-A-02: pool full — fast rejection instead of infinite queuing
+            String codeRef = codeRef(code);
+            log.warn("Script rejected (bulkhead full): {} workers active, queue full", executor.getActiveCount());
+            throw new EngineException("Script execution rejected: pool full (" + codeRef + ")");
+        }
+
         try {
             Object result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
-            log.debug("Eval result {}", code);
+            // A-09: log length/hash, not full code
+            log.debug("Eval result (len={}, hash={})", code.length(), code.hashCode());
             return result;
         } catch (java.util.concurrent.TimeoutException e) {
+            // WO-A-02: stuck-worker — cancel and replace the thread
             future.cancel(true);
-            throw new EngineException("Script execution timed out after " + (timeoutMs / 1000) + "s: " + code);
+            replaceWorker();
+            // A-09: no code in exception, correlation via length/hash
+            throw new EngineException("Script execution timed out after " + (timeoutMs / 1000) + "s (" + codeRef(code) + ")");
         } catch (java.util.concurrent.ExecutionException e) {
             Throwable cause = e.getCause();
+            String codeRef = codeRef(code);
             if (cause instanceof RuntimeException) throw (RuntimeException) cause;
             if (cause instanceof javax.script.ScriptException se) throw new RuntimeException(se);
-            throw new EngineException("Script execution failed: " + cause.getMessage(), cause);
+            throw new EngineException("Script execution failed (" + codeRef + "): " + cause.getMessage(), cause);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new EngineException("Script execution interrupted", e);
+            throw new EngineException("Script execution interrupted");
         }
+    }
+
+    /**
+     * WO-A-02: Replace the worker thread after a stuck expression.
+     * cancel(true) doesn't always work (thread may ignore interrupt).
+     * So we shut down the old executor and create a fresh one.
+     */
+    private void replaceWorker() {
+        log.warn("Replacing script worker pool after stuck expression (active={}, queued={})",
+            executor.getActiveCount(), executor.getQueue().size());
+        executor.shutdownNow();
+        executor = createExecutor();
+    }
+
+    private ThreadPoolExecutor createExecutor() {
+        ThreadPoolExecutor exec = new ThreadPoolExecutor(
+            2, 2, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(10),
+            r -> {
+                Thread t = new Thread(r, "script-eval");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+        );
+        return exec;
+    }
+
+    /**
+     * WO-A-09: code reference for logging — length + hash, NOT full code.
+     */
+    private static String codeRef(String code) {
+        return "len=" + code.length() + ",hash=" + code.hashCode();
     }
 
     @PreDestroy
