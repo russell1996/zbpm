@@ -64,7 +64,7 @@ public class SignalStartBoundaryIntegrationTests {
 
         UserTaskQuery userTaskQuery = new UserTaskQuery();
         userTaskQuery.setProcessInstanceId(processInstanceId);
-        PagedDataDTO<UserTask> userTasks = queryService.findUserTasks(userTaskQuery);
+        PagedDataDTO<UserTask> userTasks = queryService.findUserTasks(userTaskQuery, null);
         assertThat(userTasks.getData()).hasSize(2);
         UUID gate2Id = userTasks.getData().stream()
             .filter(t -> "gate2".equals(t.getName()))
