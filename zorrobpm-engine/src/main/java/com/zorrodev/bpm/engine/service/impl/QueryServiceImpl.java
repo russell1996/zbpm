@@ -58,6 +58,9 @@ import java.util.function.Function;
 @RequiredArgsConstructor
 public class QueryServiceImpl implements QueryService {
 
+    /** WO-A-05: maximum allowed page size — prevents DoS via huge queries */
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final DBService dbService;
 
     private final ServiceTaskMapper serviceTaskMapper;
@@ -90,7 +93,7 @@ public class QueryServiceImpl implements QueryService {
         if (query.getFired() != null) {
             specifications.add(TimerJobRepository.byFired(query.getFired()));
         }
-        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("dueAt").ascending());
+        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("dueAt").ascending());
         return toDTO(timerJobRepository.findAll(Specification.allOf(specifications), page), timerJobMapper::toDTO);
     }
 
@@ -106,7 +109,7 @@ public class QueryServiceImpl implements QueryService {
         if (query.getConsumed() != null) {
             specifications.add(MessageSubscriptionRepository.byConsumed(query.getConsumed()));
         }
-        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
         return toDTO(messageSubscriptionRepository.findAll(Specification.allOf(specifications), page), messageSubscriptionMapper::toDTO);
     }
 
@@ -130,7 +133,7 @@ public class QueryServiceImpl implements QueryService {
             specifications.add(ServiceTaskRepository.byCompleted(query.getCompleted()));
         }
         Specification<ServiceTaskEntity> all = Specification.allOf(specifications);
-        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
         return toDTO(serviceTaskRepository.findAll(all, page), serviceTaskMapper::toDTO);
     }
 
@@ -158,7 +161,7 @@ public class QueryServiceImpl implements QueryService {
             specifications.add(UserTaskRepository.byAssignee(query.getAssignee()));
         }
         Specification<UserTaskEntity> all = Specification.allOf(specifications);
-        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
         return toDTO(userTaskRepository.findAll(all, page), userTaskMapper::toDTO);
     }
 
@@ -191,7 +194,7 @@ public class QueryServiceImpl implements QueryService {
             specifications.add(ProcessInstanceRepository.byProcessDefinitionVersion(query.getProcessDefinitionVersion()));
         }
         Specification<ProcessInstanceEntity> all = Specification.allOf(specifications);
-        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("startedAt").descending());
+        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("startedAt").descending());
         return toDTO(processInstanceRepository.findAll(all, page), processInstanceMapper::toDTO);
     }
 
@@ -225,7 +228,7 @@ public class QueryServiceImpl implements QueryService {
             specifications.add(IncidentRepository.byResolved(query.getResolved()));
         }
         Specification<IncidentEntity> all = Specification.allOf(specifications);
-        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
+        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
         return toDTO(incidentRepository.findAll(all, page), incidentMapper::toDTO);
     }
 
@@ -245,7 +248,7 @@ public class QueryServiceImpl implements QueryService {
             specifications.add(VariableRepository.byValue(query.getValue()));
         }
         Specification<ProcessVariableEntity> all = Specification.allOf(specifications);
-        return toDTO(variableRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), variableMapper::toDTO);
+        return toDTO(variableRepository.findAll(all, clampedPage(query.getPageIndex(), query.getPageSize(), Sort.unsorted())), variableMapper::toDTO);
     }
 
     private <T, S> PagedDataDTO<T> toDTO(Page<S> page, Function<S, T> converter) {
@@ -259,6 +262,13 @@ public class QueryServiceImpl implements QueryService {
         }
         result.setData(data);
         return result;
+    }
+
+    /** WO-A-05: server-side clamp — safety net even if validation annotations are bypassed */
+    private static PageRequest clampedPage(Integer pageIndex, Integer pageSize, Sort sort) {
+        int page = Math.max(0, pageIndex != null ? pageIndex : 0);
+        int size = Math.min(MAX_PAGE_SIZE, Math.max(1, pageSize != null ? pageSize : 10));
+        return PageRequest.of(page, size, sort);
     }
 
 }
