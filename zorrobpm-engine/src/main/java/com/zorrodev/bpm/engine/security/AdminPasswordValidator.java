@@ -61,7 +61,7 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
         if (password.length() < MIN_PASSWORD_LENGTH) {
             throw new IllegalStateException(
                 "FATAL: zorrobpm.security.default-admin-password must be at least "
-                + MIN_PASSWORD_LENGTH + " characters (got " + password.length() + ").");
+                + MIN_PASSWORD_LENGTH + " characters.");
         }
 
         // WO-SEC-31c: blocklist check
@@ -71,7 +71,7 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
                 + "Choose a strong, unique password for production.");
         }
 
-        log.info("Admin password configured for production (length={})", password.length());
+        log.info("Admin password configured for production");
     }
 
     // Visible for testing

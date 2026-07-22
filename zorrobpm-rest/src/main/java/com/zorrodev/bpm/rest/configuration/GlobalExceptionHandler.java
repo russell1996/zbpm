@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -57,17 +58,25 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BpmnParseException.class)
     public ResponseEntity<Map<String, String>> handleParseError(BpmnParseException ex) {
+        // WO-SEC-33: generic message + correlationId; full details in log only
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.error("[{}] BPMN parse error: {}", correlationId, ex.getMessage(), ex);
         return ResponseEntity.badRequest().body(Map.of(
             "code", "PARSE_ERROR",
-            "message", ex.getMessage() != null ? ex.getMessage() : "BPMN parse error"
+            "message", "BPMN parse error",
+            "correlationId", correlationId
         ));
     }
 
     @ExceptionHandler(EngineException.class)
     public ResponseEntity<Map<String, String>> handleEngineError(EngineException ex) {
+        // WO-SEC-33: generic message + correlationId; full details in log only
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.error("[{}] Engine error: {}", correlationId, ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(Map.of(
             "code", "ENGINE_ERROR",
-            "message", ex.getMessage() != null ? ex.getMessage() : "Engine error"
+            "message", "Engine execution error",
+            "correlationId", correlationId
         ));
     }
 
