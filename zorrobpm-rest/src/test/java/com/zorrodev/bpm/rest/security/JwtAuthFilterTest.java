@@ -11,8 +11,11 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.io.IOException;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -154,5 +157,47 @@ class JwtAuthFilterTest {
                 .as("Expected 401 for %s", path)
                 .isEqualTo(401);
         }
+    }
+
+    @Test
+    void api_key_debounce_doesNotSaveTwice() throws Exception {
+        // WO-SEC-34: two consecutive requests with same API key → save() called once
+        UUID apiKeyId = UUID.randomUUID();
+        com.zorrodev.bpm.engine.entity.ApiKeyEntity apiKey =
+            new com.zorrodev.bpm.engine.entity.ApiKeyEntity();
+        apiKey.setId(apiKeyId);
+        apiKey.setPrefix("zbpm_sk_");
+        apiKey.setRevokedAt(null);
+        apiKey.setExpiresAt(null);
+        apiKey.setOwnerUserId(UUID.randomUUID());
+
+        ApiKeyRepository apiKeyRepo = mock(ApiKeyRepository.class);
+        ApiKeyGrantRepository apiKeyGrantRepo = mock(ApiKeyGrantRepository.class);
+        when(apiKeyRepo.findByKeyHash(anyString())).thenReturn(java.util.Optional.of(apiKey));
+        when(apiKeyGrantRepo.findByApiKeyId(any())).thenReturn(java.util.List.of());
+
+        var userLookup = mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class);
+        var env = mock(org.springframework.core.env.Environment.class);
+        when(env.getActiveProfiles()).thenReturn(new String[]{"test"});
+
+        JwtAuthFilter f = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo, userLookup, env);
+        f.setRequireApiAuth(true);
+
+        // First request — should save
+        MockHttpServletRequest req1 = new MockHttpServletRequest("GET", "/process-instances");
+        req1.addHeader("Authorization", "Bearer zbpm_sk_test123");
+        MockHttpServletResponse res1 = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+        f.doFilterInternal(req1, res1, chain);
+
+        // Second request immediately — should NOT save (debounced)
+        MockHttpServletRequest req2 = new MockHttpServletRequest("GET", "/process-instances");
+        req2.addHeader("Authorization", "Bearer zbpm_sk_test123");
+        MockHttpServletResponse res2 = new MockHttpServletResponse();
+        FilterChain chain2 = mock(FilterChain.class);
+        f.doFilterInternal(req2, res2, chain2);
+
+        // save() called only once (first request), not twice
+        verify(apiKeyRepo, org.mockito.Mockito.times(1)).save(any(com.zorrodev.bpm.engine.entity.ApiKeyEntity.class));
     }
 }

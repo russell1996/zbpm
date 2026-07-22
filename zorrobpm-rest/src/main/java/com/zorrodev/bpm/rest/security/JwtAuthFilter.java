@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -31,12 +32,16 @@ import java.util.stream.Collectors;
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final String API_KEY_PREFIX = "zbpm_sk_";
+    /** WO-SEC-34: debounce interval — don't update lastUsedAt more than once per 5 minutes */
+    private static final long DEBOUNCE_MS = 5 * 60 * 1000L;
 
     private final TokenService tokenService;
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyGrantRepository apiKeyGrantRepository;
     private final UiUserLookupService userLookupService;
     private final Environment environment;
+    /** WO-SEC-34: in-memory debounce tracker — apiKeyId → last write timestamp */
+    private final ConcurrentHashMap<UUID, Instant> lastWriteTimestamps = new ConcurrentHashMap<>();
 
     @Value("${zorrobpm.security.require-api-auth:true}")
     private boolean requireApiAuth;
@@ -212,8 +217,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         // Load grants
         Map<UUID, Principal.Grant> grants = loadGrants(apiKey.getId());
-        apiKey.setLastUsedAt(Instant.now());
-        apiKeyRepository.save(apiKey);
+
+        // WO-SEC-34: debounce — only update lastUsedAt if stale (>DEBOUNCE_MS since last write)
+        Instant now = Instant.now();
+        Instant lastWrite = lastWriteTimestamps.get(apiKey.getId());
+        if (lastWrite == null || now.toEpochMilli() - lastWrite.toEpochMilli() > DEBOUNCE_MS) {
+            apiKey.setLastUsedAt(now);
+            apiKeyRepository.save(apiKey);
+            lastWriteTimestamps.put(apiKey.getId(), now);
+        }
 
         return new Principal.ServicePrincipal(apiKey.getId(), apiKey.getOwnerUserId(), grants);
     }
