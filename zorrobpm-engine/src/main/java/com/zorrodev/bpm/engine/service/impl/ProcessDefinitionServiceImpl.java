@@ -197,7 +197,11 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
 
     @Override
     public PagedDataDTO<ProcessDefinition> getProcessDefinitions(ProcessDefinitionsQueryParameters parameters) {
-        PageRequest pageRequest = PageRequest.of(parameters.getPageIndex(), parameters.getPageSize(), Sort.by("name", "version").ascending());
+        int maxPageSize = 200; // WO-A-05: clamp
+        PageRequest pageRequest = PageRequest.of(
+            Math.max(0, parameters.getPageIndex()),
+            Math.min(maxPageSize, Math.max(1, parameters.getPageSize())),
+            Sort.by("name", "version").ascending());
 
         List<Specification<ProcessDefinitionEntity>> specifications = new LinkedList<>();
         if (parameters.getName() != null && !parameters.getName().isBlank()) {
