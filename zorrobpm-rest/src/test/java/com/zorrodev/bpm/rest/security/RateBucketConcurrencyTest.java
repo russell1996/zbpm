@@ -42,12 +42,6 @@ class RateBucketConcurrencyTest {
         filter.setWindowSeconds(1);
         filter.setRateLimitEnabled(true);
 
-        // Direct access to bucket via reflection for testing
-        var bucketField = RateLimitFilter.class.getDeclaredField("buckets");
-        bucketField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        var buckets = (java.util.concurrent.ConcurrentHashMap<String, Object>) bucketField.get(filter);
-
         // Use the internal RateBucket via the filter's computeIfAbsent
         // First, create the bucket by making one request
         var createReq = new org.springframework.mock.web.MockHttpServletRequest("POST", "/auth/login");
