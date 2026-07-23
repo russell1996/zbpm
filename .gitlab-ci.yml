@@ -41,9 +41,7 @@ default:
   before_script:
     - docker run --rm -v "$CI_PROJECT_DIR":/w busybox chown -R "$(id -u):$(id -g)" /w || true
     - docker run --rm -v "$CI_PROJECT_DIR":/w -w /w busybox sh -c 'rm -rf ./target ./*/target' || true
-  # WO-OPS-2: default artifact retention — 30 days for any job that produces artifacts
-  artifacts:
-    expire_in: 30 days
+  # WO-A-02: self-heal runs as root container to reclaim file ownership
 
 # ---------------------------------------------------------------------------
 # Test gate — blocks PRs that change src/main without a test (WO-PROC-2).
@@ -172,11 +170,9 @@ build:
   stage: build
   tags: [zbpm]
   artifacts:
-    # WO-OPS-2: build manifest — 7 days; keep last 5 on master
     paths:
       - build-manifest.txt
     expire_in: 7 days
-    keep_latest: 5
   script:
     - docker build -t "$IMAGE_BACKEND:$IMAGE_TAG" -t "$IMAGE_BACKEND:latest" -f Dockerfile .
     - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" zorrobpm-frontend
