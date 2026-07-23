@@ -77,7 +77,7 @@ class QueryServiceImplTest {
             .thenReturn(new PageImpl<>(List.of(entity)));
         when(serviceTaskMapper.toDTO(entity)).thenReturn(dto);
 
-        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(query);
+        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(query, null);
 
         assertThat(result.getTotalElements()).isEqualTo(1);
         assertThat(result.getData()).containsExactly(dto);
@@ -89,7 +89,7 @@ class QueryServiceImplTest {
         when(serviceTaskRepository.findAll(any(Specification.class), any(PageRequest.class)))
             .thenReturn(new PageImpl<>(List.of()));
 
-        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(query);
+        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(query, null);
 
         assertThat(result.getData()).isEmpty();
     }
@@ -193,7 +193,7 @@ class QueryServiceImplTest {
             .thenReturn(new PageImpl<>(List.of(entity)));
         when(incidentMapper.toDTO(entity)).thenReturn(dto);
 
-        PagedDataDTO<Incident> result = queryService.findIncidents(query);
+        PagedDataDTO<Incident> result = queryService.findIncidents(query, null);
 
         assertThat(result.getData()).containsExactly(dto);
     }
@@ -212,7 +212,7 @@ class QueryServiceImplTest {
             .thenReturn(new PageImpl<>(List.of(entity)));
         when(variableMapper.toDTO(entity)).thenReturn(dto);
 
-        PagedDataDTO<ProcessVariable> result = queryService.findVariables(query);
+        PagedDataDTO<ProcessVariable> result = queryService.findVariables(query, null);
 
         assertThat(result.getData()).containsExactly(dto);
     }

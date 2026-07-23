@@ -38,19 +38,20 @@ public class QueryResource implements QueryContract {
     private final EventAuthzResolver eventAuthzResolver;
     private final HttpServletRequest request;
 
+    /** WO-ARCH-1b: tenant-filtered variables */
     public PagedDataDTO<ProcessVariable> getVariables(@ParameterObject VariableQuery query) {
-        return queryService.findVariables(query);
+        return queryService.findVariables(query, resolveAllowedPdIds());
     }
 
+    /** WO-ARCH-1b: tenant-filtered service tasks */
     public PagedDataDTO<ServiceTask> getServiceTasks(@ParameterObject ServiceTaskQuery query) {
-        return queryService.findServiceTasks(query);
+        return queryService.findServiceTasks(query, resolveAllowedPdIds());
     }
 
     public ServiceTask getServiceTask(@PathVariable UUID id) {
         return queryService.getServiceTask(id);
     }
 
-    /** WO-ARCH-1a: tenant-filtered user tasks */
     public PagedDataDTO<UserTask> getUserTasks(@ParameterObject UserTaskQuery query) {
         return queryService.findUserTasks(query, resolveAllowedPdIds());
     }
@@ -59,7 +60,6 @@ public class QueryResource implements QueryContract {
         return queryService.getUserTask(id);
     }
 
-    /** WO-ARCH-1a: tenant-filtered process instances */
     public PagedDataDTO<ProcessInstance> getProcessInstances(@ParameterObject ProcessInstanceQuery query) {
         return queryService.findProcessInstances(query, resolveAllowedPdIds());
     }
@@ -72,33 +72,34 @@ public class QueryResource implements QueryContract {
         return queryService.getActivities(id);
     }
 
+    /** WO-ARCH-1b: tenant-filtered incidents */
     public PagedDataDTO<Incident> getIncidents(@ParameterObject IncidentQuery query) {
-        return queryService.findIncidents(query);
+        return queryService.findIncidents(query, resolveAllowedPdIds());
     }
 
     public Incident getIncident(@PathVariable UUID id) {
         return queryService.getIncident(id);
     }
 
+    /** WO-ARCH-1b: tenant-filtered timer jobs */
     public PagedDataDTO<TimerJob> getTimerJobs(@ParameterObject TimerJobQuery query) {
-        return queryService.findTimerJobs(query);
+        return queryService.findTimerJobs(query, resolveAllowedPdIds());
     }
 
+    /** WO-ARCH-1b: tenant-filtered message subscriptions */
     public PagedDataDTO<MessageSubscription> getMessageSubscriptions(@ParameterObject MessageSubscriptionQuery query) {
-        return queryService.findMessageSubscriptions(query);
+        return queryService.findMessageSubscriptions(query, resolveAllowedPdIds());
     }
 
     /**
-     * WO-ARCH-1a: resolve allowed processDefinitionIds for tenant isolation.
+     * WO-ARCH-1a/1b: resolve allowed processDefinitionIds for tenant isolation.
      * null → see all (admin/SUPER_ADMIN), empty → deny, non-null non-empty → filter.
-     * Reuses EventAuthzResolver (G-L: no duplicate membership logic).
      */
     private Collection<UUID> resolveAllowedPdIds() {
         Object attr = request.getAttribute("principal");
         if (!(attr instanceof Principal principal)) {
-            return Set.of(); // no principal → deny
+            return Set.of();
         }
-        // null key = resolve ALL allowed pdIds (not filtered by processDefinitionKey)
         return eventAuthzResolver.resolve(principal, null);
     }
 }

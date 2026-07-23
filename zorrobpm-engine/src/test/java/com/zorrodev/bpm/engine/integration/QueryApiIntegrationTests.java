@@ -51,7 +51,7 @@ public class QueryApiIntegrationTests {
         UUID pi = runtimeService.startProcessInstance(dto).getId();
         ServiceTaskQuery q = new ServiceTaskQuery();
         q.setProcessInstanceId(pi);
-        UUID svc = queryService.findServiceTasks(q).getData().get(0).getId();
+        UUID svc = queryService.findServiceTasks(q, null).getData().get(0).getId();
         return new Started(model.getId(), pi, svc);
     }
 
@@ -101,12 +101,12 @@ public class QueryApiIntegrationTests {
         ServiceTaskQuery active = new ServiceTaskQuery();
         active.setProcessInstanceId(s.processInstanceId());
         active.setCompleted(false);
-        assertThat(queryService.findServiceTasks(active).getData()).hasSize(1);
+        assertThat(queryService.findServiceTasks(active, null).getData()).hasSize(1);
 
         ServiceTaskQuery done = new ServiceTaskQuery();
         done.setProcessInstanceId(s.processInstanceId());
         done.setCompleted(true);
-        assertThat(queryService.findServiceTasks(done).getData()).isEmpty();
+        assertThat(queryService.findServiceTasks(done, null).getData()).isEmpty();
     }
 
     @Transactional
@@ -131,11 +131,11 @@ public class QueryApiIntegrationTests {
         IncidentQuery open = new IncidentQuery();
         open.setProcessInstanceId(s.processInstanceId());
         open.setResolved(false);
-        assertThat(queryService.findIncidents(open).getData()).hasSize(1);
+        assertThat(queryService.findIncidents(open, null).getData()).hasSize(1);
 
         IncidentQuery resolved = new IncidentQuery();
         resolved.setProcessInstanceId(s.processInstanceId());
         resolved.setResolved(true);
-        assertThat(queryService.findIncidents(resolved).getData()).isEmpty();
+        assertThat(queryService.findIncidents(resolved, null).getData()).isEmpty();
     }
 }
