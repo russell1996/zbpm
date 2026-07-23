@@ -89,12 +89,14 @@ public class TenantReadIsolationPgIT extends PostgresIT {
         // Save minimal BPMN files for mappers that need them (ServiceTask/Incident mappers)
         String bpmnA = "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" " +
             "targetNamespace=\"http://bpmn.io/schema/bpmn\"><bpmn:process id=\"isol-a\" name=\"A\" isExecutable=\"true\">" +
-            "<bpmn:startEvent id=\"s\"/><bpmn:endEvent id=\"e\"/>" +
-            "<bpmn:sequenceFlow sourceRef=\"s\" targetRef=\"e\"/></bpmn:process></bpmn:definitions>";
+            "<bpmn:startEvent id=\"s\"/><bpmn:serviceTask id=\"svcA\"/><bpmn:endEvent id=\"e\"/>" +
+            "<bpmn:sequenceFlow sourceRef=\"s\" targetRef=\"svcA\"/>" +
+            "<bpmn:sequenceFlow sourceRef=\"svcA\" targetRef=\"e\"/></bpmn:process></bpmn:definitions>";
         String bpmnB = "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" " +
             "targetNamespace=\"http://bpmn.io/schema/bpmn\"><bpmn:process id=\"isol-b\" name=\"B\" isExecutable=\"true\">" +
-            "<bpmn:startEvent id=\"s\"/><bpmn:endEvent id=\"e\"/>" +
-            "<bpmn:sequenceFlow sourceRef=\"s\" targetRef=\"e\"/></bpmn:process></bpmn:definitions>";
+            "<bpmn:startEvent id=\"s\"/><bpmn:serviceTask id=\"svcB\"/><bpmn:endEvent id=\"e\"/>" +
+            "<bpmn:sequenceFlow sourceRef=\"s\" targetRef=\"svcB\"/>" +
+            "<bpmn:sequenceFlow sourceRef=\"svcB\" targetRef=\"e\"/></bpmn:process></bpmn:definitions>";
         fileService.saveFile(pdIdA, bpmnA);
         fileService.saveFile(pdIdB, bpmnB);
 
