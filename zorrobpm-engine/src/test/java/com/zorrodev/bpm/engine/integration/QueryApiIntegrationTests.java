@@ -82,16 +82,16 @@ public class QueryApiIntegrationTests {
 
         ProcessInstanceQuery byId = new ProcessInstanceQuery();
         byId.setProcessDefinitionId(s.definitionId());
-        assertThat(queryService.findProcessInstances(byId).getData()).extracting(ProcessInstance::getId).contains(s.processInstanceId());
+        assertThat(queryService.findProcessInstances(byId, null).getData()).extracting(ProcessInstance::getId).contains(s.processInstanceId());
 
         ProcessInstanceQuery byKey = new ProcessInstanceQuery();
         byKey.setProcessDefinitionKey("test-service-task-fail");
         byKey.setProcessDefinitionVersion(1);
-        assertThat(queryService.findProcessInstances(byKey).getData()).extracting(ProcessInstance::getId).contains(s.processInstanceId());
+        assertThat(queryService.findProcessInstances(byKey, null).getData()).extracting(ProcessInstance::getId).contains(s.processInstanceId());
 
         ProcessInstanceQuery wrong = new ProcessInstanceQuery();
         wrong.setProcessDefinitionKey("no-such-process");
-        assertThat(queryService.findProcessInstances(wrong).getData()).isEmpty();
+        assertThat(queryService.findProcessInstances(wrong, null).getData()).isEmpty();
     }
 
     @Transactional

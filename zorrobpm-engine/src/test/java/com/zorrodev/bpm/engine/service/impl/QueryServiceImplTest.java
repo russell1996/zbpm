@@ -124,7 +124,7 @@ class QueryServiceImplTest {
             .thenReturn(new PageImpl<>(List.of(entity)));
         when(userTaskMapper.toDTO(entity)).thenReturn(dto);
 
-        PagedDataDTO<UserTask> result = queryService.findUserTasks(query);
+        PagedDataDTO<UserTask> result = queryService.findUserTasks(query, null);
 
         assertThat(result.getData()).containsExactly(dto);
         assertThat(result.getTotalElements()).isEqualTo(1);
@@ -169,7 +169,7 @@ class QueryServiceImplTest {
             .thenReturn(new PageImpl<>(List.of(entity)));
         when(processInstanceMapper.toDTO(entity)).thenReturn(dto);
 
-        PagedDataDTO<ProcessInstance> result = queryService.findProcessInstances(query);
+        PagedDataDTO<ProcessInstance> result = queryService.findProcessInstances(query, null);
 
         assertThat(result.getData()).containsExactly(dto);
     }
