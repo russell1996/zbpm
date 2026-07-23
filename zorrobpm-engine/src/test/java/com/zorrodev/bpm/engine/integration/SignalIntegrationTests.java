@@ -62,7 +62,7 @@ public class SignalIntegrationTests {
 
         UserTaskQuery userTaskQuery = new UserTaskQuery();
         userTaskQuery.setProcessInstanceId(processInstanceId);
-        PagedDataDTO<UserTask> userTasks = queryService.findUserTasks(userTaskQuery);
+        PagedDataDTO<UserTask> userTasks = queryService.findUserTasks(userTaskQuery, null);
         assertThat(userTasks.getData()).hasSize(1);
 
         // completing the gate fires the signal throw
