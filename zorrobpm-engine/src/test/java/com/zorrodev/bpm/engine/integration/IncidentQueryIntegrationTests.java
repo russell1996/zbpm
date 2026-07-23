@@ -60,13 +60,13 @@ public class IncidentQueryIntegrationTests {
         // filter matches the instance that owns the incident
         IncidentQuery match = new IncidentQuery();
         match.setProcessInstanceId(processInstanceId);
-        PagedDataDTO<Incident> matched = queryService.findIncidents(match);
+        PagedDataDTO<Incident> matched = queryService.findIncidents(match, null);
         assertThat(matched.getData()).hasSize(1);
 
         // filter by an unrelated instance returns nothing (proves the filter is actually applied)
         IncidentQuery noMatch = new IncidentQuery();
         noMatch.setProcessInstanceId(UUID.randomUUID());
-        PagedDataDTO<Incident> none = queryService.findIncidents(noMatch);
+        PagedDataDTO<Incident> none = queryService.findIncidents(noMatch, null);
         assertThat(none.getData()).isEmpty();
     }
 }

@@ -51,12 +51,12 @@ public class TimerMessageQueryIntegrationTests {
         start();
         TimerJobQuery pending = new TimerJobQuery();
         pending.setFired(false);
-        assertThat(queryService.findTimerJobs(pending).getData()).isNotEmpty();
-        assertThat(queryService.findTimerJobs(pending).getData()).allMatch(j -> !j.isFired());
+        assertThat(queryService.findTimerJobs(pending, null).getData()).isNotEmpty();
+        assertThat(queryService.findTimerJobs(pending, null).getData()).allMatch(j -> !j.isFired());
 
         TimerJobQuery fired = new TimerJobQuery();
         fired.setFired(true);
-        assertThat(queryService.findTimerJobs(fired).getData()).isEmpty();
+        assertThat(queryService.findTimerJobs(fired, null).getData()).isEmpty();
     }
 
     @Transactional
@@ -66,13 +66,13 @@ public class TimerMessageQueryIntegrationTests {
         MessageSubscriptionQuery q = new MessageSubscriptionQuery();
         q.setProcessInstanceId(pi);
         q.setConsumed(false);
-        assertThat(queryService.findMessageSubscriptions(q).getData())
+        assertThat(queryService.findMessageSubscriptions(q, null).getData())
             .extracting(MessageSubscription::getMessageName)
             .contains("approve");
 
         MessageSubscriptionQuery consumed = new MessageSubscriptionQuery();
         consumed.setProcessInstanceId(pi);
         consumed.setConsumed(true);
-        assertThat(queryService.findMessageSubscriptions(consumed).getData()).isEmpty();
+        assertThat(queryService.findMessageSubscriptions(consumed, null).getData()).isEmpty();
     }
 }

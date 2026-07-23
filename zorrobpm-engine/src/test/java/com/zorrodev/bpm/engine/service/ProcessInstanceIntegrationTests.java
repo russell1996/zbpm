@@ -53,7 +53,7 @@ class ProcessInstanceIntegrationTests {
 
         ServiceTaskQuery serviceTaskQuery = new ServiceTaskQuery();
         serviceTaskQuery.setProcessInstanceId(processInstanceId);
-        PagedDataDTO<ServiceTask> serviceTasks = queryService.findServiceTasks(serviceTaskQuery);
+        PagedDataDTO<ServiceTask> serviceTasks = queryService.findServiceTasks(serviceTaskQuery, null);
 
         assertThat(serviceTasks.getData()).hasSize(1);
         UUID serviceTaskId = serviceTasks.getData().get(0).getId();
