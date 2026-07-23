@@ -91,12 +91,10 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            // WO-ARCH-1b: compute allowed processInstanceIds via NamedParameterJdbcTemplate
-            var params = new org.springframework.jdbc.core.namedparam.MapSqlParameterSource("ids",
-                new java.util.ArrayList<>(allowedPdIds));
-            var piIds = namedJdbc.queryForList(
-                "SELECT id FROM process_instances WHERE process_definition_id IN (:ids)",
-                params, UUID.class);
+            // WO-ARCH-1b: compute allowed processInstanceIds (same pattern as Variable — verified GREEN)
+            String ph = allowedPdIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+            String sql = "SELECT id FROM process_instances WHERE process_definition_id IN (" + ph + ")";
+            var piIds = jdbcTemplate.query(sql, (rs, rn) -> rs.getObject("id", UUID.class), allowedPdIds.toArray());
             if (piIds.isEmpty()) {
                 return emptyPage(query);
             }
