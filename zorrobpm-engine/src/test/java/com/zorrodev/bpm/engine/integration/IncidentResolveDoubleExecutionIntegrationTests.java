@@ -108,7 +108,7 @@ public class IncidentResolveDoubleExecutionIntegrationTests {
 
         // fail with retries=0 → incident
         tx.executeWithoutResult(s -> runtimeService.failServiceTask(svc1, "boom", 0));
-        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi)).getData().get(0).getId());
+        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi), null).getData().get(0).getId());
 
         // resolve → 1 new active, old cancelled
         tx.executeWithoutResult(s -> runtimeService.resolveIncident(incidentId, List.of()));
@@ -159,7 +159,7 @@ public class IncidentResolveDoubleExecutionIntegrationTests {
 
         // Fail the first activity → incident
         tx.executeWithoutResult(s -> runtimeService.failServiceTask(svc1.getId(), "boom", 0));
-        UUID inc1Id = tx.execute(s -> queryService.findIncidents(openIncidents(pi)).getData().get(0).getId());
+        UUID inc1Id = tx.execute(s -> queryService.findIncidents(openIncidents(pi), null).getData().get(0).getId());
 
         // Resolve both incidents — second resolve should be guarded (active already exists from first resolve)
         tx.executeWithoutResult(s -> runtimeService.resolveIncident(inc1Id, List.of()));
@@ -185,7 +185,7 @@ public class IncidentResolveDoubleExecutionIntegrationTests {
 
         UUID svc1 = tx.execute(s -> activeServiceTask(pi));
         tx.executeWithoutResult(s -> runtimeService.failServiceTask(svc1, "boom", 0));
-        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi)).getData().get(0).getId());
+        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi), null).getData().get(0).getId());
 
         // First resolve → succeeds, creates new activity
         tx.executeWithoutResult(s -> runtimeService.resolveIncident(incidentId, List.of()));
@@ -269,7 +269,7 @@ public class IncidentResolveDoubleExecutionIntegrationTests {
 
         // Fail the current activity → incident
         tx.executeWithoutResult(s -> runtimeService.failServiceTask(svc1.getId(), "boom", 0));
-        UUID inc1Id = tx.execute(s -> queryService.findIncidents(openIncidents(pi)).getData().stream()
+        UUID inc1Id = tx.execute(s -> queryService.findIncidents(openIncidents(pi), null).getData().stream()
             .filter(i -> i.getActivityId().equals(svc1.getId()))
             .map(com.zorrodev.bpm.contract.dto.Incident::getId)
             .findFirst().orElseThrow());
@@ -300,7 +300,7 @@ public class IncidentResolveDoubleExecutionIntegrationTests {
 
         UUID svc1 = tx.execute(s -> activeServiceTask(pi));
         tx.executeWithoutResult(s -> runtimeService.failServiceTask(svc1, "boom", 0));
-        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi)).getData().get(0).getId());
+        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi), null).getData().get(0).getId());
 
         tx.executeWithoutResult(s -> runtimeService.resolveIncident(incidentId, List.of()));
         assertThat(countActiveByElement(pi, "svc"))
@@ -325,7 +325,7 @@ public class IncidentResolveDoubleExecutionIntegrationTests {
 
         // worker fails it fatally -> incident
         tx.executeWithoutResult(s -> runtimeService.failServiceTask(svc1, "boom", 0));
-        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi)).getData().get(0).getId());
+        UUID incidentId = tx.execute(s -> queryService.findIncidents(openIncidents(pi), null).getData().get(0).getId());
 
         // resolve -> svc1 is cancelled, a fresh svc2 is created and active
         tx.executeWithoutResult(s -> runtimeService.resolveIncident(incidentId, List.of()));

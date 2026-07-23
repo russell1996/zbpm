@@ -23,30 +23,28 @@ import java.util.UUID;
 
 public interface QueryService {
 
-    /** Activity history of an instance (ascending by creation), for execution history + BPMN highlight. */
     List<ActivityInstance> getActivities(UUID processInstanceId);
 
-    PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query);
+    /** WO-ARCH-1b: allowedPdIds = null → see all; non-null → filter; empty → deny. */
+    PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query, Collection<UUID> allowedPdIds);
 
     ServiceTask getServiceTask(UUID id);
 
-    /** WO-ARCH-1a: allowedPdIds = null → see all (admin); non-null → filter; empty → deny. */
     PagedDataDTO<UserTask> findUserTasks(UserTaskQuery query, Collection<UUID> allowedPdIds);
 
     UserTask getUserTask(UUID id);
 
     ProcessInstance getProcessInstance(UUID id);
 
-    /** WO-ARCH-1a: allowedPdIds = null → see all (admin); non-null → filter; empty → deny. */
     PagedDataDTO<ProcessInstance> findProcessInstances(ProcessInstanceQuery query, Collection<UUID> allowedPdIds);
 
     Incident getIncident(UUID id);
 
-    PagedDataDTO<Incident> findIncidents(IncidentQuery query);
+    PagedDataDTO<Incident> findIncidents(IncidentQuery query, Collection<UUID> allowedPdIds);
 
-    PagedDataDTO<ProcessVariable> findVariables(VariableQuery query);
+    PagedDataDTO<ProcessVariable> findVariables(VariableQuery query, Collection<UUID> allowedPdIds);
 
-    PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query);
+    PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query, Collection<UUID> allowedPdIds);
 
-    PagedDataDTO<MessageSubscription> findMessageSubscriptions(MessageSubscriptionQuery query);
+    PagedDataDTO<MessageSubscription> findMessageSubscriptions(MessageSubscriptionQuery query, Collection<UUID> allowedPdIds);
 }
