@@ -215,7 +215,8 @@ public class TenantReadIsolationPgIT extends PostgresIT {
     @Test
     void timerJobs_allowedPdIds_excludesB() {
         var r = queryService.findTimerJobs(new TimerJobQuery(), Set.of(pdIdA));
-        assertThat(r.getData()).isEmpty();
+        assertThat(r.getData()).hasSize(1);
+        assertThat(r.getData()).noneMatch(t -> t.getProcessInstanceId().equals(piIdB));
     }
 
     @Test
@@ -241,7 +242,8 @@ public class TenantReadIsolationPgIT extends PostgresIT {
     @Test
     void msgSubs_allowedPdIds_excludesB() {
         var r = queryService.findMessageSubscriptions(new MessageSubscriptionQuery(), Set.of(pdIdA));
-        assertThat(r.getData()).isEmpty();
+        assertThat(r.getData()).hasSize(1);
+        assertThat(r.getData()).noneMatch(m -> m.getProcessInstanceId().equals(piIdB));
     }
 
     @Test
