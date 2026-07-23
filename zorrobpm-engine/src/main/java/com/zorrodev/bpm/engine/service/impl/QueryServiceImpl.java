@@ -257,7 +257,18 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
+            // IncidentEntity: activityId → activities.processInstanceId → process_instances.process_definition_id
+            specifications.add((root, q, cb) -> {
+                var piSub = q.subquery(UUID.class);
+                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
+                piSub.select(piRoot.get("id"))
+                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
+                var actSub = q.subquery(UUID.class);
+                var actRoot = actSub.from(com.zorrodev.bpm.engine.entity.ActivityEntity.class);
+                actSub.select(actRoot.get("id"))
+                    .where(actRoot.get("processInstanceId").in(piSub));
+                return root.get("activityId").in(actSub);
+            });
         }
         if (query.getId() != null) {
             specifications.add(IncidentRepository.byId(query.getId()));
