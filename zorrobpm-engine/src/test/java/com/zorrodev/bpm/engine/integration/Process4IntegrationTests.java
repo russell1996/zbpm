@@ -53,7 +53,7 @@ public class Process4IntegrationTests {
 
         UserTaskQuery userTaskQuery = new UserTaskQuery();
         userTaskQuery.setProcessInstanceId(processInstanceId);
-        PagedDataDTO<UserTask> userTasks = queryService.findUserTasks(userTaskQuery);
+        PagedDataDTO<UserTask> userTasks = queryService.findUserTasks(userTaskQuery, null);
 
         assertThat(userTasks.getData()).hasSize(1);
         UUID userTaskId = userTasks.getData().get(0).getId();
