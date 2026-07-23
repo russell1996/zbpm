@@ -63,6 +63,8 @@ public class QueryServiceImpl implements QueryService {
     private static final int MAX_PAGE_SIZE = 200;
 
     private final DBService dbService;
+    private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbc;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private final ServiceTaskMapper serviceTaskMapper;
     private final UserTaskMapper userTaskMapper;
@@ -89,14 +91,16 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            // TimerJobs link via processInstanceId → process_instances.process_definition_id
-            specifications.add((root, q, cb) -> {
-                var piSub = q.subquery(UUID.class);
-                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
-                piSub.select(piRoot.get("id"))
-                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
-                return root.get("processInstanceId").in(piSub);
-            });
+            // WO-ARCH-1b: compute allowed processInstanceIds via NamedParameterJdbcTemplate
+            var params = new org.springframework.jdbc.core.namedparam.MapSqlParameterSource("ids",
+                new java.util.ArrayList<>(allowedPdIds));
+            var piIds = namedJdbc.queryForList(
+                "SELECT id FROM process_instances WHERE process_definition_id IN (:ids)",
+                params, UUID.class);
+            if (piIds.isEmpty()) {
+                return emptyPage(query);
+            }
+            specifications.add((root, q, cb) -> root.get("processInstanceId").in(piIds));
         }
         if (query.getId() != null) {
             specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
@@ -118,13 +122,12 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            specifications.add((root, q, cb) -> {
-                var piSub = q.subquery(UUID.class);
-                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
-                piSub.select(piRoot.get("id"))
-                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
-                return root.get("processInstanceId").in(piSub);
-            });
+            String ph = allowedPdIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+            String sql = "SELECT id FROM process_instances WHERE process_definition_id IN (" + ph + ")";
+            Object[] args = allowedPdIds.toArray();
+            var piIds = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getObject("id", UUID.class), args);
+            if (piIds.isEmpty()) return emptyPage(query);
+            specifications.add((root, q, cb) -> root.get("processInstanceId").in(piIds));
         }
         if (query.getId() != null) {
             specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
@@ -303,13 +306,12 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            specifications.add((root, q, cb) -> {
-                var piSub = q.subquery(UUID.class);
-                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
-                piSub.select(piRoot.get("id"))
-                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
-                return root.get("processInstanceId").in(piSub);
-            });
+            String ph = allowedPdIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+            String sql = "SELECT id FROM process_instances WHERE process_definition_id IN (" + ph + ")";
+            Object[] args = allowedPdIds.toArray();
+            var piIds = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getObject("id", UUID.class), args);
+            if (piIds.isEmpty()) return emptyPage(query);
+            specifications.add((root, q, cb) -> root.get("processInstanceId").in(piIds));
         }
         if (query.getProcessInstanceId() != null) {
             specifications.add(VariableRepository.byProcessInstanceId(query.getProcessInstanceId()));
