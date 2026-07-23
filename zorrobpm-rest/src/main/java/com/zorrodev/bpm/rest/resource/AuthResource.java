@@ -39,7 +39,7 @@ public class AuthResource implements AuthContract {
     @Value("${zorrobpm.security.refresh-ttl-days:7}")
     private long refreshTtlDays;
 
-    @Value("${zorrobpm.security.jwt-ttl-minutes:720}")
+    @Value("${zorrobpm.security.jwt-ttl-minutes:30}")
     private long jwtTtlMinutes;
 
     @Override
