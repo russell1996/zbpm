@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.DatabaseMetaData;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Base64;
 import java.util.LinkedList;
 import java.util.List;
@@ -262,6 +263,51 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         data.setData(page.getContent().stream().map(this::fromEntity).toList());
 
         return data;
+    }
+
+    @Override
+    public PagedDataDTO<ProcessDefinition> getProcessDefinitions(ProcessDefinitionsQueryParameters parameters, Collection<UUID> allowedPdIds) {
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            PagedDataDTO<ProcessDefinition> empty = new PagedDataDTO<>();
+            empty.setPageIndex(parameters.getPageIndex());
+            empty.setPageSize(parameters.getPageSize());
+            empty.setTotalElements(0L);
+            empty.setData(List.of());
+            return empty;
+        }
+        if (allowedPdIds != null) {
+            int maxPageSize = 200;
+            PageRequest pageRequest = PageRequest.of(
+                Math.max(0, parameters.getPageIndex()),
+                Math.min(maxPageSize, Math.max(1, parameters.getPageSize())),
+                Sort.by("name", "version").ascending());
+
+            java.util.List<Specification<ProcessDefinitionEntity>> specs = new java.util.LinkedList<>();
+            specs.add((root, q, cb) -> root.get("id").in(allowedPdIds));
+            if (parameters.getName() != null && !parameters.getName().isBlank()) {
+                specs.add(ProcessDefinitionRepository.byNameContains(parameters.getName()));
+            }
+            if (parameters.getProcessDefinitionKey() != null) {
+                specs.add(ProcessDefinitionRepository.byKey(parameters.getProcessDefinitionKey()));
+            }
+            if (parameters.getProcessDefinitionVersion() != null) {
+                specs.add(ProcessDefinitionRepository.byVersion(parameters.getProcessDefinitionVersion()));
+            }
+            if (Boolean.TRUE.equals(parameters.getLatestVersionOnly())) {
+                specs.add(ProcessDefinitionRepository.latestVersion());
+            }
+
+            Page<ProcessDefinitionEntity> page =
+                processDefinitionRepository.findAll(Specification.allOf(specs), pageRequest);
+
+            PagedDataDTO<ProcessDefinition> data = new PagedDataDTO<>();
+            data.setPageIndex(parameters.getPageIndex());
+            data.setPageSize(parameters.getPageSize());
+            data.setTotalElements(page.getTotalElements());
+            data.setData(page.getContent().stream().map(this::fromEntity).toList());
+            return data;
+        }
+        return getProcessDefinitions(parameters);
     }
 
     private ProcessDefinition fromEntity(ProcessDefinitionEntity processDefinitionEntity) {

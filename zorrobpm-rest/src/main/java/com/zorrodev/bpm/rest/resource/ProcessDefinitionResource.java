@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -36,6 +38,22 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
     private final ProcessRepository processRepository;
     private final AuditLogService auditLogService;
     private final HttpServletRequest request;
+    private final EventAuthzResolver eventAuthzResolver;
+
+    private Collection<UUID> resolveAllowedPdIds() {
+        Object attr = request.getAttribute("principal");
+        if (!(attr instanceof Principal principal)) {
+            return Set.of();
+        }
+        return eventAuthzResolver.resolve(principal, null);
+    }
+
+    private void requirePdAccess(UUID id) {
+        Collection<UUID> allowed = resolveAllowedPdIds();
+        if (allowed != null && !allowed.contains(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found");
+        }
+    }
 
     /**
      * ADR-2: deploy → SUPER_ADMIN only.
@@ -87,16 +105,18 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
 
     @Override
     public PagedDataDTO<ProcessDefinition> getProcessDefinitions(@ParameterObject ProcessDefinitionsQueryParameters parameters) {
-        return processDefinitionService.getProcessDefinitions(parameters);
+        return processDefinitionService.getProcessDefinitions(parameters, resolveAllowedPdIds());
     }
 
     @Override
     public ProcessDefinition getProcessDefinitionById(UUID id) {
+        requirePdAccess(id);
         return processDefinitionService.getProcessDefinitionById(id).orElseThrow( () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found")) ;
     }
 
     @Override
     public String getProcessDefinitionXml(UUID id) {
+        requirePdAccess(id);
         try {
             String xml = fileService.getFileBytes(id);
             if (xml == null) {
@@ -110,6 +130,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
 
     @Override
     public BpmnProcessStructure getProcessDefinitionStructure(UUID id) {
+        requirePdAccess(id);
         return bpmnStructureService.getStructure(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
     }
