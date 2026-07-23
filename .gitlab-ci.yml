@@ -41,6 +41,7 @@ default:
   before_script:
     - docker run --rm -v "$CI_PROJECT_DIR":/w busybox chown -R "$(id -u):$(id -g)" /w || true
     - docker run --rm -v "$CI_PROJECT_DIR":/w -w /w busybox sh -c 'rm -rf ./target ./*/target' || true
+  # WO-A-02: self-heal runs as root container to reclaim file ownership
 
 # ---------------------------------------------------------------------------
 # Test gate — blocks PRs that change src/main without a test (WO-PROC-2).
@@ -63,9 +64,24 @@ test:gate:
 test:backend:
   stage: test
   tags: [zbpm]
+  artifacts:
+    # WO-OPS-2: surefire/failsafe reports — 3 days
+    paths:
+      - "**/surefire-reports/"
+      - "**/failsafe-reports/"
+    expire_in: 3 days
+    when: always
   script:
     # `--target test` runs `mvn -B clean verify` (full reactor: unit + integration) inside the build
+    # Mount target/ out to capture test reports after build
     - docker build --target test -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
+    - docker run --rm -v "$CI_PROJECT_DIR/target-out":/out busybox sh -c 'rm -rf /out && true' || true
+    - docker create --name test-extract zorrobpm-app-test:$IMAGE_TAG || true
+    - docker cp test-extract:/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports || true
+    - docker cp test-extract:/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports || true
+    - docker cp test-extract:/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports || true
+    - docker cp test-extract:/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports || true
+    - docker rm -f test-extract || true
     - docker image rm zorrobpm-app-test:$IMAGE_TAG || true
 
 # ---------------------------------------------------------------------------
@@ -77,6 +93,12 @@ test:backend:
 test:pg:
   stage: test
   tags: [zbpm]
+  artifacts:
+    # WO-OPS-2: PG-IT reports — 3 days
+    paths:
+      - "**/failsafe-reports/"
+    expire_in: 3 days
+    when: always
   variables:
     # Non-standard host port so the ephemeral CI postgres never collides with any
     # 5432 already bound on the shared runner.
@@ -147,12 +169,18 @@ cve:scan:
 build:
   stage: build
   tags: [zbpm]
+  artifacts:
+    paths:
+      - build-manifest.txt
+    expire_in: 7 days
   script:
     - docker build -t "$IMAGE_BACKEND:$IMAGE_TAG" -t "$IMAGE_BACKEND:latest" -f Dockerfile .
     - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" zorrobpm-frontend
     # `docker image ls` accepts at most one repository argument — list each separately
     - docker image ls "$IMAGE_BACKEND"
     - docker image ls "$IMAGE_FRONTEND"
+    # WO-OPS-2: save build manifest for traceability
+    - echo "backend=$IMAGE_BACKEND:$IMAGE_TAG frontend=$IMAGE_FRONTEND:$IMAGE_TAG built=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > build-manifest.txt
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_BRANCH'
