@@ -15,9 +15,11 @@ import com.zorrodev.bpm.engine.entity.FormArtifactKind;
 import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
@@ -35,9 +37,11 @@ import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
@@ -55,6 +59,23 @@ public class FormResource implements FormContract {
     private final JsonSchemaValidator jsonSchemaValidator;
     private final HttpServletRequest request;
     private final ObjectMapper objectMapper;
+    private final EventAuthzResolver eventAuthzResolver;
+    private final ProcessInstanceRepository processInstanceRepository;
+
+    private Collection<UUID> resolveAllowedPdIds() {
+        Object attr = request.getAttribute("principal");
+        if (!(attr instanceof Principal principal)) {
+            return Set.of();
+        }
+        return eventAuthzResolver.resolve(principal, null);
+    }
+
+    private void requirePdAccess(UUID pdId) {
+        Collection<UUID> allowed = resolveAllowedPdIds();
+        if (allowed != null && !allowed.contains(pdId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found");
+        }
+    }
 
     @Override
     public List<FormDTO> listForms() {
@@ -151,6 +172,9 @@ public class FormResource implements FormContract {
     public TaskFormDTO getUserTaskForm(UUID id) {
         UserTaskEntity task = userTaskRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found"));
+        ProcessInstanceEntity pi = processInstanceRepository.findById(task.getProcessInstanceId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"));
+        requirePdAccess(pi.getProcessDefinitionId());
         return resolveForm(task.getFormKey(), task.getProcessInstanceId());
     }
 
@@ -160,6 +184,8 @@ public class FormResource implements FormContract {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
         ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+
+        requirePdAccess(pd.getId());
 
         // ADR-6 §D7: try element-artifact binding first (per elementId)
         List<ElementArtifactBindingEntity> bindings = bindingRepository.findByProcessDefinitionId(pd.getId());
