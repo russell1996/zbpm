@@ -56,18 +56,18 @@ public class UserTaskQueryIntegrationTests {
         UUID pi = start();
         UserTaskQuery active = query(pi);
         active.setCompleted(false);
-        assertThat(queryService.findUserTasks(active).getData()).hasSize(1);
+        assertThat(queryService.findUserTasks(active, null).getData()).hasSize(1);
 
         UserTaskQuery done = query(pi);
         done.setCompleted(true);
-        assertThat(queryService.findUserTasks(done).getData()).isEmpty();
+        assertThat(queryService.findUserTasks(done, null).getData()).isEmpty();
     }
 
     @Transactional
     @Test
     void singleGetReturnsTheTask() throws Exception {
         UUID pi = start();
-        UUID taskId = queryService.findUserTasks(query(pi)).getData().get(0).getId();
+        UUID taskId = queryService.findUserTasks(query(pi), null).getData().get(0).getId();
         UserTask task = queryService.getUserTask(taskId);
         assertThat(task.getId()).isEqualTo(taskId);
         assertThat(task.getCode()).isEqualTo("approve");
@@ -80,14 +80,14 @@ public class UserTaskQueryIntegrationTests {
         // assignee "alice" is persisted → task is assigned
         UserTaskQuery unassigned = query(pi);
         unassigned.setAssigned(false);
-        assertThat(queryService.findUserTasks(unassigned).getData()).isEmpty();
+        assertThat(queryService.findUserTasks(unassigned, null).getData()).isEmpty();
 
         UserTaskQuery assigned = query(pi);
         assigned.setAssigned(true);
-        assertThat(queryService.findUserTasks(assigned).getData()).hasSize(1);
+        assertThat(queryService.findUserTasks(assigned, null).getData()).hasSize(1);
 
         UserTaskQuery byAssignee = query(pi);
         byAssignee.setAssignee("alice");
-        assertThat(queryService.findUserTasks(byAssignee).getData()).hasSize(1);
+        assertThat(queryService.findUserTasks(byAssignee, null).getData()).hasSize(1);
     }
 }

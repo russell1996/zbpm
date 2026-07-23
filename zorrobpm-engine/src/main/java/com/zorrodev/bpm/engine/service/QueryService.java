@@ -17,6 +17,7 @@ import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -29,13 +30,15 @@ public interface QueryService {
 
     ServiceTask getServiceTask(UUID id);
 
-    PagedDataDTO<UserTask> findUserTasks(UserTaskQuery query);
+    /** WO-ARCH-1a: allowedPdIds = null → see all (admin); non-null → filter; empty → deny. */
+    PagedDataDTO<UserTask> findUserTasks(UserTaskQuery query, Collection<UUID> allowedPdIds);
 
     UserTask getUserTask(UUID id);
 
     ProcessInstance getProcessInstance(UUID id);
 
-    PagedDataDTO<ProcessInstance> findProcessInstances(ProcessInstanceQuery query);
+    /** WO-ARCH-1a: allowedPdIds = null → see all (admin); non-null → filter; empty → deny. */
+    PagedDataDTO<ProcessInstance> findProcessInstances(ProcessInstanceQuery query, Collection<UUID> allowedPdIds);
 
     Incident getIncident(UUID id);
 

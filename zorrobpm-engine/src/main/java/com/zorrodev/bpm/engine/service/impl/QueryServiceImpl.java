@@ -49,6 +49,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.UUID;
@@ -143,8 +144,15 @@ public class QueryServiceImpl implements QueryService {
     }
 
     @Override
-    public PagedDataDTO<UserTask> findUserTasks(UserTaskQuery query) {
+    public PagedDataDTO<UserTask> findUserTasks(UserTaskQuery query, Collection<UUID> allowedPdIds) {
         List<Specification<UserTaskEntity>> specifications = new LinkedList<>();
+        // WO-ARCH-1a: default DENY — no memberships → empty results
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            return emptyPage(query);
+        }
+        if (allowedPdIds != null) {
+            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
+        }
         if (query.getProcessInstanceId() != null) {
             specifications.add(UserTaskRepository.byProcessInstanceId(query.getProcessInstanceId()));
         }
@@ -176,8 +184,15 @@ public class QueryServiceImpl implements QueryService {
     }
 
     @Override
-    public PagedDataDTO<ProcessInstance> findProcessInstances(ProcessInstanceQuery query) {
+    public PagedDataDTO<ProcessInstance> findProcessInstances(ProcessInstanceQuery query, Collection<UUID> allowedPdIds) {
         List<Specification<ProcessInstanceEntity>> specifications = new LinkedList<>();
+        // WO-ARCH-1a: default DENY — no memberships → empty results
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            return emptyPage(query);
+        }
+        if (allowedPdIds != null) {
+            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
+        }
         if (query.getId() != null) {
             specifications.add(ProcessInstanceRepository.byId(query.getId()));
         }
@@ -269,6 +284,16 @@ public class QueryServiceImpl implements QueryService {
         int page = Math.max(0, pageIndex != null ? pageIndex : 0);
         int size = Math.min(MAX_PAGE_SIZE, Math.max(1, pageSize != null ? pageSize : 10));
         return PageRequest.of(page, size, sort);
+    }
+
+    /** WO-ARCH-1a: default DENY — empty allowedPdIds → empty page (no memberships = see nothing). */
+    private static <T> PagedDataDTO<T> emptyPage(Object query) {
+        PagedDataDTO<T> result = new PagedDataDTO<>();
+        result.setPageIndex(0);
+        result.setPageSize(10);
+        result.setTotalElements(0L);
+        result.setData(List.of());
+        return result;
     }
 
 }
