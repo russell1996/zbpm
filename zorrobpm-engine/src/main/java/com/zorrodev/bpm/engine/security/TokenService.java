@@ -38,7 +38,7 @@ public class TokenService {
 
     public TokenService(
         @Value("${zorrobpm.security.jwt-secret:" + DEFAULT_SECRET + "}") String secret,
-        @Value("${zorrobpm.security.jwt-ttl-minutes:720}") long ttlMinutes,
+        @Value("${zorrobpm.security.jwt-ttl-minutes:30}") long ttlMinutes,
         Environment environment) {
         boolean devOrTest = Arrays.stream(environment.getActiveProfiles())
             .anyMatch(SECRET_OPTIONAL_PROFILES::contains);
