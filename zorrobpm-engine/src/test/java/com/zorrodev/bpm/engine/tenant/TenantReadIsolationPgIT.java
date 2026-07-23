@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
@@ -45,6 +46,7 @@ public class TenantReadIsolationPgIT extends PostgresIT {
     @Autowired QueryService queryService;
     @Autowired ProcessDefinitionRepository processDefinitionRepository;
     @Autowired ProcessInstanceRepository processInstanceRepository;
+    @Autowired com.zorrodev.bpm.engine.service.FileService fileService;
 
     private UUID pdIdA, pdIdB, piIdA, piIdB;
 
@@ -67,8 +69,8 @@ public class TenantReadIsolationPgIT extends PostgresIT {
         jdbc.update("DELETE FROM service_tasks WHERE process_instance_id IN " +
             "(SELECT id FROM process_instances WHERE process_definition_id IN " +
             "(SELECT id FROM process_definitions WHERE code IN ('isol-a','isol-b')))");
-        jdbc.update("DELETE FROM process_instances WHERE process_definition_id IN " +
-            "(SELECT id FROM process_definitions WHERE code IN ('isol-a','isol-b'))");
+        jdbc.update("DELETE FROM activities WHERE process_instance_id IN (SELECT id FROM process_instances WHERE process_definition_id IN (SELECT id FROM process_definitions WHERE code IN ('isol-a','isol-b')))");
+        jdbc.update("DELETE FROM process_instances WHERE process_definition_id IN (SELECT id FROM process_definitions WHERE code IN ('isol-a','isol-b'))");
         jdbc.update("DELETE FROM process_definitions WHERE code IN ('isol-a','isol-b')");
 
         pdIdA = UUID.randomUUID(); pdIdB = UUID.randomUUID();
@@ -84,6 +86,18 @@ public class TenantReadIsolationPgIT extends PostgresIT {
         processDefinitionRepository.save(pdA);
         processDefinitionRepository.save(pdB);
 
+        // Save minimal BPMN files for mappers that need them (ServiceTask/Incident mappers)
+        String bpmnA = "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" " +
+            "targetNamespace=\"http://bpmn.io/schema/bpmn\"><bpmn:process id=\"isol-a\" name=\"A\" isExecutable=\"true\">" +
+            "<bpmn:startEvent id=\"s\"/><bpmn:endEvent id=\"e\"/>" +
+            "<bpmn:sequenceFlow sourceRef=\"s\" targetRef=\"e\"/></bpmn:process></bpmn:definitions>";
+        String bpmnB = "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" " +
+            "targetNamespace=\"http://bpmn.io/schema/bpmn\"><bpmn:process id=\"isol-b\" name=\"B\" isExecutable=\"true\">" +
+            "<bpmn:startEvent id=\"s\"/><bpmn:endEvent id=\"e\"/>" +
+            "<bpmn:sequenceFlow sourceRef=\"s\" targetRef=\"e\"/></bpmn:process></bpmn:definitions>";
+        fileService.saveFile(pdIdA, bpmnA);
+        fileService.saveFile(pdIdB, bpmnB);
+
         // Process instances
         var piA = new ProcessInstanceEntity();
         piA.setId(piIdA); piA.setProcessDefinitionId(pdIdA); piA.setStartedAt(Instant.now());
@@ -95,34 +109,37 @@ public class TenantReadIsolationPgIT extends PostgresIT {
         // ServiceTasks (has processDefinitionId directly)
         UUID stA = UUID.randomUUID(), stB = UUID.randomUUID();
         jdbc.update("INSERT INTO service_tasks (id,process_instance_id,process_definition_id,bpmn_element_id,created_at,retries_remaining) VALUES (?,?,?,?,?,?)",
-            stA, piIdA, pdIdA, "svcA", Instant.now(), 0);
+            stA, piIdA, pdIdA, "svcA", Timestamp.from(Instant.now()), 0);
         jdbc.update("INSERT INTO service_tasks (id,process_instance_id,process_definition_id,bpmn_element_id,created_at,retries_remaining) VALUES (?,?,?,?,?,?)",
-            stB, piIdB, pdIdB, "svcB", Instant.now(), 0);
+            stB, piIdB, pdIdB, "svcB", Timestamp.from(Instant.now()), 0);
 
         // Activities (for incidents)
         UUID actA = UUID.randomUUID(), actB = UUID.randomUUID();
-        jdbc.update("INSERT INTO activities (id,process_instance_id,bpmn_element_id,created_at,type,status) VALUES (?,?,?,?,?,?)",
-            actA, piIdA, "startA", Instant.now(), "START_EVENT", "COMPLETED");
-        jdbc.update("INSERT INTO activities (id,process_instance_id,bpmn_element_id,created_at,type,status) VALUES (?,?,?,?,?,?)",
-            actB, piIdB, "startB", Instant.now(), "START_EVENT", "COMPLETED");
+        UUID tokA = UUID.randomUUID(), tokB = UUID.randomUUID();
+        jdbc.update("INSERT INTO activities (id,process_instance_id,bpmn_element_id,created_at,type,status,token) VALUES (?,?,?,?,?,?,?)",
+            actA, piIdA, "startA", Timestamp.from(Instant.now()), "START_EVENT", "COMPLETED", tokA);
+        jdbc.update("INSERT INTO activities (id,process_instance_id,bpmn_element_id,created_at,type,status,token) VALUES (?,?,?,?,?,?,?)",
+            actB, piIdB, "startB", Timestamp.from(Instant.now()), "START_EVENT", "COMPLETED", tokB);
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", tokA);
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", tokB);
 
         // Incidents (linked via activityId)
-        jdbc.update("INSERT INTO incidents (id,activity_id,bpmn_element_id,created_at) VALUES (?,?,?,?)",
-            UUID.randomUUID(), actA, "elA", Instant.now());
-        jdbc.update("INSERT INTO incidents (id,activity_id,bpmn_element_id,created_at) VALUES (?,?,?,?)",
-            UUID.randomUUID(), actB, "elB", Instant.now());
+        jdbc.update("INSERT INTO incidents (id, activity_id, message, created_at) VALUES (?,?,?,?)",
+            UUID.randomUUID(), actA, "incidentA", Timestamp.from(Instant.now()));
+        jdbc.update("INSERT INTO incidents (id, activity_id, message, created_at) VALUES (?,?,?,?)",
+            UUID.randomUUID(), actB, "incidentB", Timestamp.from(Instant.now()));
 
         // TimerJobs (linked via processInstanceId)
         jdbc.update("INSERT INTO timer_jobs (id,process_instance_id,activity_id,due_at,fired,created_at) VALUES (?,?,?,?,?,?)",
-            UUID.randomUUID(), piIdA, actA, Instant.now(), false, Instant.now());
+            UUID.randomUUID(), piIdA, actA, Timestamp.from(Instant.now()), false, Timestamp.from(Instant.now()));
         jdbc.update("INSERT INTO timer_jobs (id,process_instance_id,activity_id,due_at,fired,created_at) VALUES (?,?,?,?,?,?)",
-            UUID.randomUUID(), piIdB, actB, Instant.now(), false, Instant.now());
+            UUID.randomUUID(), piIdB, actB, Timestamp.from(Instant.now()), false, Timestamp.from(Instant.now()));
 
         // MessageSubscriptions (linked via processInstanceId)
-        jdbc.update("INSERT INTO message_subscriptions (id,process_instance_id,activity_id,created_at) VALUES (?,?,?,?)",
-            UUID.randomUUID(), piIdA, actA, Instant.now());
-        jdbc.update("INSERT INTO message_subscriptions (id,process_instance_id,activity_id,created_at) VALUES (?,?,?,?)",
-            UUID.randomUUID(), piIdB, actB, Instant.now());
+        jdbc.update("INSERT INTO message_subscriptions (id,process_instance_id,activity_id,message_name,consumed,created_at) VALUES (?,?,?,?,?,?)",
+            UUID.randomUUID(), piIdA, actA, "msgA", false, Timestamp.from(Instant.now()));
+        jdbc.update("INSERT INTO message_subscriptions (id,process_instance_id,activity_id,message_name,consumed,created_at) VALUES (?,?,?,?,?,?)",
+            UUID.randomUUID(), piIdB, actB, "msgB", false, Timestamp.from(Instant.now()));
 
         // Variables (linked via processInstanceId)
         jdbc.update("INSERT INTO variables (id,process_instance_id,scope_id,name,type,text_value) VALUES (?,?,?,?,?,?)",
