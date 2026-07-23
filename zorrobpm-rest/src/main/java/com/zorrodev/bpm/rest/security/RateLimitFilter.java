@@ -1,5 +1,7 @@
 package com.zorrodev.bpm.rest.security;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,10 +12,14 @@ import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Rate-limits POST /auth/login per client IP.
+ *
+ * WO-A-04: replaced unbounded ConcurrentHashMap with Caffeine cache
+ * (maximumSize=100K, expireAfterAccess=10min) to prevent heap growth.
+ * Rate limits and windows unchanged.
  *
  * Runs with {@code HIGHEST_PRECEDENCE + 1} to capture the real TCP remote IP
  * BEFORE Spring's {@code ForwardedHeaderFilter} rewrites it from X-Forwarded-For.
@@ -22,8 +28,15 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
-    private final ConcurrentHashMap<String, RateBucket> buckets = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, RateBucket> dataEndpointBuckets = new ConcurrentHashMap<>();
+    // WO-A-04: Caffeine cache — bounded, auto-evicts inactive IPs
+    private final Cache<String, RateBucket> buckets = Caffeine.newBuilder()
+        .maximumSize(100_000)
+        .expireAfterAccess(10, TimeUnit.MINUTES)
+        .build();
+    private final Cache<String, RateBucket> dataEndpointBuckets = Caffeine.newBuilder()
+        .maximumSize(100_000)
+        .expireAfterAccess(10, TimeUnit.MINUTES)
+        .build();
 
     private boolean enabled;
 
@@ -63,7 +76,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         // Login endpoint: strict limit
         if ("POST".equalsIgnoreCase(method) && "/auth/login".equals(path)) {
             String key = "login:" + clientIp;
-            RateBucket bucket = buckets.computeIfAbsent(key, k -> new RateBucket(capacity, windowSeconds));
+            RateBucket bucket = buckets.get(key, k -> new RateBucket(capacity, windowSeconds));
             long retryAfter = bucket.tryConsume();
             if (retryAfter > 0) {
                 send429(response, retryAfter);
@@ -74,7 +87,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         // Data endpoints: generous limit (prevents brute-force enumeration, DoS via heavy queries)
         if (isDataEndpoint(method, path)) {
             String key = "data:" + clientIp;
-            RateBucket bucket = dataEndpointBuckets.computeIfAbsent(key, k -> new RateBucket(dataCapacity, dataWindowSeconds));
+            RateBucket bucket = dataEndpointBuckets.get(key, k -> new RateBucket(dataCapacity, dataWindowSeconds));
             long retryAfter = bucket.tryConsume();
             if (retryAfter > 0) {
                 send429(response, retryAfter);
@@ -108,8 +121,8 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
     /** Clears all buckets — for tests only. */
     public void reset() {
-        buckets.clear();
-        dataEndpointBuckets.clear();
+        buckets.invalidateAll();
+        dataEndpointBuckets.invalidateAll();
     }
 
     private static class RateBucket {
