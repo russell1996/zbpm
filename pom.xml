@@ -66,7 +66,9 @@
                 <version>12.1.1</version>
                 <configuration>
                     <failBuildOnCVSS>7</failBuildOnCVSS>
-                    <suppressionFiles/>
+                    <suppressionFiles>
+                        <suppressionFile>owasp-suppressions.xml</suppressionFile>
+                    </suppressionFiles>
                     <nodeAuditSkipDevDependencies>true</nodeAuditSkipDevDependencies>
                 </configuration>
             </plugin>
