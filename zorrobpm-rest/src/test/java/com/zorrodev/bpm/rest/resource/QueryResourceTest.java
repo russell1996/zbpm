@@ -44,7 +44,7 @@ class QueryResourceTest {
     void getVariables_delegates() {
         VariableQuery query = new VariableQuery();
         PagedDataDTO<ProcessVariable> expected = new PagedDataDTO<>();
-        when(queryService.findVariables(query)).thenReturn(expected);
+        when(queryService.findVariables(query, null)).thenReturn(expected);
 
         assertThat(resource.getVariables(query)).isSameAs(expected);
     }
@@ -53,7 +53,7 @@ class QueryResourceTest {
     void getServiceTasks_delegates() {
         ServiceTaskQuery query = new ServiceTaskQuery();
         PagedDataDTO<ServiceTask> expected = new PagedDataDTO<>();
-        when(queryService.findServiceTasks(query)).thenReturn(expected);
+        when(queryService.findServiceTasks(query, null)).thenReturn(expected);
 
         assertThat(resource.getServiceTasks(query)).isSameAs(expected);
     }
@@ -84,7 +84,7 @@ class QueryResourceTest {
     void getIncidents_delegates() {
         IncidentQuery query = new IncidentQuery();
         PagedDataDTO<Incident> expected = new PagedDataDTO<>();
-        when(queryService.findIncidents(query)).thenReturn(expected);
+        when(queryService.findIncidents(query, null)).thenReturn(expected);
 
         assertThat(resource.getIncidents(query)).isSameAs(expected);
     }

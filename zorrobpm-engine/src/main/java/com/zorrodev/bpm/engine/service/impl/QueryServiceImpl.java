@@ -83,8 +83,21 @@ public class QueryServiceImpl implements QueryService {
     private final MessageSubscriptionRepository messageSubscriptionRepository;
 
     @Override
-    public PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query) {
+    public PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query, Collection<UUID> allowedPdIds) {
         List<Specification<TimerJobEntity>> specifications = new LinkedList<>();
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            return emptyPage(query);
+        }
+        if (allowedPdIds != null) {
+            // TimerJobs link via processInstanceId → process_instances.process_definition_id
+            specifications.add((root, q, cb) -> {
+                var piSub = q.subquery(UUID.class);
+                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
+                piSub.select(piRoot.get("id"))
+                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
+                return root.get("processInstanceId").in(piSub);
+            });
+        }
         if (query.getId() != null) {
             specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
         }
@@ -99,8 +112,20 @@ public class QueryServiceImpl implements QueryService {
     }
 
     @Override
-    public PagedDataDTO<MessageSubscription> findMessageSubscriptions(MessageSubscriptionQuery query) {
+    public PagedDataDTO<MessageSubscription> findMessageSubscriptions(MessageSubscriptionQuery query, Collection<UUID> allowedPdIds) {
         List<Specification<MessageSubscriptionEntity>> specifications = new LinkedList<>();
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            return emptyPage(query);
+        }
+        if (allowedPdIds != null) {
+            specifications.add((root, q, cb) -> {
+                var piSub = q.subquery(UUID.class);
+                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
+                piSub.select(piRoot.get("id"))
+                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
+                return root.get("processInstanceId").in(piSub);
+            });
+        }
         if (query.getId() != null) {
             specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
         }
@@ -122,8 +147,15 @@ public class QueryServiceImpl implements QueryService {
     }
 
     @Override
-    public PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query) {
+    public PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query, Collection<UUID> allowedPdIds) {
         List<Specification<ServiceTaskEntity>> specifications = new LinkedList<>();
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            return emptyPage(query);
+        }
+        if (allowedPdIds != null) {
+            // ServiceTaskEntity has processDefinitionId directly
+            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
+        }
         if (query.getProcessInstanceId() != null) {
             specifications.add(ServiceTaskRepository.byProcessInstanceId(query.getProcessInstanceId()));
         }
@@ -219,8 +251,14 @@ public class QueryServiceImpl implements QueryService {
     }
 
     @Override
-    public PagedDataDTO<Incident> findIncidents(IncidentQuery query) {
+    public PagedDataDTO<Incident> findIncidents(IncidentQuery query, Collection<UUID> allowedPdIds) {
         List<Specification<IncidentEntity>> specifications = new LinkedList<>();
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            return emptyPage(query);
+        }
+        if (allowedPdIds != null) {
+            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
+        }
         if (query.getId() != null) {
             specifications.add(IncidentRepository.byId(query.getId()));
         }
@@ -248,8 +286,20 @@ public class QueryServiceImpl implements QueryService {
     }
 
     @Override
-    public PagedDataDTO<ProcessVariable> findVariables(VariableQuery query) {
+    public PagedDataDTO<ProcessVariable> findVariables(VariableQuery query, Collection<UUID> allowedPdIds) {
         List<Specification<ProcessVariableEntity>> specifications = new LinkedList<>();
+        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+            return emptyPage(query);
+        }
+        if (allowedPdIds != null) {
+            specifications.add((root, q, cb) -> {
+                var piSub = q.subquery(UUID.class);
+                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
+                piSub.select(piRoot.get("id"))
+                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
+                return root.get("processInstanceId").in(piSub);
+            });
+        }
         if (query.getProcessInstanceId() != null) {
             specifications.add(VariableRepository.byProcessInstanceId(query.getProcessInstanceId()));
         }
