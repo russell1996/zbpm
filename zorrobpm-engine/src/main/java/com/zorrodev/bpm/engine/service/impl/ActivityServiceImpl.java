@@ -45,10 +45,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -77,77 +75,9 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final com.zorrodev.bpm.engine.handler.ErrorEscalationThrower errorEscalationThrower;
     private FlowNavigator flowNavigator;
 
-    private Map<BpmnElementType, ElementHandler> handlers;
-    private com.zorrodev.bpm.engine.handler.ServiceTaskHandler serviceTaskHandler;
-
     @PostConstruct
     void init() {
         flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService);
-        handlers = createHandlers();
-        // Ensure extracted handler beans are available in the handlers map for test compatibility.
-        // In production, HandlerRegistry auto-discovers them; in tests (mocked registry), they must be
-        // registered directly so the handlers-map fallback works.
-        registerExtractedHandlerBeans();
-    }
-
-    private void registerExtractedHandlerBeans() {
-        for (var bean : List.of(
-            new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNavigator, scriptService),
-            // Catch event handlers (WO-AUD-13)
-            new com.zorrodev.bpm.engine.handler.WaitStateHandler(dbService),
-            new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, this),
-            new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService),
-            new com.zorrodev.bpm.engine.handler.SignalCatchHandler(dbService),
-            new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNavigator, scriptService),
-            // Throw event handlers (WO-AUD-14)
-            new com.zorrodev.bpm.engine.handler.IntermediateThrowEventHandler(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNavigator, this),
-            new com.zorrodev.bpm.engine.handler.SignalThrowHandler(dbService, flowNavigator, this),
-            new com.zorrodev.bpm.engine.handler.LinkThrowHandler(dbService, this),
-            new com.zorrodev.bpm.engine.handler.SendTaskHandler(this,
-                new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNavigator, this)),
-            // SubProcess + CallActivity (WO-AUD-15)
-            new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService),
-            new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, this),
-            // UserTask handler (WO-AUD-18)
-            new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler),
-            // Start/Script/BusinessRule handlers (WO-AUD-19)
-            new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNavigator, this),
-            new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNavigator),
-            // End/Escalation handlers (WO-AUD-20)
-            new com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent(dbService, this),
-            new com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent(dbService),
-            new com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent(dbService, this),
-            new com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent(dbService, this),
-            new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent(dbService, flowNavigator, this),
-            // Compensation/Cancel/ServiceTask handlers (WO-AUD-21)
-            new com.zorrodev.bpm.engine.handler.ServiceTaskHandler(dbService, elementSupport, multiInstanceExecutor, serviceTaskEnqueueService),
-            new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNavigator),
-            new com.zorrodev.bpm.engine.handler.CancelEndHandler(dbService, flowNavigator, this,
-                new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNavigator))
-        )) {
-            handlers.putIfAbsent(bean.elementType(), bean.handler());
-        }
-        // Store the ServiceTaskHandler for delegation from enterServiceTask
-        serviceTaskHandler = (com.zorrodev.bpm.engine.handler.ServiceTaskHandler) handlers.get(BpmnElementType.SERVICE_TASK);
-        // Start event aliases (WO-AUD-19): message/timer/signal start events behave like a plain start
-        handlers.putIfAbsent(BpmnElementType.MESSAGE_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
-        handlers.putIfAbsent(BpmnElementType.TIMER_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
-        handlers.putIfAbsent(BpmnElementType.SIGNAL_START_EVENT, handlers.get(BpmnElementType.START_EVENT));
-        // LINK_CATCH_EVENT shares the handler with START_EVENT
-        handlers.putIfAbsent(BpmnElementType.LINK_CATCH_EVENT, handlers.get(BpmnElementType.START_EVENT));
-        // RECEIVE_TASK uses the same handler as MESSAGE_CATCH_EVENT
-        handlers.putIfAbsent(BpmnElementType.RECEIVE_TASK, handlers.get(BpmnElementType.MESSAGE_CATCH_EVENT));
-    }
-
-    private Map<BpmnElementType, ElementHandler> createHandlers() {
-        Map<BpmnElementType, ElementHandler> map = new EnumMap<>(BpmnElementType.class);
-        // All handler beans are registered via registerExtractedHandlerBeans (WO-AUD-13..21).
-        return map;
     }
 
     /**
@@ -199,9 +129,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
             ElementHandler handler = handlerRegistry.get(type);
             if (handler == null) {
-                handler = handlers.get(type);
-            }
-            if (handler == null) {
                 // No handler for this element type: park the token as an incident instead of
                 // silently dropping it (which would strand the process instance forever). An
                 // operator can see the incident and decide how to proceed.
@@ -231,7 +158,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
 
     public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
-        serviceTaskHandler.enter(processInstanceId, token, bpmnElement, this);
+        ((com.zorrodev.bpm.engine.handler.ServiceTaskHandler) handlerRegistry.get(BpmnElementType.SERVICE_TASK))
+            .enter(processInstanceId, token, bpmnElement, this);
     }
 
     @Override
