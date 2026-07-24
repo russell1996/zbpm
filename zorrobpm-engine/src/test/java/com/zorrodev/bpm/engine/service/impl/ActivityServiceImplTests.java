@@ -143,8 +143,53 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        // Simulate @PostConstruct — initialize handler map and register in registry
+        // Simulate @PostConstruct — just initialize flowNavigator
         activityService.init();
+
+        // WO-A-08: Register handlers on the mock HandlerRegistry so execute() can resolve them.
+        // The real HandlerRegistry auto-discovers @Component handler beans via Spring DI;
+        // in this Mockito unit test, we replicate that resolution manually.
+        var flowNav = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService);
+        registerHandler(BpmnElementType.EXCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.PARALLEL_GATEWAY, new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.INCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNav, scriptService));
+        registerHandler(BpmnElementType.EVENT_BASED_GATEWAY, new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.INTERMEDIATE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.WaitStateHandler(dbService));
+        registerHandler(BpmnElementType.MESSAGE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, activityService));
+        registerHandler(BpmnElementType.TIMER_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService));
+        registerHandler(BpmnElementType.SIGNAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.SignalCatchHandler(dbService));
+        registerHandler(BpmnElementType.CONDITIONAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNav, scriptService));
+        registerHandler(BpmnElementType.INTERMEDIATE_THROW_EVENT, new com.zorrodev.bpm.engine.handler.IntermediateThrowEventHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.MESSAGE_THROW_EVENT, new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNav, activityService));
+        registerHandler(BpmnElementType.SIGNAL_THROW_EVENT, new com.zorrodev.bpm.engine.handler.SignalThrowHandler(dbService, flowNav, activityService));
+        registerHandler(BpmnElementType.LINK_THROW_EVENT, new com.zorrodev.bpm.engine.handler.LinkThrowHandler(dbService, activityService));
+        registerHandler(BpmnElementType.SEND_TASK, new com.zorrodev.bpm.engine.handler.SendTaskHandler(activityService,
+            new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNav, activityService)));
+        registerHandler(BpmnElementType.SUB_PROCESS, new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService));
+        registerHandler(BpmnElementType.CALL_ACTIVITY, new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, activityService));
+        registerHandler(BpmnElementType.USER_TASK, new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler));
+        registerHandler(BpmnElementType.START_EVENT, new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent(dbService, flowNav));
+        registerHandler(BpmnElementType.SCRIPT_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNav, activityService));
+        registerHandler(BpmnElementType.BUSINESS_RULE_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNav));
+        registerHandler(BpmnElementType.END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent(dbService, activityService));
+        registerHandler(BpmnElementType.TERMINATE_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent(dbService));
+        registerHandler(BpmnElementType.ERROR_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent(dbService, activityService));
+        registerHandler(BpmnElementType.ESCALATION_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent(dbService, activityService));
+        registerHandler(BpmnElementType.ESCALATION_THROW_EVENT, new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent(dbService, flowNav, activityService));
+        registerHandler(BpmnElementType.SERVICE_TASK, new com.zorrodev.bpm.engine.handler.ServiceTaskHandler(dbService, elementSupport, multiInstanceExecutor, serviceTaskEnqueueService));
+        registerHandler(BpmnElementType.COMPENSATION_THROW_EVENT, new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.CANCEL_END_EVENT, new com.zorrodev.bpm.engine.handler.CancelEndHandler(dbService, flowNav, activityService,
+            new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav)));
+        // Aliases
+        registerHandler(BpmnElementType.MESSAGE_START_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));
+        registerHandler(BpmnElementType.TIMER_START_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));
+        registerHandler(BpmnElementType.SIGNAL_START_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));
+        registerHandler(BpmnElementType.LINK_CATCH_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));
+        registerHandler(BpmnElementType.RECEIVE_TASK, handlerRegistry.get(BpmnElementType.MESSAGE_CATCH_EVENT));
+    }
+
+    private void registerHandler(BpmnElementType type, ElementHandler handler) {
+        org.mockito.Mockito.lenient().when(handlerRegistry.get(type)).thenReturn(handler);
     }
 
     @Test
@@ -1037,43 +1082,27 @@ public class ActivityServiceImplTests {
 
     @Test
     public void startScriptBusinessRuleHandlersRegistered() {
-        // WO-AUD-19: verify registerExtractedHandlerBeans wired START_EVENT, SCRIPT_TASK, BUSINESS_RULE_TASK (V5)
-        @SuppressWarnings("unchecked")
-        Map<BpmnElementType, ElementHandler> handlers =
-            (Map<BpmnElementType, ElementHandler>) ReflectionTestUtils.getField(activityService, "handlers");
-        assertThat(handlers).isNotNull();
-        assertThat(handlers).containsKey(BpmnElementType.START_EVENT);
-        assertThat(handlers.get(BpmnElementType.START_EVENT))
+        // WO-A-08: verify HandlerRegistry wires START_EVENT, SCRIPT_TASK, BUSINESS_RULE_TASK
+        assertThat(handlerRegistry.get(BpmnElementType.START_EVENT))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent.class);
-        assertThat(handlers).containsKey(BpmnElementType.SCRIPT_TASK);
-        assertThat(handlers.get(BpmnElementType.SCRIPT_TASK))
+        assertThat(handlerRegistry.get(BpmnElementType.SCRIPT_TASK))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask.class);
-        assertThat(handlers).containsKey(BpmnElementType.BUSINESS_RULE_TASK);
-        assertThat(handlers.get(BpmnElementType.BUSINESS_RULE_TASK))
+        assertThat(handlerRegistry.get(BpmnElementType.BUSINESS_RULE_TASK))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask.class);
     }
 
     @Test
     public void endEscalationHandlersRegistered() {
-        // WO-AUD-20: verify registerExtractedHandlerBeans wired 5 end/escalation handler types (V5)
-        @SuppressWarnings("unchecked")
-        Map<BpmnElementType, ElementHandler> handlers =
-            (Map<BpmnElementType, ElementHandler>) ReflectionTestUtils.getField(activityService, "handlers");
-        assertThat(handlers).isNotNull();
-        assertThat(handlers).containsKey(BpmnElementType.END_EVENT);
-        assertThat(handlers.get(BpmnElementType.END_EVENT))
+        // WO-A-08: verify HandlerRegistry wires 5 end/escalation handler types
+        assertThat(handlerRegistry.get(BpmnElementType.END_EVENT))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent.class);
-        assertThat(handlers).containsKey(BpmnElementType.TERMINATE_END_EVENT);
-        assertThat(handlers.get(BpmnElementType.TERMINATE_END_EVENT))
+        assertThat(handlerRegistry.get(BpmnElementType.TERMINATE_END_EVENT))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent.class);
-        assertThat(handlers).containsKey(BpmnElementType.ERROR_END_EVENT);
-        assertThat(handlers.get(BpmnElementType.ERROR_END_EVENT))
+        assertThat(handlerRegistry.get(BpmnElementType.ERROR_END_EVENT))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent.class);
-        assertThat(handlers).containsKey(BpmnElementType.ESCALATION_END_EVENT);
-        assertThat(handlers.get(BpmnElementType.ESCALATION_END_EVENT))
+        assertThat(handlerRegistry.get(BpmnElementType.ESCALATION_END_EVENT))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent.class);
-        assertThat(handlers).containsKey(BpmnElementType.ESCALATION_THROW_EVENT);
-        assertThat(handlers.get(BpmnElementType.ESCALATION_THROW_EVENT))
+        assertThat(handlerRegistry.get(BpmnElementType.ESCALATION_THROW_EVENT))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent.class);
     }
 }
