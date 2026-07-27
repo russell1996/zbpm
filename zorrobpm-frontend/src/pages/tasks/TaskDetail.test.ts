@@ -118,4 +118,21 @@ describe('TaskDetail — form integration', () => {
 
     expect(wrapper.find('.form-js-container').exists()).toBe(false)
   })
+
+  it('POF: complete task does NOT call router.push immediately, shows toast with action', async () => {
+    vi.mocked(getTaskForm).mockResolvedValue({ type: 'none' })
+    const pushSpy = vi.spyOn(router, 'push')
+
+    const wrapper = mount(TaskDetail, {
+      global: { plugins: [createPinia(), i18n, router] },
+    })
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.doComplete([])
+    await flushPromises()
+
+    // After fix: router.push is NOT called (replaced by toast action button)
+    expect(pushSpy).not.toHaveBeenCalled()
+  })
 })

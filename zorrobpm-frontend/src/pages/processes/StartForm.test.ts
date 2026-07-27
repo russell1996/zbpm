@@ -114,4 +114,21 @@ describe('StartForm', () => {
     expect(wrapper.text()).toContain('https://example.com/start')
     expect(wrapper.find('a[href="https://example.com/start"]').exists()).toBe(true)
   })
+
+  it('POF: start process does NOT call router.push immediately, shows toast with action', async () => {
+    const pushSpy = vi.spyOn(router, 'push')
+
+    const wrapper = mount(StartForm, {
+      global: { plugins: [createPinia(), i18n, router] },
+    })
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    vm.formResponse = { type: 'none' }
+    await vm.startProcess()
+    await flushPromises()
+
+    // After fix: router.push is NOT called (replaced by toast action button)
+    expect(pushSpy).not.toHaveBeenCalled()
+  })
 })

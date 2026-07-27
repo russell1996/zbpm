@@ -4,6 +4,6 @@ import { Toaster } from 'vue-sonner'
 </script>
 
 <template>
-  <Toaster position="top-right" :rich-colors="true" />
+  <Toaster position="top-center" :rich-colors="true" :duration="5000" close-button />
   <RouterView />
 </template>

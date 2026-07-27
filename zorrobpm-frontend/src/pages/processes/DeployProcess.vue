@@ -53,10 +53,9 @@ async function deploy() {
   try {
     const result = await deployProcessDefinition(bpmnText.value)
     success.value = true
-    toast.success('Process deployed successfully')
-    setTimeout(() => {
-      router.push(`/processes/definitions/${result.id}`)
-    }, 1500)
+    toast.success('Process deployed successfully', {
+      action: { label: 'View Definition', onClick: () => router.push(`/processes/definitions/${result.id}`) },
+    })
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to deploy process'
     toast.error(error.value)

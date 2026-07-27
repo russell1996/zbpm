@@ -5,7 +5,7 @@ import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 import * as processService from '@/services/processService'
-import type { BpmnNode, BpmnFlow } from '@/types/api'
+import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
@@ -19,6 +19,7 @@ const startVars = ref<{ name: string; type: string; value: string }[]>([])
 const newVarName = ref('')
 const newVarType = ref('STRING')
 const newVarValue = ref('')
+const jsonError = ref('')
 
 // --- BPMN breakdown: find / flatten nodes from the parsed structure ---
 function findNode(nodes: BpmnNode[], id: string): BpmnNode | null {
@@ -57,7 +58,16 @@ const selectedFlow = computed<BpmnFlow | null>(() =>
 const requirements = computed(() => allNodes.value.filter((n) => n.documentation))
 
 function addVariable() {
+  jsonError.value = ''
   if (newVarName.value) {
+    if (newVarType.value === 'JSON') {
+      try {
+        JSON.parse(newVarValue.value)
+      } catch {
+        jsonError.value = 'Invalid JSON'
+        return
+      }
+    }
     startVars.value.push({ name: newVarName.value, type: newVarType.value, value: newVarValue.value })
     newVarName.value = ''
     newVarValue.value = ''
@@ -69,12 +79,14 @@ function removeVariable(index: number) {
 }
 
 async function startProcess() {
+  if (jsonError.value) return
   if (newVarName.value) addVariable()
+  if (jsonError.value) return
   const id = await store.startInstance({
     processDefinitionId: route.params.id as string,
     variables: startVars.value.map((v) => ({
       name: v.name,
-      type: v.type as 'STRING' | 'LONG' | 'DOUBLE' | 'BOOLEAN',
+      type: v.type as ProcessVariable['type'],
       value: v.value,
     })),
   })
@@ -291,12 +303,16 @@ function openVersion(id: string) {
             <input v-model="newVarName" placeholder="name" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
             <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
               <option>STRING</option>
+              <option>UUID</option>
               <option>LONG</option>
               <option>DOUBLE</option>
               <option>BOOLEAN</option>
+              <option>JSON</option>
             </select>
-            <input v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
+            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
           </div>
+          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" placeholder='e.g. ["u1","u2"] or {"key":"val"}' class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
+          <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
           <button
             class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
             :disabled="!newVarName"
