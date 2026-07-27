@@ -94,9 +94,19 @@ const completeVars = ref<{ name: string; type: string; value: string }[]>([])
 const newVarName = ref('')
 const newVarType = ref('STRING')
 const newVarValue = ref('')
+const jsonError = ref('')
 
 function addVariable() {
+  jsonError.value = ''
   if (newVarName.value) {
+    if (newVarType.value === 'JSON') {
+      try {
+        JSON.parse(newVarValue.value)
+      } catch {
+        jsonError.value = 'Invalid JSON'
+        return
+      }
+    }
     completeVars.value.push({ name: newVarName.value, type: newVarType.value, value: newVarValue.value })
     newVarName.value = ''
     newVarValue.value = ''
@@ -126,8 +136,10 @@ function openResolveModal(incidentId: string) {
 }
 
 async function confirmComplete() {
+  if (jsonError.value) return
   // flush a variable that was typed but not yet "added" — otherwise it would be silently dropped
   if (newVarName.value) addVariable()
+  if (jsonError.value) return
   const variables: ProcessVariable[] = completeVars.value.map((v) => ({
     name: v.name,
     type: v.type as ProcessVariable['type'],
@@ -597,12 +609,16 @@ watch(activeTab, onTabChange)
             <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
             <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
               <option>STRING</option>
+              <option>UUID</option>
               <option>LONG</option>
               <option>DOUBLE</option>
               <option>BOOLEAN</option>
+              <option>JSON</option>
             </select>
-            <input v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
+            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
           </div>
+          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
+          <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
           <button
             class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
             :disabled="!newVarName"
