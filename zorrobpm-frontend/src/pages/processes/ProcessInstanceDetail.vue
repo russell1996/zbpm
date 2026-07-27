@@ -83,8 +83,62 @@ const selectedHasServiceTask = computed(() =>
 const selectedHasIncident = computed(() =>
   !!selectedElement.value && incidentElementIds.value.includes(selectedElement.value))
 
-function goToElementTab(tab: typeof activeTab.value) {
-  activeTab.value = tab
+// Element dialog: replaces goToElementTab — shows tasks/incidents for the clicked BPMN element
+// without switching away from the BPMN tab
+const showElementDialog = ref(false)
+const dialogSelectedElement = ref<string | null>(null)
+const elementDialogView = ref<'list' | 'form'>('list')
+
+const dialogUserTasks = computed(() => {
+  if (!dialogSelectedElement.value) return []
+  return (taskStore.userTasks?.data || []).filter((tk) => tk.code === dialogSelectedElement.value)
+})
+const dialogServiceTasks = computed(() => {
+  if (!dialogSelectedElement.value) return []
+  return (taskStore.serviceTasks?.data || []).filter((tk) => tk.code === dialogSelectedElement.value)
+})
+const dialogIncidents = computed(() => {
+  if (!dialogSelectedElement.value) return []
+  const activityIds = processStore.currentActivities
+    .filter((a) => a.bpmnElementId === dialogSelectedElement.value && a.status === 'ERROR')
+    .map((a) => a.id)
+  return (incidentStore.incidents?.data || []).filter((inc) => activityIds.includes(inc.activityId))
+})
+
+function openElementDialog(elementId: string) {
+  dialogSelectedElement.value = elementId
+  showElementDialog.value = true
+  elementDialogView.value = 'list'
+}
+
+function startElementDialogComplete(taskId: string, type: 'user' | 'service') {
+  completingTaskId.value = taskId
+  completingTaskType.value = type
+  completeVars.value = []
+  newVarName.value = ''
+  newVarValue.value = ''
+  jsonError.value = ''
+  elementDialogView.value = 'form'
+}
+
+function startElementDialogResolve(incidentId: string) {
+  completingTaskId.value = incidentId
+  completingTaskType.value = 'resolve'
+  completeVars.value = []
+  newVarName.value = ''
+  newVarValue.value = ''
+  jsonError.value = ''
+  elementDialogView.value = 'form'
+}
+
+function cancelElementDialog() {
+  showElementDialog.value = false
+  elementDialogView.value = 'list'
+  dialogSelectedElement.value = null
+}
+
+function cancelElementDialogForm() {
+  elementDialogView.value = 'list'
 }
 
 const showCompleteModal = ref(false)
@@ -159,6 +213,8 @@ async function confirmComplete() {
   if (!error) {
     toast.success(completingTaskType.value === 'resolve' ? 'Incident resolved' : 'Task completed')
     showCompleteModal.value = false
+    showElementDialog.value = false
+    elementDialogView.value = 'list'
     await reloadAll()
   } else {
     toast.error(error)
@@ -325,15 +381,15 @@ watch(activeTab, onTabChange)
                 <div><span class="text-muted-foreground">{{ t('elementId') }}:</span> <CopyableId :value="selectedElement" /></div>
               </div>
 
-              <!-- cross-links: jump to the tab that holds this element's runtime data -->
+              <!-- cross-links: open dialog with element tasks/incidents instead of switching tab -->
               <div v-if="selectedHasUserTask || selectedHasServiceTask || selectedHasIncident" class="space-y-2 pt-2 border-t border-border">
-                <button v-if="selectedHasUserTask" class="flex items-center gap-1.5 w-full text-left text-sm text-primary hover:underline" @click="goToElementTab('tasks')">
+                <button v-if="selectedHasUserTask" class="flex items-center gap-1.5 w-full text-left text-sm text-primary hover:underline" @click="openElementDialog(selectedElement!)">
                   <ArrowRight class="h-3.5 w-3.5" /> {{ t('openUserTask') }}
                 </button>
-                <button v-if="selectedHasServiceTask" class="flex items-center gap-1.5 w-full text-left text-sm text-primary hover:underline" @click="goToElementTab('serviceTasks')">
+                <button v-if="selectedHasServiceTask" class="flex items-center gap-1.5 w-full text-left text-sm text-primary hover:underline" @click="openElementDialog(selectedElement!)">
                   <ArrowRight class="h-3.5 w-3.5" /> {{ t('openServiceTask') }}
                 </button>
-                <button v-if="selectedHasIncident" class="flex items-center gap-1.5 w-full text-left text-sm text-red-600 hover:underline" @click="goToElementTab('incidents')">
+                <button v-if="selectedHasIncident" class="flex items-center gap-1.5 w-full text-left text-sm text-red-600 hover:underline" @click="openElementDialog(selectedElement!)">
                   <ArrowRight class="h-3.5 w-3.5" /> {{ t('openIncident') }}
                 </button>
               </div>
@@ -633,6 +689,126 @@ watch(activeTab, onTabChange)
             {{ completingTaskType === 'resolve' ? t('resolveAction') : t('confirm') }}
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- Element dialog: shows tasks/incidents for the selected BPMN element, with inline complete/resolve form -->
+    <div
+      v-if="showElementDialog"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      @click.self="cancelElementDialog"
+    >
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-lg p-6 space-y-4">
+        <!-- List view: tasks and incidents for this element -->
+        <template v-if="elementDialogView === 'list'">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold font-mono text-sm">{{ dialogSelectedElement }}</h2>
+            <button class="text-xs text-muted-foreground hover:text-foreground" @click="cancelElementDialog">{{ t('close') }}</button>
+          </div>
+
+          <div v-if="dialogUserTasks.length" class="space-y-2">
+            <h3 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('tasks') }}</h3>
+            <div v-for="task in dialogUserTasks" :key="task.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="font-mono truncate">{{ task.name || task.code || task.id }}</span>
+                <span v-if="task.status" :class="['inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
+                  {{ taskStatusBadge(task.status, task.completedAt).label }}
+                </span>
+              </div>
+              <button
+                v-if="isTaskActive(task.status, task.completedAt)"
+                class="text-sm text-primary hover:underline shrink-0 ml-2"
+                @click="startElementDialogComplete(task.id, 'user')"
+              >
+                {{ t('complete') }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="dialogServiceTasks.length" class="space-y-2">
+            <h3 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('serviceTasks') }}</h3>
+            <div v-for="task in dialogServiceTasks" :key="task.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="font-mono truncate">{{ task.name || task.code || task.id }}</span>
+                <span v-if="task.status" :class="['inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
+                  {{ taskStatusBadge(task.status, task.completedAt).label }}
+                </span>
+              </div>
+              <button
+                v-if="isTaskActive(task.status, task.completedAt)"
+                class="text-sm text-primary hover:underline shrink-0 ml-2"
+                @click="startElementDialogComplete(task.id, 'service')"
+              >
+                {{ t('complete') }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="dialogIncidents.length" class="space-y-2">
+            <h3 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('incidentsTab') }}</h3>
+            <div v-for="inc in dialogIncidents" :key="inc.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-xs truncate" :title="inc.message">{{ inc.message }}</span>
+                <span v-if="!inc.completedAt" class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">{{ t('open') }}</span>
+              </div>
+              <button
+                v-if="!inc.completedAt"
+                class="text-sm text-red-600 hover:underline shrink-0 ml-2"
+                @click="startElementDialogResolve(inc.id)"
+              >
+                {{ t('resolveAction') }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="!dialogUserTasks.length && !dialogServiceTasks.length && !dialogIncidents.length" class="text-sm text-muted-foreground py-4 text-center">
+            No tasks or incidents for this element.
+          </div>
+
+          <div class="flex justify-end pt-2">
+            <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="cancelElementDialog">{{ t('close') }}</button>
+          </div>
+        </template>
+
+        <!-- Form view: variable editor for complete / resolve -->
+        <template v-if="elementDialogView === 'form'">
+          <h2 class="text-lg font-bold">{{ completingTaskType === 'resolve' ? t('resolveIncidentTitle') : t('completeTask') }}</h2>
+          <div class="space-y-3">
+            <div v-for="(v, i) in completeVars" :key="i" class="flex items-center gap-2 text-sm">
+              <span class="font-mono">{{ v.name }}</span>
+              <span class="text-muted-foreground">({{ v.type }})</span>
+              <span>= {{ v.value }}</span>
+              <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
+            </div>
+            <div class="grid grid-cols-[6rem_5.5rem_1fr] gap-2">
+              <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
+              <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
+                <option>STRING</option>
+                <option>UUID</option>
+                <option>LONG</option>
+                <option>DOUBLE</option>
+                <option>BOOLEAN</option>
+                <option>JSON</option>
+              </select>
+              <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
+            </div>
+            <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
+            <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
+            <button
+              class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
+              :disabled="!newVarName"
+              @click="addVariable"
+            >
+              + {{ t('addVariable') }}
+            </button>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="cancelElementDialogForm">{{ t('cancelAction') }}</button>
+            <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="confirmComplete">
+              {{ completingTaskType === 'resolve' ? t('resolveAction') : t('confirm') }}
+            </button>
+          </div>
+        </template>
       </div>
     </div>
   </div>
