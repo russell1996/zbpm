@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { getSchemaMap, saveElementSchema, getForm, generateSchema, type SchemaMap, type SchemaMapElement, type ArtifactKind, type SchemaField } from '@/services/formService'
@@ -55,6 +55,7 @@ async function selectElement(el: SchemaMapElement) {
 
   if (el.artifactKey) {
     loadingSchema.value = true
+    let formSchema: string | null = null
     try {
       const form = await getForm(el.artifactKey)
       if (selectedKind.value === 'VARIABLE_SCHEMA' && form.schema) {
@@ -74,13 +75,22 @@ async function selectElement(el: SchemaMapElement) {
           hasXBuilder.value = false
           editorMode.value = 'json'
         }
-      } else if (selectedKind.value === 'FORM_JS' && form.schema && formEditorRef.value) {
-        await (formEditorRef.value as any).importSchema(JSON.parse(form.schema))
+      } else if (selectedKind.value === 'FORM_JS' && form.schema) {
+        // Store schema; importSchema called after FormEditor mounts (finally + nextTick)
+        formSchema = form.schema
       }
     } catch {
       toast.error(t('failedToLoadSchema'))
     } finally {
       loadingSchema.value = false
+    }
+    // FormEditor renders after loadingSchema = false (v-else-if).
+    // Wait a tick for Vue to mount FormEditor, then import the schema.
+    if (selectedKind.value === 'FORM_JS' && formSchema) {
+      await nextTick()
+      if (formEditorRef.value) {
+        await formEditorRef.value.importSchema(JSON.parse(formSchema))
+      }
     }
   }
 }
