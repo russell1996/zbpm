@@ -48,8 +48,9 @@ async function complete() {
 async function doComplete(variables: ProcessVariable[]) {
   await store.completeUserTask(route.params.id as string, variables)
   if (!store.error) {
-    toast.success('Task completed')
-    router.push('/tasks')
+    toast.success('Task completed', {
+      action: { label: 'Go to Tasks', onClick: () => router.push('/tasks') },
+    })
   } else {
     toast.error(store.error)
   }
