@@ -14,6 +14,7 @@ import java.util.Map;
  * <p>
  * Uses {@link ObjectProvider} to lazily discover {@link TypedElementHandler} beans.
  * Beans are resolved on first {@link #get} call — not during construction or register().
+ * Aliases (e.g. MESSAGE_START_EVENT → START_EVENT) are registered after bean resolution.
  */
 @Slf4j
 @Component
@@ -37,6 +38,26 @@ public class HandlerRegistry {
         for (TypedElementHandler handler : typedHandlers.orderedStream().toList()) {
             handlers.put(handler.elementType(), handler.handler());
             log.info("Registered handler for {}: {}", handler.elementType(), handler.handler().getClass().getSimpleName());
+        }
+        registerAliases();
+    }
+
+    /**
+     * WO-A-08: Register element type aliases after bean resolution.
+     */
+    private void registerAliases() {
+        putIfPresent(BpmnElementType.MESSAGE_START_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(BpmnElementType.TIMER_START_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(BpmnElementType.SIGNAL_START_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(BpmnElementType.LINK_CATCH_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(BpmnElementType.RECEIVE_TASK, BpmnElementType.MESSAGE_CATCH_EVENT);
+    }
+
+    private void putIfPresent(BpmnElementType alias, BpmnElementType target) {
+        ElementHandler handler = handlers.get(target);
+        if (handler != null) {
+            handlers.putIfAbsent(alias, handler);
+            log.info("Alias {} → {}", alias, target);
         }
     }
 
