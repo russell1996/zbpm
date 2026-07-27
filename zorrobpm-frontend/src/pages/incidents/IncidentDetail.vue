@@ -16,9 +16,19 @@ const resolveVars = ref<{ name: string; type: string; value: string }[]>([])
 const newVarName = ref('')
 const newVarType = ref('STRING')
 const newVarValue = ref('')
+const jsonError = ref('')
 
 function addVariable() {
+  jsonError.value = ''
   if (newVarName.value) {
+    if (newVarType.value === 'JSON') {
+      try {
+        JSON.parse(newVarValue.value)
+      } catch {
+        jsonError.value = 'Invalid JSON'
+        return
+      }
+    }
     resolveVars.value.push({ name: newVarName.value, type: newVarType.value, value: newVarValue.value })
     newVarName.value = ''
     newVarValue.value = ''
@@ -30,6 +40,9 @@ function removeVariable(index: number) {
 }
 
 async function resolve() {
+  if (jsonError.value) return
+  if (newVarName.value) addVariable()
+  if (jsonError.value) return
   const variables: ProcessVariable[] = resolveVars.value.map((v) => ({
     name: v.name,
     type: v.type as ProcessVariable['type'],
@@ -110,12 +123,17 @@ onMounted(() => {
             <input v-model="newVarName" placeholder="name" class="px-2 py-1 border border-input rounded text-sm w-24" />
             <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
               <option>STRING</option>
+              <option>UUID</option>
               <option>LONG</option>
+              <option>DOUBLE</option>
               <option>BOOLEAN</option>
+              <option>JSON</option>
             </select>
-            <input v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm flex-1" />
+            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm flex-1" />
             <button class="text-sm text-primary hover:underline" @click="addVariable">Add</button>
           </div>
+          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" placeholder='e.g. ["u1","u2"] or {"key":"val"}' class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
+          <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
         </div>
         <div class="flex justify-end gap-2 pt-2">
           <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showResolveModal = false">Cancel</button>

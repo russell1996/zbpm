@@ -44,8 +44,9 @@ async function startProcess() {
       variables,
     })
     if (id) {
-      toast.success('Process started')
-      router.push(`/processes/instances/${id}`)
+      toast.success('Process started', {
+        action: { label: 'View Instance', onClick: () => router.push(`/processes/instances/${id}`) },
+      })
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Failed to start process'

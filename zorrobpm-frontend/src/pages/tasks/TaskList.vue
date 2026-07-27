@@ -70,14 +70,26 @@ async function bulkComplete() {
   bulkCompleting.value = true
   try {
     const ids = Array.from(selectedIds.value)
+    let completed = 0
+    let failed = 0
     for (const id of ids) {
       await store.completeUserTask(id, [])
+      if (store.error) {
+        failed++
+        store.error = null
+      } else {
+        completed++
+      }
     }
-    toast.success(`${ids.length} task(s) completed`)
+    if (failed === 0) {
+      toast.success(`${completed} task(s) completed`)
+    } else if (completed === 0) {
+      toast.error(`${failed} task(s) failed`)
+    } else {
+      toast.info(`${completed} completed, ${failed} failed`)
+    }
     selectedIds.value.clear()
     await load()
-  } catch {
-    toast.error('Failed to complete some tasks')
   } finally {
     bulkCompleting.value = false
   }
