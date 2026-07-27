@@ -41,6 +41,12 @@ onUnmounted(() => {
   }
 })
 
+async function importSchema(schema: Record<string, unknown>) {
+  if (editorInstance) {
+    await editorInstance.importSchema(schema)
+  }
+}
+
 function saveSchema() {
   if (!editorInstance) return
   // form-js editor exposes saveSchema() (NOT save())
@@ -49,7 +55,7 @@ function saveSchema() {
   return schema
 }
 
-defineExpose({ saveSchema })
+defineExpose({ saveSchema, importSchema })
 </script>
 
 <template>
