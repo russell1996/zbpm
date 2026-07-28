@@ -164,6 +164,17 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     }
 
     /**
+     * Builds Sort from the query parameters order field.
+     * Default: ascending. When order=desc → descending on (name, version).
+     */
+    private Sort buildSort(ProcessDefinitionsQueryParameters parameters) {
+        if (parameters.getOrder() != null && "desc".equalsIgnoreCase(parameters.getOrder())) {
+            return Sort.by("name", "version").descending();
+        }
+        return Sort.by("name", "version").ascending();
+    }
+
+    /**
      * Registers (and supersedes prior versions of) message start subscriptions for the deployed
      * definition, so a correlated message of that name starts a new instance of the latest version.
      */
@@ -237,7 +248,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         PageRequest pageRequest = PageRequest.of(
             Math.max(0, parameters.getPageIndex()),
             Math.min(maxPageSize, Math.max(1, parameters.getPageSize())),
-            Sort.by("name", "version").ascending());
+            buildSort(parameters));
 
         List<Specification<ProcessDefinitionEntity>> specifications = new LinkedList<>();
         if (parameters.getName() != null && !parameters.getName().isBlank()) {
@@ -280,7 +291,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             PageRequest pageRequest = PageRequest.of(
                 Math.max(0, parameters.getPageIndex()),
                 Math.min(maxPageSize, Math.max(1, parameters.getPageSize())),
-                Sort.by("name", "version").ascending());
+                buildSort(parameters));
 
             java.util.List<Specification<ProcessDefinitionEntity>> specs = new java.util.LinkedList<>();
             specs.add((root, q, cb) -> root.get("id").in(allowedPdIds));

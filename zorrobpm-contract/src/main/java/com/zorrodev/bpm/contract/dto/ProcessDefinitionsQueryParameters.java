@@ -14,4 +14,6 @@ public class ProcessDefinitionsQueryParameters {
     private String processDefinitionKey;
     private Integer processDefinitionVersion;
     private Boolean latestVersionOnly;
+    /** Sort direction: "asc" (default) or "desc". Applied to (name, version). */
+    private String order;
 }

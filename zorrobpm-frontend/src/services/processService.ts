@@ -11,14 +11,10 @@ function toQueryString(params: Record<string, unknown>): string {
   return entries.length > 0 ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : ''
 }
 
-function desc<T>(result: PagedData<T>): PagedData<T> {
-  return { ...result, data: [...result.data].reverse() }
-}
-
 export async function getProcessDefinitions(query: ProcessDefinitionsQuery = {}): Promise<PagedData<ProcessDefinition>> {
-  const qs = toQueryString({ pageIndex: 0, pageSize: 20, ...query })
+  const qs = toQueryString({ pageIndex: 0, pageSize: 20, order: 'desc', ...query })
   const { data } = await api.get<PagedData<ProcessDefinition>>(`/process-definitions${qs}`)
-  return desc(data)
+  return data
 }
 
 export async function getProcessDefinition(id: string): Promise<ProcessDefinition> {
