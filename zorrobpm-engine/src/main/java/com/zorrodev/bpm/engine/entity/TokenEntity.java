@@ -18,4 +18,10 @@ public class TokenEntity {
     private UUID parentId;
     /** Activity id of the enclosing embedded subprocess, or null for the top-level scope. */
     private UUID scopeActivityId;
+    /**
+     * WO-ENG-1 (durable): Number of unconsumed branches for a gateway-forked token.
+     * NULL = linear process (no fork); 0 = all branches consumed; >0 = branches still active.
+     * Set by gateway handlers at fork time; decremented by {@code FlowNavigator.finishBranch}.
+     */
+    private Integer pendingBranches;
 }

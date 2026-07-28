@@ -135,24 +135,20 @@ public class FlowNavigator {
             return;
         }
 
-        // WO-ENG-1: if this token tracks pending branches from a parallel gateway, decrement
-        // the counter and only complete the instance when all branches have reached an end event.
-        // Linear processes have no entry in the map so pending is null → fall through.
-        Integer pending = TokenBranchTracker.getPendingBranches(tokenId);
-        if (pending != null) {
-            if (pending > 1) {
-                TokenBranchTracker.decrement(tokenId);
-                log.info("{}/{}: Token consumed, {} branch(es) still pending — instance stays RUNNING",
-                    processInstanceId, tokenId, pending - 1);
-                return;
-            }
-            // Last branch — clean up and fall through to completeProcessInstance
-            TokenBranchTracker.removeEntry(tokenId);
+        // WO-ENG-1 (durable, DB-backed counter): decrement the pending-branch counter.
+        // - Returns -1 → token has no counter (linear process) → complete immediately.
+        // - Returns >0 → other branches still active → stay RUNNING.
+        // - Returns 0 → all branches consumed → complete instance.
+        int remaining = dbService.decrementPendingBranches(tokenId);
+        if (remaining == -1) {
+            log.info("{}/{}: Linear token (no pending branches), completing instance", processInstanceId, tokenId);
+        } else if (remaining > 0) {
+            log.info("{}/{}: {} branch(es) still pending — instance stays RUNNING",
+                processInstanceId, tokenId, remaining);
+            return;
+        } else {
             log.info("{}/{}: All branches consumed, completing instance", processInstanceId, tokenId);
         }
-
-        // Defensive cleanup: stale entries from terminate/cancel paths
-        TokenBranchTracker.removeEntry(tokenId);
 
         dbService.completeProcessInstance(processInstanceId);
 

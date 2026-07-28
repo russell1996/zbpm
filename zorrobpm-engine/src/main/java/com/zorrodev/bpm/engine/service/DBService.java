@@ -110,6 +110,19 @@ public interface DBService {
      */
     void deleteToken(UUID tokenId);
 
+    /**
+     * WO-ENG-1: Sets the durable pending-branch counter on a token (for parallel/inclusive
+     * gateway forks). NULL means linear (no fork); 0 means all consumed.
+     */
+    void setPendingBranches(UUID tokenId, int count);
+
+    /**
+     * WO-ENG-1: Atomic decrement of the pending-branch counter. Returns the new value after
+     * decrement. If the token had no counter (null), returns -1 (linear process — caller
+     * should complete the instance).
+     */
+    int decrementPendingBranches(UUID tokenId);
+
     Integer getMaxProcessDefinitionVersionByKey(String key);
 
     void completeProcessInstance(UUID processInstanceId);
