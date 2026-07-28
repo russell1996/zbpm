@@ -22,20 +22,20 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-ENG-1: Parallel none-end-event must not prematurely complete the process instance
+ * WO-ENG-1 (durable): None-end-event must not prematurely complete the process instance
  * while other branches are still active.
  * <p>
- * The fix tracks pending outgoing branches on the token created by the parallel gateway
- * via {@link FlowNavigator#setTokenPendingBranches}. {@code finishBranch} decrements
- * this counter and only completes the process instance when all branches have reached an
- * end event.
+ * The fix uses a durable database check ({@link com.zorrodev.bpm.engine.service.DBService#getActiveActivities})
+ * instead of in-memory state: when a branch reaches an end event, {@link FlowNavigator#finishBranch}
+ * queries for any remaining CREATED/IN_PROGRESS activities. Only when <em>none</em> remain
+ * does it complete the process instance. This covers every fork source (parallel gateway,
+ * inclusive gateway, multi-instance, event-based gateway) without in-JVM tracking.
  * <p>
- * POF (red): Remove the pending-branch check from {@link FlowNavigator#finishBranch}
- * and the {@code setTokenPendingBranches} call from {@link ParallelGatewayHandler} →
- * the test below fails because the process instance is completed when endA is reached,
- * even though userTask1 is still active.
+ * POF (red): Remove the {@code getActiveActivities} check from {@link FlowNavigator#finishBranch}
+ * and always complete the instance → the test below fails because the process instance is
+ * completed when endA is reached, even though userTask1 is still active.
  * <p>
- * POF (green): With both changes in place, the counter prevents premature completion.
+ * POF (green): With the check in place, the database ensures correctness across restarts.
  */
 public class NoneEndEventPgIT extends PostgresIT {
 
@@ -81,6 +81,21 @@ public class NoneEndEventPgIT extends PostgresIT {
         return tx.execute(s -> {
             try {
                 String bpmn = Files.readString(Paths.get("src/test/files/test1.bpmn"));
+                ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+                StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+                dto.setProcessDefinitionId(model.getId());
+                return runtimeService.startProcessInstance(dto).getId();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    /** Deploys and starts test-inclusive-end.bpmn. */
+    private UUID startInclusiveEnd() {
+        return tx.execute(s -> {
+            try {
+                String bpmn = Files.readString(Paths.get("src/test/files/test-inclusive-end.bpmn"));
                 ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
                 StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
                 dto.setProcessDefinitionId(model.getId());
@@ -167,7 +182,38 @@ public class NoneEndEventPgIT extends PostgresIT {
     }
 
     /**
-     * Criterion 3: After completing the user task, the second end event is reached
+     * Criterion 3 (non-parallel fork): Inclusive gateway split with one path to a
+     * none-end-event — the instance must NOT be completed while the other branch
+     * (user task) is still active. Proves the getActiveActivities check is generic,
+     * not limited to parallel gateway.
+     */
+    @Test
+    void inclusiveGatewayFork_endEvent_doesNotCompleteInstance() {
+        UUID pi = startInclusiveEnd();
+
+        // Instance must still be RUNNING — user task on the other branch is active
+        assertThat(isDone(pi))
+                .as("Process instance should NOT be completed while userTask1 is active (inclusive gateway)")
+                .isFalse();
+
+        // userTask1 must be CREATED (active)
+        assertThat(countByElement(pi, "userTask1", ActivityStatus.CREATED))
+                .as("userTask1 should be CREATED (inclusive gateway)")
+                .isEqualTo(1);
+
+        // endA must be COMPLETED
+        assertThat(countByElement(pi, "endA", ActivityStatus.COMPLETED))
+                .as("endA should be COMPLETED (inclusive gateway)")
+                .isEqualTo(1);
+
+        // Exactly 1 active activity remains (userTask1)
+        assertThat(countActive(pi))
+                .as("Exactly one active activity should remain (inclusive gateway)")
+                .isEqualTo(1);
+    }
+
+    /**
+     * Criterion 4: After completing the user task, the second end event is reached
      * and there are no active activities left → the instance completes.
      */
     @Test

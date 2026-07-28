@@ -72,6 +72,9 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
 
             Token newToken = dbService.createToken(tokenId);
             UUID newTokenId = newToken.getId();
+            // WO-ENG-1 (durable): set pending branch count before any branch executes.
+            // Use activated.size() (only condition-passing branches), not outgoings.size().
+            dbService.setPendingBranches(newTokenId, activated.size());
             for (String outgoing : activated) {
                 flowNavigator.processFlow(processInstanceId, newTokenId, outgoing, false, null);
                 BpmnFlowModel flow = bpmn.getFlow(outgoing);

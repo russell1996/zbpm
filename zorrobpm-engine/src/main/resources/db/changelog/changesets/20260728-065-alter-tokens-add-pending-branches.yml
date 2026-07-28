@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260728-065
+  - changeSet:
+      id: 20260728-065
+      author: zorrodev
+      comment: WO-ENG-1 — durable branch counter for parallel/inclusive gateway forks
+      changes:
+        - addColumn:
+            tableName: tokens
+            columns:
+              - column:
+                  name: pending_branches
+                  type: int
+      rollback:
+        - dropColumn:
+            tableName: tokens
+            columnName: pending_branches
