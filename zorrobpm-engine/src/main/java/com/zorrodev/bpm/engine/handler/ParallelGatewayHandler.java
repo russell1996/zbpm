@@ -48,6 +48,9 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
 
             Token newToken = dbService.createToken(tokenId);
             UUID newTokenId = newToken.getId();
+            // WO-ENG-1: track how many outgoing flows this token must account for before
+            // the process instance can complete (see TokenBranchTracker).
+            TokenBranchTracker.setPendingBranches(newTokenId, outgoings.size());
             for (String outgoing : outgoings) {
                 flowNavigator.processFlow(processInstanceId, newTokenId, outgoing, false, null);
                 BpmnFlowModel flow = bpmn.getFlow(outgoing);

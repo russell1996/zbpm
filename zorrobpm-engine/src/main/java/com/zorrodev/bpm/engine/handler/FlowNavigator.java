@@ -116,8 +116,9 @@ public class FlowNavigator {
     /**
      * Ends the current branch at an end event: if the token is inside an embedded subprocess scope,
      * completes the container and continues the parent token from the subprocess's outgoing flows;
-     * otherwise completes the process instance and continues the parent call activity (if any). Shared
-     * by plain and escalation end events.
+     * otherwise consumes the current token and checks whether any active activities remain in the
+     * instance. Only completes the process instance when no other active tokens/branches remain.
+     * Shared by plain and escalation end events.
      */
     public void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, TokenExecutor executor) {
         Token endToken = dbService.getToken(tokenId);
@@ -133,6 +134,25 @@ public class FlowNavigator {
             proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement, executor);
             return;
         }
+
+        // WO-ENG-1: if this token tracks pending branches from a parallel gateway, decrement
+        // the counter and only complete the instance when all branches have reached an end event.
+        // Linear processes have no entry in the map so pending is null → fall through.
+        Integer pending = TokenBranchTracker.getPendingBranches(tokenId);
+        if (pending != null) {
+            if (pending > 1) {
+                TokenBranchTracker.decrement(tokenId);
+                log.info("{}/{}: Token consumed, {} branch(es) still pending — instance stays RUNNING",
+                    processInstanceId, tokenId, pending - 1);
+                return;
+            }
+            // Last branch — clean up and fall through to completeProcessInstance
+            TokenBranchTracker.removeEntry(tokenId);
+            log.info("{}/{}: All branches consumed, completing instance", processInstanceId, tokenId);
+        }
+
+        // Defensive cleanup: stale entries from terminate/cancel paths
+        TokenBranchTracker.removeEntry(tokenId);
 
         dbService.completeProcessInstance(processInstanceId);
 

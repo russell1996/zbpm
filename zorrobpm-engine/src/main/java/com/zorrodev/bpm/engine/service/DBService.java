@@ -104,6 +104,12 @@ public interface DBService {
 
     Token getToken(UUID tokenId);
 
+    /**
+     * Consumes (deletes) a token that has reached an end event.
+     * Called by {@code FlowNavigator.finishBranch} for top-level tokens.
+     */
+    void deleteToken(UUID tokenId);
+
     Integer getMaxProcessDefinitionVersionByKey(String key);
 
     void completeProcessInstance(UUID processInstanceId);

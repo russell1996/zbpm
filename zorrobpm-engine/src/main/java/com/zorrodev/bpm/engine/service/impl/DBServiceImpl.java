@@ -445,6 +445,11 @@ public class DBServiceImpl implements DBService {
             .orElseThrow();
     }
 
+    @Override
+    public void deleteToken(UUID tokenId) {
+        tokenRepository.deleteById(tokenId);
+    }
+
     private Token toToken(TokenEntity entity) {
         Token token = new Token();
         token.setId(entity.getId());
