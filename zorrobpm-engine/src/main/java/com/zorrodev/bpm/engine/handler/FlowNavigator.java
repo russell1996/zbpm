@@ -116,8 +116,9 @@ public class FlowNavigator {
     /**
      * Ends the current branch at an end event: if the token is inside an embedded subprocess scope,
      * completes the container and continues the parent token from the subprocess's outgoing flows;
-     * otherwise completes the process instance and continues the parent call activity (if any). Shared
-     * by plain and escalation end events.
+     * otherwise consumes the current token and checks whether any active activities remain in the
+     * instance. Only completes the process instance when no other active tokens/branches remain.
+     * Shared by plain and escalation end events.
      */
     public void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, TokenExecutor executor) {
         Token endToken = dbService.getToken(tokenId);
@@ -132,6 +133,21 @@ public class FlowNavigator {
             log.info("{}/{}: Completing {}: {}/{}", processInstanceId, parentTokenId, subProcessElement.getType(), subProcessActivityId, subProcessElement.getId());
             proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement, executor);
             return;
+        }
+
+        // WO-ENG-1 (durable, DB-backed counter): decrement the pending-branch counter.
+        // - Returns -1 → token has no counter (linear process) → complete immediately.
+        // - Returns >0 → other branches still active → stay RUNNING.
+        // - Returns 0 → all branches consumed → complete instance.
+        int remaining = dbService.decrementPendingBranches(tokenId);
+        if (remaining == -1) {
+            log.info("{}/{}: Linear token (no pending branches), completing instance", processInstanceId, tokenId);
+        } else if (remaining > 0) {
+            log.info("{}/{}: {} branch(es) still pending — instance stays RUNNING",
+                processInstanceId, tokenId, remaining);
+            return;
+        } else {
+            log.info("{}/{}: All branches consumed, completing instance", processInstanceId, tokenId);
         }
 
         dbService.completeProcessInstance(processInstanceId);
