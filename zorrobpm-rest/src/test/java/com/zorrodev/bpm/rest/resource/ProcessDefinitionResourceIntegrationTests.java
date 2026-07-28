@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
+import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
@@ -22,11 +23,15 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.fasterxml.jackson.core.type.TypeReference;
 
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -98,5 +103,45 @@ class ProcessDefinitionResourceIntegrationTests {
         String savedBpmn = fileService.getFileBytes(id);
 
         assertThat(savedBpmn).isNotNull();
+    }
+
+    @Test
+    void getProcessDefinitions_orderDesc_returnsDescending() throws Exception {
+        // Deploy assignee-task.bpmn (name "Assignee Process") and process1.bpmn (name "Process 1")
+        deploy("assignee-task.bpmn");
+        deploy("process1.bpmn");
+
+        // When: query with order=desc
+        MvcResult result = mockMvc.perform(get("/process-definitions")
+                        .param("order", "desc")
+                        .param("pageSize", "50")
+                        .header("Authorization", "Bearer " + validToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        PagedDataDTO<ProcessDefinition> page = mapper.readValue(
+            result.getResponse().getContentAsString(),
+            new TypeReference<PagedDataDTO<ProcessDefinition>>() {});
+
+        // Then: "Process 1" before "Assignee Process" (descending on name)
+        List<String> names = page.getData().stream()
+                .filter(pd -> pd.getName().equals("Process 1") || pd.getName().equals("Assignee Process"))
+                .map(ProcessDefinition::getName)
+                .toList();
+
+        assertThat(names)
+            .as("order=desc should return 'Process 1' before 'Assignee Process'")
+            .containsExactly("Process 1", "Assignee Process");
+    }
+
+    private void deploy(String fileName) throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/" + fileName), StandardCharsets.UTF_8);
+        AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
+        dto.setBpmn(bpmn);
+        mockMvc.perform(post("/process-definitions")
+                .header("Authorization", "Bearer " + validToken)
+                .content(mapper.writeValueAsString(dto))
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk());
     }
 }

@@ -144,6 +144,7 @@ export interface ProcessDefinitionsQuery {
   processDefinitionKey?: string
   processDefinitionVersion?: number
   latestVersionOnly?: boolean
+  order?: 'asc' | 'desc'
 }
 
 export interface ProcessInstanceQuery {
