@@ -34,6 +34,7 @@ public class MultiInstanceExecutor {
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final BpmnService bpmnService;
     private final ElementSupport elementSupport;
+    private final BoundaryScheduler boundaryScheduler;
 
     private FlowNavigator flowNavigator;
 
@@ -125,6 +126,10 @@ public class MultiInstanceExecutor {
             elementSupport.applyIoMappings(processInstanceId, activityId, element, true);
             serviceTaskEnqueueService.enqueueAfterCommit(activityId);
         }
+        // WO-ENG-3: schedule boundary timers/messages/signals on each MI instance's activity
+        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, element);
+        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, element);
+        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, element);
     }
 
     private int resolveCardinality(UUID processInstanceId, BpmnElementModel element) {
