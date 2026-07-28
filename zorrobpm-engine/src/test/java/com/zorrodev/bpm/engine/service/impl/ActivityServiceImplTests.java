@@ -114,6 +114,14 @@ public class ActivityServiceImplTests {
             dbService.lockProcessInstance(act.getProcessInstanceId());
             return dbService.getActivity(activityId);
         });
+        // Stub computeDueAt for the timer catch test (BPMN uses PT5M)
+        org.mockito.Mockito.lenient().when(
+            elementSupport.computeDueAt(any(com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel.class), any(java.util.UUID.class))
+        ).thenAnswer(invocation -> java.time.Instant.now().plus(java.time.Duration.ofMinutes(5)));
+        // Stub computeDueAt(timer, elementId, processInstanceId) for EventTrigger callers
+        org.mockito.Mockito.lenient().when(
+            elementSupport.computeDueAt(any(com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel.class), any(), any(java.util.UUID.class))
+        ).thenAnswer(invocation -> java.time.Instant.now().plus(java.time.Duration.ofMinutes(5)));
         // Create real CompletionService with mocked dependencies and inject it (WO-AUD-24)
         var completionService = new com.zorrodev.bpm.engine.handler.CompletionService(
             dbService, bpmnService, serviceTaskEnqueueService, elementSupport, multiInstanceExecutor,
@@ -156,7 +164,7 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.EVENT_BASED_GATEWAY, new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INTERMEDIATE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.WaitStateHandler(dbService));
         registerHandler(BpmnElementType.MESSAGE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, activityService));
-        registerHandler(BpmnElementType.TIMER_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService));
+        registerHandler(BpmnElementType.TIMER_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService, elementSupport));
         registerHandler(BpmnElementType.SIGNAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.SignalCatchHandler(dbService));
         registerHandler(BpmnElementType.CONDITIONAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNav, scriptService));
         registerHandler(BpmnElementType.INTERMEDIATE_THROW_EVENT, new com.zorrodev.bpm.engine.handler.IntermediateThrowEventHandler(dbService, flowNav));
