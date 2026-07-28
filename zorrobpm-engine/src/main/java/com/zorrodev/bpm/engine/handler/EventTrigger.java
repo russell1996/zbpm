@@ -113,6 +113,16 @@ public class EventTrigger {
 
         if (interrupting) {
             dbService.cancelActivity(hostActivityId);
+            // WO-ENG-1: An interrupting boundary replaces the host's branch path.  The original branch
+            // (e.g. host → join → endEvent) is cancelled; the boundary's continuation (boundary →
+            // boundary-end) takes its place.  Decrement the token's pending_branches counter so that
+            // the single end-event reachable from the boundary correctly completes the instance when
+            // the counter reaches 0.  Without this, a parallel-sibling branch stuck at a join that
+            // the host was meant to arrive at would keep the counter > 0 forever.
+            Token hostToken = dbService.getToken(tokenId);
+            if (hostToken.getPendingBranches() != null && hostToken.getPendingBranches() > 0) {
+                dbService.decrementPendingBranches(tokenId);
+            }
             log.info("{}/{}: Boundary {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
             flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary, executor);
         } else {

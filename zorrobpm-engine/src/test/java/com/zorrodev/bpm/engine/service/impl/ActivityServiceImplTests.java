@@ -735,6 +735,11 @@ public class ActivityServiceImplTests {
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("escalationEnd"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flowB"))).thenReturn(UUID.randomUUID());
+        // EventTrigger.fireBoundary now calls dbService.getToken (WO-ENG-1): linear path => pendingBranches = null
+        Token hostTokenDto = new Token();
+        hostTokenDto.setId(token);
+        hostTokenDto.setPendingBranches(null);
+        when(dbService.getToken(token)).thenReturn(hostTokenDto);
 
         activityService.fireBoundaryTimer(hostActivityId, "boundary1");
 
