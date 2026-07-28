@@ -445,12 +445,38 @@ public class DBServiceImpl implements DBService {
             .orElseThrow();
     }
 
+    @Override
+    public void deleteToken(UUID tokenId) {
+        tokenRepository.deleteById(tokenId);
+    }
+
     private Token toToken(TokenEntity entity) {
         Token token = new Token();
         token.setId(entity.getId());
         token.setParentId(entity.getParentId());
         token.setScopeActivityId(entity.getScopeActivityId());
+        token.setPendingBranches(entity.getPendingBranches());
         return token;
+    }
+
+    @Override
+    public void setPendingBranches(UUID tokenId, int count) {
+        TokenEntity entity = tokenRepository.findById(tokenId).orElseThrow();
+        entity.setPendingBranches(count);
+        tokenRepository.save(entity);
+    }
+
+    @Override
+    public int decrementPendingBranches(UUID tokenId) {
+        TokenEntity entity = tokenRepository.findById(tokenId).orElseThrow();
+        Integer current = entity.getPendingBranches();
+        if (current == null) {
+            return -1; // linear process — caller decides
+        }
+        int next = current - 1;
+        entity.setPendingBranches(next);
+        tokenRepository.save(entity);
+        return next;
     }
 
     @Override

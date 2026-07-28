@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="inclusiveEndTest" isExecutable="true">
+    <bpmn:startEvent id="startEvent">
+      <bpmn:outgoing>flowToGw</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:inclusiveGateway id="inclusiveGw">
+      <bpmn:incoming>flowToGw</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:endEvent id="endA">
+      <bpmn:incoming>fA</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:userTask id="userTask1">
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fC</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="endB">
+      <bpmn:incoming>fC</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowToGw" sourceRef="startEvent" targetRef="inclusiveGw" />
+    <bpmn:sequenceFlow id="fA" sourceRef="inclusiveGw" targetRef="endA" />
+    <bpmn:sequenceFlow id="fB" sourceRef="inclusiveGw" targetRef="userTask1" />
+    <bpmn:sequenceFlow id="fC" sourceRef="userTask1" targetRef="endB" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="inclusiveEndTest">
+      <bpmndi:BPMNShape id="start" bpmnElement="startEvent"><dc:Bounds x="100" y="200" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw" bpmnElement="inclusiveGw"><dc:Bounds x="220" y="195" width="50" height="50" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endA" bpmnElement="endA"><dc:Bounds x="360" y="100" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ut" bpmnElement="userTask1"><dc:Bounds x="360" y="240" width="100" height="80" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endB" bpmnElement="endB"><dc:Bounds x="540" y="262" width="36" height="36" /></bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
