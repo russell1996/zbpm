@@ -113,6 +113,11 @@ public class EventTrigger {
 
         if (interrupting) {
             dbService.cancelActivity(hostActivityId);
+            // WO-ENG-3: Cancel all remaining active activities on this token.  For multi-instance,
+            // this terminates all sibling MI instances and their inner tasks (they share the same
+            // token).  For a single-instance host, the host was already cancelled above so this
+            // call is a safe no-op (the host is no longer CREATED/IN_PROGRESS).
+            dbService.cancelActiveActivitiesForToken(tokenId);
             // WO-ENG-1: An interrupting boundary replaces the host's branch path.  The original branch
             // (e.g. host → join → endEvent) is cancelled; the boundary's continuation (boundary →
             // boundary-end) takes its place.  Decrement the token's pending_branches counter so that
