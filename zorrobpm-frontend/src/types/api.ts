@@ -217,24 +217,6 @@ export interface StartProcessInstanceDTO {
   variables: ProcessVariable[]
 }
 
-// --- WO-MT-5: Members ---
-export interface Member {
-  userId: string
-  username: string | null
-  role: string
-  addedBy: string | null
-  addedAt: string
-}
-
-export interface AddMemberDTO {
-  userId: string
-  role: string
-}
-
-export interface ChangeRoleDTO {
-  role: string
-}
-
 // --- WO-MT-4: Service Accounts ---
 export interface ServiceAccount {
   id: string
