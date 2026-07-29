@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
@@ -10,6 +11,7 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const store = useProcessStore()
 
 const bpmnXml = ref('')
@@ -118,6 +120,27 @@ function openVersion(id: string) {
     router.push(`/processes/definitions/${id}`)
   }
 }
+
+async function downloadBpmn() {
+  const def = store.currentDefinition
+  if (!def) return
+  let xml = bpmnXml.value
+  if (!xml) {
+    try {
+      xml = await processService.getProcessDefinitionXml(def.id)
+    } catch {
+      return // XML not available
+    }
+  }
+  const ext = def.key ? `${def.key}-v${def.version}.bpmn` : `${def.id}.bpmn`
+  const blob = new Blob([xml], { type: 'application/xml;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = ext
+  link.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -135,12 +158,20 @@ function openVersion(id: string) {
             · Created: {{ new Date(store.currentDefinition.createdAt).toLocaleString() }}
           </p>
         </div>
-        <button
-          class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
-          @click="showStartModal = true"
-        >
-          Start Process
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+            @click="downloadBpmn"
+          >
+            {{ t('downloadBpmn') }}
+          </button>
+          <button
+            class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
+            @click="showStartModal = true"
+          >
+            Start Process
+          </button>
+        </div>
       </div>
 
       <div v-if="bpmnXml" class="border border-border rounded-lg bg-card">

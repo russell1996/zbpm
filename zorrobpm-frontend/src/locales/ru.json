@@ -181,5 +181,6 @@
   "itemsType": "Тип элементов",
   "minItems": "Мин. элементов",
   "maxItems": "Макс. элементов",
-  "enumValues": "Enum (через запятую)"
+  "enumValues": "Enum (через запятую)",
+  "downloadBpmn": "Скачать BPMN"
 }
