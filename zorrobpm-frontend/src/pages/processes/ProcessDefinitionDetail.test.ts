@@ -186,7 +186,7 @@ describe('ProcessDefinitionDetail — download BPMN (WO-FE-11)', () => {
   it('GREEN: download BPMN loads XML from service if not yet loaded', async () => {
     const { getProcessDefinitionXml } = await import('@/services/processService')
     // Reset to return null (as per top-level mock) — bpmnXml stays empty after mount
-    vi.mocked(getProcessDefinitionXml).mockResolvedValue(null)
+    vi.mocked(getProcessDefinitionXml).mockResolvedValue('')
 
     const wrapper = mount(ProcessDefinitionDetail, {
       global: { stubs: { teleport: true }, plugins: [createPinia()] },
