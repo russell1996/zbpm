@@ -142,7 +142,7 @@ cve:scan:
       maven:3.9.9-eclipse-temurin-21
       mvn -B -ntp org.owasp:dependency-check-maven:check
       -DfailBuildOnCVSS=7
-      -DsuppressionFile=
+      -DsuppressionFile=owasp-suppressions.xml
       -DnvdApiKey=$NVD_API_KEY
       -DnodeAuditSkipDevDependencies=true
       --no-transfer-progress
