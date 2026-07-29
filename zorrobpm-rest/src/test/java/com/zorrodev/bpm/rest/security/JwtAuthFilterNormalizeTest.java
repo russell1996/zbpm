@@ -154,4 +154,123 @@ class JwtAuthFilterNormalizeTest {
     void sec15_normalUsersStillProtected() throws Exception {
         assertThat(doFilter("/users")).isEqualTo(401);
     }
+
+    // ==================== WO-BE-4: path traversal bypass tests ====================
+
+    // --- Criterion #1: /auth/../users/{id} without SUPER_ADMIN → 403 ---
+
+    @Test
+    void be4_traversalUsersPath_nonAdmin_returns403() throws Exception {
+        // /auth/../users/123 → /users/123 after normalize → SUPER_ADMIN guard
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/auth/../users/123", "user-token")).isEqualTo(403);
+    }
+
+    @Test
+    void be4_traversalUsersPath_noToken_returns401() throws Exception {
+        // /auth/../users/123 → /users/123 after normalize → protected → needs auth
+        assertThat(doFilter("/auth/../users/123")).isEqualTo(401);
+    }
+
+    @Test
+    void be4_traversalUsersPath_superAdmin_returns200() throws Exception {
+        // SUPER_ADMIN can access /users
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("SUPER_ADMIN");
+        when(tokenService.verify("admin-token")).thenReturn(claims);
+        int status = doFilter("/auth/../users/123", "admin-token");
+        // Filter passes through → 200 (no downstream handler in test), which means
+        // the filter did NOT reject it
+        assertThat(status).isEqualTo(200);
+    }
+
+    // --- Criterion #2: Legitimate paths work as before (regression) ---
+
+    @Test
+    void be4_normalUsersPath_nonAdmin_returns403() throws Exception {
+        // Regression: plain /users/123 still guarded
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/users/123", "user-token")).isEqualTo(403);
+    }
+
+    @Test
+    void be4_authLogin_stillOpen() throws Exception {
+        assertThat(doFilter("/auth/login")).isEqualTo(200);
+    }
+
+    @Test
+    void be4_authRefresh_stillOpen() throws Exception {
+        assertThat(doFilter("/auth/refresh")).isEqualTo(200);
+    }
+
+    // --- Criterion #3: Other traversal vectors closed ---
+
+    @Test
+    void be4_percentEncodedDoubleDot_usersPath_nonAdmin_returns403() throws Exception {
+        // /%2e%2e/users/123 → /../users/123 after decode → /users/123 after resolve
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/%2e%2e/users/123", "user-token")).isEqualTo(403);
+    }
+
+    @Test
+    void be4_doubleSlashDoubleDot_usersPath_nonAdmin_returns403() throws Exception {
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("//..//users/123", "user-token")).isEqualTo(403);
+    }
+
+    @Test
+    void be4_matrixParamDoubleDot_usersPath_nonAdmin_returns403() throws Exception {
+        // /auth/..;/users/123 → matrix strip: /auth/../users/123 → /users/123
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/auth/..;/users/123", "user-token")).isEqualTo(403);
+    }
+
+    @Test
+    void be4_cyclicDoubleDot_usersPath_nonAdmin_returns403() throws Exception {
+        // /users/../users/123 → /users/123
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/users/../users/123", "user-token")).isEqualTo(403);
+    }
+
+    @Test
+    void be4_doubleEncodedDoubleDot_usersPath_nonAdmin_returns403() throws Exception {
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/%2e%2e/%2e%2e/users", "user-token")).isEqualTo(403);
+    }
+
+    @Test
+    void be4_traversalAboveRoot_usersPath_nonAdmin_returns403() throws Exception {
+        // /a/../../users/123 → /users/123
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/a/../../users/123", "user-token")).isEqualTo(403);
+    }
+
+    /** Proof-of-failure: RED — without fix, traversal bypasses SUPER_ADMIN guard. */
+    @Test
+    void be4_proofOfFailure_traversal_bypassesSuperAdmin() throws Exception {
+        // This test isolates the normalize behavior. On unfixed code (without
+        // resolveDotSegments), /auth/../users/123 stays as-is → isUsersPath()=false
+        // → SUPER_ADMIN guard skipped → regular USER passes through → 200.
+        // On fixed code: /auth/../users/123 → /users/123 → isUsersPath()=true → 403.
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.role()).thenReturn("USER");
+        when(tokenService.verify("user-token")).thenReturn(claims);
+        assertThat(doFilter("/auth/../users/123", "user-token")).isEqualTo(403);
+    }
 }
