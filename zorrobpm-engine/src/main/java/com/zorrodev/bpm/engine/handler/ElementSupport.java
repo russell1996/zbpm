@@ -209,6 +209,91 @@ public class ElementSupport {
     }
 
     public Instant computeDueAt(com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel timer, String elementId) {
+        return computeDueAtFallback(timer, elementId);
+    }
+
+    /**
+     * Computes the due-at instant for a timer, resolving FEEL expressions ({@code =expr}) against
+     * process instance variables before parsing.  Literal ISO-8601 values (no leading {@code =}) use
+     * the original parsing path.
+     *
+     * @param element          the BPMN element with a timer extension
+     * @param processInstanceId the process instance whose variables are available to FEEL
+     * @return the computed {@link Instant} when the timer should fire
+     * @throws com.zorrodev.bpm.contract.exception.EngineException if the expression is null,
+     *         the FEEL evaluation returns null, or the result cannot be converted to the expected type
+     */
+    public Instant computeDueAt(BpmnElementModel element, UUID processInstanceId) {
+        return computeDueAt(Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .orElse(null), element.getId(), processInstanceId);
+    }
+
+    /**
+     * Computes the due-at instant for a timer, resolving FEEL expressions ({@code =expr}) against
+     * process instance variables before parsing.
+     */
+    public Instant computeDueAt(com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel timer,
+                                String elementId, UUID processInstanceId) {
+        if (timer == null || timer.getType() == null || timer.getExpression() == null) {
+            throw new com.zorrodev.bpm.contract.exception.EngineException("Timer event " + elementId + " has no timer definition");
+        }
+        String expression = timer.getExpression();
+        if (expression.startsWith("=")) {
+            String feelExpr = expression.substring(1);
+            Object value = scriptService.evaluateExpression(feelExpr, dbService.getVariables(processInstanceId));
+            if (value == null) {
+                throw new com.zorrodev.bpm.contract.exception.EngineException(
+                    "Timer event " + elementId + ": FEEL expression '" + expression + "' returned null");
+            }
+            return switch (timer.getType()) {
+                case DURATION -> {
+                    if (value instanceof Duration d) {
+                        yield Instant.now().plus(d);
+                    }
+                    try {
+                        yield Instant.now().plus(Duration.parse(value.toString()));
+                    } catch (Exception e) {
+                        throw new com.zorrodev.bpm.contract.exception.EngineException(
+                            "Timer event " + elementId + ": FEEL expression '" + expression + "' did not resolve to a valid duration (got: " + value + ")", e);
+                    }
+                }
+                case DATE -> {
+                    if (value instanceof Instant i) {
+                        yield i;
+                    }
+                    if (value instanceof java.time.LocalDateTime ldt) {
+                        yield ldt.toInstant(java.time.ZoneOffset.UTC);
+                    }
+                    if (value instanceof java.time.LocalDate ld) {
+                        yield ld.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+                    }
+                    if (value instanceof java.util.Date d) {
+                        yield d.toInstant();
+                    }
+                    try {
+                        yield Instant.parse(value.toString());
+                    } catch (Exception e) {
+                        throw new com.zorrodev.bpm.contract.exception.EngineException(
+                            "Timer event " + elementId + ": FEEL expression '" + expression + "' did not resolve to a valid date/instant (got: " + value + ")", e);
+                    }
+                }
+                case CYCLE -> {
+                    try {
+                        yield com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(value.toString(), Instant.now());
+                    } catch (Exception e) {
+                        throw new com.zorrodev.bpm.contract.exception.EngineException(
+                            "Timer event " + elementId + ": FEEL expression '" + expression + "' did not resolve to a valid cycle expression (got: " + value + ")", e);
+                    }
+                }
+            };
+        }
+        // Non-FEEL expression: use the original literal parsing path
+        return computeDueAtFallback(timer, elementId);
+    }
+
+    /** Original literal-only parsing path, kept for backward compatibility and as the non-FEEL fallback. */
+    private Instant computeDueAtFallback(com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel timer, String elementId) {
         if (timer == null || timer.getType() == null || timer.getExpression() == null) {
             throw new com.zorrodev.bpm.contract.exception.EngineException("Timer event " + elementId + " has no timer definition");
         }

@@ -1,6 +1,5 @@
 package com.zorrodev.bpm.engine.handler;
 
-import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
@@ -13,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,6 +27,7 @@ import java.util.UUID;
 public class TimerCatchHandler implements ElementHandler, TypedElementHandler {
 
     private final DBService dbService;
+    private final ElementSupport elementSupport;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.TIMER_CATCH_EVENT; }
@@ -42,24 +41,10 @@ public class TimerCatchHandler implements ElementHandler, TypedElementHandler {
         UUID tokenId = ctx.tokenId();
 
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        Instant dueAt = computeDueAt(bpmnElement);
+        Instant dueAt = elementSupport.computeDueAt(bpmnElement, processInstanceId);
         Integer remainingCount = computeRemainingCount(bpmnElement);
         dbService.createTimerJob(activityId, dueAt, null, remainingCount);
         log.info("{}/{}: Timer scheduled for {} at {}: {}/{} (remaining={})", processInstanceId, tokenId, bpmnElement.getId(), dueAt, activityId, bpmnElement.getType(), remainingCount);
-    }
-
-    private Instant computeDueAt(BpmnElementModel element) {
-        TimerEventExtensionModel timer = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getTimerEventExtension)
-            .orElse(null);
-        if (timer == null || timer.getType() == null || timer.getExpression() == null) {
-            throw new EngineException("Timer event " + element.getId() + " has no timer definition");
-        }
-        return switch (timer.getType()) {
-            case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
-            case DATE -> Instant.parse(timer.getExpression());
-            case CYCLE -> TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
-        };
     }
 
     private Integer computeRemainingCount(BpmnElementModel bpmnElement) {
