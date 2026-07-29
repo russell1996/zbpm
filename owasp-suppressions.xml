@@ -1,33 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
     <!--
-        WO-SEC-35: Time-boxed suppressions for spring-core CVEs.
-        Spring Boot 4.0.5 is internal/pre-release; no GA spring-framework 7.0.7+ on Maven Central (2026-07).
-        Single-tenant deployment, risk-accepted by CTO.
-        Revisit: 2026-10-01 or when spring-framework 7.0.7 GA lands.
+        WO-SEC-36: spring-core CVE suppressions removed.
+        Spring Framework upgraded to 7.0.8 which patches CVE-2026-41855 (CVSS 9.8)
+        and companion CVEs (CVE-2026-41838/41842/41848/41850/41851).
+        See pom.xml <spring-framework.version>7.0.8</spring-framework.version>.
+        Re-opened suppressions are intentional — no GA fix yet as of 2026-07.
     -->
-    <suppress>
-        <notes>No GA spring-framework 7.0.7 on Maven Central as of 2026-07; single-tenant risk-accepted by CTO; revisit when GA lands.</notes>
-        <cve>CVE-2026-41855</cve>
-    </suppress>
-    <suppress>
-        <notes>No GA spring-framework 7.0.7 on Maven Central as of 2026-07; single-tenant risk-accepted by CTO; revisit when GA lands.</notes>
-        <cve>CVE-2026-41838</cve>
-    </suppress>
-    <suppress>
-        <notes>No GA spring-framework 7.0.7 on Maven Central as of 2026-07; single-tenant risk-accepted by CTO; revisit when GA lands.</notes>
-        <cve>CVE-2026-41848</cve>
-    </suppress>
-    <suppress>
-        <notes>No GA spring-framework 7.0.7 on Maven Central as of 2026-07; single-tenant risk-accepted by CTO; revisit when GA lands.</notes>
-        <cve>CVE-2026-41851</cve>
-    </suppress>
-    <suppress>
-        <notes>No GA spring-framework 7.0.7 on Maven Central as of 2026-07; single-tenant risk-accepted by CTO; revisit when GA lands.</notes>
-        <cve>CVE-2026-41850</cve>
-    </suppress>
-    <suppress>
-        <notes>No GA spring-framework 7.0.7 on Maven Central as of 2026-07; single-tenant risk-accepted by CTO; revisit when GA lands.</notes>
-        <cve>CVE-2026-41842</cve>
-    </suppress>
 </suppressions>
