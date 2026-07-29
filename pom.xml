@@ -11,6 +11,12 @@
         <relativePath />
     </parent>
 
+    <properties>
+        <!-- WO-SEC-36: override Spring Framework 7.0.6→7.0.8 to fix CVE-2026-41855 (CVSS 9.8).
+             Spring Boot 4.0.5 BOM pins 7.0.6 by default; 7.0.8 is the patched GA per advisory. -->
+        <spring-framework.version>7.0.8</spring-framework.version>
+    </properties>
+
     <groupId>com.zorrodev.bpm</groupId>
     <artifactId>zorrobpm</artifactId>
     <version>0.7.17-SNAPSHOT</version>
