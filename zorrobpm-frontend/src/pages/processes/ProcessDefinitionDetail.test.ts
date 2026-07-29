@@ -138,3 +138,78 @@ describe('ProcessDefinitionDetail render', () => {
     expect(vm.jsonError).toBe('')
   })
 })
+
+/**
+ * WO-FE-11: Download BPMN button
+ */
+describe('ProcessDefinitionDetail — download BPMN (WO-FE-11)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test')
+  })
+
+  // ──────────────────────────────────────────────
+  // Criteria 1: Button exists and triggers download with correct filename
+  // ──────────────────────────────────────────────
+  it('GREEN: download BPMN button exists and triggers download with loaded XML', async () => {
+    // Re-mock getProcessDefinitionXml to return XML so the component loads it
+    const { getProcessDefinitionXml } = await import('@/services/processService')
+    vi.mocked(getProcessDefinitionXml).mockResolvedValue('<definitions id="proc1" />')
+
+    const wrapper = mount(ProcessDefinitionDetail, {
+      global: { stubs: { teleport: true }, plugins: [createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    // Button should be rendered with the i18n key (mock returns key as-is)
+    const allButtons = wrapper.findAll('button')
+    const downloadBtn = allButtons.find((b) => b.text().trim() === 'downloadBpmn')
+    expect(downloadBtn, `Button 'downloadBpmn' not found. All buttons: ${allButtons.map((b) => `"${b.text().trim()}"`).join(', ')}`).toBeDefined()
+
+    // Click the button
+    await downloadBtn!.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    // createObjectURL should have been called with a Blob containing the XML
+    const createSpy = URL.createObjectURL as ReturnType<typeof vi.spyOn>
+    expect(createSpy).toHaveBeenCalledTimes(1)
+    const blobArg = createSpy.mock.calls[0][0] as Blob
+    expect(blobArg).toBeInstanceOf(Blob)
+    expect(blobArg.type).toBe('application/xml;charset=utf-8;')
+  })
+
+  // ──────────────────────────────────────────────
+  // Criteria 2: If bpmnXml is empty, load via service first
+  // ──────────────────────────────────────────────
+  it('GREEN: download BPMN loads XML from service if not yet loaded', async () => {
+    const { getProcessDefinitionXml } = await import('@/services/processService')
+    // Reset to return null (as per top-level mock) — bpmnXml stays empty after mount
+    vi.mocked(getProcessDefinitionXml).mockResolvedValue('')
+
+    const wrapper = mount(ProcessDefinitionDetail, {
+      global: { stubs: { teleport: true }, plugins: [createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    // Ensure bpmnXml is empty (service returned null during mount)
+    expect(vm.bpmnXml).toBeFalsy()
+
+    // Now set up mock for the download trigger
+    vi.mocked(getProcessDefinitionXml).mockResolvedValue('<definitions id="lazy-loaded" />')
+
+    // Click download — should trigger service fetch
+    const allButtons = wrapper.findAll('button')
+    const downloadBtn = allButtons.find((b) => b.text().trim() === 'downloadBpmn')
+    expect(downloadBtn).toBeDefined()
+
+    await downloadBtn!.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    // Service was called to fetch XML
+    expect(getProcessDefinitionXml).toHaveBeenCalledWith('def1')
+  })
+})
