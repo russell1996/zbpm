@@ -144,6 +144,7 @@ cve:scan:
       -DfailBuildOnCVSS=7
       -DsuppressionFile=owasp-suppressions.xml
       -DnvdApiKey=$NVD_API_KEY
+      -DossindexAnalyzerEnabled=false
       -DnodeAuditSkipDevDependencies=true
       --no-transfer-progress
     - echo "Backend CVE scan complete (CVSS>=7 = fail)"
