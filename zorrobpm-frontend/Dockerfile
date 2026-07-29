@@ -27,6 +27,7 @@ COPY --from=builder /build/dist /usr/share/nginx/html
 RUN nginx -t
 
 EXPOSE 80
+ENV TZ=Asia/Almaty
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
   CMD wget -qO- http://localhost/healthz || exit 1

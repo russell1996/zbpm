@@ -11,6 +11,7 @@ COPY --from=builder spring-boot-loader/ ./
 COPY --from=builder application/ ./
 
 ENV SERVER_PORT=80
+ENV TZ=Asia/Almaty
 EXPOSE 80
 
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

@@ -23,6 +23,7 @@ RUN mvn -B -ntp clean verify
 FROM eclipse-temurin:21-jre
 
 WORKDIR /app
+ENV TZ=Asia/Almaty
 
 COPY --from=builder /build/zorrobpm-ce/target/*.jar app.jar
 

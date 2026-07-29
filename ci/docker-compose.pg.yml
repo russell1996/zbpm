@@ -12,6 +12,7 @@ services:
       POSTGRES_DB: ${PG_DB:-zorrobpm-db}
       POSTGRES_USER: ${PG_USER:-zorrodev}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
     # Publish on a NON-STANDARD host port by default (55432) so `up` never collides with a
     # host-installed PostgreSQL on 5432/5433 (dev machines often run local postgres — P-23).
     # The containerised test connects via the compose network to postgres:5432 (internal), so
