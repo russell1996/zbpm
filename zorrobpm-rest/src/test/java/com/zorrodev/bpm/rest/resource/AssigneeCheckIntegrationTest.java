@@ -78,8 +78,13 @@ class AssigneeCheckIntegrationTest {
 
     @BeforeAll
     void setup() throws Exception {
-        createUser("user1", "USER");
-        createUser("user2", "USER");
+        // WO-TEST-1: existsByUsername guard — other test classes may have created these
+        if (!userRepository.existsByUsername("user1")) {
+            createUser("user1", "USER");
+        }
+        if (!userRepository.existsByUsername("user2")) {
+            createUser("user2", "USER");
+        }
 
         adminToken = login("admin", "admin");
         user1Token = login("user1", "pass1");
