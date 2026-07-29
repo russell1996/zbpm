@@ -13,7 +13,7 @@ import java.util.UUID;
 
 public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> {
 
-    @Modifying
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE ActivityEntity e SET e.status = :status, e.completedAt = :completedAt WHERE e.id = :id")
     void setStatusAndCompletedAt(UUID id, ActivityStatus status, Instant completedAt);
 

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.45.0">
+  <bpmn:process id="testProcess" name="Test boundary premature complete" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>flowToSplit</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:parallelGateway id="gwSplit">
+      <bpmn:incoming>flowToSplit</bpmn:incoming>
+      <bpmn:outgoing>flowToTask</bpmn:outgoing>
+      <bpmn:outgoing>flowToEndB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:userTask id="miTask" name="Main Task">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="executorId" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowToTask</bpmn:incoming>
+      <bpmn:outgoing>flowToEndA</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=executors" inputElement="executorId" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="tmrCheck" cancelActivity="false" attachedToRef="miTask">
+      <bpmn:outgoing>flowToSrv</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDate xsi:type="bpmn:tFormalExpression">=dueDate</bpmn:timeDate>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:serviceTask id="srvNotify" name="Notify">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvNotify" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowToSrv</bpmn:incoming>
+      <bpmn:outgoing>flowToEndNotify</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="endNotify">
+      <bpmn:incoming>flowToEndNotify</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endA">
+      <bpmn:incoming>flowToEndA</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endB">
+      <bpmn:incoming>flowToEndB</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowToSplit" sourceRef="start" targetRef="gwSplit" />
+    <bpmn:sequenceFlow id="flowToTask" sourceRef="gwSplit" targetRef="miTask" />
+    <bpmn:sequenceFlow id="flowToEndB" sourceRef="gwSplit" targetRef="endB" />
+    <bpmn:sequenceFlow id="flowToEndA" sourceRef="miTask" targetRef="endA" />
+    <bpmn:sequenceFlow id="flowToSrv" sourceRef="tmrCheck" targetRef="srvNotify" />
+    <bpmn:sequenceFlow id="flowToEndNotify" sourceRef="srvNotify" targetRef="endNotify" />
+  </bpmn:process>
+</bpmn:definitions>

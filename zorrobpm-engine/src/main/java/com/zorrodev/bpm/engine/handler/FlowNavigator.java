@@ -139,6 +139,30 @@ public class FlowNavigator {
         // - Returns -1 → token has no counter (linear process) → complete immediately.
         // - Returns >0 → other branches still active → stay RUNNING.
         // - Returns 0 → all branches consumed → complete instance.
+        //
+        // WO-ENG-6: A child token (parentId != null) with no pendingBranches counter was created
+        // by a non-interrupting boundary event or event subprocess. Such tokens are linear side-
+        // branches that must NOT complete the process instance — only the root token controls
+        // instance lifecycle. Without this check, a non-interrupting boundary timer that fires
+        // and reaches an end event prematurely completes the instance while the main flow's
+        // activities are still open (PROD-REPORT c8aaa9e4, premature completion with open utExecute).
+        // CRITICAL: Check that this is a ROOT process instance (parentActivityId == null) —
+        // child process instances started by call activities have parentActivityId != null
+        // and their tokens DO have parentId set, but must still complete the child instance
+        // normally so the call activity can proceed in the parent.
+        boolean isChildLinearBranch = false;
+        if (endToken != null && endToken.getParentId() != null && endToken.getPendingBranches() == null) {
+            ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+            if (pi.getParentActivityId() == null) {
+                isChildLinearBranch = true;
+            }
+        }
+        if (isChildLinearBranch) {
+            log.info("{}/{}: Child linear token ending — branch complete, instance continues",
+                processInstanceId, tokenId);
+            return;
+        }
+
         int remaining = dbService.decrementPendingBranches(tokenId);
         if (remaining == -1) {
             log.info("{}/{}: Linear token (no pending branches), completing instance", processInstanceId, tokenId);
