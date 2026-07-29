@@ -182,5 +182,6 @@
   "minItems": "Min Items",
   "maxItems": "Max Items",
   "enumValues": "Enum (comma-separated)",
-  "downloadDiagnostic": "Download Diagnostic (JSON)"
+  "downloadDiagnostic": "Download Diagnostic (JSON)",
+  "downloadBpmn": "Download BPMN"
 }
