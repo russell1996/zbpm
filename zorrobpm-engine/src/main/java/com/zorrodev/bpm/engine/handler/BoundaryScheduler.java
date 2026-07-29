@@ -102,7 +102,7 @@ public class BoundaryScheduler {
                 .map(BoundaryEventExtensionModel::getAttachedToRef)
                 .orElse(null);
             if (host.getId().equals(attachedTo)) {
-                java.time.Instant dueAt = elementSupport.computeDueAt(element);
+                java.time.Instant dueAt = elementSupport.computeDueAt(element, processInstanceId);
                 dbService.createTimerJob(hostActivityId, dueAt, element.getId());
                 log.info("{}: Boundary timer {} scheduled for {} on host activity {}", processInstanceId, element.getId(), dueAt, hostActivityId);
             }
