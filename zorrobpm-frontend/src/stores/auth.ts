@@ -53,17 +53,30 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** Refresh user data from /auth/me (after password change). */
   async function refreshUser() {
-    user.value = await authService.getMe()
+    try {
+      user.value = await authService.getMe()
+    } catch {
+      console.warn('refreshUser failed — resetting to guest state')
+      user.value = null
+    }
   }
 
-  function logout() {
-    user.value = null
-    error.value = null
-    // Notify backend to revoke refresh token (fire-and-forget)
-    api.post('/auth/logout').catch(() => {})
-    // Clear cookie by setting maxAge to 0
-    document.cookie = 'zbpm_token=; Max-Age=0; Path=/; SameSite=Strict'
-    window.location.href = '/ui/login'
+  /**
+   * Logout: invalidate server-side cookie FIRST, then clear local state.
+   * Fail-safe: even if the API call fails, local state is still cleared
+   * and the user is redirected to login.
+   */
+  async function logout() {
+    try {
+      await api.post('/auth/logout')
+    } catch {
+      console.error('Logout API call failed — clearing local state anyway')
+    } finally {
+      user.value = null
+      error.value = null
+      document.cookie = 'zbpm_token=; Max-Age=0; Path=/; SameSite=Strict'
+      window.location.href = '/ui/login'
+    }
   }
 
   return {
