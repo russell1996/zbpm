@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_mi_signal" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-mi-boundary-signal" name="test-mi-boundary-signal" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="miTask" />
+    <bpmn:userTask id="miTask" name="miTask">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:loopCardinality>2</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="miTask" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:boundaryEvent id="boundarySignal" name="boundarySignal" attachedToRef="miTask" cancelActivity="true">
+      <bpmn:outgoing>fB</bpmn:outgoing>
+      <bpmn:signalEventDefinition id="SignalDef_b" signalRef="Signal_0" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="boundarySignal" targetRef="boundaryEnd" />
+    <bpmn:endEvent id="boundaryEnd" name="boundaryEnd">
+      <bpmn:incoming>fB</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:signal id="Signal_0" name="mySignal" />
+</bpmn:definitions>
