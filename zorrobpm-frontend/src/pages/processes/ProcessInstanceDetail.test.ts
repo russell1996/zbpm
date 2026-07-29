@@ -235,4 +235,51 @@ describe('ProcessInstanceDetail — element dialog (WO-FE-BPMN-1)', () => {
     // Dialog closed
     expect(vm.showElementDialog).toBe(false)
   })
+
+  // ──────────────────────────────────────────────
+  // WO-FE-10: AI diagnostic download button
+  // ──────────────────────────────────────────────
+  it('GREEN: diagnostic download button exists and triggers download', async () => {
+    // Spy on URL.createObjectURL to verify download is triggered
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test')
+
+    const wrapper = mount(ProcessInstanceDetail, {
+      global: { stubs, plugins: [createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    // Set store data so the instance is available and button renders
+    const { useProcessStore } = await import('@/stores/process')
+    const processStore = useProcessStore()
+    processStore.currentInstance = {
+      id: 'pi-1',
+      parentActivityId: null,
+      processDefinitionId: 'pd-1',
+      startedAt: '2026-01-01T00:00:00Z',
+      completedAt: null,
+      processName: 'Test',
+      processKey: 'test',
+      processVersion: 1,
+    }
+    await wrapper.vm.$nextTick()
+
+    // Button should be rendered with the i18n key (mock returns key as-is)
+    const allButtons = wrapper.findAll('button')
+    const downloadBtn = allButtons.find((b) => b.text().trim() === 'downloadDiagnostic')
+    expect(downloadBtn, `Button 'downloadDiagnostic' not found. All buttons: ${allButtons.map((b) => `"${b.text().trim()}"`).join(', ')}`).toBeDefined()
+
+    // Click the button
+    await downloadBtn!.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    // createObjectURL should have been called with a Blob
+    expect(createSpy).toHaveBeenCalledTimes(1)
+    const blobArg = createSpy.mock.calls[0][0]
+    expect(blobArg).toBeInstanceOf(Blob)
+    expect((blobArg as Blob).type).toBe('application/json;charset=utf-8;')
+
+    // Clean up
+    createSpy.mockRestore()
+  })
 })
