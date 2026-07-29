@@ -50,6 +50,12 @@ export function createRefreshInterceptor(instance: AxiosInstance): void {
         url.includes('/auth/logout')
 
       if (error.response?.status !== 401 || isAuthEndpoint || originalRequest?._retry) {
+        // After refresh failed or 401 on auth endpoint, sign out (but not for login itself)
+        // WO-FE-8: moved here from api.ts to break circular import api ↔ auth
+        if (error.response?.status === 401 && !url.includes('/auth/login')) {
+          const auth = useAuthStore()
+          if (auth.isAuthenticated) auth.logout()
+        }
         return Promise.reject(error)
       }
 
@@ -70,6 +76,12 @@ export function createRefreshInterceptor(instance: AxiosInstance): void {
         return instance(originalRequest)
       } catch (refreshError) {
         processPendingQueue(refreshError, null)
+        // Refresh failed — sign out (but not for login itself)
+        // WO-FE-8: moved here from api.ts to break circular import api ↔ auth
+        if (!url.includes('/auth/login')) {
+          const auth = useAuthStore()
+          if (auth.isAuthenticated) auth.logout()
+        }
         return Promise.reject(error)
       } finally {
         isRefreshing = false

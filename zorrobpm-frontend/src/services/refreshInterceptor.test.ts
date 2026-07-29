@@ -7,6 +7,7 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: vi.fn(() => ({
     isAuthenticated: true,
     setForcePasswordChange: vi.fn(),
+    logout: vi.fn(),
   })),
 }))
 
