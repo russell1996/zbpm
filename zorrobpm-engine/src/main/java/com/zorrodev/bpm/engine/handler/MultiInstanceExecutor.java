@@ -63,13 +63,23 @@ public class MultiInstanceExecutor {
             flowNavigator.proceedToOutgoing(processInstanceId, token, bpmnElement.getProcessDefinition(), bpmnElement, executor);
             return;
         }
-        dbService.recordInclusiveExpected(processInstanceId, bpmnElement.getId(), count);
+        String miId = bpmnElement.getId();
+        // WO-ENG-7: unique batch UUID per MI entry isolates join-bookkeeping between loop iterations.
+        // Without this, every iteration reuses the same (processInstanceId, miId) key and data from
+        // different iterations can collide (=done=true fires too early — the prod bug 52e6b64c).
+        String batchUuid = UUID.randomUUID().toString();
+        ProcessVariable batchVar = new ProcessVariable();
+        batchVar.setName("_mi_batch_" + miId);
+        batchVar.setType(ProcessVariableType.STRING);
+        batchVar.setValue(batchUuid);
+        dbService.setVariables(processInstanceId, List.of(batchVar));
+        dbService.recordInclusiveExpected(processInstanceId, miId + "::" + batchUuid, count);
         Object collection = miInputCollection(processInstanceId, mi);
         int spawn = mi.isSequential() ? 1 : count;
         for (int i = 0; i < spawn; i++) {
             spawnMiInstance(processInstanceId, token, bpmnElement, mi, collection, i);
         }
-        log.info("{}/{}: Entering multi-instance {}: {} {} instance(s)", processInstanceId, token, bpmnElement.getId(), count, mi.isSequential() ? "sequential" : "parallel");
+        log.info("{}/{}: Entering multi-instance {}: {} {} instance(s) batch={}", processInstanceId, token, miId, count, mi.isSequential() ? "sequential" : "parallel", batchUuid);
     }
 
     /**
@@ -78,21 +88,24 @@ public class MultiInstanceExecutor {
      */
     public boolean multiInstanceContinue(UUID processInstanceId, UUID token, BpmnElementModel element, UUID completedActivityId) {
         String miId = element.getId();
+        // WO-ENG-7: resolve the per-entry batch UUID so bookkeeping is isolated between loop iterations
+        String batchUuid = resolveBatchUuid(processInstanceId, miId);
+        String gatewayKey = miId + "::" + batchUuid;
         MultiInstanceExtensionModel mi = element.getExtensions().getMultiInstanceExtension();
-        dbService.recordParallelGatewayArrival(processInstanceId, miId, completedActivityId.toString());
-        Integer expected = dbService.getInclusiveExpected(processInstanceId, miId);
-        int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, miId).size();
+        dbService.recordParallelGatewayArrival(processInstanceId, gatewayKey, completedActivityId.toString());
+        Integer expected = dbService.getInclusiveExpected(processInstanceId, gatewayKey);
+        int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, gatewayKey).size();
 
         boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, mi);
         if (done) {
-            dbService.clearParallelGatewayArrivals(processInstanceId, miId);
+            dbService.clearParallelGatewayArrivals(processInstanceId, gatewayKey);
             return true;
         }
         if (mi.isSequential()) {
             spawnMiInstance(processInstanceId, token, element, mi, miInputCollection(processInstanceId, mi), arrived);
             log.info("{}/{}: Multi-instance {} starting next sequential instance ({} of {} done)", processInstanceId, token, miId, arrived, expected);
         } else {
-            log.info("{}: Multi-instance {} not ready: {} of {} instances done", processInstanceId, miId, arrived, expected);
+            log.info("{}: Multi-instance {} not ready: {} of {} instances done batch={}", processInstanceId, miId, arrived, expected, batchUuid);
         }
         return false;
     }
@@ -224,6 +237,21 @@ public class MultiInstanceExecutor {
             }
         }
         return null;
+    }
+
+    /**
+     * Reads the per-entry batch UUID written by {@link #enter}. Falls back to {@code miId} for
+     * legacy instances that were started before this fix (WO-ENG-7). The fallback is safe — it
+     * merely opts out of iteration isolation for those instances (which may still suffer the old
+     * bookkeeping collision, but that is pre-existing and will be resolved as those instances
+     * complete their first MI entry).
+     */
+    private String resolveBatchUuid(UUID processInstanceId, String miId) {
+        return dbService.getVariables(processInstanceId).stream()
+            .filter(v -> ("_mi_batch_" + miId).equals(v.getName()))
+            .findFirst()
+            .map(ProcessVariable::getValue)
+            .orElse(miId);
     }
 
     private boolean completionConditionMet(UUID processInstanceId, MultiInstanceExtensionModel mi) {
