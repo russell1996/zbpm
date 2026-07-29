@@ -181,5 +181,6 @@
   "itemsType": "Элемент түрі",
   "minItems": "Мин. элемент",
   "maxItems": "Макс. элемент",
-  "enumValues": "Enum (үтір арқылы)"
+  "enumValues": "Enum (үтір арқылы)",
+  "downloadDiagnostic": "Диагностиканы жүктеу (JSON)"
 }

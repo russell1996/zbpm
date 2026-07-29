@@ -10,8 +10,9 @@ import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import { taskStatusBadge, isTaskActive } from '@/shared/lib/utils'
-import { RefreshCw, ArrowRight } from 'lucide-vue-next'
+import { RefreshCw, ArrowRight, Download } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
 
 const route = useRoute()
 const router = useRouter()
@@ -275,6 +276,29 @@ async function reloadAll() {
   await loadBpmnXml()
 }
 
+function downloadDiagnostic() {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  const json = buildDiagnosticJson({
+    instance: pi,
+    activities: processStore.currentActivities,
+    variables: processStore.currentVariables,
+    userTasks: taskStore.userTasks?.data || [],
+    serviceTasks: taskStore.serviceTasks?.data || [],
+    incidents: incidentStore.incidents?.data || [],
+    bpmnXml: bpmnXml.value,
+  })
+  const blob = new Blob([JSON.stringify(json, null, 2)], {
+    type: 'application/json;charset=utf-8;',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `instance-${pi.id}-diagnostic.json`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
 async function init(id: string) {
   bpmnXml.value = ''
   selectedElement.value = null
@@ -313,14 +337,23 @@ watch(activeTab, onTabChange)
           <p v-if="processStore.currentInstance.processKey" class="text-xs text-muted-foreground font-mono">{{ processStore.currentInstance.processKey }}</p>
           <CopyableId :value="processStore.currentInstance.id" />
         </div>
-        <button
-          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-          :disabled="processStore.loading || tabLoading"
-          @click="reloadAll"
-        >
-          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading || tabLoading }" />
-          {{ t('refresh') }}
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+            @click="downloadDiagnostic"
+          >
+            <Download class="h-4 w-4" />
+            {{ t('downloadDiagnostic') }}
+          </button>
+          <button
+            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+            :disabled="processStore.loading || tabLoading"
+            @click="reloadAll"
+          >
+            <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading || tabLoading }" />
+            {{ t('refresh') }}
+          </button>
+        </div>
       </div>
 
       <div class="flex items-center gap-4 text-sm">
