@@ -56,6 +56,19 @@
         <module>zorrobpm-ce</module>
     </modules>
 
+    <dependencyManagement>
+        <dependencies>
+            <!-- WO-SEC-36: Force spring-framework 7.0.8 to override BOM default 7.0.6 -->
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-framework-bom</artifactId>
+                <version>7.0.8</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <build>
         <plugins>
             <plugin>
