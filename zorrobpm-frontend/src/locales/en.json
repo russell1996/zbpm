@@ -181,5 +181,6 @@
   "itemsType": "Items Type",
   "minItems": "Min Items",
   "maxItems": "Max Items",
-  "enumValues": "Enum (comma-separated)"
+  "enumValues": "Enum (comma-separated)",
+  "downloadDiagnostic": "Download Diagnostic (JSON)"
 }
