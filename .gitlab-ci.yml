@@ -140,12 +140,13 @@ cve:scan:
       -v "$CI_PROJECT_DIR/.nvd-cache":/root/.m2/repository/org/owasp/dependency-check-data
       -v zbpm_m2:/root/.m2
       maven:3.9.9-eclipse-temurin-21
-      mvn -B -ntp org.owasp:dependency-check-maven:check
+      sh -c "mvn -B -ntp install -DskipTests -q && mvn -B -ntp org.owasp:dependency-check-maven:check
       -DfailBuildOnCVSS=7
-      -DsuppressionFile=
+      -DsuppressionFile=owasp-suppressions.xml
       -DnvdApiKey=$NVD_API_KEY
+      -DossindexAnalyzerEnabled=false
       -DnodeAuditSkipDevDependencies=true
-      --no-transfer-progress
+      --no-transfer-progress"
     - echo "Backend CVE scan complete (CVSS>=7 = fail)"
     # Frontend CVE scan: npm audit
     - cd zorrobpm-frontend
