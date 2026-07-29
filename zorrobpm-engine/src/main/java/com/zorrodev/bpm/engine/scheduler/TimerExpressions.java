@@ -23,7 +23,27 @@ public final class TimerExpressions {
     private TimerExpressions() {
     }
 
+    /**
+     * Backward-compatible variant using the JVM's default timezone.
+     * @deprecated Use {@link #firstOccurrence(String, Instant, ZoneId)} with an explicit zone
+     *             (businessZone) for consistent timezone handling (WO-ENG-4).
+     */
+    @Deprecated
     public static Instant firstOccurrence(String cycle, Instant from) {
+        return firstOccurrence(cycle, from, ZoneId.systemDefault());
+    }
+
+    /**
+     * Computes the first occurrence of a {@code timeCycle} expression relative to {@code from},
+     * interpreting cron time-of-day fields in the given timezone.
+     *
+     * @param cycle the cycle expression (ISO repeating interval, bare duration, or Spring cron)
+     * @param from  the reference instant
+     * @param zone  the timezone for cron hour/minute interpretation (WO-ENG-4: use businessZone,
+     *              not ZoneId.systemDefault())
+     * @return the {@link Instant} of the first occurrence
+     */
+    public static Instant firstOccurrence(String cycle, Instant from, ZoneId zone) {
         if (cycle == null || cycle.isBlank()) {
             throw new IllegalArgumentException("Empty timeCycle expression");
         }
@@ -44,7 +64,7 @@ public final class TimerExpressions {
         }
 
         // otherwise a Spring cron expression
-        ZonedDateTime next = CronExpression.parse(spec).next(ZonedDateTime.ofInstant(from, ZoneId.systemDefault()));
+        ZonedDateTime next = CronExpression.parse(spec).next(ZonedDateTime.ofInstant(from, zone));
         if (next == null) {
             throw new IllegalArgumentException("timeCycle cron never fires: " + cycle);
         }

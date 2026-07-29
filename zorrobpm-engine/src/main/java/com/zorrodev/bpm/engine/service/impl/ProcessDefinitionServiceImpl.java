@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
+import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
@@ -53,6 +54,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
     private final DataSource dataSource;
+    private final ElementSupport elementSupport;
 
     /** Cached database product name — detected once on first use. */
     private volatile String databaseProduct;
@@ -233,11 +235,10 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             if (timer == null || timer.getType() == null || timer.getExpression() == null) {
                 continue;
             }
-            Instant dueAt = switch (timer.getType()) {
-                case DURATION -> Instant.now().plus(java.time.Duration.parse(timer.getExpression()));
-                case DATE -> Instant.parse(timer.getExpression());
-                case CYCLE -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
-            };
+            // WO-ENG-4: delegate to ElementSupport which uses businessZone (not ZoneId.systemDefault())
+            // for CYCLE, and provides a single source of truth for all timer literal parsing.
+            // This also eliminates the code-clone switch that duplicated ElementSupport.computeDueAtFallback.
+            Instant dueAt = elementSupport.computeDueAt(timer, start.getId());
             dbService.createTimerStartJob(key, processDefinitionId, start.getId(), dueAt);
         }
     }
