@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
+import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.service.FileService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,6 +68,9 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private javax.sql.DataSource dataSource;
 
+    @Mock
+    private ElementSupport elementSupport;
+
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
@@ -88,7 +92,8 @@ class ProcessDefinitionServiceImplTest {
             formRepository,
             jdbcTemplate,
             transactionTemplate,
-            dataSource
+            dataSource,
+            elementSupport
         );
     }
 

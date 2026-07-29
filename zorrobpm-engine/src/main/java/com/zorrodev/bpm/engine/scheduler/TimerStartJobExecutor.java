@@ -10,10 +10,12 @@ import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,6 +32,10 @@ public class TimerStartJobExecutor {
     private final DBService dbService;
     private final ActivityService activityService;
     private final BpmnService bpmnService;
+
+    // WO-ENG-4: explicit business zone for timer cycle/cron resolution
+    @Value("${zorrobpm.business-timezone:Asia/Almaty}")
+    private ZoneId businessZone;
 
     @Transactional
     public void fire(UUID timerStartJobId, UUID processDefinitionId, String elementId) {
@@ -64,7 +70,8 @@ public class TimerStartJobExecutor {
         if (!infinite && remaining != null && remaining <= 0) {
             return; // done
         }
-        Instant next = TimerExpressions.firstOccurrence(expression, Instant.now());
+        // WO-ENG-4: use businessZone, not ZoneId.systemDefault()
+        Instant next = TimerExpressions.firstOccurrence(expression, Instant.now(), businessZone);
         dbService.createTimerStartJob(model.getKey(), processDefinitionId, elementId, next);
         log.info("Rescheduled repeating timer start {} of {} for {} (remaining={})", elementId, model.getKey(), next, remaining);
     }

@@ -14,10 +14,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
 import org.camunda.feel.api.FeelEngineApi;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,6 +40,14 @@ public class ElementSupport {
     private final ScriptService scriptService;
     private final FeelEngineApi feelEngineApi;
     private final tools.jackson.databind.ObjectMapper objectMapper;
+
+    /**
+     * Business timezone for interpreting zone-naive FEEL date/time values.
+     * Configured via {@code zorrobpm.business-timezone} (default {@code Asia/Almaty}).
+     * WO-ENG-4: zone-naive LocalDateTime/LocalDate is interpreted in this zone rather than UTC.
+     */
+    @Value("${zorrobpm.business-timezone:Asia/Almaty}")
+    private ZoneId businessZone;
 
     /**
      * Reads the activity, takes a pessimistic write lock on its process instance, then re-reads the
@@ -262,11 +272,21 @@ public class ElementSupport {
                     if (value instanceof Instant i) {
                         yield i;
                     }
+                    if (value instanceof java.time.OffsetDateTime odt) {
+                        // WO-ENG-4: explicit offset → use it
+                        yield odt.toInstant();
+                    }
+                    if (value instanceof java.time.ZonedDateTime zdt) {
+                        // WO-ENG-4: explicit zone → use it
+                        yield zdt.toInstant();
+                    }
                     if (value instanceof java.time.LocalDateTime ldt) {
-                        yield ldt.toInstant(java.time.ZoneOffset.UTC);
+                        // WO-ENG-4: zone-naive → interpret in businessZone, not UTC
+                        yield ldt.atZone(businessZone).toInstant();
                     }
                     if (value instanceof java.time.LocalDate ld) {
-                        yield ld.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+                        // WO-ENG-4: zone-naive → interpret in businessZone, not UTC
+                        yield ld.atStartOfDay(businessZone).toInstant();
                     }
                     if (value instanceof java.util.Date d) {
                         yield d.toInstant();
@@ -280,7 +300,8 @@ public class ElementSupport {
                 }
                 case CYCLE -> {
                     try {
-                        yield com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(value.toString(), Instant.now());
+                        // WO-ENG-4: use businessZone for cycle/cron zone resolution
+                        yield com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(value.toString(), Instant.now(), businessZone);
                     } catch (Exception e) {
                         throw new com.zorrodev.bpm.contract.exception.EngineException(
                             "Timer event " + elementId + ": FEEL expression '" + expression + "' did not resolve to a valid cycle expression (got: " + value + ")", e);
@@ -300,7 +321,7 @@ public class ElementSupport {
         return switch (timer.getType()) {
             case DURATION -> Instant.now().plus(Duration.parse(timer.getExpression()));
             case DATE -> Instant.parse(timer.getExpression());
-            case CYCLE -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now());
+            case CYCLE -> com.zorrodev.bpm.engine.scheduler.TimerExpressions.firstOccurrence(timer.getExpression(), Instant.now(), businessZone);
         };
     }
 

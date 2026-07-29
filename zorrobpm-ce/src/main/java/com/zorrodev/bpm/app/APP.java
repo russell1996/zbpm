@@ -15,7 +15,7 @@ import java.util.TimeZone;
 public class APP implements CommandLineRunner {
 
     public static void main(String[] args) {
-        TimeZone.setDefault(TimeZone.getTimeZone("Asia/Aqtau"));
+        TimeZone.setDefault(TimeZone.getTimeZone("Asia/Almaty")); // WO-ENG-4: sync with Docker ENV TZ=Asia/Almaty
         SpringApplication.run(APP.class, args);
     }
 
