@@ -148,10 +148,13 @@ cve:scan:
       -DnodeAuditSkipDevDependencies=true
       --no-transfer-progress"
     - echo "Backend CVE scan complete (CVSS>=7 = fail)"
-    # Frontend CVE scan: npm audit
-    - cd zorrobpm-frontend
-    - npm ci --ignore-scripts
-    - npm audit --audit-level=high --omit=dev || echo "npm audit found vulnerabilities (non-blocking)"
+    # Frontend CVE scan: npm audit (containerized — the zbpm runner has no npm on host,
+    # same node:22-alpine base as zorrobpm-frontend/Dockerfile's builder stage)
+    - >-
+      docker run --rm
+      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
+      node:22-alpine
+      sh -c "npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev || echo 'npm audit found vulnerabilities (non-blocking)'"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
