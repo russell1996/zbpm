@@ -212,9 +212,12 @@ class CandidateGroupMembershipIntegrationTest {
 
     @Test
     void criterion3_assigneeCompletesOwnTask_returns200() throws Exception {
-        // Ensure user1 exists (may be created by AssigneeCheckIntegrationTest)
+        // Ensure user1 exists (may be shared with AssigneeCheckIntegrationTest — existsByUsername guard)
+        UiUserEntity user1Entity;
         if (!userRepository.existsByUsername("user1")) {
-            createUser("user1", "USER");
+            user1Entity = createUser("user1", "USER");
+        } else {
+            user1Entity = userRepository.findByUsername("user1").orElseThrow();
         }
         String user1Jwt = login("user1", "pass1");
 
@@ -231,6 +234,17 @@ class CandidateGroupMembershipIntegrationTest {
                 .andReturn();
         UUID assigneeDefId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
+
+        // WO-TEST-1: add user1 as process member (canCompleteUserTask requires membership)
+        String key = mapper.readTree(deployResult.getResponse().getContentAsString()).get("key").asText();
+        ProcessEntity assigneeProcess = processRepository.findByDefinitionKey(key).orElseThrow();
+        ProcessMemberEntity pm = new ProcessMemberEntity();
+        pm.setProcessId(assigneeProcess.getId());
+        pm.setUserId(user1Entity.getId());
+        pm.setRole("OWNER");
+        pm.setAddedBy(user1Entity.getId());
+        pm.setAddedAt(Instant.now());
+        processMemberRepository.save(pm);
 
         StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
         startDto.setProcessDefinitionId(assigneeDefId);
