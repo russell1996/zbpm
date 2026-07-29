@@ -9,6 +9,7 @@ services:
       POSTGRES_DB: ${DB_NAME:-zorrobpm-db}
       POSTGRES_USER: ${DB_USERNAME:-zorrodev}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
@@ -30,6 +31,7 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-zorrodev}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     ports:
@@ -81,6 +83,7 @@ services:
       ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}
       # Browser origins allowed for the SPA (same-origin via nginx doesn't need this, but set for safety)
       ZORROBPM_CORS_ORIGINS: ${ZORROBPM_CORS_ORIGINS:-https://zorro.i-smet.kz}
+      TZ: Asia/Almaty
     volumes:
       - app-files:/app/files
     ports:
@@ -95,6 +98,8 @@ services:
       context: ./zorrobpm-frontend
       dockerfile: Dockerfile
     image: zorrobpm-frontend:${FRONTEND_TAG:-latest}
+    environment:
+      TZ: Asia/Almaty
     container_name: zorrobpm-frontend
     restart: unless-stopped
     depends_on:
