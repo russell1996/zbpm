@@ -113,6 +113,11 @@ public class EventTrigger {
 
         if (interrupting) {
             dbService.cancelActivity(hostActivityId);
+            // WO-ENG-3: Cancel all remaining active activities on this token.  For multi-instance,
+            // this terminates all sibling MI instances and their inner tasks (they share the same
+            // token).  For a single-instance host, the host was already cancelled above so this
+            // call is a safe no-op (the host is no longer CREATED/IN_PROGRESS).
+            dbService.cancelActiveActivitiesForToken(tokenId);
             // WO-ENG-1: An interrupting boundary replaces the host's branch path.  The original branch
             // (e.g. host → join → endEvent) is cancelled; the boundary's continuation (boundary →
             // boundary-end) takes its place.  Decrement the token's pending_branches counter so that
@@ -129,7 +134,7 @@ public class EventTrigger {
             Token branch = dbService.createToken(tokenId);
             log.info("{}/{}: Boundary {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
             flowNavigator.proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary, executor);
-            rearmRepeatingBoundaryTimer(hostActivityId, boundary);
+            rearmRepeatingBoundaryTimer(hostActivityId, boundary, processInstanceId);
         }
         return true;
     }
@@ -137,7 +142,7 @@ public class EventTrigger {
     /**
      * Re-arms a repeating non-interrupting boundary timer after it fires.
      */
-    private void rearmRepeatingBoundaryTimer(UUID hostActivityId, BpmnElementModel boundary) {
+    private void rearmRepeatingBoundaryTimer(UUID hostActivityId, BpmnElementModel boundary, UUID processInstanceId) {
         if (boundary.getType() != BpmnElementType.BOUNDARY_TIMER_EVENT) {
             return;
         }
@@ -157,7 +162,7 @@ public class EventTrigger {
         if (!infinite && remaining != null && remaining <= 0) {
             return;
         }
-        dbService.createTimerJob(hostActivityId, elementSupport.computeDueAt(boundary), boundary.getId(), remaining);
+        dbService.createTimerJob(hostActivityId, elementSupport.computeDueAt(boundary, processInstanceId), boundary.getId(), remaining);
     }
 
     /**
@@ -247,7 +252,7 @@ public class EventTrigger {
                 dbService.createEventSubprocessSignalSubscription(processInstanceId, ext.getTriggerSignalName(), element.getId());
                 log.info("{}: Event sub-process {} subscribed to signal '{}'", processInstanceId, element.getId(), ext.getTriggerSignalName());
             } else if (ext.getTriggerTimer() != null) {
-                Instant dueAt = elementSupport.computeDueAt(ext.getTriggerTimer(), element.getId());
+                Instant dueAt = elementSupport.computeDueAt(ext.getTriggerTimer(), element.getId(), processInstanceId);
                 dbService.createEventSubprocessTimerJob(processInstanceId, dueAt, element.getId());
                 log.info("{}: Event sub-process {} scheduled timer for {}", processInstanceId, element.getId(), dueAt);
             }
