@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -45,5 +46,35 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().get("message")).isEqualTo("An unexpected error occurred");
+    }
+
+    // --- WO-BE-7: handleNotFound must not leak internal details ---
+
+    @Test
+    void handleNotFound_returnsGenericMessage_notExceptionDetails() {
+        NoSuchElementException ex = new NoSuchElementException("Internal path: /data/db/user/123");
+
+        ResponseEntity<Map<String, String>> response = handler.handleNotFound(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().get("code")).isEqualTo("NOT_FOUND");
+        // The message must NOT contain the internal details
+        assertThat(response.getBody().get("message"))
+            .doesNotContain("/data/db/user/123")
+            .doesNotContain("Internal path");
+        // It must be the generic message
+        assertThat(response.getBody().get("message")).isEqualTo("Resource not found");
+    }
+
+    @Test
+    void handleNotFound_nullMessage_alsoReturnsGeneric() {
+        NoSuchElementException ex = new NoSuchElementException();
+
+        ResponseEntity<Map<String, String>> response = handler.handleNotFound(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().get("message")).isEqualTo("Resource not found");
     }
 }

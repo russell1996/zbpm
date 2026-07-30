@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.DmnDecision;
 import com.zorrodev.bpm.engine.service.DmnService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -17,6 +18,7 @@ import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class DmnResource implements DmnContract {
 
     private final DmnService dmnService;
@@ -31,7 +33,8 @@ public class DmnResource implements DmnContract {
         try {
             return dmnService.getDecision(decisionId);
         } catch (EngineException e) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
+            log.warn("DMN decision not found: {}", e.getMessage());
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Decision not found");
         }
     }
 
@@ -41,7 +44,8 @@ public class DmnResource implements DmnContract {
         try {
             result = dmnService.evaluate(decisionId, dto.getVariables());
         } catch (EngineException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+            log.warn("DMN evaluation error: {}", e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Decision evaluation failed");
         }
         // always return a name -> value object for the UI; a single-output decision is wrapped under "result"
         return result instanceof Map ? result : Map.of("result", result == null ? "" : result);
