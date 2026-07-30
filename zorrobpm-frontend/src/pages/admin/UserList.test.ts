@@ -3,6 +3,10 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import UserList from './UserList.vue'
 
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+
 vi.mock('@/services/userService', () => ({
   getUsers: vi.fn().mockResolvedValue({
     data: [
@@ -23,20 +27,20 @@ describe('UserList render', () => {
     const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
     await vi.waitFor(() => { expect(wrapper.text()).toContain('alice') }, { timeout: 2000 })
     expect(wrapper.text()).toContain('bob')
-    expect(wrapper.text()).toContain('2 users')
+    expect(wrapper.text()).toContain('usersCount')
   })
 
   it('renders user details when expanded', async () => {
     const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
     await vi.waitFor(() => { expect(wrapper.text()).toContain('alice') }, { timeout: 2000 })
 
-    // Click Details button for first user
-    const detailsBtns = wrapper.findAll('button').filter(b => b.text().includes('Details'))
+    // Click Details button for first user (i18n mock returns key)
+    const detailsBtns = wrapper.findAll('button').filter(b => b.text().includes('details'))
     expect(detailsBtns.length).toBeGreaterThan(0)
     await detailsBtns[0].trigger('click')
     await wrapper.vm.$nextTick()
 
-    // UserDetailPanel should be visible
-    expect(wrapper.text()).toContain('API Key')
+    // UserDetailPanel should be visible (i18n mock returns key)
+    expect(wrapper.text()).toContain('apiKey')
   })
 })

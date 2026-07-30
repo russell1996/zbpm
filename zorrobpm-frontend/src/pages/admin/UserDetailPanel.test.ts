@@ -4,6 +4,10 @@ import { mount } from '@vue/test-utils'
 import UserDetailPanel from './UserDetailPanel.vue'
 import * as admin from '@/services/adminService'
 
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+
 const toastError = vi.fn()
 const toastSuccess = vi.fn()
 vi.mock('@/composables/useToast', () => ({
@@ -60,7 +64,7 @@ describe('UserDetailPanel', () => {
       expect(wrapper.text()).toContain('proc-a')
     }, { timeout: 2000 })
 
-    expect(wrapper.text()).toContain('OWNER')
+    expect(wrapper.text()).toContain('ownerRole')
   })
 
   it('has add membership form', async () => {
@@ -70,10 +74,10 @@ describe('UserDetailPanel', () => {
     })
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('Process Memberships')
+    expect(wrapper.text()).toContain('processMemberships')
 
     const buttons = wrapper.findAll('button')
-    const addBtn = buttons.find(b => b.text().includes('Add'))
+    const addBtn = buttons.find(b => b.text().includes('add'))
     expect(addBtn).toBeDefined()
   })
 
@@ -95,10 +99,10 @@ describe('UserDetailPanel', () => {
     })
 
     await vi.waitFor(() => {
-      expect(wrapper.text()).toContain('Create new key')
+      expect(wrapper.text()).toContain('createNewKey')
     }, { timeout: 2000 })
 
-    expect(wrapper.text()).toContain('Revoked')
+    expect(wrapper.text()).toContain('revoked')
   })
 
   it('Role change on membership row calls changeMemberRole', async () => {
@@ -147,8 +151,8 @@ describe('UserDetailPanel', () => {
     // Checkbox for "Full" should be visible
     const checkboxes = wrapper.findAll('input[type="checkbox"]')
     expect(checkboxes.length).toBeGreaterThan(0)
-    // "Full" label should be present
-    expect(wrapper.text()).toContain('Full')
+    // "Full" label should be present (i18n mock returns key)
+    expect(wrapper.text()).toContain('full')
   })
 
   it('Add membership selects only non-member processes', async () => {
@@ -162,7 +166,7 @@ describe('UserDetailPanel', () => {
     }, { timeout: 2000 })
 
     // Open add membership form
-    const addBtn = wrapper.findAll('button').find(b => b.text().includes('Add'))
+    const addBtn = wrapper.findAll('button').find(b => b.text().includes('add'))
     await addBtn!.trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -193,7 +197,7 @@ describe('UserDetailPanel', () => {
     }, { timeout: 2000 })
 
     // Open add membership form
-    const addBtn = wrapper.findAll('button').find(b => b.text().includes('Add'))
+    const addBtn = wrapper.findAll('button').find(b => b.text().includes('add'))
     await addBtn!.trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -203,7 +207,7 @@ describe('UserDetailPanel', () => {
     await processSelect!.setValue('proc-b')
 
     // Click Add
-    const submitBtn = wrapper.findAll('button').find(b => b.text() === 'Add')
+    const submitBtn = wrapper.findAll('button').find(b => b.text() === 'add')
     await submitBtn!.trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -212,6 +216,6 @@ describe('UserDetailPanel', () => {
       expect(toastError).toHaveBeenCalled()
     }, { timeout: 2000 })
 
-    expect(toastError).toHaveBeenCalledWith('User is already a member of this process')
+    expect(toastError).toHaveBeenCalledWith('alreadyMember')
   })
 })

@@ -7,6 +7,10 @@ import ChangePassword from '@/pages/ChangePassword.vue'
 import { useAuthStore } from '@/stores/auth'
 import * as userService from '@/services/userService'
 
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+
 vi.mock('vue-router', () => ({
   useRouter: vi.fn(),
   useRoute: vi.fn(),
@@ -51,7 +55,7 @@ describe('ChangePassword.vue', () => {
 
   it('renders the form with password inputs and submit button', () => {
     const wrapper = mountComponent()
-    expect(wrapper.find('h1').text()).toBe('Change Password')
+    expect(wrapper.find('h1').text()).toBe('changePassword')
     expect(wrapper.find('#newPassword').exists()).toBe(true)
     expect(wrapper.find('#confirmPassword').exists()).toBe(true)
     expect(wrapper.find('button[type="submit"]').exists()).toBe(true)
@@ -61,7 +65,7 @@ describe('ChangePassword.vue', () => {
     const wrapper = mountComponent()
     await wrapper.find('#newPassword').setValue('newpass123')
     await wrapper.find('#confirmPassword').setValue('differentpass')
-    expect(wrapper.text()).toContain('Passwords do not match')
+    expect(wrapper.text()).toContain('passwordsDoNotMatch')
   })
 
   it('submit button disabled when passwords mismatch', async () => {

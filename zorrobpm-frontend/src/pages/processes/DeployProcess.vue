@@ -3,10 +3,12 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { deployProcessDefinition } from '@/services/processService'
 import { useToast } from '@/composables/useToast'
+import { useI18n } from 'vue-i18n'
 import { Upload, FileText, AlertCircle, CheckCircle } from 'lucide-vue-next'
 
 const router = useRouter()
 const toast = useToast()
+const { t } = useI18n()
 
 const bpmnText = ref('')
 const fileName = ref('')
@@ -44,7 +46,7 @@ function onDragOver(event: DragEvent) {
 
 async function deploy() {
   if (!bpmnText.value.trim()) {
-    error.value = 'Please provide BPMN XML content'
+    error.value = t('bpmnRequired')
     return
   }
   loading.value = true
@@ -53,11 +55,11 @@ async function deploy() {
   try {
     const result = await deployProcessDefinition(bpmnText.value)
     success.value = true
-    toast.success('Process deployed successfully', {
-      action: { label: 'View Definition', onClick: () => router.push(`/processes/definitions/${result.id}`) },
+    toast.success(t('deploySuccessToast'), {
+      action: { label: t('viewDefinition'), onClick: () => router.push(`/processes/definitions/${result.id}`) },
     })
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to deploy process'
+    error.value = e instanceof Error ? e.message : t('failedToDeploy')
     toast.error(error.value)
   } finally {
     loading.value = false
@@ -74,7 +76,7 @@ function clear() {
 
 <template>
   <div class="space-y-6 max-w-4xl">
-    <h1 class="text-2xl font-bold">Deploy BPMN Process</h1>
+    <h1 class="text-2xl font-bold">{{ t('deployBpmnProcess') }}</h1>
 
     <div
       v-if="!bpmnText"
@@ -84,8 +86,8 @@ function clear() {
       @click="($refs.fileInput as HTMLInputElement).click()"
     >
       <Upload class="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-      <p class="text-lg font-medium mb-2">Drop BPMN file here or click to browse</p>
-      <p class="text-sm text-muted-foreground">Supports .bpmn XML files</p>
+      <p class="text-lg font-medium mb-2">{{ t('dropBpmn') }}</p>
+      <p class="text-sm text-muted-foreground">{{ t('supportsBpmn') }}</p>
       <input ref="fileInput" type="file" accept=".bpmn,.xml" class="hidden" @change="onFileChange" />
     </div>
 
@@ -94,17 +96,17 @@ function clear() {
         <div class="flex items-center gap-3">
           <FileText class="h-5 w-5 text-primary" />
           <div>
-            <p class="font-medium">{{ fileName || 'BPMN XML' }}</p>
-            <p class="text-xs text-muted-foreground">{{ bpmnText.length }} characters</p>
+            <p class="font-medium">{{ fileName || t('bpmnXml') }}</p>
+            <p class="text-xs text-muted-foreground">{{ bpmnText.length }} {{ t('characters') }}</p>
           </div>
         </div>
-        <button class="text-sm text-muted-foreground hover:text-foreground" @click="clear">Clear</button>
+        <button class="text-sm text-muted-foreground hover:text-foreground" @click="clear">{{ t('clear') }}</button>
       </div>
 
       <textarea
         v-model="bpmnText"
         class="w-full h-96 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-        placeholder="Paste BPMN XML here..."
+        :placeholder="t('pasteBpmnHere')"
       />
 
       <div v-if="error" class="flex items-center gap-2 text-sm text-red-500">
@@ -114,7 +116,7 @@ function clear() {
 
       <div v-if="success" class="flex items-center gap-2 text-sm text-green-600">
         <CheckCircle class="h-4 w-4" />
-        Process deployed successfully! Redirecting...
+        {{ t('deploySuccess') }}
       </div>
 
       <div class="flex justify-end gap-3">
@@ -122,14 +124,14 @@ function clear() {
           class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
           @click="clear"
         >
-          Cancel
+          {{ t('cancel') }}
         </button>
         <button
           class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
           :disabled="loading || !bpmnText.trim()"
           @click="deploy"
         >
-          {{ loading ? 'Deploying...' : 'Deploy' }}
+          {{ loading ? t('deploying') : t('deploy') }}
         </button>
       </div>
     </template>
