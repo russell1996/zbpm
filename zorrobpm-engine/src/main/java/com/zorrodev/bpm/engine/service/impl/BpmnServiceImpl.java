@@ -47,12 +47,10 @@ public class BpmnServiceImpl implements BpmnService {
         return cache.get(id, uuid -> {
             String bpmn;
             try {
-                bpmn = fileService.getFileBytes(uuid);
+                bpmn = fileService.getFileBytes(uuid)
+                    .orElseThrow(() -> new EngineException("BPMN file not found for definition " + uuid));
             } catch (IOException e) {
                 throw new EngineException("Failed to read BPMN file for definition " + uuid, e);
-            }
-            if (bpmn == null) {
-                throw new EngineException("BPMN file not found for definition " + uuid);
             }
             return bpmnParseService.parse(bpmn);
         });

@@ -54,18 +54,19 @@ class FileServiceImplTest {
         entity.setBpmn("<bpmn/>");
         when(bpmnRepository.findById(id)).thenReturn(Optional.of(entity));
 
-        String result = fileService.getFileBytes(id);
+        Optional<String> result = fileService.getFileBytes(id);
 
-        assertThat(result).isEqualTo("<bpmn/>");
+        assertThat(result).isPresent();
+        assertThat(result.get()).isEqualTo("<bpmn/>");
     }
 
     @Test
-    void getFileBytes_returnsNullWhenMissing() throws IOException {
+    void getFileBytes_returnsEmptyWhenMissing() throws IOException {
         UUID id = UUID.randomUUID();
         when(bpmnRepository.findById(id)).thenReturn(Optional.empty());
 
-        String result = fileService.getFileBytes(id);
+        Optional<String> result = fileService.getFileBytes(id);
 
-        assertThat(result).isNull();
+        assertThat(result).isEmpty();
     }
 }

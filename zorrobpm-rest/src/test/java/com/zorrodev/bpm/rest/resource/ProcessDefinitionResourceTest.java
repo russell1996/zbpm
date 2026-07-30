@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -148,7 +149,7 @@ class ProcessDefinitionResourceTest {
     void getProcessDefinitionXml_delegatesToFileService() throws Exception {
         UUID id = UUID.randomUUID();
         stubSuperAdmin();
-        when(fileService.getFileBytes(id)).thenReturn("<bpmn/>");
+        when(fileService.getFileBytes(id)).thenReturn(Optional.of("<bpmn/>"));
 
         String result = resource.getProcessDefinitionXml(id);
         assertThat(result).isEqualTo("<bpmn/>");
