@@ -5,7 +5,9 @@ import type { MessageSubscription } from '@/types/api'
 import { Mail, CheckCircle, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const messages = ref<MessageSubscription[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -31,7 +33,7 @@ function exportData() {
     processInstanceId: m.processInstanceId || '',
     messageName: m.messageName,
     correlationKey: m.correlationKey || '',
-    status: m.consumed ? 'Consumed' : 'Pending',
+    status: m.consumed ? t('consumed') : t('pending'),
     createdAt: m.createdAt,
   })), 'message-subscriptions.csv')
 }
@@ -40,7 +42,7 @@ function exportData() {
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">Message Subscriptions</h1>
+      <h1 class="text-2xl font-bold">{{ t('messageSubscriptions') }}</h1>
       <div class="flex items-center gap-2">
         <button
           class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
@@ -48,7 +50,7 @@ function exportData() {
           @click="load"
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
-          Refresh
+          {{ t('refresh') }}
         </button>
         <button
           v-if="messages.length"
@@ -56,22 +58,22 @@ function exportData() {
           @click="exportData"
         >
           <Download class="h-4 w-4" />
-          Export CSV
+          {{ t('export') }}
         </button>
       </div>
     </div>
 
-    <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
     <div v-else class="border border-border rounded-lg overflow-hidden">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">ID</th>
-            <th class="px-4 py-3 text-left font-medium">Message Name</th>
-            <th class="px-4 py-3 text-left font-medium">Process Instance</th>
-            <th class="px-4 py-3 text-left font-medium">Status</th>
-            <th class="px-4 py-3 text-left font-medium">Created</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('id') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('messageName') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('processInstance') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -87,18 +89,18 @@ function exportData() {
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', msg.consumed ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
                 <CheckCircle v-if="msg.consumed" class="h-3 w-3" />
-                {{ msg.consumed ? 'Consumed' : 'Pending' }}
+                {{ msg.consumed ? t('consumed') : t('pending') }}
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ new Date(msg.createdAt).toLocaleString() }}</td>
           </tr>
           <tr v-if="!messages.length">
-            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">No message subscriptions found</td>
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noMessages') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div v-if="total" class="text-sm text-muted-foreground">{{ total }} total</div>
+    <div v-if="total" class="text-sm text-muted-foreground">{{ total }} {{ t('total') }}</div>
   </div>
 </template>

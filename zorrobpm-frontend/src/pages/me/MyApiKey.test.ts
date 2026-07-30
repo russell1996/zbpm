@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MyApiKey from './MyApiKey.vue'
 
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+
 // Mock the apiKeyService
 vi.mock('@/services/apiKeyService', () => ({
   getMyApiKey: vi.fn(),

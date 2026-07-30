@@ -3,7 +3,9 @@ import { ref, onMounted } from 'vue'
 import { getProcessInstances } from '@/services/instanceService'
 import { getUserTasks } from '@/services/taskService'
 import { getIncidents } from '@/services/incidentService'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const loading = ref(true)
 
 const totalInstances = ref(0)
@@ -62,35 +64,35 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-6">
-    <h1 class="text-2xl font-bold">Analytics</h1>
+    <h1 class="text-2xl font-bold">{{ t('analytics') }}</h1>
 
-    <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
     <template v-else>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div class="border border-border rounded-lg p-4 bg-card">
-          <h3 class="text-sm font-medium text-muted-foreground mb-1">Completion Rate</h3>
+          <h3 class="text-sm font-medium text-muted-foreground mb-1">{{ t('completionRate') }}</h3>
           <div class="text-3xl font-bold">{{ completionRate }}%</div>
-          <p class="text-xs text-muted-foreground mt-1">{{ completedInstances }} of {{ totalInstances }} completed</p>
+          <p class="text-xs text-muted-foreground mt-1">{{ t('ofCompleted', { completed: completedInstances, total: totalInstances }) }}</p>
         </div>
         <div class="border border-border rounded-lg p-4 bg-card">
-          <h3 class="text-sm font-medium text-muted-foreground mb-1">Average Duration</h3>
+          <h3 class="text-sm font-medium text-muted-foreground mb-1">{{ t('averageDuration') }}</h3>
           <div class="text-3xl font-bold">{{ avgDuration }}</div>
-          <p class="text-xs text-muted-foreground mt-1">Across completed instances</p>
+          <p class="text-xs text-muted-foreground mt-1">{{ t('acrossCompletedInstances') }}</p>
         </div>
         <div class="border border-border rounded-lg p-4 bg-card">
-          <h3 class="text-sm font-medium text-muted-foreground mb-1">Incident Rate</h3>
+          <h3 class="text-sm font-medium text-muted-foreground mb-1">{{ t('incidentRate') }}</h3>
           <div class="text-3xl font-bold">{{ incidentRate }}%</div>
-          <p class="text-xs text-muted-foreground mt-1">{{ totalIncidents }} incidents / {{ totalInstances }} instances</p>
+          <p class="text-xs text-muted-foreground mt-1">{{ t('incidentsPerInstances', { incidents: totalIncidents, instances: totalInstances }) }}</p>
         </div>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div class="border border-border rounded-lg p-6 bg-card">
-          <h2 class="text-lg font-bold mb-4">Process Instances</h2>
+          <h2 class="text-lg font-bold mb-4">{{ t('instances') }}</h2>
           <div class="space-y-3">
             <div class="flex items-center justify-between">
-              <span class="text-sm">Running</span>
+              <span class="text-sm">{{ t('running') }}</span>
               <div class="flex items-center gap-2">
                 <div class="w-32 h-2 bg-muted rounded-full overflow-hidden">
                   <div class="h-full bg-blue-500 rounded-full" :style="{ width: `${totalInstances ? (runningInstances / totalInstances) * 100 : 0}%` }" />
@@ -99,7 +101,7 @@ onMounted(async () => {
               </div>
             </div>
             <div class="flex items-center justify-between">
-              <span class="text-sm">Completed</span>
+              <span class="text-sm">{{ t('completed') }}</span>
               <div class="flex items-center gap-2">
                 <div class="w-32 h-2 bg-muted rounded-full overflow-hidden">
                   <div class="h-full bg-green-500 rounded-full" :style="{ width: `${totalInstances ? (completedInstances / totalInstances) * 100 : 0}%` }" />
@@ -111,10 +113,10 @@ onMounted(async () => {
         </div>
 
         <div class="border border-border rounded-lg p-6 bg-card">
-          <h2 class="text-lg font-bold mb-4">Tasks</h2>
+          <h2 class="text-lg font-bold mb-4">{{ t('tasks') }}</h2>
           <div class="space-y-3">
             <div class="flex items-center justify-between">
-              <span class="text-sm">Active</span>
+              <span class="text-sm">{{ t('active') }}</span>
               <div class="flex items-center gap-2">
                 <div class="w-32 h-2 bg-muted rounded-full overflow-hidden">
                   <div class="h-full bg-yellow-500 rounded-full" :style="{ width: `${totalTasks ? ((totalTasks - completedTasks) / totalTasks) * 100 : 0}%` }" />
@@ -123,7 +125,7 @@ onMounted(async () => {
               </div>
             </div>
             <div class="flex items-center justify-between">
-              <span class="text-sm">Completed</span>
+              <span class="text-sm">{{ t('completed') }}</span>
               <div class="flex items-center gap-2">
                 <div class="w-32 h-2 bg-muted rounded-full overflow-hidden">
                   <div class="h-full bg-green-500 rounded-full" :style="{ width: `${totalTasks ? (completedTasks / totalTasks) * 100 : 0}%` }" />
@@ -135,10 +137,10 @@ onMounted(async () => {
         </div>
 
         <div class="border border-border rounded-lg p-6 bg-card">
-          <h2 class="text-lg font-bold mb-4">Incidents</h2>
+          <h2 class="text-lg font-bold mb-4">{{ t('incidents') }}</h2>
           <div class="space-y-3">
             <div class="flex items-center justify-between">
-              <span class="text-sm">Open</span>
+              <span class="text-sm">{{ t('open') }}</span>
               <div class="flex items-center gap-2">
                 <div class="w-32 h-2 bg-muted rounded-full overflow-hidden">
                   <div class="h-full bg-red-500 rounded-full" :style="{ width: `${totalIncidents ? ((totalIncidents - resolvedIncidents) / totalIncidents) * 100 : 0}%` }" />
@@ -147,7 +149,7 @@ onMounted(async () => {
               </div>
             </div>
             <div class="flex items-center justify-between">
-              <span class="text-sm">Resolved</span>
+              <span class="text-sm">{{ t('resolved') }}</span>
               <div class="flex items-center gap-2">
                 <div class="w-32 h-2 bg-muted rounded-full overflow-hidden">
                   <div class="h-full bg-green-500 rounded-full" :style="{ width: `${totalIncidents ? (resolvedIncidents / totalIncidents) * 100 : 0}%` }" />
@@ -159,22 +161,22 @@ onMounted(async () => {
         </div>
 
         <div class="border border-border rounded-lg p-6 bg-card">
-          <h2 class="text-lg font-bold mb-4">Summary</h2>
+          <h2 class="text-lg font-bold mb-4">{{ t('summary') }}</h2>
           <div class="space-y-2 text-sm">
             <div class="flex justify-between">
-              <span class="text-muted-foreground">Total Process Definitions</span>
+              <span class="text-muted-foreground">{{ t('totalProcessDefinitions') }}</span>
               <span class="font-medium">—</span>
             </div>
             <div class="flex justify-between">
-              <span class="text-muted-foreground">Total Process Instances</span>
+              <span class="text-muted-foreground">{{ t('totalProcessInstances') }}</span>
               <span class="font-medium">{{ totalInstances }}</span>
             </div>
             <div class="flex justify-between">
-              <span class="text-muted-foreground">Total Tasks</span>
+              <span class="text-muted-foreground">{{ t('totalTasks') }}</span>
               <span class="font-medium">{{ totalTasks }}</span>
             </div>
             <div class="flex justify-between">
-              <span class="text-muted-foreground">Total Incidents</span>
+              <span class="text-muted-foreground">{{ t('totalIncidents') }}</span>
               <span class="font-medium">{{ totalIncidents }}</span>
             </div>
           </div>

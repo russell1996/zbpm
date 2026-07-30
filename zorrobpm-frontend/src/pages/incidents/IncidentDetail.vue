@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useIncidentStore } from '@/stores/incident'
 import { useToast } from '@/composables/useToast'
+import { useI18n } from 'vue-i18n'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
@@ -10,6 +11,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useIncidentStore()
 const toast = useToast()
+const { t } = useI18n()
 
 const showResolveModal = ref(false)
 const resolveVars = ref<{ name: string; type: string; value: string }[]>([])
@@ -25,7 +27,7 @@ function addVariable() {
       try {
         JSON.parse(newVarValue.value)
       } catch {
-        jsonError.value = 'Invalid JSON'
+        jsonError.value = t('invalidJson')
         return
       }
     }
@@ -50,7 +52,7 @@ async function resolve() {
   }))
   await store.resolveIncident(route.params.id as string, variables)
   if (!store.error) {
-    toast.success('Incident resolved')
+    toast.success(t('incidentResolved'))
     showResolveModal.value = false
     resolveVars.value = []
     router.push('/incidents')
@@ -66,13 +68,13 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
-    <div v-if="store.loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
     <template v-else-if="store.currentIncident">
       <div class="flex items-center justify-between">
         <div>
-          <h1 class="text-2xl font-bold">Incident</h1>
+          <h1 class="text-2xl font-bold">{{ t('incident') }}</h1>
           <CopyableId :value="store.currentIncident.id" />
         </div>
         <button
@@ -80,26 +82,26 @@ onMounted(() => {
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
           @click="showResolveModal = true"
         >
-          Resolve Incident
+          {{ t('resolveIncident') }}
         </button>
       </div>
 
       <div class="grid grid-cols-2 gap-4 text-sm">
         <div>
-          <span class="text-muted-foreground">Status:</span>
+          <span class="text-muted-foreground">{{ t('status') }}:</span>
           <span :class="['ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', store.currentIncident.completedAt ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-            {{ store.currentIncident.completedAt ? 'Resolved' : 'Open' }}
+            {{ store.currentIncident.completedAt ? t('resolved') : t('open') }}
           </span>
         </div>
-        <div><span class="text-muted-foreground">Activity:</span> <span class="font-mono">{{ store.currentIncident.activityId }}</span></div>
-        <div class="col-span-2"><span class="text-muted-foreground">Created:</span> {{ new Date(store.currentIncident.createdAt).toLocaleString() }}</div>
+        <div><span class="text-muted-foreground">{{ t('activity') }}:</span> <span class="font-mono">{{ store.currentIncident.activityId }}</span></div>
+        <div class="col-span-2"><span class="text-muted-foreground">{{ t('created') }}:</span> {{ new Date(store.currentIncident.createdAt).toLocaleString() }}</div>
         <div v-if="store.currentIncident.completedAt" class="col-span-2">
-          <span class="text-muted-foreground">Resolved:</span> {{ new Date(store.currentIncident.completedAt).toLocaleString() }}
+          <span class="text-muted-foreground">{{ t('resolved') }}:</span> {{ new Date(store.currentIncident.completedAt).toLocaleString() }}
         </div>
       </div>
 
       <div class="border border-border rounded-lg p-4 bg-card">
-        <h2 class="text-lg font-bold mb-2">Message</h2>
+        <h2 class="text-lg font-bold mb-2">{{ t('message') }}</h2>
         <pre class="text-sm whitespace-pre-wrap font-mono bg-muted p-3 rounded">{{ store.currentIncident.message }}</pre>
       </div>
     </template>
@@ -110,17 +112,17 @@ onMounted(() => {
       @click.self="showResolveModal = false"
     >
       <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-        <h2 class="text-lg font-bold">Resolve Incident</h2>
-        <p class="text-sm text-muted-foreground">This will re-execute the failed element.</p>
+        <h2 class="text-lg font-bold">{{ t('resolveIncident') }}</h2>
+        <p class="text-sm text-muted-foreground">{{ t('resolveIncidentHint') }}</p>
         <div class="space-y-3">
           <div v-for="(v, i) in resolveVars" :key="i" class="flex items-center gap-2 text-sm">
             <span class="font-mono">{{ v.name }}</span>
             <span class="text-muted-foreground">({{ v.type }})</span>
             <span>= {{ v.value }}</span>
-            <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">Remove</button>
+            <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
           </div>
           <div class="flex items-center gap-2">
-            <input v-model="newVarName" placeholder="name" class="px-2 py-1 border border-input rounded text-sm w-24" />
+            <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm w-24" />
             <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
               <option>STRING</option>
               <option>UUID</option>
@@ -129,15 +131,15 @@ onMounted(() => {
               <option>BOOLEAN</option>
               <option>JSON</option>
             </select>
-            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm flex-1" />
-            <button class="text-sm text-primary hover:underline" @click="addVariable">Add</button>
+            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm flex-1" />
+            <button class="text-sm text-primary hover:underline" @click="addVariable">{{ t('add') }}</button>
           </div>
-          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" placeholder='e.g. ["u1","u2"] or {"key":"val"}' class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
+          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('jsonPlaceholder')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
           <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
         </div>
         <div class="flex justify-end gap-2 pt-2">
-          <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showResolveModal = false">Cancel</button>
-          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="resolve">Resolve</button>
+          <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showResolveModal = false">{{ t('cancel') }}</button>
+          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="resolve">{{ t('resolve') }}</button>
         </div>
       </div>
     </div>
