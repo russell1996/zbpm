@@ -1,14 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import axios, { AxiosError, AxiosHeaders } from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
-import { createRefreshInterceptor } from './refreshInterceptor'
-
-vi.mock('@/stores/auth', () => ({
-  useAuthStore: vi.fn(() => ({
-    isAuthenticated: true,
-    setForcePasswordChange: vi.fn(),
-  })),
-}))
+import { createRefreshInterceptor, type AuthCallbacks } from './refreshInterceptor'
 
 function make401Error(config: Partial<InternalAxiosRequestConfig> = {}): AxiosError {
   const fullConfig: InternalAxiosRequestConfig = {
@@ -50,11 +43,16 @@ function make403PcrError(config: Partial<InternalAxiosRequestConfig> = {}): Axio
 
 describe('createRefreshInterceptor', () => {
   let instance: ReturnType<typeof axios.create>
+  let callbacks: AuthCallbacks
 
   beforeEach(() => {
     vi.clearAllMocks()
     instance = axios.create({ baseURL: 'http://localhost' })
-    createRefreshInterceptor(instance)
+    callbacks = {
+      onPasswordChangeRequired: vi.fn(),
+      onUnauthorized: vi.fn(),
+    }
+    createRefreshInterceptor(instance, callbacks)
   })
 
   // --- Criterion #6: 401 → refresh → retry original request ---
