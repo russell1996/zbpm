@@ -1,15 +1,25 @@
 import type { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios'
-import { useAuthStore } from '@/stores/auth'
+
+/**
+ * Callbacks provided by the app wiring layer to handle auth-related events
+ * without importing the auth store directly (avoids circular dependency).
+ */
+export interface AuthCallbacks {
+  /** Called when a 403 PASSWORD_CHANGE_REQUIRED is received */
+  onPasswordChangeRequired: () => void
+  /** Called when a non-login 401 reaches the interceptor */
+  onUnauthorized: () => void
+}
 
 /**
  * Auto-refresh interceptor: on 401, attempts a single /auth/refresh,
  * and retries the original request if successful.
  * Excludes /auth/login, /auth/refresh, and /auth/logout from refresh attempts.
  *
- * WO-SEC-19: Also handles 403 PASSWORD_CHANGE_REQUIRED by setting
- * forcePasswordChange in the auth store and redirecting to change-password.
+ * WO-SEC-19: Also handles 403 PASSWORD_CHANGE_REQUIRED via callbacks.onPasswordChangeRequired.
+ * WO-FE-8: callbacks injected to break circular import api ↔ auth.
  */
-export function createRefreshInterceptor(instance: AxiosInstance): void {
+export function createRefreshInterceptor(instance: AxiosInstance, callbacks: AuthCallbacks): void {
   let isRefreshing = false
   let pendingQueue: Array<{
     resolve: (token: string) => void
@@ -34,11 +44,7 @@ export function createRefreshInterceptor(instance: AxiosInstance): void {
       if (error.response?.status === 403) {
         const body = error.response?.data as Record<string, unknown> | undefined
         if (body?.code === 'PASSWORD_CHANGE_REQUIRED') {
-          const auth = useAuthStore()
-          if (auth.isAuthenticated) {
-            auth.setForcePasswordChange(true)
-            window.location.href = '/ui/change-password'
-          }
+          callbacks.onPasswordChangeRequired()
           return Promise.reject(error)
         }
       }
@@ -50,6 +56,10 @@ export function createRefreshInterceptor(instance: AxiosInstance): void {
         url.includes('/auth/logout')
 
       if (error.response?.status !== 401 || isAuthEndpoint || originalRequest?._retry) {
+        // After refresh failed or 401 on auth endpoint, sign out (but not for login itself)
+        if (error.response?.status === 401 && !url.includes('/auth/login')) {
+          callbacks.onUnauthorized()
+        }
         return Promise.reject(error)
       }
 
@@ -70,6 +80,10 @@ export function createRefreshInterceptor(instance: AxiosInstance): void {
         return instance(originalRequest)
       } catch (refreshError) {
         processPendingQueue(refreshError, null)
+        // Refresh failed — sign out (but not for login itself)
+        if (!url.includes('/auth/login')) {
+          callbacks.onUnauthorized()
+        }
         return Promise.reject(error)
       } finally {
         isRefreshing = false
