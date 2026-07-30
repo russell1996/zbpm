@@ -32,7 +32,7 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
-    public String getFileBytes(UUID id) throws IOException {
+    public Optional<String> getFileBytes(UUID id) throws IOException {
         Optional<BpmnEntity> bpmnOptional = bpmnRepository.findById(id);
 
         if (bpmnOptional.isEmpty()) {
@@ -48,13 +48,13 @@ public class FileServiceImpl implements FileService {
             if (Files.exists(file)) {
                 String bpmn = Files.readString(file);
                 saveFile(id, bpmn);
-                return bpmn;
+                return Optional.of(bpmn);
             } else {
-                return null;
+                return Optional.empty();
             }
         } else {
             BpmnEntity entity = bpmnOptional.get();
-            return entity.getBpmn();
+            return Optional.of(entity.getBpmn());
         }
     }
 
