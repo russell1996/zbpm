@@ -3,9 +3,11 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getDecisions } from '@/services/dmnService'
 import type { DmnDecision } from '@/services/dmnService'
+import { useI18n } from 'vue-i18n'
 import { RefreshCw } from 'lucide-vue-next'
 
 const router = useRouter()
+const { t } = useI18n()
 const decisions = ref<DmnDecision[]>([])
 const loading = ref(false)
 
@@ -26,28 +28,28 @@ onMounted(load)
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">DMN Decisions</h1>
+      <h1 class="text-2xl font-bold">{{ t('dmnDecisions') }}</h1>
       <button
         class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
         :disabled="loading"
         @click="load"
       >
         <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
-        Refresh
+        {{ t('refresh') }}
       </button>
     </div>
 
-    <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
     <div v-else class="border border-border rounded-lg overflow-hidden">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">ID</th>
-            <th class="px-4 py-3 text-left font-medium">Name</th>
-            <th class="px-4 py-3 text-left font-medium">Version</th>
-            <th class="px-4 py-3 text-left font-medium">Hit Policy</th>
-            <th class="px-4 py-3 text-left font-medium">Actions</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('id') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('name') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('version') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('hitPolicy') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -64,11 +66,11 @@ onMounted(load)
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ d.hitPolicy }}</span>
             </td>
             <td class="px-4 py-3">
-              <button class="text-sm text-primary hover:underline" @click.stop="router.push(`/dmn/${d.id}`)">View</button>
+              <button class="text-sm text-primary hover:underline" @click.stop="router.push(`/dmn/${d.id}`)">{{ t('view') }}</button>
             </td>
           </tr>
           <tr v-if="!decisions.length">
-            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">No DMN decisions found</td>
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noDecisions') }}</td>
           </tr>
         </tbody>
       </table>

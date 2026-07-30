@@ -2,9 +2,11 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getDecision, evaluateDecision, inferVariable, type DmnDecision } from '@/services/dmnService'
+import { useI18n } from 'vue-i18n'
 import { Play } from 'lucide-vue-next'
 
 const route = useRoute()
+const { t } = useI18n()
 const decision = ref<DmnDecision | null>(null)
 const loading = ref(false)
 const showTestModal = ref(false)
@@ -42,7 +44,7 @@ async function runTest() {
       .map((input) => inferVariable(input.expression, testInputs.value[input.expression]))
     testResult.value = await evaluateDecision(decision.value.id, variables)
   } catch (e: unknown) {
-    testError.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Evaluation failed'
+    testError.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || t('evaluationFailed')
   } finally {
     evaluating.value = false
   }
@@ -51,16 +53,16 @@ async function runTest() {
 
 <template>
   <div class="space-y-6">
-    <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
     <template v-else-if="decision">
       <div class="flex items-center justify-between">
         <div>
           <h1 class="text-2xl font-bold">{{ decision.name }}</h1>
           <p class="text-sm text-muted-foreground">
-            ID: <span class="font-mono">{{ decision.id }}</span>
-            · Version: {{ decision.version }}
-            · Hit Policy: {{ decision.hitPolicy }}
+            {{ t('id') }}: <span class="font-mono">{{ decision.id }}</span>
+            · {{ t('version') }}: {{ decision.version }}
+            · {{ t('hitPolicy') }}: {{ decision.hitPolicy }}
           </p>
         </div>
         <button
@@ -68,7 +70,7 @@ async function runTest() {
           @click="showTestModal = true"
         >
           <Play class="h-4 w-4" />
-          Test
+          {{ t('test') }}
         </button>
       </div>
 
@@ -99,7 +101,7 @@ async function runTest() {
         @click.self="showTestModal = false"
       >
         <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-          <h2 class="text-lg font-bold">Test Decision</h2>
+          <h2 class="text-lg font-bold">{{ t('testDecision') }}</h2>
           <div class="space-y-3">
             <div v-for="input in decision.inputs" :key="input.id">
               <label class="block text-sm font-medium mb-1">{{ input.label }} ({{ input.expression }})</label>
@@ -114,16 +116,16 @@ async function runTest() {
             :disabled="evaluating"
             @click="runTest"
           >
-            {{ evaluating ? 'Evaluating…' : 'Evaluate' }}
+            {{ evaluating ? t('evaluating') : t('evaluate') }}
           </button>
           <p v-if="testError" class="text-sm text-red-500">{{ testError }}</p>
           <div v-if="testResult" class="border border-border rounded p-3 bg-muted/50">
-            <h3 class="text-sm font-bold mb-2">Result</h3>
+            <h3 class="text-sm font-bold mb-2">{{ t('result') }}</h3>
             <div v-for="(val, key) in testResult" :key="key" class="text-sm">
               <span class="font-mono">{{ key }}</span>: {{ typeof val === 'object' ? JSON.stringify(val) : val }}
             </div>
           </div>
-          <button class="text-sm text-muted-foreground hover:text-foreground" @click="showTestModal = false">Close</button>
+          <button class="text-sm text-muted-foreground hover:text-foreground" @click="showTestModal = false">{{ t('close') }}</button>
         </div>
       </div>
     </template>

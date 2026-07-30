@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/features/auth/useAuth'
 
+const { t } = useI18n()
 const { login, isLoading, error } = useAuth()
 const route = useRoute()
 const router = useRouter()
@@ -30,12 +32,12 @@ async function submit() {
           </div>
         </div>
         <h1 class="text-2xl font-bold">ZorroBPM</h1>
-        <p class="text-sm text-muted-foreground">Sign in to continue</p>
+        <p class="text-sm text-muted-foreground">{{ t('signInToContinue') }}</p>
       </div>
 
       <div class="space-y-3">
         <div>
-          <label class="block text-sm font-medium mb-1">Username</label>
+          <label class="block text-sm font-medium mb-1">{{ t('username') }}</label>
           <input
             v-model="username"
             type="text"
@@ -45,7 +47,7 @@ async function submit() {
           />
         </div>
         <div>
-          <label class="block text-sm font-medium mb-1">Password</label>
+          <label class="block text-sm font-medium mb-1">{{ t('password') }}</label>
           <input
             v-model="password"
             type="password"
@@ -62,7 +64,7 @@ async function submit() {
         :disabled="isLoading"
         class="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm disabled:opacity-50"
       >
-        {{ isLoading ? 'Signing in…' : 'Sign in' }}
+        {{ isLoading ? t('signingIn') : t('signIn') }}
       </button>
     </form>
   </div>
