@@ -82,9 +82,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<Map<String, String>> handleNotFound(NoSuchElementException ex) {
+        log.warn("NoSuchElementException (returning 404): {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
             "code", "NOT_FOUND",
-            "message", ex.getMessage() != null ? ex.getMessage() : "Resource not found"
+            "message", "Resource not found"
         ));
     }
 
