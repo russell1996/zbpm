@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="testEng8CompletionCondition" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="miTask" name="Execute">
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowFromMi</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:loopCardinality>2</bpmn:loopCardinality>
+        <bpmn:completionCondition>=completedInstances = totalInstances</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+    <bpmn:endEvent id="endEvent">
+      <bpmn:incoming>flowFromMi</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="start" targetRef="miTask" />
+    <bpmn:sequenceFlow id="flowFromMi" sourceRef="miTask" targetRef="endEvent" />
+  </bpmn:process>
+</bpmn:definitions>
