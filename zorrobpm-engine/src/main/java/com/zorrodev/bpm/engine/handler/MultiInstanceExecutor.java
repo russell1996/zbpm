@@ -96,7 +96,7 @@ public class MultiInstanceExecutor {
         Integer expected = dbService.getInclusiveExpected(processInstanceId, gatewayKey);
         int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, gatewayKey).size();
 
-        boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, mi);
+        boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, arrived, expected, mi);
         if (done) {
             dbService.clearParallelGatewayArrivals(processInstanceId, gatewayKey);
             return true;
@@ -254,7 +254,7 @@ public class MultiInstanceExecutor {
             .orElse(miId);
     }
 
-    private boolean completionConditionMet(UUID processInstanceId, MultiInstanceExtensionModel mi) {
+    private boolean completionConditionMet(UUID processInstanceId, int arrived, Integer expected, MultiInstanceExtensionModel mi) {
         String expression = mi.getCompletionCondition();
         if (expression == null || expression.isBlank()) {
             return false;
@@ -262,7 +262,30 @@ public class MultiInstanceExecutor {
         if (expression.startsWith("=")) {
             expression = expression.substring(1);
         }
-        Object result = scriptService.evaluateScript(expression, dbService.getVariables(processInstanceId));
+        // Build evaluation variables: process variables + MI-scope locals.
+        // WO-ENG-8: inject completedInstances/totalInstances that the completionCondition may reference.
+        // These are NOT persisted — they exist only for the duration of this FEEL evaluation.
+        // NOTE: use evaluateExpression (not evaluateScript) because completionCondition is a FEEL expression,
+        // not a unary test. evaluateScript would misinterpret the expression.
+        List<ProcessVariable> variables = new ArrayList<>(dbService.getVariables(processInstanceId));
+        long total = expected != null ? expected : 0;
+        long active = expected != null ? Math.max(0, expected - arrived) : 0;
+        addLocalLong(variables, "completedInstances", arrived);
+        addLocalLong(variables, "totalInstances", total);
+        addLocalLong(variables, "numberOfInstances", total);
+        addLocalLong(variables, "numberOfCompleteInstances", arrived);
+        addLocalLong(variables, "numberOfActiveInstances", active);
+        addLocalLong(variables, "numberOfTerminatedInstances", 0);
+        Object result = scriptService.evaluateExpression(expression, variables);
         return Boolean.TRUE.equals(result);
+    }
+
+    /** Adds a long-valued ProcessVariable to the list for FEEL evaluation scope (not persisted). */
+    private void addLocalLong(List<ProcessVariable> variables, String name, long value) {
+        ProcessVariable var = new ProcessVariable();
+        var.setName(name);
+        var.setType(ProcessVariableType.LONG);
+        var.setValue(Long.toString(value));
+        variables.add(var);
     }
 }
