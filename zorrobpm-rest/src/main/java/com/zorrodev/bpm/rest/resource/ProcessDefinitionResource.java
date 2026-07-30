@@ -118,11 +118,8 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
     public String getProcessDefinitionXml(UUID id) {
         requirePdAccess(id);
         try {
-            String xml = fileService.getFileBytes(id);
-            if (xml == null) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition XML not found");
-            }
-            return xml;
+            return fileService.getFileBytes(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition XML not found"));
         } catch (java.io.IOException e) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition XML not found");
         }

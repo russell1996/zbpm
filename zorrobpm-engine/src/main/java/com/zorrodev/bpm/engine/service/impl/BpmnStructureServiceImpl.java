@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -52,8 +53,9 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
 
         String xml;
         try {
-            xml = fileService.getFileBytes(processDefinitionId);
-        } catch (Exception e) {
+            xml = fileService.getFileBytes(processDefinitionId)
+                .orElseThrow(() -> new BpmnParseException("BPMN file not found for definition " + processDefinitionId));
+        } catch (IOException e) {
             throw new BpmnParseException(e);
         }
 

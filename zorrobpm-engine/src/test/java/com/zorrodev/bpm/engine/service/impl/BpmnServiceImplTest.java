@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.FileService;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,7 +36,7 @@ class BpmnServiceImplTest {
         UUID id = UUID.randomUUID();
         FileService fileService = mock(FileService.class);
         BpmnParseService bpmnParseService = mock(BpmnParseService.class);
-        when(fileService.getFileBytes(id)).thenReturn(null);
+        when(fileService.getFileBytes(id)).thenReturn(Optional.empty());
 
         BpmnServiceImpl service = new BpmnServiceImpl(fileService, bpmnParseService, 500, 60);
 
@@ -80,7 +81,7 @@ class BpmnServiceImplTest {
         BpmnParseService bpmnParseService = mock(BpmnParseService.class);
         BpmnProcessDefinitionModel parsedModel = new BpmnProcessDefinitionModel();
         parsedModel.setKey("reloaded");
-        when(fileService.getFileBytes(any())).thenReturn("<bpmn/>");
+        when(fileService.getFileBytes(any())).thenReturn(Optional.of("<bpmn/>"));
         when(bpmnParseService.parse("<bpmn/>")).thenReturn(parsedModel);
 
         BpmnServiceImpl service = new BpmnServiceImpl(fileService, bpmnParseService, 2, 60);
@@ -111,7 +112,7 @@ class BpmnServiceImplTest {
         BpmnParseService bpmnParseService = mock(BpmnParseService.class);
         BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
         model.setKey("atomic");
-        when(fileService.getFileBytes(any())).thenReturn("<bpmn/>");
+        when(fileService.getFileBytes(any())).thenReturn(Optional.of("<bpmn/>"));
         when(bpmnParseService.parse("<bpmn/>")).thenReturn(model);
 
         BpmnServiceImpl service = new BpmnServiceImpl(fileService, bpmnParseService, 500, 60);

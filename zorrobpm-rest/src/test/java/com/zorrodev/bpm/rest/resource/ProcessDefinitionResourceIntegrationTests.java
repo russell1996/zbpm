@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -100,9 +101,9 @@ class ProcessDefinitionResourceIntegrationTests {
         assertThat(processDefinitionEntity.getVersion()).isNotNull();
         assertThat(processDefinitionEntity.getName()).isEqualTo("Process 1");
 
-        String savedBpmn = fileService.getFileBytes(id);
+        Optional<String> savedBpmn = fileService.getFileBytes(id);
 
-        assertThat(savedBpmn).isNotNull();
+        assertThat(savedBpmn).isPresent();
     }
 
     @Test
