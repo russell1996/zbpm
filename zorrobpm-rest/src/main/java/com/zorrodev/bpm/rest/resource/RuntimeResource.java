@@ -36,6 +36,7 @@ import com.zorrodev.bpm.engine.service.RuntimeService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,6 +52,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class RuntimeResource implements RuntimeContract {
 
     private final RuntimeService runtimeService;
@@ -255,7 +257,8 @@ public class RuntimeResource implements RuntimeContract {
         try {
             dbService.claimUserTask(id, assignee);
         } catch (IllegalStateException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+            log.warn("Failed to claim user task {}: {}", id, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Failed to claim user task");
         }
         auditLogService.record(getPrincipal(), "CLAIM_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), assignee);
 

@@ -10,6 +10,7 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.service.UiUserService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +23,7 @@ import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class UserResource implements UserContract {
 
     private final UiUserService userService;
@@ -45,7 +47,8 @@ public class UserResource implements UserContract {
         try {
             return id(userService.create(dto));
         } catch (EngineException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+            log.warn("Failed to create user: {}", e.getMessage());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User creation failed");
         }
     }
 

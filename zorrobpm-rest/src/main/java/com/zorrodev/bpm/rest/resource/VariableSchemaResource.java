@@ -8,6 +8,7 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
 import com.zorrodev.bpm.engine.service.SchemaGeneratorService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -17,6 +18,7 @@ import java.util.Set;
 
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class VariableSchemaResource implements VariableSchemaContract {
 
     private final SchemaGeneratorService schemaGeneratorService;
@@ -42,7 +44,8 @@ public class VariableSchemaResource implements VariableSchemaContract {
         try {
             schema = schemaGeneratorService.generateSchema(dto.getFields());
         } catch (EngineException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+            log.warn("Schema generation error: {}", e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Schema generation failed");
         }
 
         // Validate the generated schema passes VM-5 validator
