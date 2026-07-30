@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { GitBranch, ListTodo, AlertTriangle, CheckCircle, FileText, Play, RefreshCw, Cpu } from 'lucide-vue-next'
 import { getProcessDefinitions } from '@/services/processService'
 import { getProcessInstances } from '@/services/instanceService'
 import { getUserTasks, getServiceTasks } from '@/services/taskService'
 import { getIncidents } from '@/services/incidentService'
+
+const { t } = useI18n()
 
 const router = useRouter()
 
@@ -52,14 +55,14 @@ onMounted(load)
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">Dashboard</h1>
+      <h1 class="text-2xl font-bold">{{ t('dashboard') }}</h1>
       <button
         class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
         :disabled="loading"
         @click="load"
       >
         <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
-        Refresh
+        {{ t('refresh') }}
       </button>
     </div>
 
@@ -69,7 +72,7 @@ onMounted(load)
         @click="router.push('/processes/instances')"
       >
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-muted-foreground">Active Processes</span>
+          <span class="text-sm font-medium text-muted-foreground">{{ t('activeProcesses') }}</span>
           <GitBranch class="h-4 w-4 text-muted-foreground" />
         </div>
         <div class="text-2xl font-bold">{{ loading ? '—' : activeProcesses }}</div>
@@ -80,7 +83,7 @@ onMounted(load)
         @click="router.push('/tasks')"
       >
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-muted-foreground">Open Tasks</span>
+          <span class="text-sm font-medium text-muted-foreground">{{ t('openTasks') }}</span>
           <ListTodo class="h-4 w-4 text-muted-foreground" />
         </div>
         <div class="text-2xl font-bold">{{ loading ? '—' : openTasks }}</div>
@@ -91,7 +94,7 @@ onMounted(load)
         @click="router.push('/tasks?type=service')"
       >
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-muted-foreground">Service Tasks</span>
+          <span class="text-sm font-medium text-muted-foreground">{{ t('openServiceTasks') }}</span>
           <Cpu class="h-4 w-4 text-muted-foreground" />
         </div>
         <div class="text-2xl font-bold">{{ loading ? '—' : openServiceTasks }}</div>
@@ -102,7 +105,7 @@ onMounted(load)
         @click="router.push('/incidents')"
       >
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-muted-foreground">Open Incidents</span>
+          <span class="text-sm font-medium text-muted-foreground">{{ t('openIncidents') }}</span>
           <AlertTriangle class="h-4 w-4 text-muted-foreground" />
         </div>
         <div class="text-2xl font-bold">{{ loading ? '—' : openIncidents }}</div>
@@ -110,7 +113,7 @@ onMounted(load)
 
       <div class="border border-border rounded-lg p-4 bg-card">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-muted-foreground">Completed Today</span>
+          <span class="text-sm font-medium text-muted-foreground">{{ t('completedToday') }}</span>
           <CheckCircle class="h-4 w-4 text-muted-foreground" />
         </div>
         <div class="text-2xl font-bold">{{ loading ? '—' : completedToday }}</div>
@@ -120,15 +123,15 @@ onMounted(load)
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div class="border border-border rounded-lg p-6 bg-card">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg font-bold">Process Definitions</h2>
+          <h2 class="text-lg font-bold">{{ t('processDefinitions') }}</h2>
           <button
             class="text-sm text-primary hover:underline"
             @click="router.push('/processes/definitions')"
           >
-            View all
+            {{ t('viewAll') }}
           </button>
         </div>
-        <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
+        <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
         <div v-else-if="recentDefinitions.length" class="space-y-3">
           <div
             v-for="def in recentDefinitions"
@@ -145,39 +148,39 @@ onMounted(load)
             </span>
           </div>
         </div>
-        <div v-else class="text-sm text-muted-foreground">No definitions deployed yet.</div>
+        <div v-else class="text-sm text-muted-foreground">{{ t('noDefinitions') }}</div>
       </div>
 
       <div class="border border-border rounded-lg p-6 bg-card">
-        <h2 class="text-lg font-bold mb-4">Quick Actions</h2>
+        <h2 class="text-lg font-bold mb-4">{{ t('quickActions') }}</h2>
         <div class="space-y-3">
           <button
             class="w-full flex items-center gap-3 px-4 py-3 border border-border rounded-lg hover:bg-muted/50 transition-colors text-left text-sm"
             @click="router.push('/processes/deploy')"
           >
             <FileText class="h-4 w-4 text-primary" />
-            Deploy BPMN Process
+            {{ t('deployBpmn') }}
           </button>
           <button
             class="w-full flex items-center gap-3 px-4 py-3 border border-border rounded-lg hover:bg-muted/50 transition-colors text-left text-sm"
             @click="router.push('/processes/definitions')"
           >
             <Play class="h-4 w-4 text-primary" />
-            Start Process Instance
+            {{ t('startProcessInstance') }}
           </button>
           <button
             class="w-full flex items-center gap-3 px-4 py-3 border border-border rounded-lg hover:bg-muted/50 transition-colors text-left text-sm"
             @click="router.push('/tasks')"
           >
             <ListTodo class="h-4 w-4 text-primary" />
-            View My Tasks
+            {{ t('viewMyTasks') }}
           </button>
           <button
             class="w-full flex items-center gap-3 px-4 py-3 border border-border rounded-lg hover:bg-muted/50 transition-colors text-left text-sm"
             @click="router.push('/incidents')"
           >
             <AlertTriangle class="h-4 w-4 text-primary" />
-            View Incidents
+            {{ t('viewIncidents') }}
           </button>
         </div>
       </div>

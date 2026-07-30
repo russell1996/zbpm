@@ -3,9 +3,11 @@ import { ref, onMounted } from 'vue'
 import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
+import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
 
 const toast = useToast()
+const { t } = useI18n()
 
 const users = ref<User[]>([])
 const totalCount = ref(0)
@@ -79,10 +81,10 @@ async function save() {
     }
     showForm.value = false
     await loadUsers()
-    toast.success('Saved')
+    toast.success(t('saved'))
   } catch (e: unknown) {
     const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    toast.error(msg || 'Failed to save user')
+    toast.error(msg || t('failedToSaveUser'))
   } finally {
     saving.value = false
   }
@@ -104,12 +106,12 @@ onMounted(loadUsers)
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">Users</h1>
+      <h1 class="text-2xl font-bold">{{ t('users') }}</h1>
       <button
         class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
         @click="openCreate"
       >
-        Create User
+        {{ t('addUser') }}
       </button>
     </div>
 
@@ -117,25 +119,25 @@ onMounted(loadUsers)
       <input
         v-model="search"
         type="text"
-        placeholder="Search by username..."
+        :placeholder="t('searchByUsername')"
         class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
         @input="loadUsers"
       />
-      <span class="text-sm text-muted-foreground">{{ totalCount }} users</span>
+      <span class="text-sm text-muted-foreground">{{ totalCount }} {{ t('usersCount') }}</span>
     </div>
 
-    <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
     <div v-else class="border border-border rounded-lg overflow-hidden">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">Username</th>
-            <th class="px-4 py-3 text-left font-medium">Full Name</th>
-            <th class="px-4 py-3 text-left font-medium">Email</th>
-            <th class="px-4 py-3 text-left font-medium">Role</th>
-            <th class="px-4 py-3 text-left font-medium">Status</th>
-            <th class="px-4 py-3 text-left font-medium">Actions</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('username') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('fullName') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('email') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('role') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -152,21 +154,21 @@ onMounted(loadUsers)
                 class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
                 :class="user.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
               >
-                {{ user.active ? 'Active' : 'Inactive' }}
+                {{ user.active ? t('active') : t('inactive') }}
               </span>
             </td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">
                 <button class="text-sm text-primary hover:underline" @click="expandedUserId = expandedUserId === user.id ? null : user.id">
-                  {{ expandedUserId === user.id ? 'Collapse' : 'Details' }}
+                  {{ expandedUserId === user.id ? t('collapse') : t('details') }}
                 </button>
-                <button class="text-sm text-primary hover:underline" @click="openEdit(user)">Edit</button>
+                <button class="text-sm text-primary hover:underline" @click="openEdit(user)">{{ t('edit') }}</button>
                 <button
                   class="text-sm hover:underline"
                   :class="user.active ? 'text-red-600' : 'text-green-600'"
                   @click="toggleActive(user)"
                 >
-                  {{ user.active ? 'Deactivate' : 'Activate' }}
+                  {{ user.active ? t('deactivate') : t('activate') }}
                 </button>
               </div>
             </td>
@@ -178,7 +180,7 @@ onMounted(loadUsers)
           </tr>
           </template>
           <tr v-if="users.length === 0">
-            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">No users found</td>
+            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noUsers') }}</td>
           </tr>
         </tbody>
       </table>
@@ -190,10 +192,10 @@ onMounted(loadUsers)
       @click.self="showForm = false"
     >
       <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-        <h2 class="text-lg font-bold">{{ editingUser ? 'Edit User' : 'Create User' }}</h2>
+        <h2 class="text-lg font-bold">{{ editingUser ? t('editUser') : t('addUser') }}</h2>
         <div class="space-y-3">
           <div>
-            <label class="block text-sm font-medium mb-1">Username</label>
+            <label class="block text-sm font-medium mb-1">{{ t('username') }}</label>
             <input
               v-model="formUsername"
               type="text"
@@ -202,7 +204,7 @@ onMounted(loadUsers)
             />
           </div>
           <div>
-            <label class="block text-sm font-medium mb-1">{{ editingUser ? 'New password (optional)' : 'Password' }}</label>
+            <label class="block text-sm font-medium mb-1">{{ editingUser ? t('newPasswordOptional') : t('password') }}</label>
             <input
               v-model="formPassword"
               type="password"
@@ -211,7 +213,7 @@ onMounted(loadUsers)
             />
           </div>
           <div>
-            <label class="block text-sm font-medium mb-1">Full Name</label>
+            <label class="block text-sm font-medium mb-1">{{ t('fullName') }}</label>
             <input
               v-model="formFullName"
               type="text"
@@ -219,7 +221,7 @@ onMounted(loadUsers)
             />
           </div>
           <div>
-            <label class="block text-sm font-medium mb-1">Email</label>
+            <label class="block text-sm font-medium mb-1">{{ t('email') }}</label>
             <input
               v-model="formEmail"
               type="email"
@@ -227,15 +229,15 @@ onMounted(loadUsers)
             />
           </div>
           <div>
-            <label class="block text-sm font-medium mb-1">Role</label>
+            <label class="block text-sm font-medium mb-1">{{ t('role') }}</label>
             <select v-model="formRole" class="w-full px-3 py-2 border border-input rounded-md text-sm">
-              <option value="USER">USER</option>
-              <option value="ADMIN">ADMIN</option>
+              <option value="USER">{{ t('userRole') }}</option>
+              <option value="ADMIN">{{ t('adminRole') }}</option>
             </select>
           </div>
           <div class="flex items-center gap-2">
             <input id="active" v-model="formActive" type="checkbox" class="rounded" />
-            <label for="active" class="text-sm">Active</label>
+            <label for="active" class="text-sm">{{ t('active') }}</label>
           </div>
         </div>
         <div class="flex justify-end gap-2 pt-2">
@@ -243,14 +245,14 @@ onMounted(loadUsers)
             class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
             @click="showForm = false"
           >
-            Cancel
+            {{ t('cancel') }}
           </button>
           <button
             :disabled="saving"
             class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
             @click="save"
           >
-            {{ editingUser ? 'Save' : 'Create' }}
+            {{ editingUser ? t('save') : t('add') }}
           </button>
         </div>
       </div>

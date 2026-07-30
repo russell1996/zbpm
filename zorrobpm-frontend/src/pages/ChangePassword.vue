@@ -1,10 +1,8 @@
 <template>
   <div class="min-h-screen flex items-center justify-center bg-gray-50">
     <div class="w-full max-w-md bg-white rounded-lg shadow-md p-8">
-      <h1 class="text-2xl font-bold text-gray-900 mb-6">Change Password</h1>
-      <p class="text-sm text-gray-600 mb-6">
-        You must change your password before continuing.
-      </p>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6">{{ t('changePassword') }}</h1>
+      <p class="text-sm text-gray-600 mb-6">{{ t('mustChangePassword') }}</p>
 
       <div v-if="error" class="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
         {{ error }}
@@ -13,7 +11,7 @@
       <form @submit.prevent="handleChangePassword" class="space-y-4">
         <div>
           <label for="newPassword" class="block text-sm font-medium text-gray-700 mb-1">
-            New Password
+            {{ t('newPassword') }}
           </label>
           <input
             id="newPassword"
@@ -27,7 +25,7 @@
 
         <div>
           <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-1">
-            Confirm Password
+            {{ t('confirmPassword') }}
           </label>
           <input
             id="confirmPassword"
@@ -40,7 +38,7 @@
         </div>
 
         <div v-if="mismatch" class="text-sm text-red-600">
-          Passwords do not match.
+          {{ t('passwordsDoNotMatch') }}
         </div>
 
         <button
@@ -48,7 +46,7 @@
           :disabled="isLoading || mismatch || !newPassword"
           class="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
         >
-          {{ isLoading ? 'Changing...' : 'Change Password' }}
+          {{ isLoading ? t('changingPassword') : t('changePassword') }}
         </button>
       </form>
     </div>
@@ -58,8 +56,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { updateUser } from '@/services/userService'
+
+const { t } = useI18n()
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -89,11 +90,11 @@ async function handleChangePassword() {
     if (!auth.forcePasswordChange) {
       router.push({ name: 'dashboard' })
     } else {
-      error.value = 'Password change did not take effect. Please try again.'
+      error.value = t('passwordChangeFailed')
     }
   } catch (e: unknown) {
     const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    error.value = msg || 'Failed to change password. Please try again.'
+    error.value = msg || t('failedToChangePassword')
   } finally {
     isLoading.value = false
   }
