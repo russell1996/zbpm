@@ -173,6 +173,57 @@ public class MultiInstanceIntegrationTests {
             .anyMatch(a -> a.getBpmnElementId().equals("endEvent") && a.getStatus() == ActivityStatus.COMPLETED)).isTrue();
     }
 
+    // --- WO-ENG-8: completionCondition with completedInstances/totalInstances ---
+    // BPMN: start → MI userTask(2 parallel, completionCondition="=completedInstances = totalInstances") → endEvent
+    // RED (without fix): undefined vars → null=null → true → first completion ends MI, process completes prematurely
+    // GREEN (with fix): injected completedInstances/totalInstances → 1=2 → false → wait for second completion
+
+    @Transactional
+    @Test
+    void completionConditionWithStandardMiVars_waitsForAllInstances() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-eng-8-completioncondition.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        // Two parallel MI user tasks should be active
+        List<ActivityEntity> tasks = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals("miTask") && a.getStatus() == ActivityStatus.CREATED)
+            .toList();
+        assertThat(tasks).hasSize(2);
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
+
+        // Complete first MI task — with the fix this should NOT complete the process
+        runtimeService.completeUserTask(tasks.get(0).getId(), List.of());
+
+        // After first completion: process instance must NOT be completed
+        // (RED without fix: null=null → true → instance completed; GREEN with fix: 1=2 → false → stays alive)
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt()).isNull();
+
+        // Complete second MI task — after both done, MI should finish
+        List<ActivityEntity> remaining = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals("miTask") && a.getStatus() == ActivityStatus.CREATED)
+            .toList();
+        assertThat(remaining).hasSize(1);
+        runtimeService.completeUserTask(remaining.get(0).getId(), List.of());
+
+        // After second completion: both miTask instances done, process reaches endEvent and completes
+        ProcessInstance pi2 = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi2.getCompletedAt()).isNotNull();
+
+        // Both MI tasks should be completed
+        long completed = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals("miTask") && a.getStatus() == ActivityStatus.COMPLETED)
+            .count();
+        assertThat(completed).isEqualTo(2);
+    }
+
     private UUID nextInstance(UUID processInstanceId, Set<UUID> done) {
         return activityRepository.findAll().stream()
             .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
