@@ -103,7 +103,8 @@ class ElementArtifactKindIntegrationTest {
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value(containsString("kind")));
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[0].field").value("kind"));
     }
 
     // --- Criterion #2: POST /forms with invalid kind → 400 ---

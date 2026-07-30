@@ -8,6 +8,7 @@ import com.zorrodev.bpm.contract.dto.SchemaMapDTO;
 import com.zorrodev.bpm.contract.dto.SchemaMapElementDTO;
 import com.zorrodev.bpm.contract.dto.SaveElementSchemaDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,7 +20,7 @@ public interface FormContract {
     List<FormDTO> listForms();
 
     @PostMapping("/forms")
-    FormDTO deployForm(@RequestBody DeployFormDTO dto);
+    FormDTO deployForm(@Valid @RequestBody DeployFormDTO dto);
 
     @GetMapping("/forms/{key}")
     FormDTO getForm(@PathVariable String key);
@@ -31,7 +32,7 @@ public interface FormContract {
     TaskFormDTO getStartForm(@PathVariable String key);
 
     @PostMapping("/process-definitions/{key}/element-bindings")
-    ElementBindingDTO createElementBinding(@PathVariable String key, @RequestBody CreateElementBindingDTO dto);
+    ElementBindingDTO createElementBinding(@PathVariable String key, @Valid @RequestBody CreateElementBindingDTO dto);
 
     @GetMapping("/process-definitions/{key}/element-bindings")
     List<ElementBindingDTO> listElementBindings(@PathVariable String key);
@@ -43,5 +44,5 @@ public interface FormContract {
     SchemaMapDTO getSchemaMap(@PathVariable String key);
 
     @PostMapping("/process-definitions/{key}/elements/{elementId}/schema")
-    SchemaMapElementDTO saveElementSchema(@PathVariable String key, @PathVariable String elementId, @RequestBody SaveElementSchemaDTO dto);
+    SchemaMapElementDTO saveElementSchema(@PathVariable String key, @PathVariable String elementId, @Valid @RequestBody SaveElementSchemaDTO dto);
 }
