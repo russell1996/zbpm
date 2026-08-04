@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import { getDecisions } from '@/services/dmnService'
 import type { DmnDecision } from '@/services/dmnService'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 import { RefreshCw } from 'lucide-vue-next'
 
 const router = useRouter()
 const { t } = useI18n()
+const toast = useToast()
 const decisions = ref<DmnDecision[]>([])
 const loading = ref(false)
 
@@ -16,7 +18,7 @@ async function load() {
   try {
     decisions.value = await getDecisions()
   } catch {
-    // ignore
+    toast.error(t('loadError'))
   } finally {
     loading.value = false
   }

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
@@ -12,6 +13,7 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const toast = useToast()
 const store = useProcessStore()
 
 const bpmnXml = ref('')
@@ -111,7 +113,7 @@ onMounted(async () => {
   try {
     bpmnXml.value = await processService.getProcessDefinitionXml(id)
   } catch {
-    // XML not available, structure-only view
+    toast.error(t('loadError'))
   }
 })
 
@@ -129,7 +131,8 @@ async function downloadBpmn() {
     try {
       xml = await processService.getProcessDefinitionXml(def.id)
     } catch {
-      return // XML not available
+      toast.error(t('loadError'))
+      return
     }
   }
   const ext = def.key ? `${def.key}-v${def.version}.bpmn` : `${def.id}.bpmn`

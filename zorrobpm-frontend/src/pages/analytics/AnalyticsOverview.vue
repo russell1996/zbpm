@@ -4,8 +4,10 @@ import { getProcessInstances } from '@/services/instanceService'
 import { getUserTasks } from '@/services/taskService'
 import { getIncidents } from '@/services/incidentService'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
+const toast = useToast()
 const loading = ref(true)
 
 const totalInstances = ref(0)
@@ -55,7 +57,7 @@ onMounted(async () => {
       avgDuration.value = mins < 60 ? `${mins}m` : `${Math.round(mins / 60)}h ${mins % 60}m`
     }
   } catch {
-    // API unavailable — show empty analytics
+    toast.error(t('loadError'))
   } finally {
     loading.value = false
   }

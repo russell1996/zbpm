@@ -3,10 +3,12 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getDecision, evaluateDecision, inferVariable, type DmnDecision } from '@/services/dmnService'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 import { Play } from 'lucide-vue-next'
 
 const route = useRoute()
 const { t } = useI18n()
+const toast = useToast()
 const decision = ref<DmnDecision | null>(null)
 const loading = ref(false)
 const showTestModal = ref(false)
@@ -27,7 +29,7 @@ onMounted(async () => {
       }
     }
   } catch {
-    // ignore
+    toast.error(t('loadError'))
   } finally {
     loading.value = false
   }
