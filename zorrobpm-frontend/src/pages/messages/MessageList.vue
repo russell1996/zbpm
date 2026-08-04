@@ -6,8 +6,10 @@ import { Mail, CheckCircle, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
+const toast = useToast()
 const messages = ref<MessageSubscription[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -19,7 +21,7 @@ async function load() {
     messages.value = result.data
     total.value = result.totalElements
   } catch {
-    // ignore
+    toast.error(t('loadError'))
   } finally {
     loading.value = false
   }

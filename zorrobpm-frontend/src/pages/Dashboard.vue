@@ -7,8 +7,10 @@ import { getProcessDefinitions } from '@/services/processService'
 import { getProcessInstances } from '@/services/instanceService'
 import { getUserTasks, getServiceTasks } from '@/services/taskService'
 import { getIncidents } from '@/services/incidentService'
+import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
+const toast = useToast()
 
 const router = useRouter()
 
@@ -43,7 +45,7 @@ async function load() {
       (i) => i.completedAt && new Date(i.completedAt).toDateString() === today,
     ).length
   } catch {
-    // API unavailable
+    toast.error(t('loadError'))
   } finally {
     loading.value = false
   }

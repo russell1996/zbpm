@@ -287,6 +287,7 @@
   "deploySuccessToast": "Process deployed successfully",
   "viewDefinition": "View Definition",
   "failedToDeploy": "Failed to deploy process",
+  "loadError": "Failed to load data",
   "dueAt": "Due At",
   "id": "ID",
   "ownerRole": "OWNER",
