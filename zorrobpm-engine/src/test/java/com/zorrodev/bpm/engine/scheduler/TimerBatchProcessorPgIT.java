@@ -1,12 +1,14 @@
 package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.PostgresIT;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
@@ -239,5 +241,91 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
             "SELECT id FROM timer_jobs WHERE fired = false AND due_at <= now() FOR UPDATE SKIP LOCKED",
             UUID.class);
         assertThat(locked).isEmpty();
+    }
+
+    // ==================== WO-REL-11: batch-size LIMIT ====================
+
+    /**
+     * Criterion #1: One processBatch() handles at most batchSize timers.
+     * Inserts 500 due timers, calls findDueLocked with batchSize=100 → exactly 100 returned.
+     */
+    @Test
+    @Transactional
+    void batchLimit_returnsAtMostBatchSize() {
+        Instant now = Instant.now().minusSeconds(10);
+        for (int i = 0; i < 500; i++) {
+            jdbc.update(
+                "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) VALUES (?, ?, ?, false, ?)",
+                UUID.randomUUID(), UUID.randomUUID(), Timestamp.from(now), Timestamp.from(Instant.now()));
+        }
+
+        List<TimerJobEntity> batch1 = timerJobRepository.findDueLocked(now, 100);
+        assertThat(batch1).hasSize(100);
+    }
+
+    /**
+     * Criterion #2: Remaining due timers handled by next run, none lost.
+     * 500 timers, batchSize=100 → 5 runs process all 500.
+     */
+    @Test
+    @Transactional
+    void batchLimit_allTimersProcessedAfterMultipleRuns() {
+        Instant now = Instant.now().minusSeconds(10);
+        for (int i = 0; i < 500; i++) {
+            jdbc.update(
+                "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) VALUES (?, ?, ?, false, ?)",
+                UUID.randomUUID(), UUID.randomUUID(), Timestamp.from(now), Timestamp.from(Instant.now()));
+        }
+
+        int totalProcessed = 0;
+        for (int run = 0; run < 5; run++) {
+            List<TimerJobEntity> batch = timerJobRepository.findDueLocked(now, 100);
+            assertThat(batch).hasSize(100);
+            for (TimerJobEntity job : batch) {
+                timerJobRepository.claimTimerJob(job.getId());
+            }
+            totalProcessed += batch.size();
+        }
+        assertThat(totalProcessed).isEqualTo(500);
+
+        // No more due timers
+        List<TimerJobEntity> remaining = timerJobRepository.findDueLocked(now, 100);
+        assertThat(remaining).isEmpty();
+    }
+
+    /**
+     * Criterion #3: Existing behavior for N ≤ batchSize unchanged.
+     * 50 timers, batchSize=100 → all 50 returned in one batch.
+     */
+    @Test
+    @Transactional
+    void batchLimit_fewerThanBatchSize_allReturned() {
+        Instant now = Instant.now().minusSeconds(10);
+        for (int i = 0; i < 50; i++) {
+            jdbc.update(
+                "INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at) VALUES (?, ?, ?, false, ?)",
+                UUID.randomUUID(), UUID.randomUUID(), Timestamp.from(now), Timestamp.from(Instant.now()));
+        }
+
+        List<TimerJobEntity> batch = timerJobRepository.findDueLocked(now, 100);
+        assertThat(batch).hasSize(50);
+    }
+
+    /**
+     * Same batch-limit tests for timer_start_jobs table.
+     */
+    @Test
+    @Transactional
+    void batchLimit_timerStartJobs_returnsAtMostBatchSize() {
+        Instant now = Instant.now().minusSeconds(10);
+        for (int i = 0; i < 200; i++) {
+            jdbc.update(
+                "INSERT INTO timer_start_jobs (id, process_key, process_definition_id, element_id, due_at, fired, created_at) " +
+                "VALUES (?, 'test-proc', ?, 'start1', ?, false, ?)",
+                UUID.randomUUID(), UUID.randomUUID(), Timestamp.from(now), Timestamp.from(Instant.now()));
+        }
+
+        List<?> batch = timerStartJobRepository.findDueLocked(now, 100);
+        assertThat(batch).hasSize(100);
     }
 }
