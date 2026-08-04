@@ -295,5 +295,15 @@
   "revokeApiKeyDescription": "Бұл кілтті дереу жарамсыз етеді. Оны қолданатын интеграциялар жұмысын тоқтатады.",
   "jsonPlaceholder": "мыс. [\"u1\",\"u2\"] немесе {\"key\":\"val\"}",
   "bpmnXml": "BPMN XML",
-  "characters": "таңба"
+  "characters": "таңба",
+  "serviceAccounts": "Сервис аккаунттары",
+  "serviceName": "Сервис аккаунтының аты",
+  "noServiceAccounts": "Сервис аккаунттары жоқ.",
+  "rotating": "Айналдыру…",
+  "apiKeySaveNow": "API кілті — Қазір сақтаңыз",
+  "keyNotShownAgain": "Бұл кілт қайта көрсетілмейді. Оны көшіріп, қауіпсіз жерге сақтаңыз.",
+  "failedToLoadServiceAccounts": "Сервис аккаунттарын жүктеу мүмкін болмады",
+  "failedToCreateServiceAccount": "Сервис аккаунтын жасау мүмкін болмады",
+  "failedToRotateServiceAccountKey": "Кілтті айналдыру мүмкін болмады",
+  "failedToRevokeServiceAccount": "Сервис аккаунтын қайтару мүмкін болмады"
 }

@@ -2,6 +2,9 @@
 import { ref, onMounted } from 'vue'
 import type { ServiceAccount } from '@/types/api'
 import * as serviceAccountService from '@/services/serviceAccountService'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{ processKey: string }>()
 
@@ -30,7 +33,7 @@ async function loadAccounts() {
   try {
     accounts.value = await serviceAccountService.listServiceAccounts(props.processKey)
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : 'Failed to load service accounts'
+    error.value = e instanceof Error ? e.message : t('failedToLoadServiceAccounts')
   } finally {
     loading.value = false
   }
@@ -53,7 +56,7 @@ async function createAccount() {
     showCreateForm.value = false
     await loadAccounts()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : 'Failed to create service account'
+    error.value = e instanceof Error ? e.message : t('failedToCreateServiceAccount')
   }
 }
 
@@ -67,7 +70,7 @@ async function rotateKey(saId: string) {
     showKeyModal.value = true
     await loadAccounts()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : 'Failed to rotate key'
+    error.value = e instanceof Error ? e.message : t('failedToRotateServiceAccountKey')
   } finally {
     rotatingId.value = null
   }
@@ -79,7 +82,7 @@ async function revokeAccount(saId: string) {
     await serviceAccountService.revokeServiceAccount(props.processKey, saId)
     await loadAccounts()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : 'Failed to revoke service account'
+    error.value = e instanceof Error ? e.message : t('failedToRevokeServiceAccount')
   }
 }
 
@@ -110,12 +113,12 @@ onMounted(loadAccounts)
 <template>
   <div class="space-y-4">
     <div class="flex items-center justify-between">
-      <h3 class="text-lg font-bold">Service Accounts</h3>
+      <h3 class="text-lg font-bold">{{ t('serviceAccounts') }}</h3>
       <button
         class="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90"
         @click="showCreateForm = !showCreateForm"
       >
-        {{ showCreateForm ? 'Cancel' : '+ Create' }}
+        {{ showCreateForm ? t('cancel') : '+ ' + t('create') }}
       </button>
     </div>
 
@@ -125,11 +128,11 @@ onMounted(loadAccounts)
     <div v-if="showCreateForm" class="border border-border rounded-lg p-4 bg-card space-y-3">
       <input
         v-model="newName"
-        placeholder="Service account name"
+        :placeholder="t('serviceName')"
         class="w-full px-3 py-1.5 border border-input rounded text-sm"
       />
       <div class="space-y-1">
-        <p class="text-xs text-muted-foreground font-medium">Permissions:</p>
+        <p class="text-xs text-muted-foreground font-medium">{{ t('permissions') }}:</p>
         <label v-for="perm in ALL_PERMISSIONS" :key="perm" class="flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" :checked="newPermissions.includes(perm)" @change="togglePermission(perm)" />
           {{ perm }}
@@ -140,7 +143,7 @@ onMounted(loadAccounts)
         :disabled="!newName"
         @click="createAccount"
       >
-        Create
+        {{ t('create') }}
       </button>
     </div>
 
@@ -150,11 +153,11 @@ onMounted(loadAccounts)
     <table v-else-if="accounts.length" class="w-full text-sm border border-border rounded-lg overflow-hidden">
       <thead class="bg-muted">
         <tr>
-          <th class="px-4 py-2 text-left font-medium">Name</th>
-          <th class="px-4 py-2 text-left font-medium">Prefix</th>
-          <th class="px-4 py-2 text-left font-medium">Permissions</th>
-          <th class="px-4 py-2 text-left font-medium">Status</th>
-          <th class="px-4 py-2 text-right font-medium">Actions</th>
+          <th class="px-4 py-2 text-left font-medium">{{ t('name') }}</th>
+          <th class="px-4 py-2 text-left font-medium">{{ t('prefix') }}</th>
+          <th class="px-4 py-2 text-left font-medium">{{ t('permissions') }}</th>
+          <th class="px-4 py-2 text-left font-medium">{{ t('status') }}</th>
+          <th class="px-4 py-2 text-right font-medium">{{ t('actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -163,8 +166,8 @@ onMounted(loadAccounts)
           <td class="px-4 py-2 font-mono text-xs">{{ sa.prefix }}…</td>
           <td class="px-4 py-2 text-xs">{{ sa.permissions.join(', ') || '—' }}</td>
           <td class="px-4 py-2">
-            <span v-if="sa.revokedAt" class="text-xs text-red-500">Revoked</span>
-            <span v-else class="text-xs text-green-600">Active</span>
+            <span v-if="sa.revokedAt" class="text-xs text-red-500">{{ t('revoked') }}</span>
+            <span v-else class="text-xs text-green-600">{{ t('active') }}</span>
           </td>
           <td class="px-4 py-2 text-right space-x-2">
             <button
@@ -173,31 +176,31 @@ onMounted(loadAccounts)
               :disabled="rotatingId === sa.id"
               @click="rotateKey(sa.id)"
             >
-              {{ rotatingId === sa.id ? 'Rotating…' : 'Rotate' }}
+              {{ rotatingId === sa.id ? t('rotating') : t('rotate') }}
             </button>
             <button
               v-if="!sa.revokedAt"
               class="text-xs text-red-500 hover:underline"
               @click="revokeAccount(sa.id)"
             >
-              Revoke
+              {{ t('revoke') }}
             </button>
           </td>
         </tr>
       </tbody>
     </table>
 
-    <p v-else class="text-sm text-muted-foreground">No service accounts yet.</p>
+    <p v-else class="text-sm text-muted-foreground">{{ t('noServiceAccounts') }}</p>
 
     <!-- Key display modal — key lives ONLY here, never in Pinia store -->
     <div v-if="showKeyModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeKeyModal">
       <div class="bg-card rounded-lg shadow-lg w-full max-w-lg p-6 space-y-4">
         <div class="flex items-center gap-2">
           <span class="text-amber-500 text-xl">⚠️</span>
-          <h3 class="font-bold text-lg">API Key — Save it now</h3>
+          <h3 class="font-bold text-lg">{{ t('apiKeySaveNow') }}</h3>
         </div>
         <p class="text-sm text-muted-foreground">
-          This key will <strong>not</strong> be shown again. Copy it and store it securely.
+          {{ t('keyNotShownAgain') }}
         </p>
         <div class="bg-muted rounded p-3 font-mono text-sm break-all select-all border border-border">
           {{ displayedKey }}
@@ -207,13 +210,13 @@ onMounted(loadAccounts)
             class="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted"
             @click="copyKey"
           >
-            {{ keyCopied ? 'Copied!' : 'Copy to clipboard' }}
+            {{ keyCopied ? t('copied') : t('copyToClipboard') }}
           </button>
           <button
             class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90"
             @click="closeKeyModal"
           >
-            I saved it — Close
+            {{ t('savedClose') }}
           </button>
         </div>
       </div>
