@@ -29,6 +29,7 @@ import com.zorrodev.bpm.engine.service.FormResolver;
 import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -46,6 +47,7 @@ import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class FormResource implements FormContract {
 
     private final FormRepository formRepository;
@@ -327,8 +329,8 @@ public class FormResource implements FormContract {
                             globalArtifactUsage.merge(e.getExtensions().getUserTaskExtension().getFormKey(), 1L, Long::sum);
                         }
                     });
-            } catch (Exception ignored) {
-                // Skip PDs that can't be parsed
+            } catch (Exception e) {
+                log.warn("Failed to parse process definition {} for schema-map usage count: {}", allPd.getId(), e.getMessage());
             }
         }
 
