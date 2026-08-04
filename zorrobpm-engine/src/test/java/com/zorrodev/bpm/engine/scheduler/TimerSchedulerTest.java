@@ -9,10 +9,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,16 +63,19 @@ class TimerSchedulerTest {
     }
 
     @Test
-    void batchProcessor_firesEachDueJob_andIsolatesFailures() {
+    void batchProcessor_firesEachDueJob_andIsolatesFailures() throws Exception {
         DBService dbServiceMock = org.mockito.Mockito.mock(DBService.class);
         TimerJobExecutor executorMock = org.mockito.Mockito.mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutorMock = org.mockito.Mockito.mock(TimerStartJobExecutor.class);
         TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbServiceMock, executorMock, startExecutorMock);
+        Field f = TimerBatchProcessor.class.getDeclaredField("batchSize");
+        f.setAccessible(true);
+        f.setInt(batchProcessor, 100);
 
         TimerJob bad = job();
         TimerJob good = job();
-        when(dbServiceMock.findDueTimerJobsLocked(any())).thenReturn(List.of(bad, good));
-        when(dbServiceMock.findDueTimerStartJobsLocked(any())).thenReturn(List.of());
+        when(dbServiceMock.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of(bad, good));
+        when(dbServiceMock.findDueTimerStartJobsLocked(any(), anyInt())).thenReturn(List.of());
         org.mockito.Mockito.doThrow(new RuntimeException("boom")).when(executorMock).fire(eq(bad));
 
         batchProcessor.processBatch();
