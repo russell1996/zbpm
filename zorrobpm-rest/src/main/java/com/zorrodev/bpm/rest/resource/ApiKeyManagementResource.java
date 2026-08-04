@@ -143,6 +143,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         return getGrants(apiKey.getId());
     }
 
+    @Transactional
     @Override
     public ApiKeyWithSecretDTO rotateApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
@@ -158,6 +159,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         return toWithSecret(apiKey, rawKey);
     }
 
+    @Transactional
     @Override
     public void revokeApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
@@ -183,6 +185,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         return toDTO(apiKey);
     }
 
+    @Transactional
     @Override
     public ApiKeyWithSecretDTO rotateMyApiKey() {
         Principal principal = getPrincipal();
@@ -200,6 +203,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         return toWithSecret(apiKey, rawKey);
     }
 
+    @Transactional
     @Override
     public void revokeMyApiKey() {
         Principal principal = getPrincipal();
