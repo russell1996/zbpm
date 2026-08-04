@@ -294,5 +294,15 @@
   "revokeApiKeyDescription": "Это немедленно аннулирует ключ. Все интеграции, использующие его, перестанут работать.",
   "jsonPlaceholder": "напр. [\"u1\",\"u2\"] или {\"key\":\"val\"}",
   "bpmnXml": "BPMN XML",
-  "characters": "символов"
+  "characters": "символов",
+  "serviceAccounts": "Сервисные аккаунты",
+  "serviceName": "Имя сервисного аккаунта",
+  "noServiceAccounts": "Сервисные аккаунты отсутствуют.",
+  "rotating": "Ротация…",
+  "apiKeySaveNow": "API-ключ — Сохраните сейчас",
+  "keyNotShownAgain": "Этот ключ больше не будет показан. Скопируйте и сохраните его.",
+  "failedToLoadServiceAccounts": "Не удалось загрузить сервисные аккаунты",
+  "failedToCreateServiceAccount": "Не удалось создать сервисный аккаунт",
+  "failedToRotateServiceAccountKey": "Не удалось выполнить ротацию ключа",
+  "failedToRevokeServiceAccount": "Не удалось отозвать сервисный аккаунт"
 }
