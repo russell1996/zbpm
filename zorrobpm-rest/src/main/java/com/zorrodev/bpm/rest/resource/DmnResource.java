@@ -4,7 +4,9 @@ import com.zorrodev.bpm.contract.DmnContract;
 import com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.DmnDecision;
+import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.DmnService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -13,8 +15,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
@@ -22,14 +27,46 @@ import java.util.Map;
 public class DmnResource implements DmnContract {
 
     private final DmnService dmnService;
+    private final EventAuthzResolver eventAuthzResolver;
+    private final HttpServletRequest request;
+
+    /**
+     * WO-SEC-40: resolves the process definition ids the current principal may access.
+     * {@code null} = see all (superAdmin / full-grant), empty = see nothing (DENY).
+     * Reuses the shared EventAuthzResolver (same mechanism as ProcessDefinitionResource).
+     */
+    private Collection<UUID> resolveAllowedPdIds() {
+        Object attr = request.getAttribute("principal");
+        if (!(attr instanceof Principal principal)) {
+            return Set.of();
+        }
+        return eventAuthzResolver.resolve(principal, null);
+    }
+
+    /**
+     * WO-SEC-40: throws 404 if the current principal cannot access the decision's owning
+     * process definition. 404 (not 403) keeps decision existence hidden from unauthorized
+     * principals (same pattern as ProcessDefinitionResource.requirePdAccess).
+     */
+    private void requireDecisionAccess(String decisionId) {
+        Collection<UUID> allowed = resolveAllowedPdIds();
+        if (allowed == null) {
+            return; // see all (superAdmin / full grant)
+        }
+        UUID owningPdId = dmnService.findProcessDefinitionId(decisionId).orElse(null);
+        if (owningPdId == null || !allowed.contains(owningPdId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Decision not found");
+        }
+    }
 
     @Override
     public List<DmnDecision> getDecisions() {
-        return dmnService.listDecisions();
+        return dmnService.listDecisions(resolveAllowedPdIds());
     }
 
     @Override
     public DmnDecision getDecision(@PathVariable String decisionId) {
+        requireDecisionAccess(decisionId);
         try {
             return dmnService.getDecision(decisionId);
         } catch (EngineException e) {
@@ -40,6 +77,7 @@ public class DmnResource implements DmnContract {
 
     @Override
     public Object evaluateDecision(@PathVariable String decisionId, @RequestBody EvaluateDecisionDTO dto) {
+        requireDecisionAccess(decisionId);
         Object result;
         try {
             result = dmnService.evaluate(decisionId, dto.getVariables());
