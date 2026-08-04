@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ServiceAccountsTab from './ServiceAccountsTab.vue'
+
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
 
 /**
  * WO-MT-6 criterion #2: API key does NOT persist in component state after modal close.
