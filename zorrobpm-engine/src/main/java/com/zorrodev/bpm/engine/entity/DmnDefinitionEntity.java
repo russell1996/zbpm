@@ -24,4 +24,6 @@ public class DmnDefinitionEntity {
     @Lob
     private String dmn;
     private Instant createdAt;
+    /** Link to the process definition this DMN belongs to (embedded DMN in BPMN deploy). */
+    private UUID processDefinitionId;
 }

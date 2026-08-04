@@ -27,9 +27,12 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * A small DMN decision-table engine built directly on the project's FEEL engine (the same feel-scala line
@@ -47,6 +50,11 @@ public class DmnServiceImpl implements DmnService {
 
     @Override
     public void deploy(String dmnXml) {
+        deploy(dmnXml, null);
+    }
+
+    @Override
+    public void deploy(String dmnXml, UUID processDefinitionId) {
         DmnDefinitionsModel model = SecureXmlParser.unmarshal(dmnXml, DmnDefinitionsModel.class);
         if (model.getDecisions() == null || model.getDecisions().isEmpty()) {
             throw new EngineException("DMN resource has no decisions");
@@ -61,6 +69,7 @@ public class DmnServiceImpl implements DmnService {
             entity.setVersion(version);
             entity.setDmn(dmnXml);
             entity.setCreatedAt(Instant.now());
+            entity.setProcessDefinitionId(processDefinitionId);
             dmnDefinitionRepository.save(entity);
             log.info("Deployed DMN decision '{}' version {}", decision.getId(), version);
         }
@@ -212,9 +221,17 @@ public class DmnServiceImpl implements DmnService {
 
     @Override
     public List<DmnDecision> listDecisions() {
+        return listDecisions(null);
+    }
+
+    @Override
+    public List<DmnDecision> listDecisions(Collection<UUID> allowedPdIds) {
         // keep the latest version of each decisionId
         Map<String, DmnDefinitionEntity> latest = new LinkedHashMap<>();
         for (DmnDefinitionEntity e : dmnDefinitionRepository.findAll()) {
+            if (!visible(e, allowedPdIds)) {
+                continue;
+            }
             DmnDefinitionEntity current = latest.get(e.getDecisionId());
             if (current == null || e.getVersion() > current.getVersion()) {
                 latest.put(e.getDecisionId(), e);
@@ -225,6 +242,25 @@ public class DmnServiceImpl implements DmnService {
             result.add(toDecisionDTO(e));
         }
         return result;
+    }
+
+    /**
+     * WO-SEC-40: a decision is visible to a principal iff its scoped process definition id is
+     * among the allowed ones. {@code null} allowed = see all (superAdmin / full grant).
+     * Decisions with no process definition scope are only visible to "see all" principals —
+     * a scoped principal cannot see unscoped decisions (DENY by default).
+     */
+    private boolean visible(DmnDefinitionEntity entity, Collection<UUID> allowedPdIds) {
+        if (allowedPdIds == null) {
+            return true;
+        }
+        return entity.getProcessDefinitionId() != null
+            && allowedPdIds.contains(entity.getProcessDefinitionId());
+    }
+
+    @Override
+    public Optional<UUID> findProcessDefinitionId(String decisionId) {
+        return dmnDefinitionRepository.findLatestProcessDefinitionId(decisionId);
     }
 
     @Override
