@@ -288,6 +288,7 @@
   "deploySuccessToast": "Процес сәтті орналастырылды",
   "viewDefinition": "Анықтаманы қарау",
   "failedToDeploy": "Процесті орналастыру мүмкін болмады",
+  "loadError": "Деректерді жүктеу мүмкін болмады",
   "dueAt": "Мерзімі",
   "ownerRole": "ИЕСІ",
   "designerRole": "ДИЗАЙНЕР",
