@@ -288,6 +288,7 @@
   "deploySuccessToast": "Процесс успешно загружен",
   "viewDefinition": "Просмотр определения",
   "failedToDeploy": "Не удалось загрузить процесс",
+  "loadError": "Не удалось загрузить данные",
   "dueAt": "Срок до",
   "ownerRole": "ВЛАДЕЛЕЦ",
   "designerRole": "ДИЗАЙНЕР",
