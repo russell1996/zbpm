@@ -17,10 +17,11 @@ public interface TimerStartJobRepository extends JpaRepository<TimerStartJobEnti
     /**
      * L6 FIX: FOR UPDATE SKIP LOCKED prevents two pollers from picking up the same timer start jobs.
      * Row locks are held until the calling transaction commits.
+     * WO-REL-11: LIMIT :batchSize caps the number of rows locked per poll to avoid unbounded locking.
      */
-    @Query(value = "SELECT * FROM timer_start_jobs WHERE fired = false AND due_at <= :now ORDER BY due_at ASC FOR UPDATE SKIP LOCKED",
+    @Query(value = "SELECT * FROM timer_start_jobs WHERE fired = false AND due_at <= :now ORDER BY due_at ASC LIMIT :batchSize FOR UPDATE SKIP LOCKED",
            nativeQuery = true)
-    List<TimerStartJobEntity> findDueLocked(@Param("now") Instant now);
+    List<TimerStartJobEntity> findDueLocked(@Param("now") Instant now, @Param("batchSize") int batchSize);
 
     @Modifying
     @Query("UPDATE TimerStartJobEntity t SET t.fired = true WHERE t.id = :id AND t.fired = false")

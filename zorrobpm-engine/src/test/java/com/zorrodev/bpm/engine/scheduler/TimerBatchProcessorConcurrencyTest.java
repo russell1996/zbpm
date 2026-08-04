@@ -8,12 +8,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
 /**
@@ -31,8 +33,14 @@ class TimerBatchProcessorConcurrencyTest {
     @Mock private DBService dbService;
     @Mock private ActivityService activityService;
 
+    private static void setBatchSize(TimerBatchProcessor processor, int size) throws Exception {
+        Field f = TimerBatchProcessor.class.getDeclaredField("batchSize");
+        f.setAccessible(true);
+        f.setInt(processor, size);
+    }
+
     @Test
-    void twoPollersSameJob_onlyOneFires() throws InterruptedException {
+    void twoPollersSameJob_onlyOneFires() throws Exception {
         // Setup: one due timer job
         TimerJob job = new TimerJob();
         job.setId(UUID.randomUUID());
@@ -41,10 +49,11 @@ class TimerBatchProcessorConcurrencyTest {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
         TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        setBatchSize(batchProcessor, 100);
 
         // Both "pollers" see the same due job (simulates race before SKIP LOCKED)
-        when(dbService.findDueTimerJobsLocked(any())).thenReturn(List.of(job));
-        when(dbService.findDueTimerStartJobsLocked(any())).thenReturn(List.of());
+        when(dbService.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of(job));
+        when(dbService.findDueTimerStartJobsLocked(any(), anyInt())).thenReturn(List.of());
 
         // First thread's claim succeeds, second's fails (simulates SKIP LOCKED behavior)
         AtomicInteger claimCount = new AtomicInteger(0);
@@ -77,7 +86,7 @@ class TimerBatchProcessorConcurrencyTest {
     }
 
     @Test
-    void singlePoller_firesJob() {
+    void singlePoller_firesJob() throws Exception {
         TimerJob job = new TimerJob();
         job.setId(UUID.randomUUID());
         job.setActivityId(UUID.randomUUID());
@@ -85,9 +94,10 @@ class TimerBatchProcessorConcurrencyTest {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
         TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        setBatchSize(batchProcessor, 100);
 
-        when(dbService.findDueTimerJobsLocked(any())).thenReturn(List.of(job));
-        when(dbService.findDueTimerStartJobsLocked(any())).thenReturn(List.of());
+        when(dbService.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of(job));
+        when(dbService.findDueTimerStartJobsLocked(any(), anyInt())).thenReturn(List.of());
 
         batchProcessor.processBatch();
 
@@ -95,13 +105,14 @@ class TimerBatchProcessorConcurrencyTest {
     }
 
     @Test
-    void noDueJobs_noFire() {
+    void noDueJobs_noFire() throws Exception {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
         TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        setBatchSize(batchProcessor, 100);
 
-        when(dbService.findDueTimerJobsLocked(any())).thenReturn(List.of());
-        when(dbService.findDueTimerStartJobsLocked(any())).thenReturn(List.of());
+        when(dbService.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of());
+        when(dbService.findDueTimerStartJobsLocked(any(), anyInt())).thenReturn(List.of());
 
         batchProcessor.processBatch();
 
