@@ -608,8 +608,8 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public List<TimerJob> findDueTimerJobsLocked(Instant now) {
-        return timerJobRepository.findDueLocked(now).stream()
+    public List<TimerJob> findDueTimerJobsLocked(Instant now, int batchSize) {
+        return timerJobRepository.findDueLocked(now, batchSize).stream()
             .map(e -> {
                 TimerJob job = new TimerJob();
                 job.setId(e.getId());
@@ -862,8 +862,8 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobsLocked(Instant now) {
-        return timerStartJobRepository.findDueLocked(now).stream()
+    public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobsLocked(Instant now, int batchSize) {
+        return timerStartJobRepository.findDueLocked(now, batchSize).stream()
             .map(e -> {
                 com.zorrodev.bpm.engine.dto.TimerStartJob job = new com.zorrodev.bpm.engine.dto.TimerStartJob();
                 job.setId(e.getId());
