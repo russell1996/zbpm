@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useIncidentStore } from '@/stores/incident'
+import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
@@ -15,8 +16,9 @@ const { formatDateTime } = useDateFormat()
 
 // unchecked -> only open incidents (server-side resolved=false); checked -> all
 const showResolved = ref(false)
-const page = ref(0)
-const pageSize = 10
+const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
+  () => store.incidents?.totalElements,
+)
 
 async function load() {
   await store.fetchIncidents({
@@ -26,26 +28,15 @@ async function load() {
   })
 }
 
-function nextPage() {
-  if (store.incidents && (page.value + 1) * pageSize < store.incidents.totalElements) {
-    page.value++
-    load()
-  }
-}
-
-function prevPage() {
-  if (page.value > 0) {
-    page.value--
-    load()
-  }
-}
+function goNextPage() { nextPage(); load() }
+function goPrevPage() { prevPage(); load() }
 
 function viewDetail(id: string) {
   router.push(`/incidents/${id}`)
 }
 
 onMounted(load)
-watch(showResolved, () => { page.value = 0; load() })
+watch(showResolved, () => { resetPage(); load() })
 
 function exportData() {
   if (!store.incidents?.data) return
@@ -137,9 +128,9 @@ function exportData() {
     <div v-if="store.incidents" class="flex items-center justify-between text-sm text-muted-foreground">
       <span>{{ store.incidents.totalElements }} {{ t('total') }}</span>
       <div class="flex items-center gap-2">
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="page === 0" @click="prevPage">{{ t('previous') }}</button>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="!hasPrev" @click="goPrevPage">{{ t('previous') }}</button>
         <span>{{ t('page') }} {{ page + 1 }}</span>
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="(page + 1) * pageSize >= store.incidents.totalElements" @click="nextPage">{{ t('next') }}</button>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="!hasNext" @click="goNextPage">{{ t('next') }}</button>
       </div>
     </div>
   </div>

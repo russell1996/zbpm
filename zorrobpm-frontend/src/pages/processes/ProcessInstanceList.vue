@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
+import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
@@ -14,8 +15,9 @@ const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
 const filterDefId = ref('')
-const page = ref(0)
-const pageSize = 10
+const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
+  () => store.instances?.totalElements,
+)
 
 async function load() {
   await store.fetchInstances({
@@ -25,19 +27,8 @@ async function load() {
   })
 }
 
-function nextPage() {
-  if (store.instances && (page.value + 1) * pageSize < store.instances.totalElements) {
-    page.value++
-    load()
-  }
-}
-
-function prevPage() {
-  if (page.value > 0) {
-    page.value--
-    load()
-  }
-}
+function goNextPage() { nextPage(); load() }
+function goPrevPage() { prevPage(); load() }
 
 function viewDetail(id: string) {
   router.push(`/processes/instances/${id}`)
@@ -64,7 +55,7 @@ function exportData() {
 }
 
 onMounted(load)
-watch(filterDefId, () => { page.value = 0; load() })
+watch(filterDefId, () => { resetPage(); load() })
 </script>
 
 <template>
@@ -144,9 +135,9 @@ watch(filterDefId, () => { page.value = 0; load() })
     <div v-if="store.instances" class="flex items-center justify-between text-sm text-muted-foreground">
       <span>{{ store.instances.totalElements }} {{ t('total') }}</span>
       <div class="flex items-center gap-2">
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="page === 0" @click="prevPage">{{ t('previous') }}</button>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="!hasPrev" @click="goPrevPage">{{ t('previous') }}</button>
         <span>{{ t('page') }} {{ page + 1 }}</span>
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="(page + 1) * pageSize >= store.instances.totalElements" @click="nextPage">{{ t('next') }}</button>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="!hasNext" @click="goNextPage">{{ t('next') }}</button>
       </div>
     </div>
   </div>
