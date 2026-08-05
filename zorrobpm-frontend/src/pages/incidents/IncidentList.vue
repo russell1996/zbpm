@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useIncidentStore } from '@/stores/incident'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -10,6 +11,7 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 const router = useRouter()
 const store = useIncidentStore()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 
 // unchecked -> only open incidents (server-side resolved=false); checked -> all
 const showResolved = ref(false)
@@ -119,8 +121,8 @@ function exportData() {
                 {{ inc.completedAt ? t('resolved') : t('open') }}
               </span>
             </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ new Date(inc.createdAt).toLocaleString() }}</td>
-            <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? new Date(inc.completedAt).toLocaleString() : '—' }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(inc.createdAt) }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? formatDateTime(inc.completedAt) : '—' }}</td>
             <td class="px-4 py-3">
               <button class="text-sm text-primary hover:underline" @click="viewDetail(inc.id)">{{ t('view') }}</button>
             </td>

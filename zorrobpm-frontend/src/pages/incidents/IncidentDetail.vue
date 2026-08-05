@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useIncidentStore } from '@/stores/incident'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
@@ -12,6 +13,7 @@ const router = useRouter()
 const store = useIncidentStore()
 const toast = useToast()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 
 const showResolveModal = ref(false)
 const resolveVars = ref<{ name: string; type: string; value: string }[]>([])
@@ -94,9 +96,9 @@ onMounted(() => {
           </span>
         </div>
         <div><span class="text-muted-foreground">{{ t('activity') }}:</span> <span class="font-mono">{{ store.currentIncident.activityId }}</span></div>
-        <div class="col-span-2"><span class="text-muted-foreground">{{ t('created') }}:</span> {{ new Date(store.currentIncident.createdAt).toLocaleString() }}</div>
+        <div class="col-span-2"><span class="text-muted-foreground">{{ t('created') }}:</span> {{ formatDateTime(store.currentIncident.createdAt) }}</div>
         <div v-if="store.currentIncident.completedAt" class="col-span-2">
-          <span class="text-muted-foreground">{{ t('resolved') }}:</span> {{ new Date(store.currentIncident.completedAt).toLocaleString() }}
+          <span class="text-muted-foreground">{{ t('resolved') }}:</span> {{ formatDateTime(store.currentIncident.completedAt) }}
         </div>
       </div>
 

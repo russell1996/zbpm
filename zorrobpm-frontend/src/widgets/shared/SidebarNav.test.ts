@@ -10,7 +10,7 @@ vi.mock('vue-router', () => ({
 
 // t returns the key, so nav labels render as their labelKey
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (k: string) => k }),
+  useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 
 describe('SidebarNav', () => {

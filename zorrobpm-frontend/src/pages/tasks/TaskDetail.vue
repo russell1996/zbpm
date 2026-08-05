@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import { getTaskForm, type TaskFormResponse } from '@/services/formService'
@@ -15,6 +16,7 @@ const router = useRouter()
 const store = useTaskStore()
 const toast = useToast()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 
 const editableVars = ref<{ name: string; type: string; value: string }[]>([])
 const formResponse = ref<TaskFormResponse | null>(null)
@@ -106,9 +108,9 @@ onMounted(async () => {
           <CopyableId :value="store.currentTask.processInstanceId" />
         </div>
         <div><span class="text-muted-foreground">{{ t('formKey') }}:</span> {{ store.currentTask.formKey || '—' }}</div>
-        <div><span class="text-muted-foreground">{{ t('created') }}:</span> {{ new Date(store.currentTask.createdAt).toLocaleString() }}</div>
+        <div><span class="text-muted-foreground">{{ t('created') }}:</span> {{ formatDateTime(store.currentTask.createdAt) }}</div>
         <div v-if="store.currentTask.completedAt" class="col-span-2">
-          <span class="text-muted-foreground">{{ t('completedAtLabel') }}:</span> {{ new Date(store.currentTask.completedAt).toLocaleString() }}
+          <span class="text-muted-foreground">{{ t('completedAtLabel') }}:</span> {{ formatDateTime(store.currentTask.completedAt) }}
         </div>
       </div>
 

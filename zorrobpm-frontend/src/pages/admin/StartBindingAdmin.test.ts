@@ -19,7 +19,7 @@ vi.mock('@/services/formService', () => ({
 }))
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (k: string) => k }),
+  useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 
 vi.mock('@/composables/useToast', () => ({
