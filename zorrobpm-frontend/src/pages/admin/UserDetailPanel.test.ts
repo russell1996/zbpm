@@ -5,7 +5,7 @@ import UserDetailPanel from './UserDetailPanel.vue'
 import * as admin from '@/services/adminService'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (k: string) => k }),
+  useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 
 const toastError = vi.fn()

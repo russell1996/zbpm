@@ -2,8 +2,10 @@
 import { ref, onMounted } from 'vue'
 import { getMyApiKey, rotateMyApiKey, revokeMyApiKey, type ApiKeyInfo } from '@/services/apiKeyService'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 const apiKey = ref<ApiKeyInfo | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -96,8 +98,8 @@ onMounted(loadApiKey)
         </div>
         <div class="text-sm space-y-1">
           <div><span class="text-muted-foreground">{{ t('prefix') }}</span> <span class="font-mono">{{ apiKey.prefix }}…</span></div>
-          <div><span class="text-muted-foreground">{{ t('created') }}:</span> {{ new Date(apiKey.createdAt).toLocaleString() }}</div>
-          <div v-if="apiKey.lastUsedAt"><span class="text-muted-foreground">{{ t('lastUsed') }}</span> {{ new Date(apiKey.lastUsedAt).toLocaleString() }}</div>
+          <div><span class="text-muted-foreground">{{ t('created') }}:</span> {{ formatDateTime(apiKey.createdAt) }}</div>
+          <div v-if="apiKey.lastUsedAt"><span class="text-muted-foreground">{{ t('lastUsed') }}</span> {{ formatDateTime(apiKey.lastUsedAt) }}</div>
         </div>
       </div>
 

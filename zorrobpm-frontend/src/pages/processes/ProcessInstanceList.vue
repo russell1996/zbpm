@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -10,6 +11,7 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 const router = useRouter()
 const store = useProcessStore()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 
 const filterDefId = ref('')
 const page = ref(0)
@@ -129,8 +131,8 @@ watch(filterDefId, () => { page.value = 0; load() })
                 {{ status(pi) }}
               </span>
             </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ new Date(pi.startedAt).toLocaleString() }}</td>
-            <td class="px-4 py-3 text-muted-foreground">{{ pi.completedAt ? new Date(pi.completedAt).toLocaleString() : '—' }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(pi.startedAt) }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ pi.completedAt ? formatDateTime(pi.completedAt) : '—' }}</td>
           </tr>
           <tr v-if="!store.instances?.data?.length">
             <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noInstances') }}</td>

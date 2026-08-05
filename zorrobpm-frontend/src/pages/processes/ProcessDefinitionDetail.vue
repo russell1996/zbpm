@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
 import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
@@ -13,6 +14,7 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 const toast = useToast()
 const store = useProcessStore()
 
@@ -158,7 +160,7 @@ async function downloadBpmn() {
           <p class="text-sm text-muted-foreground">
             Key: <span class="font-mono">{{ store.currentDefinition.key }}</span>
             · Version: {{ store.currentDefinition.version }}
-            · Created: {{ new Date(store.currentDefinition.createdAt).toLocaleString() }}
+            · Created: {{ formatDateTime(store.currentDefinition.createdAt) }}
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -310,7 +312,7 @@ async function downloadBpmn() {
                 v{{ v.version }}
                 <span v-if="v.id === (route.params.id as string)" class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">current</span>
               </td>
-              <td class="px-4 py-3 text-muted-foreground">{{ new Date(v.createdAt).toLocaleString() }}</td>
+              <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(v.createdAt) }}</td>
               <td class="px-4 py-3 text-right text-primary text-xs">{{ v.id === (route.params.id as string) ? '' : 'Open →' }}</td>
             </tr>
           </tbody>
