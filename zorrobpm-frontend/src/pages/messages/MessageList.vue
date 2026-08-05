@@ -7,9 +7,11 @@ import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useDateFormat } from '@/composables/useDateFormat'
 
 const { t } = useI18n()
 const toast = useToast()
+const { formatDateTime } = useDateFormat()
 const messages = ref<MessageSubscription[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -94,7 +96,7 @@ function exportData() {
                 {{ msg.consumed ? t('consumed') : t('pending') }}
               </span>
             </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ new Date(msg.createdAt).toLocaleString() }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(msg.createdAt) }}</td>
           </tr>
           <tr v-if="!messages.length">
             <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noMessages') }}</td>

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { useTaskStore } from '@/stores/task'
 import { useIncidentStore } from '@/stores/incident'
@@ -21,6 +22,7 @@ const taskStore = useTaskStore()
 const incidentStore = useIncidentStore()
 const toast = useToast()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 
 const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses'>('bpmn')
 const bpmnXml = ref('')
@@ -364,10 +366,10 @@ watch(activeTab, onTabChange)
           {{ processStore.currentInstance.completedAt ? t('completed') : t('running') }}
         </span>
         <span class="text-muted-foreground">
-          {{ t('startedAt') }}: {{ new Date(processStore.currentInstance.startedAt).toLocaleString() }}
+          {{ t('startedAt') }}: {{ formatDateTime(processStore.currentInstance.startedAt) }}
         </span>
         <span v-if="processStore.currentInstance.completedAt" class="text-muted-foreground">
-          {{ t('completedAtLabel') }}: {{ new Date(processStore.currentInstance.completedAt).toLocaleString() }}
+          {{ t('completedAtLabel') }}: {{ formatDateTime(processStore.currentInstance.completedAt) }}
         </span>
       </div>
 
@@ -506,8 +508,8 @@ watch(activeTab, onTabChange)
                     {{ taskStatusBadge(task.status, task.completedAt).label }}
                   </span>
                 </td>
-                <td class="px-4 py-3 text-muted-foreground">{{ new Date(task.createdAt).toLocaleString() }}</td>
-                <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? new Date(task.completedAt).toLocaleString() : '—' }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? formatDateTime(task.completedAt) : '—' }}</td>
                 <td class="px-4 py-3">
                   <button
                     v-if="isTaskActive(task.status, task.completedAt)"
@@ -548,8 +550,8 @@ watch(activeTab, onTabChange)
                     {{ taskStatusBadge(task.status, task.completedAt).label }}
                   </span>
                 </td>
-                <td class="px-4 py-3 text-muted-foreground">{{ new Date(task.createdAt).toLocaleString() }}</td>
-                <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? new Date(task.completedAt).toLocaleString() : '—' }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? formatDateTime(task.completedAt) : '—' }}</td>
                 <td class="px-4 py-3">
                   <button
                     v-if="isTaskActive(task.status, task.completedAt)"
@@ -588,8 +590,8 @@ watch(activeTab, onTabChange)
                     {{ inc.completedAt ? t('resolved') : t('open') }}
                   </span>
                 </td>
-                <td class="px-4 py-3 text-muted-foreground">{{ new Date(inc.createdAt).toLocaleString() }}</td>
-                <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? new Date(inc.completedAt).toLocaleString() : '—' }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(inc.createdAt) }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? formatDateTime(inc.completedAt) : '—' }}</td>
                 <td class="px-4 py-3">
                   <button
                     v-if="!inc.completedAt"
@@ -631,8 +633,8 @@ watch(activeTab, onTabChange)
                     {{ act.status }}
                   </span>
                 </td>
-                <td class="px-4 py-3 text-muted-foreground">{{ new Date(act.createdAt).toLocaleString() }}</td>
-                <td class="px-4 py-3 text-muted-foreground">{{ act.completedAt ? new Date(act.completedAt).toLocaleString() : '—' }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(act.createdAt) }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ act.completedAt ? formatDateTime(act.completedAt) : '—' }}</td>
               </tr>
               <tr v-if="!processStore.currentActivities.length">
                 <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noHistory') }}</td>
@@ -665,8 +667,8 @@ watch(activeTab, onTabChange)
                     {{ sp.completedAt ? t('completed') : t('running') }}
                   </span>
                 </td>
-                <td class="px-4 py-3 text-muted-foreground">{{ new Date(sp.startedAt).toLocaleString() }}</td>
-                <td class="px-4 py-3 text-muted-foreground">{{ sp.completedAt ? new Date(sp.completedAt).toLocaleString() : '—' }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(sp.startedAt) }}</td>
+                <td class="px-4 py-3 text-muted-foreground">{{ sp.completedAt ? formatDateTime(sp.completedAt) : '—' }}</td>
                 <td class="px-4 py-3">
                   <button class="text-sm text-primary hover:underline" @click="router.push(`/processes/instances/${sp.id}`)">{{ t('view') }}</button>
                 </td>
