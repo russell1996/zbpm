@@ -31,7 +31,7 @@ async function submit() {
             <span class="text-sm font-black text-primary-foreground">BPM</span>
           </div>
         </div>
-        <h1 class="text-2xl font-bold">ZorroBPM</h1>
+        <h1 class="text-2xl font-bold">ZBPM</h1>
         <p class="text-sm text-muted-foreground">{{ t('signInToContinue') }}</p>
       </div>
 
