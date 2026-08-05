@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTaskStore } from '@/stores/task'
+import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
 import { taskStatusBadge } from '@/shared/lib/utils'
@@ -15,8 +16,9 @@ const toast = useToast()
 const { t } = useI18n()
 
 const filterCompleted = ref(false)
-const page = ref(0)
-const pageSize = 10
+const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
+  () => store.userTasks?.totalElements,
+)
 const selectedIds = ref<Set<string>>(new Set())
 const bulkCompleting = ref(false)
 
@@ -29,19 +31,8 @@ async function load() {
   })
 }
 
-function nextPage() {
-  if (store.userTasks && (page.value + 1) * pageSize < store.userTasks.totalElements) {
-    page.value++
-    load()
-  }
-}
-
-function prevPage() {
-  if (page.value > 0) {
-    page.value--
-    load()
-  }
-}
+function goNextPage() { nextPage(); load() }
+function goPrevPage() { prevPage(); load() }
 
 function viewDetail(id: string) {
   router.push(`/tasks/${id}`)
@@ -108,7 +99,7 @@ function exportData() {
 }
 
 onMounted(load)
-watch(filterCompleted, () => { page.value = 0; load() })
+watch(filterCompleted, () => { resetPage(); load() })
 </script>
 
 <template>
@@ -210,9 +201,9 @@ watch(filterCompleted, () => { page.value = 0; load() })
     <div v-if="store.userTasks" class="flex items-center justify-between text-sm text-muted-foreground">
       <span>{{ store.userTasks.totalElements }} {{ t('total') }}</span>
       <div class="flex items-center gap-2">
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="page === 0" @click="prevPage">{{ t('previous') }}</button>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="!hasPrev" @click="goPrevPage">{{ t('previous') }}</button>
         <span>{{ t('page') }} {{ page + 1 }}</span>
-        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="(page + 1) * pageSize >= store.userTasks.totalElements" @click="nextPage">{{ t('next') }}</button>
+        <button class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50" :disabled="!hasNext" @click="goNextPage">{{ t('next') }}</button>
       </div>
     </div>
   </div>
