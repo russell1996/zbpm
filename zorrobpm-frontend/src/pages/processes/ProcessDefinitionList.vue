@@ -3,6 +3,7 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProcessStore } from '@/stores/process'
+import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
 
@@ -12,8 +13,9 @@ const { t } = useI18n()
 
 const search = ref('')
 const latestOnly = ref(true)
-const page = ref(0)
-const pageSize = 10
+const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
+  () => store.definitions?.totalElements,
+)
 
 async function load() {
   await store.fetchDefinitions({
@@ -24,19 +26,8 @@ async function load() {
   })
 }
 
-function nextPage() {
-  if (store.definitions && (page.value + 1) * pageSize < store.definitions.totalElements) {
-    page.value++
-    load()
-  }
-}
-
-function prevPage() {
-  if (page.value > 0) {
-    page.value--
-    load()
-  }
-}
+function goNextPage() { nextPage(); load() }
+function goPrevPage() { prevPage(); load() }
 
 function viewDetail(id: string) {
   router.push(`/processes/definitions/${id}`)
@@ -54,7 +45,7 @@ function exportData() {
 }
 
 onMounted(load)
-watch([search, latestOnly], () => { page.value = 0; load() })
+watch([search, latestOnly], () => { resetPage(); load() })
 </script>
 
 <template>
@@ -141,16 +132,16 @@ watch([search, latestOnly], () => { page.value = 0; load() })
       <div class="flex items-center gap-2">
         <button
           class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50"
-          :disabled="page === 0"
-          @click="prevPage"
+          :disabled="!hasPrev"
+          @click="goPrevPage"
         >
           {{ t('previous') }}
         </button>
         <span>{{ t('page') }} {{ page + 1 }}</span>
         <button
           class="px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50"
-          :disabled="(page + 1) * pageSize >= store.definitions.totalElements"
-          @click="nextPage"
+          :disabled="!hasNext"
+          @click="goNextPage"
         >
           {{ t('next') }}
         </button>
