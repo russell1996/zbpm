@@ -14,10 +14,12 @@ vi.mock('vue-i18n', () => ({
 }))
 
 describe('SidebarNav', () => {
-  it('renders the Forms menu item (WO-FORM-6 — route existed, menu item was missing)', () => {
+  it('Forms menu item removed — form/schema editing now lives inside Process Definitions detail', () => {
     const wrapper = mount(SidebarNav)
-    // navItems includes { labelKey: 'forms', to: '/admin/forms' } → label 'forms' rendered
-    expect(wrapper.text()).toContain('forms')
+    // forms was superseded by the per-process SchemaEditorPanel (same pattern as processSchemas below)
+    const buttons = wrapper.findAll('button')
+    const formsBtn = buttons.find(b => b.text().includes('forms'))
+    expect(formsBtn).toBeFalsy()
   })
 
   it('still renders existing items (users) — no regression', () => {
