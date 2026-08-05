@@ -7,9 +7,11 @@ import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useDateFormat } from '@/composables/useDateFormat'
 
 const { t } = useI18n()
 const toast = useToast()
+const { formatDateTime } = useDateFormat()
 const timers = ref<TimerJob[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -82,7 +84,7 @@ function exportData() {
           <tr v-for="timer in timers" :key="timer.id" class="border-t border-border">
             <td class="px-4 py-3 font-mono text-xs">{{ timer.id.slice(0, 8) }}...</td>
             <td class="px-4 py-3 font-mono text-xs">{{ (timer.processInstanceId || timer.activityId || '—').slice(0, 8) }}{{ (timer.processInstanceId || timer.activityId) ? '...' : '' }}</td>
-            <td class="px-4 py-3 text-sm">{{ new Date(timer.dueAt).toLocaleString() }}</td>
+            <td class="px-4 py-3 text-sm">{{ formatDateTime(timer.dueAt) }}</td>
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', timer.fired ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
                 <CheckCircle v-if="timer.fired" class="h-3 w-3" />
@@ -90,7 +92,7 @@ function exportData() {
                 {{ timer.fired ? t('fired') : t('pending') }}
               </span>
             </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ new Date(timer.createdAt).toLocaleString() }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(timer.createdAt) }}</td>
           </tr>
           <tr v-if="!timers.length">
             <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noTimers') }}</td>

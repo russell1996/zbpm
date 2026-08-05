@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import * as userService from '@/services/userService'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (k: string) => k }),
+  useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 
 vi.mock('vue-router', () => ({

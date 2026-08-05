@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import type { ProcessVariable } from '@/types/api'
@@ -12,6 +13,7 @@ const router = useRouter()
 const store = useTaskStore()
 const toast = useToast()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 
 const editableVars = ref<{ name: string; type: string; value: string }[]>([])
 
@@ -67,9 +69,9 @@ onMounted(async () => {
           <span class="text-muted-foreground">{{ t('process') }}:</span>
           <CopyableId :value="store.currentServiceTask.processInstanceId" />
         </div>
-        <div><span class="text-muted-foreground">{{ t('created') }}:</span> {{ new Date(store.currentServiceTask.createdAt).toLocaleString() }}</div>
+        <div><span class="text-muted-foreground">{{ t('created') }}:</span> {{ formatDateTime(store.currentServiceTask.createdAt) }}</div>
         <div v-if="store.currentServiceTask.completedAt" class="col-span-2">
-          <span class="text-muted-foreground">{{ t('completedAtLabel') }}:</span> {{ new Date(store.currentServiceTask.completedAt).toLocaleString() }}
+          <span class="text-muted-foreground">{{ t('completedAtLabel') }}:</span> {{ formatDateTime(store.currentServiceTask.completedAt) }}
         </div>
       </div>
 

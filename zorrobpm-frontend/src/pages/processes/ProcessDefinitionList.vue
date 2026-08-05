@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -9,6 +10,7 @@ import { Download, RefreshCw } from 'lucide-vue-next'
 const router = useRouter()
 const store = useProcessStore()
 const { t } = useI18n()
+const { formatDate } = useDateFormat()
 
 const search = ref('')
 const latestOnly = ref(true)
@@ -122,7 +124,7 @@ watch([search, latestOnly], () => { page.value = 0; load() })
                 v{{ def.version }}
               </span>
             </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ new Date(def.createdAt).toLocaleDateString() }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ formatDate(def.createdAt) }}</td>
             <td class="px-4 py-3">
               <button class="text-sm text-primary hover:underline" @click.stop="viewDetail(def.id)">
                 View

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
@@ -13,6 +14,7 @@ const router = useRouter()
 const store = useTaskStore()
 const toast = useToast()
 const { t } = useI18n()
+const { formatDateTime } = useDateFormat()
 
 const filterCompleted = ref(false)
 const page = ref(0)
@@ -195,7 +197,7 @@ watch(filterCompleted, () => { page.value = 0; load() })
                 {{ taskStatusBadge(task.status, task.completedAt).label }}
               </span>
             </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ new Date(task.createdAt).toLocaleString() }}</td>
+            <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
             <td class="px-4 py-3">
               <button class="text-sm text-primary hover:underline" @click="viewDetail(task.id)">View</button>
             </td>

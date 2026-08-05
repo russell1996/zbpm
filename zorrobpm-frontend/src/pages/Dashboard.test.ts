@@ -5,7 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import Dashboard from '@/pages/Dashboard.vue'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (k: string) => k }),
+  useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 
 vi.mock('vue-router', () => ({
