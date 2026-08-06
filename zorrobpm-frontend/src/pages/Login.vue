@@ -25,18 +25,18 @@ async function submit() {
 
 <template>
   <div class="min-h-screen flex items-center justify-center bg-muted">
-    <form class="bg-card rounded-lg shadow-lg w-full max-w-sm p-8 space-y-5" @submit.prevent="submit">
-      <div class="flex justify-between items-start">
-        <div class="text-center space-y-2 flex-1">
-          <div class="flex justify-center">
-            <div class="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-              <span class="text-sm font-black text-primary-foreground">BPM</span>
-            </div>
-          </div>
-          <h1 class="text-2xl font-bold">ZBPM</h1>
-          <p class="text-sm text-muted-foreground">{{ t('signInToContinue') }}</p>
-        </div>
+    <form class="relative bg-card rounded-lg shadow-lg w-full max-w-sm p-8 space-y-5" @submit.prevent="submit">
+      <div class="absolute right-3 top-3">
         <LanguageSwitcher />
+      </div>
+      <div class="text-center space-y-2">
+        <div class="flex justify-center">
+          <div class="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
+            <span class="text-sm font-black text-primary-foreground">BPM</span>
+          </div>
+        </div>
+        <h1 class="text-2xl font-bold">ZBPM</h1>
+        <p class="text-sm text-muted-foreground">{{ t('signInToContinue') }}</p>
       </div>
 
       <div class="space-y-3">
