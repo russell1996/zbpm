@@ -29,18 +29,22 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- 3.1.0 (not 3.0.3): natively vendors swagger-ui 5.32.11, which is the exact version
+             WO-SEC-39 previously force-overrode on top of 3.0.3 (which vendors 5.32.2) to patch
+             the DOMPurify CVE. That override broke Swagger UI entirely: springdoc's resource
+             handler registers a hardcoded classpath location for the version IT vendors
+             (META-INF/resources/webjars/swagger-ui/5.32.2/), so once the actual jar on the
+             classpath was 5.32.11, every request to /swagger-ui/** 404'd - confirmed via
+             springdoc TRACE logging showing "Mapped to ResourceHttpRequestHandler [classpath
+             META-INF/resources/webjars/swagger-ui/5.32.2/]" / "Resource not found for path
+             [index.html]". Upgrading springdoc itself to the version that already vendors
+             5.32.11 fixes this at the root - the vendored version and the resource handler's
+             hardcoded path are back in sync, and the manual swagger-ui dependency override is
+             no longer needed (removed). -->
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>3.0.3</version>
-        </dependency>
-        <!-- WO-SEC-39: override transitive swagger-ui webjar to patch DOMPurify CVE-2026-65898 et al.
-             springdoc 3.0.3 vendors swagger-ui 5.32.2 which bundles DOMPurify 3.3.2 (vulnerable).
-             swagger-ui 5.32.11 bundles DOMPurify >=3.3.3 which patches the CVE family. -->
-        <dependency>
-            <groupId>org.webjars</groupId>
-            <artifactId>swagger-ui</artifactId>
-            <version>5.32.11</version>
+            <version>3.1.0</version>
         </dependency>
 
         <dependency>
