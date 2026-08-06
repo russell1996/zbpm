@@ -22,8 +22,10 @@ import com.zorrodev.bpm.engine.service.QueryService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Collection;
 import java.util.List;
@@ -49,7 +51,9 @@ public class QueryResource implements QueryContract {
     }
 
     public ServiceTask getServiceTask(@PathVariable UUID id) {
-        return queryService.getServiceTask(id);
+        ServiceTask task = queryService.getServiceTask(id);
+        requireResourceAccess(task.getProcessDefinitionId());
+        return task;
     }
 
     public PagedDataDTO<UserTask> getUserTasks(@ParameterObject UserTaskQuery query) {
@@ -57,7 +61,9 @@ public class QueryResource implements QueryContract {
     }
 
     public UserTask getUserTask(@PathVariable UUID id) {
-        return queryService.getUserTask(id);
+        UserTask task = queryService.getUserTask(id);
+        requireResourceAccess(task.getProcessDefinitionId());
+        return task;
     }
 
     public PagedDataDTO<ProcessInstance> getProcessInstances(@ParameterObject ProcessInstanceQuery query) {
@@ -65,10 +71,14 @@ public class QueryResource implements QueryContract {
     }
 
     public ProcessInstance getProcessInstance(@PathVariable UUID id) {
-        return queryService.getProcessInstance(id);
+        ProcessInstance instance = queryService.getProcessInstance(id);
+        requireResourceAccess(instance.getProcessDefinitionId());
+        return instance;
     }
 
     public List<ActivityInstance> getProcessInstanceActivities(@PathVariable UUID id) {
+        ProcessInstance instance = queryService.getProcessInstance(id);
+        requireResourceAccess(instance.getProcessDefinitionId());
         return queryService.getActivities(id);
     }
 
@@ -78,7 +88,9 @@ public class QueryResource implements QueryContract {
     }
 
     public Incident getIncident(@PathVariable UUID id) {
-        return queryService.getIncident(id);
+        Incident incident = queryService.getIncident(id);
+        requireResourceAccess(queryService.resolveIncidentProcessDefinitionId(id));
+        return incident;
     }
 
     /** WO-ARCH-1b: tenant-filtered timer jobs */
@@ -101,5 +113,21 @@ public class QueryResource implements QueryContract {
             return Set.of();
         }
         return eventAuthzResolver.resolve(principal, null);
+    }
+
+    /**
+     * WO-SEC-43: 404 (not 403) when the current principal has no grant on the owning
+     * process definition of a singular query resource. null allowed → full access
+     * (superAdmin / full-grant); otherwise the owning pdId must be in the allowed set.
+     * 404 keeps existence of the foreign resource hidden (same pattern as WO-SEC-40).
+     */
+    private void requireResourceAccess(UUID owningPdId) {
+        Collection<UUID> allowed = resolveAllowedPdIds();
+        if (allowed == null) {
+            return;
+        }
+        if (owningPdId == null || !allowed.contains(owningPdId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Resource not found");
+        }
     }
 }

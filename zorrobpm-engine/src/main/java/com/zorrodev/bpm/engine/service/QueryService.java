@@ -40,6 +40,12 @@ public interface QueryService {
 
     Incident getIncident(UUID id);
 
+    /**
+     * WO-SEC-43: resolve the processDefinitionId owning an incident (via its
+     * activity → process instance), or {@code null} if the incident does not exist.
+     */
+    UUID resolveIncidentProcessDefinitionId(UUID incidentId);
+
     PagedDataDTO<Incident> findIncidents(IncidentQuery query, Collection<UUID> allowedPdIds);
 
     PagedDataDTO<ProcessVariable> findVariables(VariableQuery query, Collection<UUID> allowedPdIds);
