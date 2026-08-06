@@ -83,7 +83,17 @@ function exportData() {
         <tbody>
           <tr v-for="timer in timers" :key="timer.id" class="border-t border-border">
             <td class="px-4 py-3 font-mono text-xs">{{ timer.id.slice(0, 8) }}...</td>
-            <td class="px-4 py-3 font-mono text-xs">{{ (timer.processInstanceId || timer.activityId || '—').slice(0, 8) }}{{ (timer.processInstanceId || timer.activityId) ? '...' : '' }}</td>
+            <td class="px-4 py-3 font-mono text-xs">
+              <router-link
+                v-if="timer.processInstanceId"
+                :to="{ name: 'process-instance-detail', params: { id: timer.processInstanceId } }"
+                class="text-primary hover:underline"
+              >
+                {{ timer.processInstanceId.slice(0, 8) }}...
+              </router-link>
+              <span v-else-if="timer.activityId">{{ timer.activityId.slice(0, 8) }}...</span>
+              <span v-else class="text-muted-foreground">—</span>
+            </td>
             <td class="px-4 py-3 text-sm">{{ formatDateTime(timer.dueAt) }}</td>
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', timer.fired ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
