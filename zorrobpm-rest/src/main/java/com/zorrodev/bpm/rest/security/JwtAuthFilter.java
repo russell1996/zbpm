@@ -100,6 +100,19 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             && "navigate".equals(request.getHeader("Sec-Fetch-Mode"));
     }
 
+    /**
+     * WO-SEC-43: the path the user was actually trying to reach (e.g. /swagger-ui/index.html),
+     * URL-encoded for use as a query param on the /ui/login redirect. Without this, Login.vue's
+     * post-login redirect defaults to '/' - sending someone who was on Swagger straight to the
+     * SPA dashboard instead of back to where they were.
+     */
+    private static String encodeRedirectTarget(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        String query = request.getQueryString();
+        String target = (query != null) ? uri + "?" + query : uri;
+        return java.net.URLEncoder.encode(target, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     private boolean isProtected(String path) {
         // WO-SEC-26: deny-by-default — only explicitly public paths are unprotected
         if (isPublicPath(path)) return false;
@@ -174,7 +187,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         if (principal == null) {
             if (isBrowserNavigation(request)) {
-                response.sendRedirect("/ui/login");
+                response.sendRedirect("/ui/login?redirect=" + encodeRedirectTarget(request));
                 return;
             }
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");

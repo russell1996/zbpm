@@ -13,12 +13,24 @@ const router = useRouter()
 const username = ref('')
 const password = ref('')
 
+// WO-SEC-43: paths outside the SPA's own routes (Swagger, raw API docs - anything the backend
+// itself redirected here from, not Vue Router's auth guard) need a real page load, not
+// router.replace - Vue Router doesn't know these routes and would just fall through to the
+// dashboard, which is exactly the "logs in on Swagger, lands on the admin panel" bug this fixes.
+function isExternalRedirect(target: string): boolean {
+  return target.startsWith('/swagger-ui') || target.startsWith('/v3/api-docs')
+}
+
 async function submit() {
   if (!username.value || !password.value) return
   const ok = await login(username.value, password.value)
   if (ok) {
     const redirect = (route.query.redirect as string) || '/'
-    router.replace(redirect)
+    if (isExternalRedirect(redirect)) {
+      window.location.href = redirect
+    } else {
+      router.replace(redirect)
+    }
   }
 }
 </script>

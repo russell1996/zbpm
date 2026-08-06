@@ -215,7 +215,23 @@ class JwtAuthFilterTest {
         filter.doFilterInternal(request, response, chain);
 
         assertThat(response.getStatus()).isEqualTo(302);
-        assertThat(response.getRedirectedUrl()).isEqualTo("/ui/login");
+        // Carries the original destination so Login.vue can send the user back to Swagger
+        // instead of defaulting to the SPA dashboard after a successful login.
+        assertThat(response.getRedirectedUrl()).isEqualTo("/ui/login?redirect=%2Fswagger-ui%2Findex.html");
+    }
+
+    @Test
+    void unauthenticatedBrowserNavigation_preservesQueryString() throws Exception {
+        setRequireApiAuth(true);
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v3/api-docs");
+        request.setQueryString("group=users");
+        request.addHeader("Sec-Fetch-Mode", "navigate");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getRedirectedUrl()).isEqualTo("/ui/login?redirect=%2Fv3%2Fapi-docs%3Fgroup%3Dusers");
     }
 
     @Test
