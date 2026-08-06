@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { setLocale } from '@/app/i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { LogOut, User, Sun, Moon, Menu, Globe } from 'lucide-vue-next'
+import { LogOut, User, Sun, Moon, Menu, Globe, FileCode } from 'lucide-vue-next'
 import SearchCommand from './SearchCommand.vue'
 
 defineProps<{
@@ -79,6 +79,15 @@ const currentLang = () => languages.find((l) => l.code === locale.value)?.label 
         <Sun v-if="ui.darkMode" class="h-4 w-4" />
         <Moon v-else class="h-4 w-4" />
       </button>
+      <a
+        href="/swagger-ui/index.html"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
+        title="API Docs"
+      >
+        <FileCode class="h-4 w-4" />
+      </a>
       <div v-if="auth.user" class="hidden md:flex items-center gap-2 text-sm">
         <User class="h-4 w-4 text-muted-foreground" />
         <span>{{ auth.user.fullName || auth.user.username }}</span>
