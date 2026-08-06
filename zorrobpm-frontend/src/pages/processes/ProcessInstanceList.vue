@@ -14,7 +14,7 @@ const store = useProcessStore()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
-const filterDefId = ref('')
+const filterKey = ref('')
 const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
   () => store.instances?.totalElements,
 )
@@ -23,7 +23,7 @@ async function load() {
   await store.fetchInstances({
     pageIndex: page.value,
     pageSize,
-    processDefinitionId: filterDefId.value || undefined,
+    processDefinitionKey: filterKey.value || undefined,
   })
 }
 
@@ -55,7 +55,7 @@ function exportData() {
 }
 
 onMounted(load)
-watch(filterDefId, () => { resetPage(); load() })
+watch(filterKey, () => { resetPage(); load() })
 </script>
 
 <template>
@@ -84,9 +84,9 @@ watch(filterDefId, () => { resetPage(); load() })
 
     <div class="flex items-center gap-4">
       <input
-        v-model="filterDefId"
+        v-model="filterKey"
         type="text"
-        :placeholder="t('filterByDefId')"
+        :placeholder="t('filterByKey')"
         class="px-3 py-2 border border-input rounded-md text-sm w-72 focus:outline-none focus:ring-2 focus:ring-ring"
       />
     </div>
