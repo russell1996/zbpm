@@ -47,7 +47,7 @@ const router = createRouter({
           path: 'processes/definitions/:id',
           name: 'process-definition-detail',
           component: () => import('@/pages/processes/ProcessDefinitionDetail.vue'),
-          meta: { title: 'Process Definition' },
+          meta: { title: 'Process Definition', parentTitle: 'Process Definitions', parentTo: { name: 'process-definitions' } },
         },
         {
           path: 'processes/:key/start',
@@ -65,7 +65,7 @@ const router = createRouter({
           path: 'processes/instances/:id',
           name: 'process-instance-detail',
           component: () => import('@/pages/processes/ProcessInstanceDetail.vue'),
-          meta: { title: 'Process Instance' },
+          meta: { title: 'Process Instance', parentTitle: 'Process Instances', parentTo: { name: 'process-instances' } },
         },
         {
           path: 'processes/deploy',
@@ -83,7 +83,7 @@ const router = createRouter({
           path: 'tasks/:id',
           name: 'task-detail',
           component: () => import('@/pages/tasks/TaskDetail.vue'),
-          meta: { title: 'Task' },
+          meta: { title: 'Task', parentTitle: 'My Tasks', parentTo: { name: 'my-tasks' } },
         },
         {
           path: 'service-tasks',
@@ -95,7 +95,7 @@ const router = createRouter({
           path: 'service-tasks/:id',
           name: 'service-task-detail',
           component: () => import('@/pages/tasks/ServiceTaskDetail.vue'),
-          meta: { title: 'Service Task' },
+          meta: { title: 'Service Task', parentTitle: 'Service Tasks', parentTo: { name: 'service-tasks' } },
         },
         {
           path: 'incidents',
@@ -107,7 +107,7 @@ const router = createRouter({
           path: 'incidents/:id',
           name: 'incident-detail',
           component: () => import('@/pages/incidents/IncidentDetail.vue'),
-          meta: { title: 'Incident' },
+          meta: { title: 'Incident', parentTitle: 'Incidents', parentTo: { name: 'incidents' } },
         },
         {
           path: 'timers',
@@ -131,7 +131,7 @@ const router = createRouter({
           path: 'dmn/:id',
           name: 'dmn-detail',
           component: () => import('@/pages/dmn/DmnViewer.vue'),
-          meta: { title: 'DMN Decision' },
+          meta: { title: 'DMN Decision', parentTitle: 'DMN Decisions', parentTo: { name: 'dmn-list' } },
         },
         {
           path: 'admin/users',
