@@ -10,6 +10,7 @@ import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
+import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
@@ -249,6 +250,17 @@ public class QueryServiceImpl implements QueryService {
     @Override
     public Incident getIncident(UUID id) {
         return dbService.getIncident(id);
+    }
+
+    @Override
+    public UUID resolveIncidentProcessDefinitionId(UUID incidentId) {
+        return incidentRepository.findById(incidentId)
+            .map(IncidentEntity::getActivityId)
+            .flatMap(activityRepository::findById)
+            .map(ActivityEntity::getProcessInstanceId)
+            .flatMap(processInstanceRepository::findById)
+            .map(ProcessInstanceEntity::getProcessDefinitionId)
+            .orElse(null);
     }
 
     @Override
