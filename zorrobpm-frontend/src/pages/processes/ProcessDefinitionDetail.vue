@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -103,8 +103,8 @@ async function startProcess() {
   }
 }
 
-onMounted(async () => {
-  const id = route.params.id as string
+async function loadDefinition(id: string) {
+  bpmnXml.value = ''
   await Promise.all([
     store.fetchDefinition(id),
     store.fetchStructure(id),
@@ -117,7 +117,16 @@ onMounted(async () => {
   } catch {
     toast.error(t('loadError'))
   }
-})
+}
+
+onMounted(() => loadDefinition(route.params.id as string))
+
+// Vue Router reuses the component instance when only :id changes (same route).
+// Without this watch, switching versions leaves stale data on screen.
+watch(
+  () => route.params.id,
+  (id) => { if (id) loadDefinition(id as string) },
+)
 
 function openVersion(id: string) {
   if (id !== (route.params.id as string)) {
