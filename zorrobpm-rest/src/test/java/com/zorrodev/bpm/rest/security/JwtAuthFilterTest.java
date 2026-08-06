@@ -200,4 +200,68 @@ class JwtAuthFilterTest {
         // save() called only once (first request), not twice
         verify(apiKeyRepo, org.mockito.Mockito.times(1)).save(any(com.zorrodev.bpm.engine.entity.ApiKeyEntity.class));
     }
+
+    // WO-SEC-43: unauthenticated top-level browser navigation (e.g. typing /swagger-ui/index.html
+    // directly) redirects to the login page instead of showing a raw 401 Whitelabel error page.
+
+    @Test
+    void unauthenticatedBrowserNavigation_redirectsToLogin() throws Exception {
+        setRequireApiAuth(true);
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/swagger-ui/index.html");
+        request.addHeader("Sec-Fetch-Mode", "navigate");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl()).isEqualTo("/ui/login");
+    }
+
+    @Test
+    void unauthenticatedApiCall_stillReturnsJson401_notRedirected() throws Exception {
+        // The SPA's own axios calls (fetch/XHR) never send Sec-Fetch-Mode: navigate - this must
+        // keep returning a plain 401 so refreshInterceptor.ts's existing handling isn't broken.
+        setRequireApiAuth(true);
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/process-instances");
+        request.addHeader("Sec-Fetch-Mode", "cors");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getRedirectedUrl()).isNull();
+    }
+
+    @Test
+    void unauthenticatedRequest_noSecFetchModeHeader_stillReturnsJson401() throws Exception {
+        // Non-browser clients (curl, older browsers) without Sec-Fetch-Mode fall through to the
+        // existing behavior - never accidentally redirected.
+        setRequireApiAuth(true);
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/swagger-ui/index.html");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getRedirectedUrl()).isNull();
+    }
+
+    @Test
+    void unauthenticatedNonGetNavigation_stillReturnsJson401() throws Exception {
+        // Sec-Fetch-Mode: navigate can also occur for e.g. form POST navigations - only redirect
+        // GET (an actual document-load navigation), not other methods.
+        setRequireApiAuth(true);
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/process-instances");
+        request.addHeader("Sec-Fetch-Mode", "navigate");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getRedirectedUrl()).isNull();
+    }
 }

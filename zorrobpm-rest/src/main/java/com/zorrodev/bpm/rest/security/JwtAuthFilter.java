@@ -86,6 +86,20 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             || isUsersPath(path);
     }
 
+    /**
+     * WO-SEC-43: distinguishes a real top-level browser navigation (typed URL, clicked link -
+     * e.g. hitting /swagger-ui/index.html directly) from an API/XHR call (the SPA's own axios
+     * requests). Sec-Fetch-Mode is sent automatically by all modern browsers and is not
+     * spoofable by page JS, so it's a reliable signal here - "navigate" only occurs for actual
+     * document loads, never for fetch/XHR. GET-only because navigations are always GET; a
+     * misconfigured or legacy client without Sec-Fetch-Mode just falls through to the existing
+     * JSON 401 (unchanged behavior), it never gets redirected by accident.
+     */
+    private static boolean isBrowserNavigation(HttpServletRequest request) {
+        return "GET".equalsIgnoreCase(request.getMethod())
+            && "navigate".equals(request.getHeader("Sec-Fetch-Mode"));
+    }
+
     private boolean isProtected(String path) {
         // WO-SEC-26: deny-by-default — only explicitly public paths are unprotected
         if (isPublicPath(path)) return false;
@@ -159,6 +173,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
 
         if (principal == null) {
+            if (isBrowserNavigation(request)) {
+                response.sendRedirect("/ui/login");
+                return;
+            }
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
             return;
         }
