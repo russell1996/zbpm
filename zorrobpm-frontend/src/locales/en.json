@@ -85,6 +85,7 @@
   "noServiceTasksInInstance": "No service tasks",
   "noInstancesFound": "No instances found",
   "filterByDefId": "Filter by definition ID...",
+  "filterByKey": "Search by process key...",
   "elementDetails": "Element Details",
   "startProcessInstance": "Start Process Instance",
   "processContext": "Process Context",
