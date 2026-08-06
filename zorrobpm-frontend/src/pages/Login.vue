@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/features/auth/useAuth'
+import LanguageSwitcher from '@/widgets/shared/LanguageSwitcher.vue'
 
 const { t } = useI18n()
 const { login, isLoading, error } = useAuth()
@@ -25,14 +26,17 @@ async function submit() {
 <template>
   <div class="min-h-screen flex items-center justify-center bg-muted">
     <form class="bg-card rounded-lg shadow-lg w-full max-w-sm p-8 space-y-5" @submit.prevent="submit">
-      <div class="text-center space-y-2">
-        <div class="flex justify-center">
-          <div class="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-            <span class="text-sm font-black text-primary-foreground">BPM</span>
+      <div class="flex justify-between items-start">
+        <div class="text-center space-y-2 flex-1">
+          <div class="flex justify-center">
+            <div class="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
+              <span class="text-sm font-black text-primary-foreground">BPM</span>
+            </div>
           </div>
+          <h1 class="text-2xl font-bold">ZBPM</h1>
+          <p class="text-sm text-muted-foreground">{{ t('signInToContinue') }}</p>
         </div>
-        <h1 class="text-2xl font-bold">ZBPM</h1>
-        <p class="text-sm text-muted-foreground">{{ t('signInToContinue') }}</p>
+        <LanguageSwitcher />
       </div>
 
       <div class="space-y-3">
