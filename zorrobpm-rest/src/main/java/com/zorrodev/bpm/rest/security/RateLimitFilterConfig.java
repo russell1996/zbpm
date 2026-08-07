@@ -23,12 +23,28 @@ public class RateLimitFilterConfig {
     @Value("${zorrobpm.security.rate-limit.window-seconds:60}")
     private int windowSeconds;
 
+    @Value("${zorrobpm.security.rate-limit.account-capacity:3}")
+    private int accountCapacity;
+
+    @Value("${zorrobpm.security.rate-limit.account-window-seconds:300}")
+    private int accountWindowSeconds;
+
+    @Value("${zorrobpm.security.rate-limit.data-capacity:120}")
+    private int dataCapacity;
+
+    @Value("${zorrobpm.security.rate-limit.data-window-seconds:60}")
+    private int dataWindowSeconds;
+
     @Bean
     public RateLimitFilter rateLimitFilter() {
         RateLimitFilter filter = new RateLimitFilter();
         filter.setRateLimitEnabled(enabled);
         filter.setCapacity(capacity);
         filter.setWindowSeconds(windowSeconds);
+        filter.setAccountCapacity(accountCapacity);
+        filter.setAccountWindowSeconds(accountWindowSeconds);
+        filter.setDataCapacity(dataCapacity);
+        filter.setDataWindowSeconds(dataWindowSeconds);
         return filter;
     }
 
