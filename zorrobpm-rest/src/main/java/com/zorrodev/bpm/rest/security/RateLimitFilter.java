@@ -139,6 +139,15 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             // STEP 3: buffer body (capped) for per-account extraction.
             CachingRequestWrapper wrappedRequest = new CachingRequestWrapper(request);
 
+            // STEP 3b: chunked/no-Content-Length body that exceeded the cap in-flight → 413.
+            // The wrapper only buffered READ_CAP bytes; without this rejection the stream
+            // would carry a truncated body (length/stream desync), so we refuse instead.
+            if (wrappedRequest.isOversized()) {
+                log.warn("Login body exceeds {} bytes (chunked) — rejecting 413", MAX_LOGIN_BODY_BYTES);
+                send413(response);
+                return;
+            }
+
             // STEP 4: per-account bucket (disabled when accountCapacity == 0).
             String username = extractUsername(wrappedRequest);
             if (accountCapacity > 0 && username != null && !username.isBlank()) {
@@ -334,21 +343,37 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
      *
      * HOLD-fix: oversized declared bodies are rejected with 413 BEFORE this wrapper
      * is created (see doFilterInternal), so the capped buffer only ever holds bodies
-     * that legitimately fit. The stream length always matches the buffered bytes.
+     * that legitimately fit. As defense in depth the wrapper itself stops reading at
+     * MAX_LOGIN_BODY_BYTES+1 and flags the request as oversized (covers chunked /
+     * no-Content-Length requests); doFilterInternal then rejects it with 413, so the
+     * stream length always matches the buffered bytes (no length/stream desync).
      */
     private static class CachingRequestWrapper extends HttpServletRequestWrapper {
+        private static final int READ_CAP = MAX_LOGIN_BODY_BYTES + 1;
         private final byte[] cachedBody;
+        private final boolean oversized;
 
         CachingRequestWrapper(HttpServletRequest request) throws IOException {
             super(request);
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(READ_CAP);
             byte[] buf = new byte[1024];
             int n;
+            int total = 0;
             ServletInputStream inputStream = request.getInputStream();
-            while ((n = inputStream.read(buf)) != -1) {
-                baos.write(buf, 0, n);
+            while (total <= READ_CAP && (n = inputStream.read(buf)) != -1) {
+                int toWrite = Math.min(n, READ_CAP - total);
+                baos.write(buf, 0, toWrite);
+                total += toWrite;
+                if (total > READ_CAP) {
+                    break;
+                }
             }
+            this.oversized = total > MAX_LOGIN_BODY_BYTES;
             this.cachedBody = baos.toByteArray();
+        }
+
+        boolean isOversized() {
+            return oversized;
         }
 
         byte[] getBodyBytes() {
