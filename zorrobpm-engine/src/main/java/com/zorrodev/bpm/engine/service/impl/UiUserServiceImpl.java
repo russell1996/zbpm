@@ -11,6 +11,7 @@ import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.mapper.UiUserMapper;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.security.AdminPasswordValidator;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.UiUserService;
@@ -93,6 +94,8 @@ public class UiUserServiceImpl implements UiUserService {
     public UUID create(CreateUiUserDTO dto) {
         if (dto.getUsername() == null || dto.getUsername().isBlank()) throw new EngineException("Username is required");
         if (dto.getPassword() == null || dto.getPassword().isBlank()) throw new EngineException("Password is required");
+        // WO-SEC-46: enforce password complexity on create
+        if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
         if (repository.existsByUsername(dto.getUsername())) throw new EngineException("Username already exists");
 
         UiUserEntity entity = new UiUserEntity();
@@ -118,6 +121,8 @@ public class UiUserServiceImpl implements UiUserService {
         if (dto.getRole() != null) entity.setRole(normalizeRole(dto.getRole()));
         if (dto.getActive() != null) entity.setActive(dto.getActive());
         if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
+            // WO-SEC-46: enforce password complexity on update
+            if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
             entity.setPasswordHash(passwordHasher.hash(dto.getPassword()));
             entity.setForcePasswordChange(false);
         }
