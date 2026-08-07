@@ -7,6 +7,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import jakarta.servlet.FilterChain;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -14,7 +15,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * WO-SEC-44/45 HOLD fix: body-buffering DoS prevention.
  *
  * Key invariant: per-IP check is CHEAP (no body read).
- * Body is only read (with 16 KB cap) AFTER IP check passes.
+ * Body is only read AFTER IP check passes, and oversized declared bodies
+ * are rejected with 413 BEFORE any byte is buffered.
  */
 class RateLimitFilterBodyBufferingTest {
 
@@ -27,9 +29,11 @@ class RateLimitFilterBodyBufferingTest {
         filter.setCapacity(10);      // generous IP limit for multi-request tests
         filter.setWindowSeconds(3600);
         filter.setAccountCapacity(2); // 2 per account
-        filter.setAccountWindowSeconds(3600);
-        filter.setDataCapacity(0);    // disable data endpoint check
-        filter.setDataWindowSeconds(60);
+        filter.setRefreshCapacity(3);
+        filter.setRefreshWindowSeconds(3600);
+        filter.setDataCapacity(10);
+        filter.setDataWindowSeconds(3600);
+        filter.setTrustedProxies(Set.of());
         filter.reset();
     }
 
@@ -64,6 +68,13 @@ class RateLimitFilterBodyBufferingTest {
         return resp.getStatus();
     }
 
+    private int doFilter(RateLimitFilter f, MockHttpServletRequest req) throws Exception {
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        FilterChain chain = org.mockito.Mockito.mock(jakarta.servlet.FilterChain.class);
+        f.doFilterInternal(req, resp, chain);
+        return resp.getStatus();
+    }
+
     /**
      * Test #1: IP exhausted → body NOT read at all.
      * Use a separate filter with capacity=1 to test this cleanly.
@@ -75,7 +86,10 @@ class RateLimitFilterBodyBufferingTest {
         smallFilter.setCapacity(1);
         smallFilter.setWindowSeconds(3600);
         smallFilter.setAccountCapacity(5);
-        smallFilter.setAccountWindowSeconds(3600);
+        smallFilter.setRefreshCapacity(3);
+        smallFilter.setRefreshWindowSeconds(3600);
+        smallFilter.setDataCapacity(10);
+        smallFilter.setDataWindowSeconds(3600);
         smallFilter.reset();
 
         // Exhaust IP bucket
@@ -98,7 +112,7 @@ class RateLimitFilterBodyBufferingTest {
     /**
      * Test #2: IP passes → body read, per-account check works.
      * Request 1: user1 → 200 (IP passes, account passes, body read).
-     * Request 2: user1 → 200 (account capacity=2, still has token).
+     * Request 2: user1 → 200 (capacity=2, still has token).
      * Request 3: user1 → 429 (account exhausted).
      * Request 4: user2 → 200 (different account).
      */
@@ -118,16 +132,19 @@ class RateLimitFilterBodyBufferingTest {
     }
 
     /**
-     * Test #3: Large body (>16 KB) → capped, not fully buffered into heap.
+     * Test #3: Declared body larger than 16 KB cap → 413 BEFORE buffering.
+     * No bytes are read into memory — rejected by Content-Length alone.
      */
     @Test
-    void largeBody_capped_notFullyBuffered() throws Exception {
-        // 32 KB body — username "biguser" is within first 100 bytes, so it gets extracted
+    void largeBody_declaredOverCap_returns413() throws Exception {
         MockHttpServletRequest req = loginRequestLarge("biguser", 32_768);
         int status = doFilter(req);
-        // IP check passes (first request), account check runs with truncated body
-        // Username is within first 16KB so it should be extracted and account check should work
-        assertThat(status).isEqualTo(200); // IP=1/10, account=1/2 → passes
+        assertThat(status).isEqualTo(413);
+
+        // IP token was consumed for this attempt (IP check ran before size check),
+        // but no body was buffered — verify a follow-up small request still works
+        // with a different account (IP capacity=10, generous).
+        assertThat(doFilter(loginRequest("normaluser"))).isEqualTo(200);
     }
 
     /**
@@ -160,7 +177,10 @@ class RateLimitFilterBodyBufferingTest {
         noAcctFilter.setCapacity(2);
         noAcctFilter.setWindowSeconds(3600);
         noAcctFilter.setAccountCapacity(0); // disabled
-        noAcctFilter.setDataCapacity(0);
+        noAcctFilter.setRefreshCapacity(3);
+        noAcctFilter.setRefreshWindowSeconds(3600);
+        noAcctFilter.setDataCapacity(10);
+        noAcctFilter.setDataWindowSeconds(3600);
         noAcctFilter.reset();
 
         // Same user, 2 requests → both pass (only IP limit)
@@ -171,10 +191,35 @@ class RateLimitFilterBodyBufferingTest {
         assertThat(doFilter(noAcctFilter, loginRequest("sameuser"))).isEqualTo(429);
     }
 
-    private int doFilter(RateLimitFilter f, MockHttpServletRequest req) throws Exception {
-        MockHttpServletResponse resp = new MockHttpServletResponse();
-        FilterChain chain = org.mockito.Mockito.mock(jakarta.servlet.FilterChain.class);
-        f.doFilterInternal(req, resp, chain);
-        return resp.getStatus();
+    /**
+     * Test #6: Account-limit rejection rolls back the IP token.
+     * IP capacity=3, account capacity=2:
+     *   req1 user1 → 200 (IP 3→2, acct 2→1)
+     *   req2 user1 → 200 (IP 2→1, acct 1→0)
+     *   req3 user1 → 429 (acct exhausted; IP 1→0, rollback → 1)
+     *   req4 user2 → 200 (IP 1→0). WITHOUT rollback req4 would be 429 (IP 0).
+     */
+    @Test
+    void accountRejection_rollsBackIpToken() throws Exception {
+        RateLimitFilter tightFilter = new RateLimitFilter();
+        tightFilter.setRateLimitEnabled(true);
+        tightFilter.setCapacity(3);
+        tightFilter.setWindowSeconds(3600);
+        tightFilter.setAccountCapacity(2);
+        tightFilter.setRefreshCapacity(3);
+        tightFilter.setRefreshWindowSeconds(3600);
+        tightFilter.setDataCapacity(10);
+        tightFilter.setDataWindowSeconds(3600);
+        tightFilter.reset();
+
+        // Consume user1's 2 account tokens (2 IP tokens consumed too)
+        assertThat(doFilter(tightFilter, loginRequest("user1"))).isEqualTo(200);
+        assertThat(doFilter(tightFilter, loginRequest("user1"))).isEqualTo(200);
+
+        // user1 exhausted: 3rd request → 429, IP token rolled back
+        assertThat(doFilter(tightFilter, loginRequest("user1"))).isEqualTo(429);
+
+        // user2 from same IP should still pass (rollback returned the IP token)
+        assertThat(doFilter(tightFilter, loginRequest("user2"))).isEqualTo(200);
     }
 }

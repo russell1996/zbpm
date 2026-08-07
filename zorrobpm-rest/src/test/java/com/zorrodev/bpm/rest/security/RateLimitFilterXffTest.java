@@ -6,18 +6,14 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import jakarta.servlet.FilterChain;
 
+import java.util.Set;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
-/**
- * WO-SEC-12: XFF spoofing resistance for rate-limit.
- *
- *  #1: N+1 requests with DIFFERENT XFF but same remoteAddr → 429 on (N+1)-th
- *  #2: getClientIp returns remoteAddr, not XFF
- *  #3: rate-limit enabled by default
- *  #5: proof-of-failure — test #1 on current code → RED (different XFF = different bucket)
- */
 class RateLimitFilterXffTest {
 
     private RateLimitFilter filter;
@@ -27,13 +23,21 @@ class RateLimitFilterXffTest {
         filter = new RateLimitFilter();
         filter.setCapacity(5);
         filter.setWindowSeconds(3600);
+        filter.setAccountCapacity(5);
+        filter.setDataCapacity(120);
+        filter.setDataWindowSeconds(60);
+        filter.setRefreshCapacity(30);
+        filter.setRefreshWindowSeconds(60);
         filter.setRateLimitEnabled(true);
+        filter.setTrustedProxies(Set.of());
         filter.reset();
     }
 
     private MockHttpServletRequest loginRequest(String xff) {
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/auth/login");
         req.setRemoteAddr("192.168.1.100");
+        req.setContentType("application/json");
+        req.setContent("{\"username\":\"admin\",\"password\":\"pass\"}".getBytes());
         if (xff != null) {
             req.addHeader("X-Forwarded-For", xff);
         }
@@ -47,24 +51,8 @@ class RateLimitFilterXffTest {
         return resp.getStatus();
     }
 
-    // --- Criterion #2: getClientIp returns remoteAddr, not XFF ---
-
-    @Test
-    void criterion2_getClientIp_returnsRemoteAddr_notXff() throws Exception {
-        MockHttpServletRequest req = loginRequest("10.0.0.1, 10.0.0.2");
-        MockHttpServletResponse resp = new MockHttpServletResponse();
-        FilterChain chain = mock(FilterChain.class);
-        filter.doFilterInternal(req, resp, chain);
-        // With the fix, getClientIp should use remoteAddr (192.168.1.100), not XFF (10.0.0.1)
-        // The filter passes through (chain.doFilter called) for the first request
-        verify(chain).doFilter(req, resp);
-    }
-
-    // --- Criterion #1: Different XFF with same remoteAddr → same bucket → 429 ---
-
     @Test
     void criterion1_differentXff_sameRemoteAddr_hits429() throws Exception {
-        // Send 5 requests with different XFF, same remoteAddr → should hit 429 on 6th
         for (int i = 0; i < 5; i++) {
             MockHttpServletRequest req = loginRequest("10.0.0." + (i + 1));
             int status = doFilter(req);
@@ -72,7 +60,6 @@ class RateLimitFilterXffTest {
                     .as("Request %d with XFF=10.0.0.%d should pass", i, i + 1)
                     .isEqualTo(200);
         }
-        // 6th request with yet another XFF → should be 429 (same bucket via remoteAddr)
         MockHttpServletRequest req = loginRequest("10.0.0.99");
         int status = doFilter(req);
         assertThat(status)
@@ -80,13 +67,17 @@ class RateLimitFilterXffTest {
                 .isEqualTo(429);
     }
 
-    // --- Proof-of-failure #5: on current code (manual XFF), different XFF → no 429 ---
+    @Test
+    void criterion2_getClientIp_returnsRemoteAddr_notXff() throws Exception {
+        MockHttpServletRequest req = loginRequest("10.0.0.1, 10.0.0.2");
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+        filter.doFilterInternal(req, resp, chain);
+        verify(chain).doFilter(any(), eq(resp));
+    }
 
     @Test
     void criterion5_proofOfFailure_xffSpoofBypassesLimit() throws Exception {
-        // On the CURRENT code (getClientIp parses XFF), each different XFF = new bucket
-        // After fix (getClientIp = getRemoteAddr), all go to same bucket
-        // This test PASSES after fix, FAILS before fix (RED)
         for (int i = 0; i < 6; i++) {
             MockHttpServletRequest req = loginRequest("10.0.0." + (i + 1));
             int status = doFilter(req);

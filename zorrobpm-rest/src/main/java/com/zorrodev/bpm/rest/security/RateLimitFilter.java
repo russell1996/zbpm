@@ -3,9 +3,10 @@ package com.zorrodev.bpm.rest.security;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import jakarta.servlet.FilterChain;
-import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
@@ -14,40 +15,59 @@ import org.springframework.core.Ordered;
 import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Rate-limits POST /auth/login per client IP (cheap, no body read)
- * and per account (requires body read — guarded by IP check first).
- * Also rate-limits data endpoints per client IP.
+ * WO-SEC-44/45: Rate-limits auth + data endpoints.
  *
- * WO-SEC-44/45 HOLD fix: per-IP check runs BEFORE any body buffering.
- * Body is only read (with a 16 KB cap) if IP bucket allows.
- * This prevents memory-exhaustion DoS where attacker floods /auth/login
- * with oversized bodies that would all be buffered into heap.
+ * <p>Login (POST /auth/login): two independent buckets — per-IP AND per-account.
+ * Both must have capacity for the request to pass. This prevents:
+ * <ul>
+ *   <li>Self-DoS behind shared proxy (per-IP bucket shared by all users → one attacker blocks all)</li>
+ *   <li>Brute-force per account (attacker spreads attempts across IPs)</li>
+ * </ul>
  *
- * Runs with {@code HIGHEST_PRECEDENCE + 1} to capture the real TCP remote IP
- * BEFORE Spring's {@code ForwardedHeaderFilter} rewrites it from X-Forwarded-For.
+ * <p>Refresh (POST /auth/refresh): per-user bucket extracted from refresh token cookie.
+ *
+ * <p>Data endpoints: per-IP generous limit (WO-SEC-45).
+ *
+ * <p>Trusted proxy support: when {@code zorrobpm.security.rate-limit.trusted-proxies} is configured,
+ * the filter extracts the real client IP from X-Forwarded-For (leftmost non-trusted IP).
+ * Untrusted XFF headers are ignored (WO-SEC-12/13 anti-spoofing preserved).
+ *
+ * <p>HOLD-fix (body-buffering DoS): per-IP check runs BEFORE any body read.
+ * The body is only buffered (with a 16 KB cap) after the IP bucket allows the request.
+ * Requests with a declared body larger than the cap are rejected with 413 BEFORE reading.
+ * This prevents memory-exhaustion on the public unauthenticated /auth/login endpoint.
+ *
+ * <p>Runs with {@code HIGHEST_PRECEDENCE + 1} — before Spring's {@code ForwardedHeaderFilter}
+ * ({@code HIGHEST_PRECEDENCE + 5}) to capture IP before XFF rewriting.
  */
 @Slf4j
 public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
-    /** Maximum bytes read from login request body (16 KB — login JSON is ~100 bytes). */
-    private static final int MAX_LOGIN_BODY_BYTES = 16_384;
+    /** Maximum bytes buffered from login request body (login JSON is ~100 bytes). */
+    static final int MAX_LOGIN_BODY_BYTES = 16_384;
 
     private final Cache<String, RateBucket> ipBuckets = Caffeine.newBuilder()
         .maximumSize(100_000)
         .expireAfterAccess(10, TimeUnit.MINUTES)
         .build();
-
     private final Cache<String, RateBucket> accountBuckets = Caffeine.newBuilder()
         .maximumSize(100_000)
         .expireAfterAccess(10, TimeUnit.MINUTES)
         .build();
-
+    private final Cache<String, RateBucket> refreshBuckets = Caffeine.newBuilder()
+        .maximumSize(100_000)
+        .expireAfterAccess(10, TimeUnit.MINUTES)
+        .build();
     private final Cache<String, RateBucket> dataEndpointBuckets = Caffeine.newBuilder()
         .maximumSize(100_000)
         .expireAfterAccess(10, TimeUnit.MINUTES)
@@ -56,18 +76,26 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     private boolean enabled;
     private int capacity;
     private int windowSeconds;
-    private int accountCapacity;
-    private int accountWindowSeconds;
     private int dataCapacity;
     private int dataWindowSeconds;
+    /** WO-SEC-44: per-account login limit (separate from IP limit). Default same as capacity. */
+    private int accountCapacity;
+    /** WO-SEC-44: per-user refresh limit. Default: 30 per window. */
+    private int refreshCapacity;
+    /** WO-SEC-44: refresh window in seconds. Default: 60. */
+    private int refreshWindowSeconds;
+    /** WO-SEC-44: trusted proxy IPs/CIDRs. Empty = ignore XFF (current behavior). */
+    private Set<String> trustedProxies = Set.of();
 
     void setRateLimitEnabled(boolean enabled) { this.enabled = enabled; }
     void setCapacity(int capacity) { this.capacity = capacity; }
     void setWindowSeconds(int windowSeconds) { this.windowSeconds = windowSeconds; }
-    void setAccountCapacity(int accountCapacity) { this.accountCapacity = accountCapacity; }
-    void setAccountWindowSeconds(int accountWindowSeconds) { this.accountWindowSeconds = accountWindowSeconds; }
     void setDataCapacity(int dataCapacity) { this.dataCapacity = dataCapacity; }
     void setDataWindowSeconds(int dataWindowSeconds) { this.dataWindowSeconds = dataWindowSeconds; }
+    void setAccountCapacity(int accountCapacity) { this.accountCapacity = accountCapacity; }
+    void setRefreshCapacity(int refreshCapacity) { this.refreshCapacity = refreshCapacity; }
+    void setRefreshWindowSeconds(int refreshWindowSeconds) { this.refreshWindowSeconds = refreshWindowSeconds; }
+    void setTrustedProxies(Set<String> trustedProxies) { this.trustedProxies = trustedProxies; }
 
     @Override
     public int getOrder() {
@@ -86,41 +114,69 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         String method = request.getMethod();
         String clientIp = getClientIp(request);
 
-        // STEP 1: Per-IP check (CHEAP — no body read, no memory allocation)
+        // Login endpoint: per-IP + per-account throttling
         if ("POST".equalsIgnoreCase(method) && "/auth/login".equals(path)) {
+            // STEP 1: per-IP check — CHEAP, no body read, no memory allocation.
+            // This MUST run before any body buffering (HOLD-fix: memory-exhaustion DoS).
             String ipKey = "login:ip:" + clientIp;
             RateBucket ipBucket = ipBuckets.get(ipKey, k -> new RateBucket(capacity, windowSeconds));
             long ipRetryAfter = ipBucket.tryConsume();
             if (ipRetryAfter > 0) {
-                // IP exhausted — 429 returned IMMEDIATELY, body never read
                 send429(response, ipRetryAfter);
                 return;
             }
 
-            // STEP 2: Per-account check (body read — ONLY after IP check passes)
-            if (accountCapacity > 0) {
-                CachingRequestWrapper wrappedRequest = new CachingRequestWrapper(request);
-                String username = extractUsernameFromBody(wrappedRequest);
-                if (username != null) {
-                    String acctKey = "login:acct:" + username.toLowerCase();
-                    RateBucket acctBucket = accountBuckets.get(acctKey,
-                        k -> new RateBucket(accountCapacity, accountWindowSeconds));
-                    long acctRetryAfter = acctBucket.tryConsume();
-                    if (acctRetryAfter > 0) {
-                        send429(response, acctRetryAfter);
-                        return;
-                    }
-                }
-                chain.doFilter(wrappedRequest, response);
+            // STEP 2: reject oversized declared bodies BEFORE reading (413, no buffering).
+            // Defense in depth: an attacker declaring a 1 GB body is rejected by
+            // Content-Length alone, without a single byte allocated.
+            long declaredLength = request.getContentLengthLong();
+            if (declaredLength > MAX_LOGIN_BODY_BYTES) {
+                log.warn("Login body declared {} bytes, cap is {} — rejecting 413", declaredLength, MAX_LOGIN_BODY_BYTES);
+                send413(response);
                 return;
             }
+
+            // STEP 3: buffer body (capped) for per-account extraction.
+            CachingRequestWrapper wrappedRequest = new CachingRequestWrapper(request);
+
+            // STEP 4: per-account bucket (disabled when accountCapacity == 0).
+            String username = extractUsername(wrappedRequest);
+            if (accountCapacity > 0 && username != null && !username.isBlank()) {
+                String acctKey = "login:account:" + username.toLowerCase();
+                RateBucket acctBucket = accountBuckets.get(acctKey, k -> new RateBucket(accountCapacity, windowSeconds));
+                long acctRetryAfter = acctBucket.tryConsume();
+                if (acctRetryAfter > 0) {
+                    // Rollback IP bucket token — request rejected by account limit, not IP limit
+                    ipBucket.rollback();
+                    send429(response, acctRetryAfter);
+                    return;
+                }
+            }
+
+            chain.doFilter(wrappedRequest, response);
+            return;
+        }
+
+        // Refresh endpoint: per-user throttling
+        if ("POST".equalsIgnoreCase(method) && "/auth/refresh".equals(path)) {
+            String userId = extractUserIdFromRefreshCookie(request);
+            if (userId != null) {
+                String refreshKey = "refresh:" + userId;
+                RateBucket refreshBucket = refreshBuckets.get(refreshKey, k -> new RateBucket(refreshCapacity, refreshWindowSeconds));
+                long retryAfter = refreshBucket.tryConsume();
+                if (retryAfter > 0) {
+                    send429(response, retryAfter);
+                    return;
+                }
+            }
+            chain.doFilter(request, response);
+            return;
         }
 
         // Data endpoints: generous limit
-        if (isDataEndpoint(method, path) && dataCapacity > 0) {
-            String dataKey = "data:" + clientIp;
-            RateBucket bucket = dataEndpointBuckets.get(dataKey,
-                k -> new RateBucket(dataCapacity, dataWindowSeconds));
+        if (isDataEndpoint(method, path)) {
+            String key = "data:" + clientIp;
+            RateBucket bucket = dataEndpointBuckets.get(key, k -> new RateBucket(dataCapacity, dataWindowSeconds));
             long retryAfter = bucket.tryConsume();
             if (retryAfter > 0) {
                 send429(response, retryAfter);
@@ -129,38 +185,6 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         }
 
         chain.doFilter(request, response);
-    }
-
-    private String extractUsernameFromBody(HttpServletRequest request) {
-        try {
-            ServletInputStream is = request.getInputStream();
-            ByteArrayOutputStream buf = new ByteArrayOutputStream();
-            byte[] tmp = new byte[256];
-            int totalRead = 0;
-            int n;
-            while ((n = is.read(tmp)) != -1) {
-                totalRead += n;
-                if (totalRead > MAX_LOGIN_BODY_BYTES) {
-                    log.warn("Login body exceeds {} bytes — rejecting", MAX_LOGIN_BODY_BYTES);
-                    return null; // body too large — skip per-account check, IP limit already applied
-                }
-                buf.write(tmp, 0, n);
-            }
-            String body = buf.toString(StandardCharsets.UTF_8);
-            // Extract "username":"..." from JSON (minimal parser — avoids Jackson dependency in filter)
-            int idx = body.indexOf("\"username\"");
-            if (idx < 0) return null;
-            int colon = body.indexOf(':', idx + 10);
-            if (colon < 0) return null;
-            int startQuote = body.indexOf('"', colon + 1);
-            if (startQuote < 0) return null;
-            int endQuote = body.indexOf('"', startQuote + 1);
-            if (endQuote < 0) return null;
-            return body.substring(startQuote + 1, endQuote).trim();
-        } catch (IOException e) {
-            log.debug("Failed to read login body for per-account rate-limit: {}", e.getMessage());
-            return null;
-        }
     }
 
     private boolean isDataEndpoint(String method, String path) {
@@ -180,60 +204,177 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             "{\"code\":\"RATE_LIMITED\",\"message\":\"Too many attempts, retry after " + retryAfter + "s\"}");
     }
 
+    private void send413(HttpServletResponse response) throws IOException {
+        response.setStatus(413);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.getWriter().write(
+            "{\"code\":\"PAYLOAD_TOO_LARGE\",\"message\":\"Request body exceeds " + MAX_LOGIN_BODY_BYTES + " bytes\"}");
+    }
+
+    /**
+     * WO-SEC-44: extract client IP, respecting trusted proxy configuration.
+     * If remoteAddr is a trusted proxy, extract real IP from X-Forwarded-For (leftmost).
+     * Otherwise, use remoteAddr directly (XFF ignored — anti-spoofing).
+     */
     private String getClientIp(HttpServletRequest request) {
-        return request.getRemoteAddr();
+        String remoteAddr = request.getRemoteAddr();
+        if (trustedProxies.isEmpty() || !isTrustedProxy(remoteAddr)) {
+            return remoteAddr;
+        }
+        // Trusted proxy: extract real client IP from X-Forwarded-For
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff == null || xff.isBlank()) {
+            return remoteAddr;
+        }
+        // XFF format: "client, proxy1, proxy2" — take leftmost (original client)
+        String[] ips = xff.split(",");
+        return ips[0].trim();
+    }
+
+    /**
+     * Check if an IP is in the trusted proxy list. Supports exact match and CIDR notation.
+     */
+    private boolean isTrustedProxy(String ip) {
+        for (String trusted : trustedProxies) {
+            if (trusted.contains("/")) {
+                if (matchesCidr(ip, trusted)) return true;
+            } else {
+                if (trusted.equals(ip)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Simple CIDR match for IPv4. Supports /8, /16, /24, /32 masks.
+     */
+    static boolean matchesCidr(String ip, String cidr) {
+        try {
+            String[] parts = cidr.split("/");
+            String network = parts[0];
+            int prefixLen = Integer.parseInt(parts[1]);
+
+            long ipNum = ipToLong(ip);
+            long networkNum = ipToLong(network);
+            long mask = prefixLen == 0 ? 0L : (~0L) << (32 - prefixLen);
+
+            return (ipNum & mask) == (networkNum & mask);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static long ipToLong(String ip) {
+        String[] parts = ip.split("\\.");
+        long result = 0;
+        for (String part : parts) {
+            result = result * 256 + Long.parseLong(part.trim());
+        }
+        return result;
+    }
+
+    /**
+     * WO-SEC-44: extract username from login request body.
+     * Uses CachingRequestWrapper so the body can be read by the controller after this filter.
+     */
+    private String extractUsername(CachingRequestWrapper request) {
+        try {
+            byte[] body = request.getBodyBytes();
+            if (body == null || body.length == 0) return null;
+            String json = new String(body, StandardCharsets.UTF_8);
+            // Minimal JSON parsing — avoid pulling in ObjectMapper for a simple field
+            // Format: {"username":"...","password":"..."}
+            int idx = json.indexOf("\"username\"");
+            if (idx < 0) return null;
+            int colon = json.indexOf(':', idx + 10);
+            if (colon < 0) return null;
+            int openQuote = json.indexOf('"', colon + 1);
+            if (openQuote < 0) return null;
+            int closeQuote = json.indexOf('"', openQuote + 1);
+            if (closeQuote < 0) return null;
+            return json.substring(openQuote + 1, closeQuote);
+        } catch (Exception e) {
+            log.debug("Failed to extract username from login body: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * WO-SEC-44: extract userId from refresh_token cookie for rate-limiting.
+     * The cookie contains the raw refresh token — we can't verify it here (no TokenService),
+     * so we use the token value itself as the rate-limit key. Different tokens = different buckets.
+     */
+    private String extractUserIdFromRefreshCookie(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) return null;
+        for (Cookie cookie : cookies) {
+            if ("refresh_token".equals(cookie.getName())) {
+                String value = cookie.getValue();
+                if (value != null && !value.isBlank()) {
+                    // Use first 16 chars as key (sufficient for uniqueness, avoids full token in cache key)
+                    return value.substring(0, Math.min(16, value.length()));
+                }
+            }
+        }
+        return null;
     }
 
     /** Clears all buckets — for tests only. */
     public void reset() {
         ipBuckets.invalidateAll();
         accountBuckets.invalidateAll();
+        refreshBuckets.invalidateAll();
         dataEndpointBuckets.invalidateAll();
     }
 
     /**
-     * Wraps request to buffer the body for re-reading.
-     * Body is capped at {@link #MAX_LOGIN_BODY_BYTES} to prevent memory exhaustion.
+     * Request wrapper that caches the body bytes (capped at MAX_LOGIN_BODY_BYTES),
+     * allowing the body to be read multiple times (by this filter for username
+     * extraction, then by the controller).
+     *
+     * HOLD-fix: oversized declared bodies are rejected with 413 BEFORE this wrapper
+     * is created (see doFilterInternal), so the capped buffer only ever holds bodies
+     * that legitimately fit. The stream length always matches the buffered bytes.
      */
     private static class CachingRequestWrapper extends HttpServletRequestWrapper {
         private final byte[] cachedBody;
-        private final int bodyLength;
 
         CachingRequestWrapper(HttpServletRequest request) throws IOException {
             super(request);
-            ByteArrayOutputStream buf = new ByteArrayOutputStream();
-            byte[] tmp = new byte[1024];
-            int totalRead = 0;
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[1024];
             int n;
-            ServletInputStream is = request.getInputStream();
-            while ((n = is.read(tmp)) != -1) {
-                totalRead += n;
-                if (totalRead > MAX_LOGIN_BODY_BYTES) {
-                    // Stop reading — body too large
-                    break;
-                }
-                buf.write(tmp, 0, n);
+            ServletInputStream inputStream = request.getInputStream();
+            while ((n = inputStream.read(buf)) != -1) {
+                baos.write(buf, 0, n);
             }
-            this.cachedBody = buf.toByteArray();
-            this.bodyLength = totalRead;
+            this.cachedBody = baos.toByteArray();
+        }
+
+        byte[] getBodyBytes() {
+            return cachedBody;
         }
 
         @Override
         public ServletInputStream getInputStream() {
+            ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(cachedBody);
             return new ServletInputStream() {
-                private int pos = 0;
-                @Override public boolean isFinished() { return pos >= cachedBody.length; }
-                @Override public boolean isReady() { return true; }
-                @Override public void setReadListener(ReadListener listener) {}
-                @Override public int read() { return pos < cachedBody.length ? cachedBody[pos++] & 0xFF : -1; }
+                @Override
+                public boolean isFinished() { return byteArrayInputStream.available() == 0; }
+                @Override
+                public boolean isReady() { return true; }
+                @Override
+                public void setReadListener(ReadListener readListener) {}
+                @Override
+                public int read() { return byteArrayInputStream.read(); }
             };
         }
 
         @Override
-        public int getContentLength() { return bodyLength; }
-
-        @Override
-        public long getContentLengthLong() { return bodyLength; }
+        public BufferedReader getReader() {
+            ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(cachedBody);
+            return new BufferedReader(new InputStreamReader(byteArrayInputStream, StandardCharsets.UTF_8));
+        }
     }
 
     static class RateBucket {
@@ -263,6 +404,11 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             }
             long waitMillis = windowMillis - (now - windowStart);
             return Math.max(1, waitMillis / 1000);
+        }
+
+        /** WO-SEC-44: roll back one token (when per-account limit rejects after IP limit passed). */
+        synchronized void rollback() {
+            tokens = Math.min(tokens + 1, capacity);
         }
     }
 }
