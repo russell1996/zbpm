@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 /**
  * Shared AuthZ resolver for event endpoints (WO-EVT-4, G-L: DENY by default).
  * Resolves which processDefinitionIds a principal may see based on their grants.
- * null = see all (superAdmin / full-access ServicePrincipal), empty = see nothing.
+ * null = see all (superAdmin only — WO-SEC-54), empty = see nothing.
  */
 @Slf4j
 @Component
@@ -31,7 +31,8 @@ public class EventAuthzResolver {
     /**
      * Resolves allowed processDefinitionIds for the given principal.
      *
-     * @return null if the principal sees all (superAdmin or full grant),
+     * @return null if the principal sees all (superAdmin only — WO-SEC-54: ServicePrincipal
+     *         NEVER returns null, not even for isFull grants),
      *         empty set if the principal sees nothing,
      *         or the set of allowed processDefinitionIds.
      */
@@ -41,11 +42,10 @@ public class EventAuthzResolver {
         }
 
         if (principal instanceof Principal.ServicePrincipal sp) {
-            boolean hasFullAccess = sp.grants().values().stream()
-                .anyMatch(Principal.Grant::isFull);
-            if (hasFullAccess) {
-                return null; // see all
-            }
+            // WO-SEC-54 (CRITICAL S-02): isFull is a per-process flag (full operations INSIDE the
+            // granted process), NOT a global see-all grant. It must never widen the visible
+            // process list — the granted processIds (sp.grants().keySet()) are the ONLY visible
+            // processes, full or not. Global see-all (null) stays exclusive to isSuperAdmin().
             // Get definitionKeys from granted processIds
             Set<UUID> processIds = sp.grants().keySet();
             if (processIds.isEmpty()) {
