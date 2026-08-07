@@ -20,6 +20,7 @@ import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
@@ -44,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequiredArgsConstructor
@@ -63,6 +65,7 @@ public class FormResource implements FormContract {
     private final ObjectMapper objectMapper;
     private final EventAuthzResolver eventAuthzResolver;
     private final ProcessInstanceRepository processInstanceRepository;
+    private final ProcessRepository processRepository;
 
     private Collection<UUID> resolveAllowedPdIds() {
         Object attr = request.getAttribute("principal");
@@ -81,14 +84,32 @@ public class FormResource implements FormContract {
 
     @Override
     public List<FormDTO> listForms() {
-        return formRepository.findLatestVersions().stream().map(entity -> {
-            FormDTO dto = new FormDTO();
-            dto.setKey(entity.getFormKey());
-            dto.setVersion(entity.getVersion());
-            dto.setKind(entity.getKind() != null ? entity.getKind().name() : null);
-            dto.setSchema(entity.getSchemaJson());
-            return dto;
-        }).toList();
+        Collection<UUID> allowedPdIds = resolveAllowedPdIds();
+
+        // Get all form keys that are bound to allowed process definitions
+        Set<String> allowedFormKeys;
+        if (allowedPdIds == null) {
+            // SuperAdmin / full grant — see all forms
+            allowedFormKeys = null; // null = no filter
+        } else if (allowedPdIds.isEmpty()) {
+            // No grants — only show unbound forms (not tied to any process)
+            allowedFormKeys = getUnboundFormKeys();
+        } else {
+            allowedFormKeys = getFormKeysBoundToPds(allowedPdIds);
+            // Also include unbound forms
+            allowedFormKeys.addAll(getUnboundFormKeys());
+        }
+
+        return formRepository.findLatestVersions().stream()
+            .filter(entity -> allowedFormKeys == null || allowedFormKeys.contains(entity.getFormKey()))
+            .map(entity -> {
+                FormDTO dto = new FormDTO();
+                dto.setKey(entity.getFormKey());
+                dto.setVersion(entity.getVersion());
+                dto.setKind(entity.getKind() != null ? entity.getKind().name() : null);
+                dto.setSchema(entity.getSchemaJson());
+                return dto;
+            }).toList();
     }
 
     @Override
@@ -159,6 +180,9 @@ public class FormResource implements FormContract {
     public FormDTO getForm(String key) {
         FormEntity entity = formRepository.findTopByFormKeyOrderByVersionDesc(key)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Form not found"));
+
+        // Authz: 404 if form belongs to an inaccessible process (G-L: deny by default)
+        checkFormAccess(key);
 
         FormDTO dto = new FormDTO();
         dto.setKey(entity.getFormKey());
@@ -260,6 +284,9 @@ public class FormResource implements FormContract {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
         ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+
+        // Authz: deny if principal lacks access to this process definition (G-L)
+        requirePdAccess(pd.getId());
 
         return bindingRepository.findByProcessDefinitionId(pd.getId()).stream()
             .map(b -> {
@@ -534,5 +561,59 @@ public class FormResource implements FormContract {
     private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
         return attr instanceof Principal p ? p : null;
+    }
+
+    // --- WO-SEC-47: authz helpers ---
+
+    /**
+     * Returns form keys that are NOT bound to any process definition (global forms).
+     * These are visible to all authenticated principals regardless of process-level grants.
+     */
+    private Set<String> getUnboundFormKeys() {
+        // All form keys that appear in at least one binding
+        Set<String> boundKeys = bindingRepository.findAll().stream()
+            .map(ElementArtifactBindingEntity::getArtifactKey)
+            .collect(Collectors.toSet());
+        // All form keys from the form repository
+        Set<String> allKeys = formRepository.findLatestVersions().stream()
+            .map(FormEntity::getFormKey)
+            .collect(Collectors.toSet());
+        // Unbound = all keys minus bound keys
+        Set<String> unbound = new java.util.HashSet<>(allKeys);
+        unbound.removeAll(boundKeys);
+        return unbound;
+    }
+
+    /**
+     * Returns form keys that are bound to at least one of the given process definition IDs.
+     */
+    private Set<String> getFormKeysBoundToPds(Collection<UUID> pdIds) {
+        return bindingRepository.findByProcessDefinitionIdIn(pdIds).stream()
+            .map(ElementArtifactBindingEntity::getArtifactKey)
+            .collect(Collectors.toSet());
+    }
+
+    /**
+     * Checks that the current principal has access to the process definitions
+     * associated with the given form key. Throws 404 if denied (G-L: deny by default).
+     * Unbound forms (not tied to any process) are accessible to all authenticated principals.
+     */
+    private void checkFormAccess(String formKey) {
+        Collection<UUID> allowedPdIds = resolveAllowedPdIds();
+        if (allowedPdIds == null) {
+            return; // superAdmin / full grant — see all
+        }
+        // Find process definitions this form is bound to
+        List<UUID> boundPdIds = bindingRepository.findByArtifactKey(formKey).stream()
+            .map(ElementArtifactBindingEntity::getProcessDefinitionId)
+            .distinct()
+            .toList();
+        if (boundPdIds.isEmpty()) {
+            return; // unbound form — accessible to all authenticated principals
+        }
+        boolean hasAccess = boundPdIds.stream().anyMatch(allowedPdIds::contains);
+        if (!hasAccess) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found");
+        }
     }
 }
