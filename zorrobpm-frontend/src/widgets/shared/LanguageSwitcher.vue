@@ -24,6 +24,7 @@ const currentLang = () => languages.find((l) => l.code === locale.value)?.label 
 <template>
   <div class="relative">
     <button
+      type="button"
       class="flex items-center gap-1.5 px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
       @click="showLangMenu = !showLangMenu"
     >
@@ -37,6 +38,7 @@ const currentLang = () => languages.find((l) => l.code === locale.value)?.label 
       <button
         v-for="lang in languages"
         :key="lang.code"
+        type="button"
         class="w-full px-3 py-1.5 text-sm text-left hover:bg-muted transition-colors"
         :class="{ 'font-medium text-primary': locale === lang.code }"
         @click="switchLang(lang.code)"
