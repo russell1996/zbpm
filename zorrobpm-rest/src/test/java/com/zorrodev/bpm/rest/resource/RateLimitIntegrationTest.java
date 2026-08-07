@@ -34,7 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @TestPropertySource(properties = {
     "zorrobpm.security.rate-limit.enabled=true",
     "zorrobpm.security.rate-limit.capacity=5",
-    "zorrobpm.security.rate-limit.window-seconds=3600"
+    "zorrobpm.security.rate-limit.window-seconds=3600",
+    "zorrobpm.security.rate-limit.account-capacity=10"
 })
 class RateLimitIntegrationTest {
 
