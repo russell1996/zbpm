@@ -31,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "zorrobpm.security.rate-limit.enabled=true",
     "zorrobpm.security.rate-limit.capacity=5",
     "zorrobpm.security.rate-limit.window-seconds=3600",
+    "zorrobpm.security.rate-limit.account-capacity=10",
     "server.forward-headers-strategy=framework"
 })
 class RateLimitXffFullContextTest {
