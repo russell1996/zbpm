@@ -378,6 +378,12 @@ public class RuntimeResource implements RuntimeContract {
             if (task.getAssignee() != null && !task.getAssignee().isBlank()
                     && task.getAssignee().equals(user.username())) return;
 
+            // WO-SEC-56: task is personally assigned to someone else → forbidden even for
+            // candidate-group members (candidate pool applies only while the task is unassigned)
+            if (task.getAssignee() != null && !task.getAssignee().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+            }
+
             // Member of a candidate group — allowed (WO-MT-3b)
             if (task.getCandidateGroups() != null && !task.getCandidateGroups().isBlank()) {
                 Set<String> taskGroups = java.util.Arrays.stream(task.getCandidateGroups().split(","))

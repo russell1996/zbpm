@@ -158,6 +158,10 @@ class CrossTenantCompleteIT {
         UUID taskId = startProcessAndReturnTask();
         UserTaskEntity task = userTaskRepository.findById(taskId).orElseThrow();
 
+        // WO-SEC-56: candidate-group membership must NOT bypass a personal assignee —
+        // assignee-task.bpmn seeds assignee="user1", so clear it here to exercise the pure
+        // candidate-group path (unassigned task), which stays allowed (criterion #3 of WO-SEC-56).
+        task.setAssignee(null);
         // Set candidate groups on the task
         task.setCandidateGroups("managers");
         userTaskRepository.save(task);
