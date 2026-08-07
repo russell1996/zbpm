@@ -62,6 +62,7 @@ class FormResourceAuthzIntegrationTest {
 
     private String adminToken;
     private String restrictedToken; // grant on procA only
+    private String fullAToken;      // WO-SEC-54: isFull=true grant on procA only
 
     private static final String PROC_A_KEY = "sec47-procA-" + UUID.randomUUID().toString().substring(0, 8);
     private static final String PROC_B_KEY = "sec47-procB-" + UUID.randomUUID().toString().substring(0, 8);
@@ -90,6 +91,12 @@ class FormResourceAuthzIntegrationTest {
         // Set grants: only procA
         setGrants(restrictedUserId, PROC_A_KEY, "READ");
         restrictedToken = apiKey;
+
+        // WO-SEC-54 crit #4: user with isFull=true grant on procA only (regression for WO-SEC-47)
+        UUID fullAUserId = createRestrictedUser("sec54-fullA-" + UUID.randomUUID().toString().substring(0, 8));
+        addMember(fullAUserId, PROC_A_KEY, "OWNER");
+        fullAToken = createApiKeyForUser(fullAUserId);
+        setGrantsFull(fullAUserId, PROC_A_KEY);
 
         // Deploy forms
         deployForm(FORM_A_KEY, "{\"type\":\"form\",\"components\":[],\"properties\":{}}");
@@ -145,6 +152,15 @@ class FormResourceAuthzIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content("{\"grants\":[{\"processKey\":\"" + processKey
                                 + "\",\"permissions\":\"" + permissions + "\"}]}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
+    /** WO-SEC-54: isFull=true grant (no permissions field). */
+    private void setGrantsFull(UUID userId, String processKey) throws Exception {
+        mockMvc.perform(put("/admin/users/" + userId + "/api-key/grants")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content("{\"grants\":[{\"processKey\":\"" + processKey + "\",\"full\":true}]}")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
     }
@@ -381,6 +397,23 @@ class FormResourceAuthzIntegrationTest {
         forms.forEach(f -> keys.add(f.get("key").asText()));
 
         assertThat(keys).contains(FORM_A_KEY, FORM_B_KEY, UNBOUND_FORM_KEY);
+    }
+
+    /**
+     * WO-SEC-54 crit #4: isFull=true grant on procA sees OWN procA form (200)
+     * but still NOT procB form (404) — full access stays scoped to the granted process.
+     */
+    @Test
+    @Order(12)
+    void fullGrantOnA_seesOwnForm_butNotProcB() throws Exception {
+        mockMvc.perform(get("/forms/" + FORM_A_KEY)
+                        .header("Authorization", "Bearer " + fullAToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.key").value(FORM_A_KEY));
+
+        mockMvc.perform(get("/forms/" + FORM_B_KEY)
+                        .header("Authorization", "Bearer " + fullAToken))
+                .andExpect(status().isNotFound());
     }
 
     /**

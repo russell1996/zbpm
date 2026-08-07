@@ -319,13 +319,16 @@ class SseEventStreamIntegrationTest {
         Collection<UUID> adminResolved = resolver.resolve(adminPrincipal, null);
         assertThat(adminResolved).isNull(); // null = see all, correct for admin
 
-        // Full-access ServicePrincipal also sees all
+        // Full-access ServicePrincipal: isFull=true grant is SCOPED to its granted process (WO-SEC-54).
+        // It must NOT return null (= see all) — it sees exactly the granted processDefinitionIds.
         Principal fullPrincipal = new Principal.ServicePrincipal(
             UUID.randomUUID(), UUID.randomUUID(),
             Map.of(processIdA, new Principal.Grant(Set.of("READ"), true))
         );
         Collection<UUID> fullResolved = resolver.resolve(fullPrincipal, null);
-        assertThat(fullResolved).isNull(); // full grant = see all
+        assertThat(fullResolved).isNotNull(); // full grant is NOT global see-all (S-02 fix)
+        assertThat(fullResolved).containsExactly(pdIdA);
+        assertThat(fullResolved).doesNotContain(pdIdB);
 
         // ServicePrincipal with NO grants sees nothing
         Principal noGrantPrincipal = new Principal.ServicePrincipal(
