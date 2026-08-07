@@ -74,8 +74,11 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
         log.info("Admin password configured for production");
     }
 
-    // Visible for testing
-    static boolean isWeak(String password) {
+    /**
+     * WO-SEC-46: check if a password is weak (too short or blocklisted).
+     * Public — reusable from UiUserServiceImpl for create/update validation.
+     */
+    public static boolean isWeak(String password) {
         if (password == null) return true;
         if (password.length() < MIN_PASSWORD_LENGTH) return true;
         return WEAK_PASSWORD_BLOCKLIST.contains(password.toLowerCase());
