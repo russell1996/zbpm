@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,4 +21,10 @@ public interface ElementArtifactBindingRepository extends JpaRepository<ElementA
     /** WO-VM-9a: find bindings by old PD version to carry-forward to new version. */
     @Query("SELECT b FROM ElementArtifactBindingEntity b WHERE b.processDefinitionVersion = :oldVersion AND EXISTS (SELECT 1 FROM ProcessDefinitionEntity pd WHERE pd.key = :key AND pd.id = b.processDefinitionId)")
     List<ElementArtifactBindingEntity> findByKeyAndOldVersion(@Param("key") String key, @Param("oldVersion") int oldVersion);
+
+    /** WO-SEC-47: find all bindings for a given artifact (form) key. */
+    List<ElementArtifactBindingEntity> findByArtifactKey(String artifactKey);
+
+    /** WO-SEC-47: find all bindings for a set of process definition IDs. */
+    List<ElementArtifactBindingEntity> findByProcessDefinitionIdIn(Collection<UUID> processDefinitionIds);
 }
