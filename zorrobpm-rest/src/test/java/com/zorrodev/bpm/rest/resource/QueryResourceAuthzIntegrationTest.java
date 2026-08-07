@@ -68,6 +68,7 @@ class QueryResourceAuthzIntegrationTest {
     private String adminToken;
     private String userAKey;   // ServicePrincipal: non-full grant on processA
     private String userBKey;   // ServicePrincipal: non-full grant on processB only
+    private String userFullAKey; // WO-SEC-54: ServicePrincipal with isFull=true grant on processA only
 
     private static final String PROC_A_KEY = "sec43-procA";
     private static final String PROC_B_KEY = "sec43-procB";
@@ -96,6 +97,12 @@ class QueryResourceAuthzIntegrationTest {
         addMember(userBId, PROC_B_KEY, "OWNER");
         userBKey = createApiKeyForUser(userBId);
         setGrants(userBId, PROC_B_KEY, "START");
+
+        // WO-SEC-54: real isFull=true grant on processA only (crit #4 regression for WO-SEC-43)
+        UUID userFullAId = createUser("sec54-userFullA-" + UUID.randomUUID(), "USER");
+        addMember(userFullAId, PROC_A_KEY, "OWNER");
+        userFullAKey = createApiKeyForUser(userFullAId);
+        setGrantsFull(userFullAId, PROC_A_KEY);
 
         createProcessAResources();
     }
@@ -336,5 +343,32 @@ class QueryResourceAuthzIntegrationTest {
                         .content("{\"grants\":[{\"processKey\":\"" + processKey + "\",\"permissions\":\"" + permissions + "\"}]}")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
+    }
+
+    /** WO-SEC-54: isFull=true grant (no permissions field). */
+    private void setGrantsFull(UUID userId, String processKey) throws Exception {
+        mockMvc.perform(put("/admin/users/" + userId + "/api-key/grants")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content("{\"grants\":[{\"processKey\":\"" + processKey + "\",\"full\":true}]}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
+    // ==================== WO-SEC-54 crit #4: full grant still sees OWN direct-GETs (WO-SEC-43 regression) ====================
+
+    @Test
+    void fullGrantOnA_seesOwnProcessInstance_returns200() throws Exception {
+        mockMvc.perform(get("/process-instances/" + instanceA)
+                        .header("Authorization", "Bearer " + userFullAKey))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(instanceA.toString()));
+    }
+
+    @Test
+    void fullGrantOnA_seesOwnUserTask_returns200() throws Exception {
+        mockMvc.perform(get("/user-tasks/" + userTaskA)
+                        .header("Authorization", "Bearer " + userFullAKey))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(userTaskA.toString()));
     }
 }

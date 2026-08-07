@@ -1,5 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.engine.entity.DomainEventEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
@@ -22,12 +24,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -50,6 +55,8 @@ class EventAuthzIntegrationTest {
 
     private String adminToken;
     private String userTokenA; // has grant on processA only
+    private String fullAKey;   // WO-SEC-54: API-key with isFull=true grant on processA ONLY
+    private String fullAPlusBKey; // WO-SEC-54: isFull=true on processA + limited grant on processB
     private UUID pdIdA;
     private UUID pdIdB;
     private UUID processIdA;
@@ -111,6 +118,23 @@ class EventAuthzIntegrationTest {
         procB.setCreatedAt(Instant.now());
         processRepository.save(procB);
 
+        // WO-SEC-54: API-key principal with a REAL isFull=true grant on processA only.
+        // Before the fix, EventAuthzResolver returned null (= see all) for any principal
+        // with at least one full grant → this key would see processB events too (S-02).
+        UUID userFullAId = createUser("evtuser_fullA_" + UUID.randomUUID());
+        addMember(userFullAId, "processA", "OWNER");
+        fullAKey = createApiKeyForUser(userFullAId);
+        setGrantsFull(userFullAId, "processA");
+
+        // WO-SEC-54 crit #2: isFull=true on processA + limited grant on processB.
+        UUID userFullAPlusBId = createUser("evtuser_fullAB_" + UUID.randomUUID());
+        addMember(userFullAPlusBId, "processA", "OWNER");
+        addMember(userFullAPlusBId, "processB", "VIEWER");
+        fullAPlusBKey = createApiKeyForUser(userFullAPlusBId);
+        setGrantsRaw(userFullAPlusBId,
+            "[{\"processKey\":\"processA\",\"full\":true},"
+                + "{\"processKey\":\"processB\",\"permissions\":\"READ\"}]");
+
         // Emit events for both processes
         emitEvent(pdIdA, UUID.randomUUID(), "process-instance.started");
         emitEvent(pdIdA, UUID.randomUUID(), "process-instance.completed");
@@ -143,6 +167,61 @@ class EventAuthzIntegrationTest {
         Map<String, Object> body = new com.fasterxml.jackson.databind.ObjectMapper()
             .readValue(result.getResponse().getContentAsString(), Map.class);
         return (String) body.get("token");
+    }
+
+    // --- WO-SEC-54 helpers: real API-key grants (V11 full-context, not mocked) ---
+
+    private UUID createUser(String username) {
+        UiUserEntity user = new UiUserEntity();
+        user.setId(UUID.randomUUID());
+        user.setUsername(username);
+        user.setPasswordHash(passwordHasher.hash("pass123"));
+        user.setFullName(username);
+        user.setRole("USER");
+        user.setActive(true);
+        user.setCreatedAt(Instant.now());
+        user.setUpdatedAt(Instant.now());
+        return userRepository.save(user).getId();
+    }
+
+    private void addMember(UUID userId, String processKey, String role) throws Exception {
+        mockMvc.perform(post("/processes/" + processKey + "/members")
+                .header("Authorization", "Bearer " + adminToken)
+                .content("{\"userId\":\"" + userId + "\",\"role\":\"" + role + "\"}")
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk());
+    }
+
+    private String createApiKeyForUser(UUID userId) throws Exception {
+        MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        ObjectMapper mapper = new ObjectMapper();
+        return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
+    }
+
+    private void setGrantsFull(UUID userId, String processKey) throws Exception {
+        setGrantsRaw(userId, "[{\"processKey\":\"" + processKey + "\",\"full\":true}]");
+    }
+
+    private void setGrantsRaw(UUID userId, String grantsJson) throws Exception {
+        mockMvc.perform(put("/admin/users/" + userId + "/api-key/grants")
+                .header("Authorization", "Bearer " + adminToken)
+                .content("{\"grants\":" + grantsJson + "}")
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk());
+    }
+
+    private Set<String> eventPdIds(String bearer) throws Exception {
+        MvcResult result = mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + bearer))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode data = new ObjectMapper().readTree(result.getResponse().getContentAsString()).get("data");
+        Set<String> pdIds = new HashSet<>();
+        data.forEach(e -> pdIds.add(e.get("processDefinitionId").asText()));
+        return pdIds;
     }
 
     // --- Basic access tests ---
@@ -196,6 +275,58 @@ class EventAuthzIntegrationTest {
             .andExpect(jsonPath("$.data.length()").value(2))
             .andExpect(jsonPath("$.data[0].type").value("process-instance.started"))
             .andExpect(jsonPath("$.data[1].type").value("process-instance.started"));
+    }
+
+    // --- WO-SEC-54 (CRITICAL S-02): isFull=true on ONE process must NOT grant see-all ---
+
+    /**
+     * POF (WO-SEC-54 crit #1): API-key with a REAL isFull=true grant on processA only
+     * must see processA events but NOT processB events.
+     * RED (before fix): EventAuthzResolver returned null (= see all) for any principal
+     * with at least one full grant → this key sees processB events too.
+     * GREEN (after fix): only granted process definition IDs are returned.
+     */
+    @Test
+    void fullGrant_onProcessA_doesNotSeeProcessBEvents() throws Exception {
+        Set<String> pdIds = eventPdIds(fullAKey);
+
+        // Sees processA (its own full-grant process)
+        assertThat(pdIds).contains(pdIdA.toString());
+        // MUST NOT see processB (no grant at all) — this assertion is RED before the fix
+        assertThat(pdIds).doesNotContain(pdIdB.toString());
+    }
+
+    /**
+     * WO-SEC-54 crit #2: isFull=true on processA + limited grant on processB →
+     * sees processA AND processB (granted), and nothing else.
+     */
+    @Test
+    void fullPlusLimitedGrants_seesOnlyGrantedProcesses() throws Exception {
+        Set<String> pdIds = eventPdIds(fullAPlusBKey);
+
+        assertThat(pdIds).containsExactlyInAnyOrder(pdIdA.toString(), pdIdB.toString());
+    }
+
+    /**
+     * WO-SEC-54 crit #2 (negative): the same key filtered per processDefinitionKey
+     * still works — full access is scoped to the granted processes.
+     */
+    @Test
+    void fullGrant_scopeIsPerProcess_notGlobal() throws Exception {
+        // processA (full grant) — both events visible
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + fullAKey)
+                .param("processDefinitionKey", "processA"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdA.toString()));
+
+        // processB — NO grant → empty
+        mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + fullAKey)
+                .param("processDefinitionKey", "processB"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(0));
     }
 
     // --- POF: AuthZ isolation (V11 full-context) ---
