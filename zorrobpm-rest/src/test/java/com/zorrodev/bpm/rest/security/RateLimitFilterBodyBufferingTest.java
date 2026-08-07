@@ -192,6 +192,34 @@ class RateLimitFilterBodyBufferingTest {
     }
 
     /**
+     * Test #7: chunked request without Content-Length with a body > cap → 413,
+     * buffered bytes stay bounded (no full-body allocation, no desync).
+     */
+    @Test
+    void chunkedLargeBody_noContentLength_returns413() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/auth/login");
+        req.setRemoteAddr("10.0.0.1");
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"username\":\"chunky\",\"password\":\"");
+        while (sb.length() < 32_768) {
+            sb.append("x");
+        }
+        sb.append("\"}");
+        req.setContent(sb.toString().getBytes(StandardCharsets.UTF_8));
+        // Simulate chunked transfer: no Content-Length visible to the filter.
+        jakarta.servlet.http.HttpServletRequest chunked = new jakarta.servlet.http.HttpServletRequestWrapper(req) {
+            @Override
+            public long getContentLengthLong() { return -1L; }
+            @Override
+            public int getContentLength() { return -1; }
+        };
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        FilterChain chain = org.mockito.Mockito.mock(jakarta.servlet.FilterChain.class);
+        filter.doFilterInternal(chunked, resp, chain);
+        assertThat(resp.getStatus()).isEqualTo(413);
+    }
+
+    /**
      * Test #6: Account-limit rejection rolls back the IP token.
      * IP capacity=3, account capacity=2:
      *   req1 user1 → 200 (IP 3→2, acct 2→1)
