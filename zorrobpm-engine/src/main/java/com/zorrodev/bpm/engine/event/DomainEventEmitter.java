@@ -89,6 +89,8 @@ public class DomainEventEmitter {
 
             OutboxEntry outboxEntry = new OutboxEntry();
             outboxEntry.setId(UUID.randomUUID());
+            // WO-REL-12 R-01: producer knows the type — no payload guessing downstream
+            outboxEntry.setKind(com.zorrodev.bpm.engine.entity.OutboxKind.DOMAIN_EVENT);
             outboxEntry.setPayload(objectMapper.writeValueAsString(envelope));
             outboxEntry.setCreatedAt(occurredAt);
             outboxEntry.setPublished(false);

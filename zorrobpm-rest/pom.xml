@@ -36,6 +36,13 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- WO-REL-12: Rabbit broker integration tests (@Tag("rabbit")) are excluded from the
+             standard build — they need a real broker, which CI does not provide yet (only
+             postgres is available via ci/docker-compose.pg.yml). Run locally with
+             -Dgroups=rabbit -Dzbpm.excludedGroups= against a running rabbitmq:3.13
+             (docker compose up -d rabbitmq). A literal here is NOT overridable by -D, so it
+             must be a property (same pattern as zorrobpm-engine's pg group). -->
+        <zbpm.excludedGroups>rabbit</zbpm.excludedGroups>
     </properties>
 
     <dependencies>
@@ -134,6 +141,8 @@
                     <includes>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!-- WO-REL-12: exclude @Tag("rabbit") broker tests by default (see property) -->
+                    <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>

@@ -85,5 +85,7 @@ class ServiceTaskEnqueueServiceImplTest {
         assertThat(entry.isPublished()).isFalse();
         assertThat(entry.getCreatedAt()).isNotNull();
         assertThat(entry.getPayload()).isNotEmpty();
+        // WO-REL-12 R-01: producer writes the explicit kind — no payload guessing downstream
+        assertThat(entry.getKind()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxKind.SERVICE_TASK);
     }
 }

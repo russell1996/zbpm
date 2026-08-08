@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.AmqpAdmin;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
@@ -34,7 +35,17 @@ public class ServiceTaskListener {
             log.info("Queue {} created", queueName);
         }
 
-        rabbitTemplate.convertAndSend(queueName, detail);
+        // WO-REL-12 (R-02/R-06): CorrelationData id = outbox entry id → broker ACK is matched
+        // back to the DB row (markPublished only after confirmation). The id is also carried
+        // on the message properties so the return callback can match unroutable messages.
+        rabbitTemplate.convertAndSend(
+            queueName,
+            detail,
+            m -> {
+                m.getMessageProperties().setCorrelationId(event.getOutboxId());
+                return m;
+            },
+            new CorrelationData(event.getOutboxId()));
         log.info("Sent data for job {} to {}", detail.getJob(), queueName);
     }
 
