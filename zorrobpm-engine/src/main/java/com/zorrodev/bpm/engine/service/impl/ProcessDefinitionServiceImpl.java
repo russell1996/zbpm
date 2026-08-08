@@ -25,6 +25,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
@@ -76,31 +78,55 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         String key = model.getKey();
         String name = model.getName();
 
-        Optional<ProcessDefinitionEntity> processDefinitionEntityOptional = processDefinitionRepository.findBySha256(sha256);
+        // WO-REL-15 (R-05): ALL database artifacts of a deployment (version row, bpmn model/file,
+        // message/signal start subscriptions, timer start jobs, element bindings) are created
+        // inside ONE transaction — either everything commits or nothing does. A failure between
+        // version creation and artifact creation can no longer leave a "half-deployed" version.
+        // The in-memory model cache is filled only in afterCommit (TransactionSynchronization),
+        // never inside the tx, so the cache cannot contain a model that is not in the database.
+        return transactionTemplate.execute(status -> {
+            Optional<ProcessDefinitionEntity> processDefinitionEntityOptional = processDefinitionRepository.findBySha256(sha256);
 
-        ProcessDefinitionEntity processDefinitionEntity;
+            ProcessDefinitionEntity processDefinitionEntity;
 
-        if (processDefinitionEntityOptional.isEmpty()) {
-            UUID id = UUID.randomUUID();
+            if (processDefinitionEntityOptional.isEmpty()) {
+                UUID id = UUID.randomUUID();
 
-            processDefinitionEntity = createNewVersionWithAdvisoryLock(key, name, sha256, id, model.getStartFormKey());
+                processDefinitionEntity = createNewVersionEntity(key, name, sha256, id, model.getStartFormKey());
+                processDefinitionEntity.setDeploymentState(ProcessDefinitionEntity.STATE_PENDING);
+                processDefinitionRepository.save(processDefinitionEntity);
 
-            bpmnService.addProcessDefinition(id, model);
-            fileService.saveFile(id, bpmn);
+                fileService.saveFile(id, bpmn);
 
-            registerMessageStartSubscriptions(key, id, model);
-            registerTimerStartJobs(key, id, model);
-            registerSignalStartSubscriptions(key, id, model);
+                registerMessageStartSubscriptions(key, id, model);
+                registerTimerStartJobs(key, id, model);
+                registerSignalStartSubscriptions(key, id, model);
 
-            // WO-VM-9a: carry-forward element_artifact_bindings from previous version
-            if (processDefinitionEntity.getVersion() > 1) {
-                carryForwardBindings(key, processDefinitionEntity.getVersion() - 1, processDefinitionEntity);
+                // WO-VM-9a: carry-forward element_artifact_bindings from previous version
+                if (processDefinitionEntity.getVersion() > 1) {
+                    carryForwardBindings(key, processDefinitionEntity.getVersion() - 1, processDefinitionEntity);
+                }
+
+                processDefinitionEntity.setDeploymentState(ProcessDefinitionEntity.STATE_ACTIVE);
+                processDefinitionRepository.save(processDefinitionEntity);
+
+                cacheModelAfterCommit(id, model);
+            } else {
+                processDefinitionEntity = processDefinitionEntityOptional.get();
+                // WO-REL-15: idempotent repair — a redeploy of the same sha256 whose previous attempt
+                // left a non-ACTIVE deployment (crash between version commit and artifact creation,
+                // or an explicitly FAILED attempt) re-assembles the missing artifacts instead of
+                // bailing out with "already exists". ACTIVE deployments stay untouched (fast path).
+                if (!ProcessDefinitionEntity.STATE_ACTIVE.equals(processDefinitionEntity.getDeploymentState())) {
+                    log.warn("WO-REL-15: repairing incomplete deployment of {} (version {}, state {})",
+                        processDefinitionEntity.getKey(), processDefinitionEntity.getVersion(),
+                        processDefinitionEntity.getDeploymentState());
+                    repairDeployment(processDefinitionEntity, model, bpmn);
+                }
             }
-        } else {
-            processDefinitionEntity = processDefinitionEntityOptional.get();
-        }
 
-        return fromEntity(processDefinitionEntity);
+            return fromEntity(processDefinitionEntity);
+        });
     }
 
     /**
@@ -111,23 +137,85 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
      *
      * WO-A-03 FAIL-CLOSED: PG advisory lock failure propagates (rollback),
      * no broad catch. H2: lock is skipped (function not supported).
+     *
+     * Kept as the package-private entry point for the WO-A-03 fail-closed unit test;
+     * the production deployment path (addProcessDefinition) runs createNewVersionEntity
+     * inside its own single transaction instead (WO-REL-15).
      */
     ProcessDefinitionEntity createNewVersionWithAdvisoryLock(
             String key, String name, String sha256, UUID id, String startFormKey) {
         return transactionTemplate.execute(status -> {
-            // WO-A-03: acquire advisory lock based on database dialect
-            acquireAdvisoryLock(key);
-            Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
-            ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
-            entity.setId(id);
-            entity.setKey(key);
-            entity.setName(name);
-            entity.setVersion(maxVersion + 1);
-            entity.setSha256(sha256);
-            entity.setCreatedAt(Instant.now());
-            entity.setStartFormKey(startFormKey);
+            ProcessDefinitionEntity entity = createNewVersionEntity(key, name, sha256, id, startFormKey);
+            entity.setDeploymentState(ProcessDefinitionEntity.STATE_ACTIVE);
             return processDefinitionRepository.save(entity);
         });
+    }
+
+    /**
+     * WO-REL-15: builds a new version entity (advisory lock + next version number) WITHOUT
+     * saving it — the caller persists it inside the deployment transaction. The advisory lock
+     * is acquired on the caller's connection and released at that transaction's commit/rollback.
+     */
+    private ProcessDefinitionEntity createNewVersionEntity(
+            String key, String name, String sha256, UUID id, String startFormKey) {
+        // WO-A-03: acquire advisory lock based on database dialect
+        acquireAdvisoryLock(key);
+        Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
+        ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
+        entity.setId(id);
+        entity.setKey(key);
+        entity.setName(name);
+        entity.setVersion(maxVersion + 1);
+        entity.setSha256(sha256);
+        entity.setCreatedAt(Instant.now());
+        entity.setStartFormKey(startFormKey);
+        return entity;
+    }
+
+    /**
+     * WO-REL-15: re-assembles every artifact of a deployment whose state is not ACTIVE
+     * (crash between version commit and artifact creation, or explicit FAILED). Runs inside
+     * the deployment transaction; idempotent — re-creating a model row / subscriptions /
+     * jobs that already exist is a plain upsert or delete+insert. Element bindings are
+     * re-carried from the previous version (leftovers of a failed attempt are dropped first).
+     */
+    private void repairDeployment(ProcessDefinitionEntity entity, BpmnProcessDefinitionModel model, String bpmn) {
+        UUID id = entity.getId();
+        fileService.saveFile(id, bpmn);
+        registerMessageStartSubscriptions(entity.getKey(), id, model);
+        registerTimerStartJobs(entity.getKey(), id, model);
+        registerSignalStartSubscriptions(entity.getKey(), id, model);
+
+        bindingRepository.findByProcessDefinitionId(id).forEach(bindingRepository::delete);
+        if (entity.getVersion() != null && entity.getVersion() > 1) {
+            carryForwardBindings(entity.getKey(), entity.getVersion() - 1, entity);
+        }
+
+        entity.setDeploymentState(ProcessDefinitionEntity.STATE_ACTIVE);
+        processDefinitionRepository.save(entity);
+
+        cacheModelAfterCommit(id, model);
+    }
+
+    /**
+     * WO-REL-15: fills the in-memory model cache only after the surrounding deployment
+     * transaction has COMMITTED — never inside the tx (a rolled-back deployment must not
+     * leave a cached model that does not exist in the database). registerSynchronization
+     * defers the cache put to afterCommit, which is not invoked on rollback. Without an
+     * active transaction synchronization (e.g. unit tests running the TransactionTemplate
+     * callback directly) the cache is filled immediately.
+     */
+    private void cacheModelAfterCommit(UUID processDefinitionId, BpmnProcessDefinitionModel model) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    bpmnService.addProcessDefinition(processDefinitionId, model);
+                }
+            });
+        } else {
+            bpmnService.addProcessDefinition(processDefinitionId, model);
+        }
     }
 
     /**
