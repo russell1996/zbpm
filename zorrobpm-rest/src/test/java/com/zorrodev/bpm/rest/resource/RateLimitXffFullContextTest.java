@@ -8,8 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.ApplicationContext;
+import org.springframework.core.Ordered;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -18,6 +20,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -54,11 +57,24 @@ class RateLimitXffFullContextTest {
     }
 
     @Test
-    void debug_allBeans() {
-        System.out.println("=== FilterRegistrationBean count: " +
-            ctx.getBeansOfType(org.springframework.boot.web.servlet.FilterRegistrationBean.class).size());
-        ctx.getBeansOfType(org.springframework.boot.web.servlet.FilterRegistrationBean.class)
-            .forEach((name, bean) -> System.out.println("  " + name + " order=" + bean.getOrder() + " url=" + bean.getUrlPatterns()));
+    void rateLimitFilter_registeredOnAuthAndDataEndpoints_highestPrecedence() {
+        // WO-TEST-3 T-03: the old debug_allBeans only PRINTED beans — no assertions, so it
+        // looked like coverage while asserting nothing (even a fully unregistered filter chain
+        // was "green"). Assert the registration contract from RateLimitFilterConfig instead:
+        // exactly one registration, HIGHEST_PRECEDENCE, covering every auth + data endpoint.
+        List<FilterRegistrationBean> registrations = ctx.getBeansOfType(FilterRegistrationBean.class)
+            .values().stream()
+            .filter(b -> b.getUrlPatterns().contains("/auth/login"))
+            .toList();
+
+        assertThat(registrations).hasSize(1);
+        FilterRegistrationBean registration = registrations.get(0);
+        assertThat(registration.getOrder()).isEqualTo(Ordered.HIGHEST_PRECEDENCE);
+        assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder(
+            "/auth/login", "/auth/refresh",
+            "/events/*", "/variables/*",
+            "/process-instances/*", "/user-tasks/*",
+            "/service-tasks/*", "/incidents/*");
     }
 
     private HttpRequest buildLoginRequest(String xffValue) throws Exception {
