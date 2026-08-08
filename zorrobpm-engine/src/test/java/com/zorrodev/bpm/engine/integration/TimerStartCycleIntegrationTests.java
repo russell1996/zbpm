@@ -12,7 +12,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -21,7 +23,12 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** C8-3: a repeating timeCycle timer start (R/<duration> or cron) reschedules its next occurrence after firing. */
+/**
+ * C8-3: a repeating timeCycle timer start (R/<duration> or cron) reschedules its next occurrence after firing.
+ *
+ * WO-REL-13 (R-03): each step runs in its OWN committed transaction — timer fires (TimerStartJobExecutor
+ * REQUIRES_NEW) cannot see rows of the test's outer transaction (READ COMMITTED).
+ */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
 public class TimerStartCycleIntegrationTests {
@@ -38,6 +45,19 @@ public class TimerStartCycleIntegrationTests {
     @Autowired
     private ProcessInstanceRepository processInstanceRepository;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    /** Runs the action in its own committed transaction (WO-REL-13: fires must see committed rows). */
+    private void inNewTx(Runnable action) {
+        TransactionTemplate tt = new TransactionTemplate(transactionManager);
+        tt.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        tt.execute(status -> {
+            action.run();
+            return null;
+        });
+    }
+
     private TimerStartJobEntity pendingJob(UUID processDefinitionId) {
         return timerStartJobRepository.findAll().stream()
             .filter(j -> j.getProcessDefinitionId().equals(processDefinitionId) && !j.isFired())
@@ -49,31 +69,34 @@ public class TimerStartCycleIntegrationTests {
             .filter(pi -> pi.getProcessDefinitionId().equals(processDefinitionId)).count();
     }
 
-    @Transactional
     @Test
     void repeatingTimerStartReschedulesAfterFiring() throws Exception {
         // timerStart with timeCycle R/PT0S (unbounded, immediately due). Each firing starts an instance and
         // schedules the next occurrence, so firing the pending job twice yields two instances.
         String bpmn = Files.readString(Paths.get("src/test/files/test-timer-start-cycle.bpmn"));
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
-        UUID defId = model.getId();
 
-        TimerStartJobEntity first = pendingJob(defId);
-        timerStartJobExecutor.fire(first.getId(), first.getProcessDefinitionId(), first.getElementId());
-        assertThat(instanceCount(defId)).isEqualTo(1);
+        UUID[] defId = new UUID[1];
+        inNewTx(() -> {
+            ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+            defId[0] = model.getId();
+        });
+
+        TimerStartJobEntity first = pendingJob(defId[0]);
+        inNewTx(() -> timerStartJobExecutor.fire(first.getId(), first.getProcessDefinitionId(), first.getElementId()));
+        assertThat(instanceCount(defId[0])).isEqualTo(1);
 
         // firing produced a fresh pending job (the reschedule); fire it too
-        TimerStartJobEntity second = pendingJob(defId);
+        TimerStartJobEntity second = pendingJob(defId[0]);
         assertThat(second.getId()).isNotEqualTo(first.getId());
-        timerStartJobExecutor.fire(second.getId(), second.getProcessDefinitionId(), second.getElementId());
-        assertThat(instanceCount(defId)).isEqualTo(2);
+        inNewTx(() -> timerStartJobExecutor.fire(second.getId(), second.getProcessDefinitionId(), second.getElementId()));
+        assertThat(instanceCount(defId[0])).isEqualTo(2);
 
         // and it keeps repeating: another pending job is queued
         assertThat(timerStartJobRepository.findAll().stream()
-            .filter(j -> j.getProcessDefinitionId().equals(defId) && !j.isFired())).isNotEmpty();
+            .filter(j -> j.getProcessDefinitionId().equals(defId[0]) && !j.isFired())).isNotEmpty();
 
         List<ProcessInstanceEntity> instances = processInstanceRepository.findAll().stream()
-            .filter(pi -> pi.getProcessDefinitionId().equals(defId)).toList();
+            .filter(pi -> pi.getProcessDefinitionId().equals(defId[0])).toList();
         assertThat(instances).allMatch(pi -> pi.getCompletedAt() != null);
     }
 }
