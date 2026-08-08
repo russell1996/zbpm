@@ -15,6 +15,14 @@ import java.util.UUID;
 @Entity
 @Table(name="process_definitions")
 public class ProcessDefinitionEntity {
+
+    /** WO-REL-15: deployment is in progress (version row written, artifacts not yet all created). */
+    public static final String STATE_PENDING = "PENDING";
+    /** WO-REL-15: fully deployed — version + model + subscriptions + jobs + bindings all present. */
+    public static final String STATE_ACTIVE = "ACTIVE";
+    /** WO-REL-15: previous deployment attempt failed; redeploy of the same sha256 repairs it. */
+    public static final String STATE_FAILED = "FAILED";
+
     @Id
     private UUID id;
     @Column(name = "code")
@@ -25,4 +33,6 @@ public class ProcessDefinitionEntity {
     private String sha256;
     private Instant createdAt;
     private String startFormKey;
+    @Column(name = "deployment_state", nullable = false)
+    private String deploymentState = STATE_ACTIVE;
 }

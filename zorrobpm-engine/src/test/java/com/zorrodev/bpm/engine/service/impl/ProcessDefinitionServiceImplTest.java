@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -125,18 +126,28 @@ class ProcessDefinitionServiceImplTest {
 
         when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
         when(processDefinitionRepository.findMaxByKey("test1")).thenReturn(Optional.of(2));
-        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
-            .thenAnswer(inv -> inv.getArgument(0));
+        // Snapshot each save's arguments AT CALL TIME (Mockito keeps references, so a plain
+        // captor/matcher would see the entity already flipped to ACTIVE).
+        List<ProcessDefinitionEntity> saved = new ArrayList<>();
+        List<String> saveStates = new ArrayList<>();
+        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class))).thenAnswer(inv -> {
+            ProcessDefinitionEntity e = inv.getArgument(0);
+            saved.add(e);
+            saveStates.add(e.getDeploymentState());
+            return e;
+        });
 
         ProcessDefinition result = service.addProcessDefinition(bpmn);
 
-        ArgumentCaptor<ProcessDefinitionEntity> savedEntity = ArgumentCaptor.forClass(ProcessDefinitionEntity.class);
-        verify(processDefinitionRepository).save(savedEntity.capture());
-        assertThat(savedEntity.getValue().getKey()).isEqualTo("test1");
-        assertThat(savedEntity.getValue().getVersion()).isEqualTo(3);
+        // WO-REL-15: two writes inside the single deployment transaction — PENDING first, ACTIVE last
+        assertThat(saveStates).containsExactly(
+            ProcessDefinitionEntity.STATE_PENDING, ProcessDefinitionEntity.STATE_ACTIVE);
+        assertThat(saved).hasSize(2);
+        assertThat(saved.get(1).getKey()).isEqualTo("test1");
+        assertThat(saved.get(1).getVersion()).isEqualTo(3);
 
-        verify(bpmnService).addProcessDefinition(eq(savedEntity.getValue().getId()), any());
-        verify(fileService).saveFile(eq(savedEntity.getValue().getId()), eq(bpmn));
+        verify(bpmnService).addProcessDefinition(eq(saved.get(1).getId()), any());
+        verify(fileService).saveFile(eq(saved.get(1).getId()), eq(bpmn));
 
         assertThat(result.getKey()).isEqualTo("test1");
         assertThat(result.getVersion()).isEqualTo(3);
@@ -156,6 +167,35 @@ class ProcessDefinitionServiceImplTest {
         verify(processDefinitionRepository, never()).save(any());
         verify(bpmnService, never()).addProcessDefinition(any(), any());
         verify(fileService, never()).saveFile(any(), any());
+
+        assertThat(result.getId()).isEqualTo(existingId);
+        assertThat(result.getVersion()).isEqualTo(5);
+    }
+
+    @Test
+    void addProcessDefinition_existingShaPending_repairsAndActivates() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"));
+        UUID existingId = UUID.randomUUID();
+        ProcessDefinitionEntity existing = entity(existingId, "test1", 5);
+        existing.setCreatedAt(Instant.now());
+        existing.setDeploymentState(ProcessDefinitionEntity.STATE_PENDING);
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.of(existing));
+        when(bindingRepository.findByProcessDefinitionId(existingId)).thenReturn(List.of());
+        List<String> saveStates = new ArrayList<>();
+        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class))).thenAnswer(inv -> {
+            ProcessDefinitionEntity e = inv.getArgument(0);
+            saveStates.add(e.getDeploymentState());
+            return e;
+        });
+
+        ProcessDefinition result = service.addProcessDefinition(bpmn);
+
+        // WO-REL-15: redeploy of the same sha256 REPAIRS the incomplete deployment instead of
+        // bailing out with "already exists": model re-saved, state flipped to ACTIVE.
+        verify(fileService).saveFile(eq(existingId), eq(bpmn));
+        verify(bpmnService).addProcessDefinition(eq(existingId), any());
+        assertThat(saveStates).containsExactly(ProcessDefinitionEntity.STATE_ACTIVE);
 
         assertThat(result.getId()).isEqualTo(existingId);
         assertThat(result.getVersion()).isEqualTo(5);
