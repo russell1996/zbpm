@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -17,6 +18,10 @@ import java.util.List;
  * Fires a single due timer in its own transaction, so one failing timer cannot roll back the
  * whole poll batch. Separate bean (not a self-invoked method) so the {@link Transactional} proxy
  * actually applies.
+ *
+ * WO-REL-13 (R-03): REQUIRES_NEW — the fire transaction is fully independent of the poll loop
+ * (which no longer holds a transaction at all) and of every other job. A failure rolls back only
+ * this job's claim and side effects; the row stays fired=false and is retried by the next poll.
  */
 @Slf4j
 @Component
@@ -27,7 +32,7 @@ public class TimerJobExecutor {
     private final ActivityService activityService;
     private final ProcessInstanceRepository processInstanceRepository;
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void fire(TimerJob job) {
         if (!dbService.claimTimerJob(job.getId())) {
             return; // Already claimed by another node
