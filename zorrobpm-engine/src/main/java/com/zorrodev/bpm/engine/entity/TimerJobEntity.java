@@ -39,6 +39,12 @@ public class TimerJobEntity {
      */
     private Integer remainingCount;
     /**
+     * WO-REL-14 (R-04): the original {@code timeCycle} expression (e.g. {@code R3/PT1H}),
+     * persisted so re-arm computes the next occurrence from the REAL interval instead of a
+     * hardcoded zero-second cycle. Null for non-repeating (one-shot / boundary) timers.
+     */
+    private String expression;
+    /**
      * Number of failed fire attempts (WO-REL-13). Incremented per-job when {@code fire} throws,
      * so a failing timer is visible for retry/quarantine instead of being silently lost.
      */

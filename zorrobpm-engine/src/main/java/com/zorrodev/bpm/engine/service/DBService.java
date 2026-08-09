@@ -145,6 +145,9 @@ public interface DBService {
 
     UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId, Integer remainingCount);
 
+    /** WO-REL-14: also persists the original timeCycle expression, so re-arm uses the real interval. */
+    UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId, Integer remainingCount, String expression);
+
     /** Creates a timer job that triggers a timer-started event sub-process when due (no host activity). */
     UUID createEventSubprocessTimerJob(UUID processInstanceId, java.time.Instant dueAt, String eventSubprocessId);
 
@@ -211,6 +214,9 @@ public interface DBService {
 
     /** Replaces any timer-start jobs for {@code processKey} with a fresh one. */
     void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, java.time.Instant dueAt);
+
+    /** WO-REL-14: also persists remainingCount, so a bounded repeating cycle can actually be exhausted. */
+    void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, java.time.Instant dueAt, Integer remainingCount);
 
     void deleteTimerStartJobsByKey(String processKey);
 

@@ -34,4 +34,11 @@ public class TimerStartJobEntity {
     private int attempts;
     /** Last fire failure message (WO-REL-13), null while the job never failed. */
     private String lastError;
+    /**
+     * WO-REL-14 (R-04): remaining repetitions after current fire, for bounded repeating timer
+     * starts (e.g. R3/PT1H). Null = infinite repeat (unbounded R/... or cron). 0 = done, do not
+     * reschedule. Persisted (unlike the pre-fix behavior of recomputing repeatCount from the
+     * BPMN model on every fire, which meant a bounded cycle never actually exhausted).
+     */
+    private Integer remainingCount;
 }

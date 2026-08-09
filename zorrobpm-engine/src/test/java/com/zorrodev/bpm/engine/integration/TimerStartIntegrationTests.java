@@ -80,7 +80,7 @@ public class TimerStartIntegrationTests {
 
         inNewTx(() -> {
             TimerStartJobEntity job = timerStartJobRepository.findById(jobId[0]).orElseThrow();
-            timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId());
+            timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId(), job.getDueAt(), job.getRemainingCount());
         });
 
         List<ProcessInstanceEntity> instances = processInstanceRepository.findAll().stream()
