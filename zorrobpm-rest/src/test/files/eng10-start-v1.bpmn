@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_eng10_v1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="eng10-process" name="ENG-10 process" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="Start Event">
+      <bpmn:extensionElements>
+        <zeebe:properties>
+          <zeebe:property name="formKey" value="eng10FormA" />
+        </zeebe:properties>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:endEvent id="endEvent" name="End Event">
+      <bpmn:incoming>flow1</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow1" sourceRef="startEvent" targetRef="endEvent" />
+  </bpmn:process>
+</bpmn:definitions>
