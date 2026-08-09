@@ -36,6 +36,10 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- WO-SEC-55: PG-only tests (@Tag("pg"), e.g. RefreshTokenRacePgIT) are excluded from
+             the default H2 build; the local/CI PG run clears this via -Dzbpm.excludedGroups=
+             and selects them with -Dgroups=pg (same mechanism as zorrobpm-engine/pom.xml). -->
+        <zbpm.excludedGroups>pg</zbpm.excludedGroups>
     </properties>
 
     <dependencies>
@@ -134,6 +138,10 @@
                     <includes>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!-- WO-SEC-55: exclude PG-only tests by default (H2 build); the PG run
+                         clears this via -Dzbpm.excludedGroups= (see zorrobpm-engine/pom.xml).
+                         A literal here is NOT overridable by -D, so it must be a property. -->
+                    <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>

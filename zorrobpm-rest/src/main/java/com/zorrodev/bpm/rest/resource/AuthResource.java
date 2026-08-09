@@ -130,10 +130,14 @@ public class AuthResource implements AuthContract {
         // Issue new access token
         String newAccessToken = tokenService.issue(user.getId(), user.getUsername(), user.getRole());
 
-        // Revoke old refresh token, issue new one (rotation)
-        found.setRevoked(true);
-        found.setRevokedAt(Instant.now());
-        refreshTokenRepository.save(found);
+        // WO-SEC-55: atomically claim the old refresh token BEFORE issuing a successor.
+        // A single UPDATE wins exactly one of N concurrent rotations; the losers see 0 rows
+        // and are rejected (no double-spend). Reuse-detection above (S10/WO-SEC-18 L7) still
+        // handles replays of already-revoked tokens.
+        int claimed = refreshTokenRepository.markRevokedByTokenHash(tokenHash, Instant.now());
+        if (claimed != 1) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token already rotated");
+        }
 
         String newRefreshToken = tokenService.generateRefreshToken();
         RefreshTokenEntity newEntity = new RefreshTokenEntity();
