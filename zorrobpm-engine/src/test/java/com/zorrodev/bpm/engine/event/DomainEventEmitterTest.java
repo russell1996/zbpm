@@ -163,8 +163,10 @@ class DomainEventEmitterTest {
         ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
         verify(domainEventRepository).save(eventCaptor.capture());
 
-        // Verify outbox entry was created (serialization did NOT fail)
-        verify(outboxRepository).save(any(OutboxEntry.class));
+        // Verify outbox entry was created (serialization did NOT fail) with explicit kind (WO-REL-12 R-01)
+        ArgumentCaptor<OutboxEntry> outboxCaptor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxRepository).save(outboxCaptor.capture());
+        assertThat(outboxCaptor.getValue().getKind()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxKind.DOMAIN_EVENT);
 
         // Verify data was sanitized: Integer 42 → String "42"
         Map<String, Object> savedData = eventCaptor.getValue().getData();

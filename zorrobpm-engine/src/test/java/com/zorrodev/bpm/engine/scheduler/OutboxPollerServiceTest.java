@@ -16,16 +16,16 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * WO-REL-2 + WO-AUD-1 tests for OutboxBatchProcessor and OutboxPollerService:
- *  #2: publish fails then recovers → delivered
- *  #4: successful publish+mark → no double publish
- *  #5: proof-of-failure — old order (claim→publish) loses messages
- *  AUD-1: pollOnce delegates to batchProcessor.processBatch()
+ * WO-REL-2 + WO-AUD-1 + WO-REL-12 tests for OutboxBatchProcessor and OutboxPollerService.
+ *
+ * WO-REL-12 (R-02) semantics: the processor publishes the Spring event but NEVER calls
+ * markPublished — the row is marked published only after the broker ACK arrives
+ * (OutboxDeliveryResultListener). Until then the entry stays pending and is re-published
+ * on the next poll (at-least-once; consumers dedupe by messageId = outbox id).
  */
 @ExtendWith(MockitoExtension.class)
 class OutboxPollerServiceTest {
@@ -55,54 +55,55 @@ class OutboxPollerServiceTest {
         return e;
     }
 
-    // --- Criterion #2: publish fails then recovers → delivered ---
+    // --- Criterion #2 (WO-REL-2): publish fails then recovers → entry stays pending, no mark ---
 
     @Test
     void criterion2_publishFailsThenRecovers_delivered() throws Exception {
         OutboxEntry entry = entry("job1");
 
-        // First poll: publish throws → entry stays pending
+        // First poll: publish throws → entry stays pending, failure recorded, NOT marked published
         when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
         when(objectMapper.readValue(entry.getPayload(), JobDetailModel.class)).thenReturn(new JobDetailModel());
         doThrow(new RuntimeException("MQ down")).when(publisher).publishEvent(any(ServiceTaskEnqueued.class));
 
         poller.pollOnce();
         verify(outboxRepository, never()).markPublished(entry.getId());
+        verify(outboxRepository).recordFailure(eq(entry.getId()), eq(1), anyString());
 
-        // Second poll: publish succeeds → entry marked
+        // Second poll: publish succeeds → event published; still NO markPublished from the
+        // processor (marking happens only on broker ACK — WO-REL-12 R-02)
         reset(outboxRepository, publisher, objectMapper);
         when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
         when(objectMapper.readValue(entry.getPayload(), JobDetailModel.class)).thenReturn(new JobDetailModel());
 
         poller.pollOnce();
         verify(publisher, times(1)).publishEvent(any(ServiceTaskEnqueued.class));
-        verify(outboxRepository).markPublished(entry.getId());
+        verify(outboxRepository, never()).markPublished(entry.getId());
     }
 
-    // --- Criterion #4: no double publish ---
+    // --- Criterion #4 (WO-REL-2): no double publish once confirmed ---
 
     @Test
-    void criterion4_successfulPublishThenMark_noDoublePublish() throws Exception {
+    void criterion4_processorNeverMarksPublished_waitsForBrokerAck() throws Exception {
         OutboxEntry entry = entry("job1");
         when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
 
         poller.pollOnce();
 
         verify(publisher, times(1)).publishEvent(any(ServiceTaskEnqueued.class));
-        verify(outboxRepository).markPublished(entry.getId());
+        // WO-REL-12 R-02: markPublished is NOT the processor's job anymore — only the
+        // OutboxDeliveryResultListener marks after the broker ACK.
+        verify(outboxRepository, never()).markPublished(entry.getId());
 
-        // Second poll: entry is published → not in pending list
-        reset(outboxRepository, publisher, objectMapper);
-        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of());
-
+        // Until an ACK arrives the entry stays pending → next poll publishes again (at-least-once)
+        when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
         poller.pollOnce();
-
-        verify(publisher, never()).publishEvent(any(ServiceTaskEnqueued.class));
+        verify(publisher, times(2)).publishEvent(any(ServiceTaskEnqueued.class));
     }
 
     // --- Criterion #5: proof-of-failure ---
-    // OLD ORDER (claim→publish): publish fails but entry already marked → LOST
-    // NEW ORDER (publish→mark): publish fails → entry stays pending → RETRY
+    // OLD ORDER (mark→publish): publish fails but entry already marked → LOST
+    // NEW ORDER (publish → ACK → mark): publish fails → entry stays pending → RETRY
 
     @Test
     void criterion5_proofOfFailure_publishFails_entryStaysPending() throws Exception {
@@ -114,9 +115,9 @@ class OutboxPollerServiceTest {
 
         poller.pollOnce();
 
-        // With NEW order (publish→mark): markPublished NOT called because publish failed
+        // Entry stays pending (not marked published) → next poll will retry
         verify(outboxRepository, never()).markPublished(entry.getId());
-        // Entry stays pending → next poll will retry
+        verify(outboxRepository).recordFailure(eq(entry.getId()), eq(1), anyString());
     }
 
     // --- AUD-1: pollOnce delegates to batchProcessor ---
@@ -130,6 +131,6 @@ class OutboxPollerServiceTest {
 
         verify(outboxRepository).findPendingBatch(100);
         verify(publisher).publishEvent(any(ServiceTaskEnqueued.class));
-        verify(outboxRepository).markPublished(entry.getId());
+        verify(outboxRepository, never()).markPublished(entry.getId());
     }
 }
