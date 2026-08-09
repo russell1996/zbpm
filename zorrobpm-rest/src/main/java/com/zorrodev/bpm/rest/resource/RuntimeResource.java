@@ -103,6 +103,32 @@ public class RuntimeResource implements RuntimeContract {
         }
     }
 
+    /**
+     * WO-ENG-10: resolves the EXACT {@link ProcessDefinitionEntity} that
+     * {@code RuntimeServiceImpl.startProcessInstance} will actually start — same order:
+     * explicit {@code processDefinitionId} wins; else {@code processDefinitionKey} +
+     * {@code processDefinitionVersion} (or max version by key if version is unset). Returns
+     * null only if the DTO fails validation elsewhere (id/key both absent) or the resolved
+     * definition genuinely doesn't exist (startProcessInstance will itself throw in that case).
+     */
+    private ProcessDefinitionEntity resolveTargetDefinition(StartProcessInstanceDTO dto) {
+        if (dto.getProcessDefinitionId() != null) {
+            return processDefinitionRepository.findById(dto.getProcessDefinitionId()).orElse(null);
+        }
+        String key = dto.getProcessDefinitionKey();
+        if (key == null) {
+            return null;
+        }
+        Integer version = dto.getProcessDefinitionVersion();
+        if (version == null) {
+            version = processDefinitionRepository.findMaxByKey(key).orElse(null);
+        }
+        if (version == null) {
+            return null;
+        }
+        return processDefinitionRepository.findByKeyAndVersion(key, version).orElse(null);
+    }
+
     private String resolveDefinitionKeyByInstance(UUID instanceId) {
         ProcessInstanceEntity pi = processInstanceRepository.findById(instanceId).orElse(null);
         if (pi == null) return null;
@@ -135,21 +161,21 @@ public class RuntimeResource implements RuntimeContract {
         }
         requireOperate(definitionKey, AuthorizationService.Action.START);
 
+        // WO-ENG-10: validate against the EXACT definition that will actually be started, not
+        // always "latest by key" — mirrors RuntimeServiceImpl.startProcessInstance's own
+        // resolution order (id > key+version > key+maxVersion), so a start pinned to an older
+        // version is validated against that version's form/schema, not a newer one's.
+        ProcessDefinitionEntity targetDefinition = resolveTargetDefinition(dto);
+
         // ADR-6 §D9: form validation via FormArtifactService facade
-        if (definitionKey != null) {
-            Integer maxVersion = processDefinitionRepository.findMaxByKey(definitionKey).orElse(null);
-            if (maxVersion != null) {
-                ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(definitionKey, maxVersion).orElse(null);
-                if (pd != null && pd.getStartFormKey() != null) {
-                    List<FormValidator.ValidationError> errors = formArtifactService.validateFormIfApplicable(
-                        pd.getStartFormKey(), dto.getVariables());
-                    if (!errors.isEmpty()) {
-                        String errorDetails = errors.stream()
-                            .map(e -> e.field() + ": " + e.message())
-                            .reduce((a, b) -> a + "; " + b).orElse("Validation failed");
-                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, errorDetails);
-                    }
-                }
+        if (targetDefinition != null && targetDefinition.getStartFormKey() != null) {
+            List<FormValidator.ValidationError> errors = formArtifactService.validateFormIfApplicable(
+                targetDefinition.getStartFormKey(), dto.getVariables());
+            if (!errors.isEmpty()) {
+                String errorDetails = errors.stream()
+                    .map(e -> e.field() + ": " + e.message())
+                    .reduce((a, b) -> a + "; " + b).orElse("Validation failed");
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, errorDetails);
             }
         }
 
