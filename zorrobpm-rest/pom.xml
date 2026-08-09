@@ -36,11 +36,12 @@
 
     <properties>
         <java.version>17</java.version>
-        <!-- WO-SEC-55 + WO-REL-12: PG-only (@Tag("pg"), e.g. RefreshTokenRacePgIT) and Rabbit
-             broker (@Tag("rabbit"), e.g. RabbitOutboxConfirmIT) tests are excluded from the
-             default H2/no-broker build. Local/CI runs select one group at a time via
-             -Dgroups=pg|rabbit -Dzbpm.excludedGroups= (same mechanism as zorrobpm-engine/pom.xml).
-             A literal here is NOT overridable by -D, so it must be a property. -->
+        <!-- WO-SEC-55 + WO-REL-12 + WO-TEST-3: PG-only (@Tag("pg"), e.g. RefreshTokenRacePgIT,
+             QueryResourceAuthzPgIT) and Rabbit broker (@Tag("rabbit"), e.g. RabbitOutboxConfirmIT)
+             tests are excluded from the default H2/no-broker build. Local/CI runs select one
+             group at a time via -Dgroups=pg|rabbit -Dzbpm.excludedGroups= (same mechanism as
+             zorrobpm-engine/pom.xml). A literal here is NOT overridable by -D, so it must be a
+             property. -->
         <zbpm.excludedGroups>pg | rabbit</zbpm.excludedGroups>
     </properties>
 
@@ -140,10 +141,10 @@
                     <includes>
                         <include>**/*IT.java</include>
                     </includes>
-                    <!-- WO-SEC-55 + WO-REL-12: exclude PG-only and Rabbit-broker tests by default
-                         (H2/no-broker build); a targeted run clears/narrows this via
-                         -Dzbpm.excludedGroups= (see zorrobpm-engine/pom.xml). A literal here is
-                         NOT overridable by -D, so it must be a property. -->
+                    <!-- WO-SEC-55 + WO-REL-12 + WO-TEST-3: exclude PG-only and Rabbit-broker
+                         tests by default (H2/no-broker build); a targeted run clears/narrows
+                         this via -Dzbpm.excludedGroups= (see zorrobpm-engine/pom.xml). A literal
+                         here is NOT overridable by -D, so it must be a property. -->
                     <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>

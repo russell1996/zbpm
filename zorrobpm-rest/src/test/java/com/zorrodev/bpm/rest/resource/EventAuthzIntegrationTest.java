@@ -55,6 +55,7 @@ class EventAuthzIntegrationTest {
 
     private String adminToken;
     private String userTokenA; // has grant on processA only
+    private String grantedAKey; // WO-TEST-3 T-01: REAL API-key grant (READ) on processA only
     private String fullAKey;   // WO-SEC-54: API-key with isFull=true grant on processA ONLY
     private String fullAPlusBKey; // WO-SEC-54: isFull=true on processA + limited grant on processB
     private UUID pdIdA;
@@ -134,6 +135,18 @@ class EventAuthzIntegrationTest {
         setGrantsRaw(userFullAPlusBId,
             "[{\"processKey\":\"processA\",\"full\":true},"
                 + "{\"processKey\":\"processB\",\"permissions\":\"READ\"}]");
+
+        // WO-TEST-3 T-01: a REAL non-full grant on processA only. The old
+        // pof_authzIsolation_principalWithGrantOnPdA_doesNotSeePdBEvents asserted "0 events"
+        // without ever creating a grant — green under BOTH deny-all AND a global see-all bug
+        // (that is how S-02 survived a green CI). This key is created through the real admin
+        // API chain (member + api-key + grants) so the isolation test below proves the grant
+        // actually WORKS: 2 PD-A events visible, PD-B invisible.
+        UUID userGrantedAId = createUser("evtuser_grantA_" + UUID.randomUUID());
+        addMember(userGrantedAId, "processA", "OWNER");
+        grantedAKey = createApiKeyForUser(userGrantedAId);
+        setGrantsRaw(userGrantedAId,
+            "[{\"processKey\":\"processA\",\"permissions\":\"READ\"}]");
 
         // Emit events for both processes
         emitEvent(pdIdA, UUID.randomUUID(), "process-instance.started");
@@ -333,27 +346,29 @@ class EventAuthzIntegrationTest {
     // Without authz filter: principal A sees events from PD-B (RED)
     // With authz filter: principal A does NOT see events from PD-B (GREEN)
 
+    /**
+     * WO-TEST-3 T-01: replaces the fake-green test that asserted "0 events" for a principal
+     * that was never given a grant (green under deny-all AND under a global see-all bug).
+     * Here the principal has a REAL grant on processA (created via the admin API chain in
+     * setup: member + api-key + grants), so the positive proof is:
+     *   - sees its 2 granted PD-A events (asserts the grant actually grants), and
+     *   - does NOT see the PD-B event (asserts cross-process isolation).
+     * RED if the resolver is bypassed (see-all): the key would see all 3 events.
+     */
     @Test
-    void pof_authzIsolation_principalWithGrantOnPdA_doesNotSeePdBEvents() throws Exception {
-        // Arrange: userTokenA has NO grants → sees 0 events (already verified above).
-        // Now test the positive case: if we gave user A a grant on processIdA,
-        // they should see PD-A events but NOT PD-B events.
-
-        // For this POF, admin sees all 3 events (PD-A: 2, PD-B: 1)
+    void principalWithRealGrantOnPdA_seesOwnEvents_notForeignEvents() throws Exception {
         mockMvc.perform(get("/events")
-                .header("Authorization", "Bearer " + adminToken))
+                .header("Authorization", "Bearer " + grantedAKey))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(3));
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdA.toString()))
+            .andExpect(jsonPath("$.data[1].processDefinitionId").value(pdIdA.toString()));
 
-        // User A with no grants sees 0 events (no access to any PD)
-        mockMvc.perform(get("/events")
-                .header("Authorization", "Bearer " + userTokenA))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(0));
-
-        // RED (proof-of-failure): if authz filter were bypassed, user A would see all 3 events.
-        // GREEN: with authz filter, user A sees only events from PDs they have grants on (0 = none).
-        // This proves the authz filter is working and not leaking cross-tenant data.
+        Set<String> pdIds = eventPdIds(grantedAKey);
+        // Positive: the grant really grants access to PD-A events (not just "no error").
+        assertThat(pdIds).contains(pdIdA.toString());
+        // Isolation: PD-B events must NOT leak through.
+        assertThat(pdIds).doesNotContain(pdIdB.toString());
     }
 
     @Test
