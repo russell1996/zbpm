@@ -1,0 +1,80 @@
+databaseChangeLog:
+  - logicalFilePath: 20260809-071
+  - changeSet:
+      id: 20260809-071
+      author: zorrodev
+      comment: WO-PERF-2 (D-02) — indexes on hot lookup columns that had none (FK columns are NOT
+        auto-indexed by PostgreSQL). api_key.key_hash is looked up on every API-key authenticated
+        request; process_member.user_id resolves a user's process memberships (the PK leads with
+        process_id, which does not help a user_id-only lookup); process_instances is filtered by
+        process_definition_id (tenant scoping) and ordered by started_at on every list query, and
+        a partial index on completed_at supports the retention batch processor's "not yet purged"
+        scan without indexing the (larger) set of still-running instances.
+      changes:
+        - addUniqueConstraint:
+            tableName: api_key
+            columnNames: key_hash
+            constraintName: uq_api_key_key_hash
+        - createIndex:
+            tableName: process_member
+            indexName: idx_process_member_user_id
+            columns:
+              - column:
+                  name: user_id
+        - createIndex:
+            tableName: process_instances
+            indexName: idx_process_instances_definition_started
+            columns:
+              - column:
+                  name: process_definition_id
+              - column:
+                  name: started_at
+                  descending: true
+      rollback:
+        - dropUniqueConstraint:
+            tableName: api_key
+            constraintName: uq_api_key_key_hash
+        - dropIndex:
+            tableName: process_member
+            indexName: idx_process_member_user_id
+        - dropIndex:
+            tableName: process_instances
+            indexName: idx_process_instances_definition_started
+
+  - changeSet:
+      id: 20260809-071-completed-at-pg
+      author: zorrodev
+      dbms: postgresql
+      comment: WO-PERF-2 — partial index for the retention batch processor (RetentionBatchProcessor
+        scans "completed_at IS NOT NULL AND completed_at < cutoff"); excludes still-running
+        rows (completed_at IS NULL), which are the majority in a healthy system and would
+        only bloat the index. PostgreSQL-only because H2 does not support the WHERE clause
+        on CREATE INDEX.
+      changes:
+        - sql:
+            sql: >-
+              CREATE INDEX idx_process_instances_completed_at
+              ON process_instances (completed_at)
+              WHERE completed_at IS NOT NULL
+      rollback:
+        - sql:
+            sql: DROP INDEX IF EXISTS idx_process_instances_completed_at
+
+  - changeSet:
+      id: 20260809-071-completed-at-h2
+      author: zorrodev
+      dbms: h2
+      comment: WO-PERF-2 — H2 equivalent of the PostgreSQL partial index above (test profile
+        only; H2 does not support a WHERE-filtered CREATE INDEX, so this indexes the full
+        column instead).
+      changes:
+        - createIndex:
+            tableName: process_instances
+            indexName: idx_process_instances_completed_at
+            columns:
+              - column:
+                  name: completed_at
+      rollback:
+        - dropIndex:
+            tableName: process_instances
+            indexName: idx_process_instances_completed_at

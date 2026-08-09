@@ -75,7 +75,7 @@ class QueryServiceImplTest {
         ServiceTask dto = new ServiceTask();
         when(serviceTaskRepository.findAll(any(Specification.class), any(PageRequest.class)))
             .thenReturn(new PageImpl<>(List.of(entity)));
-        when(serviceTaskMapper.toDTO(entity)).thenReturn(dto);
+        when(serviceTaskMapper.toDTOs(List.of(entity))).thenReturn(List.of(dto));
 
         PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(query, null);
 
@@ -122,7 +122,7 @@ class QueryServiceImplTest {
         UserTask dto = new UserTask();
         when(userTaskRepository.findAll(any(Specification.class), any(PageRequest.class)))
             .thenReturn(new PageImpl<>(List.of(entity)));
-        when(userTaskMapper.toDTO(entity)).thenReturn(dto);
+        when(userTaskMapper.toDTOs(List.of(entity))).thenReturn(List.of(dto));
 
         PagedDataDTO<UserTask> result = queryService.findUserTasks(query, null);
 
@@ -167,7 +167,7 @@ class QueryServiceImplTest {
         ProcessInstance dto = new ProcessInstance();
         when(processInstanceRepository.findAll(any(Specification.class), any(PageRequest.class)))
             .thenReturn(new PageImpl<>(List.of(entity)));
-        when(processInstanceMapper.toDTO(entity)).thenReturn(dto);
+        when(processInstanceMapper.toDTOs(List.of(entity))).thenReturn(List.of(dto));
 
         PagedDataDTO<ProcessInstance> result = queryService.findProcessInstances(query, null);
 

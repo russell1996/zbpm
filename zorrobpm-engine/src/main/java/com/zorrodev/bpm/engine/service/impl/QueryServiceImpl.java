@@ -42,6 +42,8 @@ import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.QueryService;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -65,7 +67,6 @@ public class QueryServiceImpl implements QueryService {
 
     private final DBService dbService;
     private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbc;
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private final ServiceTaskMapper serviceTaskMapper;
     private final UserTaskMapper userTaskMapper;
@@ -92,14 +93,7 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            // WO-ARCH-1b: compute allowed processInstanceIds (same pattern as Variable — verified GREEN)
-            String ph = allowedPdIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
-            String sql = "SELECT id FROM process_instances WHERE process_definition_id IN (" + ph + ")";
-            var piIds = jdbcTemplate.query(sql, (rs, rn) -> rs.getObject("id", UUID.class), allowedPdIds.toArray());
-            if (piIds.isEmpty()) {
-                return emptyPage(query);
-            }
-            specifications.add((root, q, cb) -> root.get("processInstanceId").in(piIds));
+            specifications.add(processInstanceInAllowedDefinitions(allowedPdIds));
         }
         if (query.getId() != null) {
             specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
@@ -121,12 +115,7 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            String ph = allowedPdIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
-            String sql = "SELECT id FROM process_instances WHERE process_definition_id IN (" + ph + ")";
-            Object[] args = allowedPdIds.toArray();
-            var piIds = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getObject("id", UUID.class), args);
-            if (piIds.isEmpty()) return emptyPage(query);
-            specifications.add((root, q, cb) -> root.get("processInstanceId").in(piIds));
+            specifications.add(processInstanceInAllowedDefinitions(allowedPdIds));
         }
         if (query.getId() != null) {
             specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
@@ -169,7 +158,7 @@ public class QueryServiceImpl implements QueryService {
         }
         Specification<ServiceTaskEntity> all = Specification.allOf(specifications);
         PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
-        return toDTO(serviceTaskRepository.findAll(all, page), serviceTaskMapper::toDTO);
+        return toDTOBulk(serviceTaskRepository.findAll(all, page), serviceTaskMapper::toDTOs);
     }
 
     @Override
@@ -204,7 +193,7 @@ public class QueryServiceImpl implements QueryService {
         }
         Specification<UserTaskEntity> all = Specification.allOf(specifications);
         PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
-        return toDTO(userTaskRepository.findAll(all, page), userTaskMapper::toDTO);
+        return toDTOBulk(userTaskRepository.findAll(all, page), userTaskMapper::toDTOs);
     }
 
     @Override
@@ -244,7 +233,7 @@ public class QueryServiceImpl implements QueryService {
         }
         Specification<ProcessInstanceEntity> all = Specification.allOf(specifications);
         PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("startedAt").descending());
-        return toDTO(processInstanceRepository.findAll(all, page), processInstanceMapper::toDTO);
+        return toDTOBulk(processInstanceRepository.findAll(all, page), processInstanceMapper::toDTOs);
     }
 
     @Override
@@ -316,12 +305,7 @@ public class QueryServiceImpl implements QueryService {
             return emptyPage(query);
         }
         if (allowedPdIds != null) {
-            String ph = allowedPdIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
-            String sql = "SELECT id FROM process_instances WHERE process_definition_id IN (" + ph + ")";
-            Object[] args = allowedPdIds.toArray();
-            var piIds = jdbcTemplate.query(sql, (rs, rowNum) -> rs.getObject("id", UUID.class), args);
-            if (piIds.isEmpty()) return emptyPage(query);
-            specifications.add((root, q, cb) -> root.get("processInstanceId").in(piIds));
+            specifications.add(processInstanceInAllowedDefinitions(allowedPdIds));
         }
         if (query.getProcessInstanceId() != null) {
             specifications.add(VariableRepository.byProcessInstanceId(query.getProcessInstanceId()));
@@ -350,6 +334,38 @@ public class QueryServiceImpl implements QueryService {
         }
         result.setData(data);
         return result;
+    }
+
+    /**
+     * WO-PERF-2 (D-01): bulk variant — the mapper batch-loads its related rows (definitions/
+     * activities) in ONE extra query for the whole page instead of one per entity.
+     */
+    private <T, S> PagedDataDTO<T> toDTOBulk(Page<S> page, Function<List<S>, List<T>> bulkConverter) {
+        PagedDataDTO<T> result = new PagedDataDTO<>();
+        result.setTotalElements(page.getTotalElements());
+        result.setPageIndex(page.getNumber());
+        result.setPageSize(page.getSize());
+        result.setData(bulkConverter.apply(page.getContent()));
+        return result;
+    }
+
+    /**
+     * WO-PERF-2 (D-05): entities that only carry {@code processInstanceId} (TimerJob,
+     * MessageSubscription, ProcessVariable) are scoped to the allowed process DEFINITIONS via a
+     * single correlated subquery on {@code process_instances}, instead of the caller first
+     * materializing every matching instance id into a JVM list (native SQL round-trip) and then
+     * building an {@code IN (...)} list from it — two round-trips and, on a large tenant, a large
+     * heap-resident id list, for what the database can do as one query with a semi-join. A
+     * definition with zero instances yet naturally yields zero matching rows here too, so the
+     * separate "piIds.isEmpty() -> emptyPage" short-circuit the old code needed is not required.
+     */
+    private static <T> Specification<T> processInstanceInAllowedDefinitions(Collection<UUID> allowedPdIds) {
+        return (root, query, cb) -> {
+            Subquery<UUID> subquery = query.subquery(UUID.class);
+            Root<ProcessInstanceEntity> piRoot = subquery.from(ProcessInstanceEntity.class);
+            subquery.select(piRoot.get("id")).where(piRoot.get("processDefinitionId").in(allowedPdIds));
+            return root.<UUID>get("processInstanceId").in(subquery);
+        };
     }
 
     /** WO-A-05: server-side clamp — safety net even if validation annotations are bypassed */
