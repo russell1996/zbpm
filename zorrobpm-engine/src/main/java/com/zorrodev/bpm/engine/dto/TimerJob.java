@@ -12,6 +12,7 @@ public class TimerJob {
     private UUID id;
     private UUID activityId;
     private Instant dueAt;
+    private Instant createdAt;
     private String boundaryElementId;
     private UUID processInstanceId;
     private String eventSubprocessId;

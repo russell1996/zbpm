@@ -7,18 +7,23 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
 
 /**
- * Transactional batch processor for timer jobs.
+ * Batch processor for timer jobs.
  * Separated from TimerScheduler to avoid self-invocation proxy issue (P-18):
  * @Transactional only works when called through a Spring proxy (i.e. from a different bean).
  *
- * Uses SELECT … FOR UPDATE SKIP LOCKED (L6 fix) so that row locks are held until commit,
- * preventing two pollers from picking the same due timers.
+ * WO-REL-13 (R-03): the poll loop itself is NOT transactional. Candidate selection
+ * ({@link DBService#findDueTimerJobsLocked}) runs in its own SHORT transaction (SKIP LOCKED row
+ * locks are released as soon as the SELECT returns), and each {@code fire()} runs in its own
+ * REQUIRES_NEW transaction inside the executor. A failing job therefore rolls back ONLY its own
+ * transaction — the other jobs of the batch commit independently. Double execution of one job is
+ * still impossible: either the SKIP LOCKED selection skips a concurrently locked row, or the
+ * atomic CAS claim (fired=false → true) inside the fire transaction loses for the second poller.
+ * Each failure is recorded per-job (attempts++/last_error) instead of being silently logged.
  */
 @Slf4j
 @Component
@@ -32,7 +37,6 @@ public class TimerBatchProcessor {
     @Value("${zorrobpm.timer.batch-size:100}")
     private int batchSize;
 
-    @Transactional
     public void processBatch() {
         Instant now = Instant.now();
 
@@ -42,6 +46,11 @@ public class TimerBatchProcessor {
                 timerJobExecutor.fire(job);
             } catch (Exception e) {
                 log.error("Failed to fire timer job {} (activity {})", job.getId(), job.getActivityId(), e);
+                try {
+                    dbService.recordTimerJobError(job.getId(), e.getMessage());
+                } catch (Exception rec) {
+                    log.error("Failed to record timer job {} error, it will retry without attempts bookkeeping", job.getId(), rec);
+                }
             }
         }
 
@@ -51,6 +60,11 @@ public class TimerBatchProcessor {
                 timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId());
             } catch (Exception e) {
                 log.error("Failed to fire timer start job {} (definition {})", job.getId(), job.getProcessDefinitionId(), e);
+                try {
+                    dbService.recordTimerStartJobError(job.getId(), e.getMessage());
+                } catch (Exception rec) {
+                    log.error("Failed to record timer start job {} error, it will retry without attempts bookkeeping", job.getId(), rec);
+                }
             }
         }
     }

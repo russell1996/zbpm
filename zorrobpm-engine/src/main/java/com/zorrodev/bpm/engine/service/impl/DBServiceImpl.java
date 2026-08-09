@@ -47,6 +47,7 @@ import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -80,6 +81,7 @@ public class DBServiceImpl implements DBService {
     private final ParallelGatewayRepository parallelGatewayRepository;
     private final ProcessInstanceMapper processInstanceMapper;
     private final com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -598,6 +600,7 @@ public class DBServiceImpl implements DBService {
                 job.setId(e.getId());
                 job.setActivityId(e.getActivityId());
                 job.setDueAt(e.getDueAt());
+                job.setCreatedAt(e.getCreatedAt());
                 job.setBoundaryElementId(e.getBoundaryElementId());
                 job.setProcessInstanceId(e.getProcessInstanceId());
                 job.setEventSubprocessId(e.getEventSubprocessId());
@@ -607,7 +610,13 @@ public class DBServiceImpl implements DBService {
             .toList();
     }
 
+    /**
+     * WO-REL-13: candidate selection runs in its own SHORT transaction — the SKIP LOCKED row locks
+     * are released as soon as the SELECT returns, before any job is fired. Double execution is then
+     * prevented by the atomic CAS claim inside each fire's REQUIRES_NEW transaction.
+     */
     @Override
+    @Transactional
     public List<TimerJob> findDueTimerJobsLocked(Instant now, int batchSize) {
         return timerJobRepository.findDueLocked(now, batchSize).stream()
             .map(e -> {
@@ -615,6 +624,7 @@ public class DBServiceImpl implements DBService {
                 job.setId(e.getId());
                 job.setActivityId(e.getActivityId());
                 job.setDueAt(e.getDueAt());
+                job.setCreatedAt(e.getCreatedAt());
                 job.setBoundaryElementId(e.getBoundaryElementId());
                 job.setProcessInstanceId(e.getProcessInstanceId());
                 job.setEventSubprocessId(e.getEventSubprocessId());
@@ -625,8 +635,26 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    @Transactional
     public boolean claimTimerJob(UUID timerJobId) {
+        // WO-REL-13: NON-BLOCKING claim. The SKIP LOCKED row lock from findDueTimerJobsLocked is
+        // released as soon as the selection transaction commits, so two pollers (multinode) can
+        // select the SAME due row. A plain UPDATE here would then block on the other poller's
+        // uncommitted row lock → cross-poller deadlock. FOR UPDATE SKIP LOCKED makes the claim
+        // either win instantly or lose instantly (row already locked → skipped → 0 rows).
+        List<UUID> locked = jdbcTemplate.queryForList(
+            "SELECT id FROM timer_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED",
+            UUID.class, timerJobId);
+        if (locked.isEmpty()) {
+            return false;
+        }
         return timerJobRepository.claimTimerJob(timerJobId) > 0;
+    }
+
+    @Override
+    @Transactional
+    public void recordTimerJobError(UUID timerJobId, String errorMessage) {
+        timerJobRepository.recordTimerJobError(timerJobId, errorMessage);
     }
 
     @Override
@@ -861,7 +889,11 @@ public class DBServiceImpl implements DBService {
             .toList();
     }
 
+    /**
+     * WO-REL-13: candidate selection runs in its own SHORT transaction (see findDueTimerJobsLocked).
+     */
     @Override
+    @Transactional
     public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobsLocked(Instant now, int batchSize) {
         return timerStartJobRepository.findDueLocked(now, batchSize).stream()
             .map(e -> {
@@ -877,8 +909,22 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    @Transactional
     public boolean claimTimerStartJob(UUID timerStartJobId) {
+        // WO-REL-13: NON-BLOCKING claim — see claimTimerJob.
+        List<UUID> locked = jdbcTemplate.queryForList(
+            "SELECT id FROM timer_start_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED",
+            UUID.class, timerStartJobId);
+        if (locked.isEmpty()) {
+            return false;
+        }
         return timerStartJobRepository.claimTimerStartJob(timerStartJobId) > 0;
+    }
+
+    @Override
+    @Transactional
+    public void recordTimerStartJobError(UUID timerStartJobId, String errorMessage) {
+        timerStartJobRepository.recordTimerStartJobError(timerStartJobId, errorMessage);
     }
 
     @Override

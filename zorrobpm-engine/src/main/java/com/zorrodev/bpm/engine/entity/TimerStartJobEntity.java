@@ -27,4 +27,11 @@ public class TimerStartJobEntity {
     private Instant dueAt;
     private boolean fired;
     private Instant createdAt;
+    /**
+     * Number of failed fire attempts (WO-REL-13). Incremented per-job when {@code fire} throws,
+     * so a failing timer start is visible for retry instead of being silently lost.
+     */
+    private int attempts;
+    /** Last fire failure message (WO-REL-13), null while the job never failed. */
+    private String lastError;
 }
