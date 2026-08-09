@@ -51,14 +51,20 @@ public class OutboxBatchProcessorPgIT extends PostgresIT {
     }
 
     private void insert(String payload) {
+        insert(payload, "SERVICE_TASK");
+    }
+
+    private void insert(String payload, String kind) {
         jdbc.update(
-            "INSERT INTO outbox (id, payload, created_at, published, attempts, status) " +
-            "VALUES (?, ?, ?, false, 0, 'PENDING')",
-            UUID.randomUUID(), payload, Timestamp.from(Instant.now()));
+            "INSERT INTO outbox (id, payload, created_at, published, attempts, status, kind) " +
+            "VALUES (?, ?, ?, false, 0, 'PENDING', ?)",
+            UUID.randomUUID(), payload, Timestamp.from(Instant.now()), kind);
     }
 
     /**
-     * POF LIMIT: 5 entries, batch size=3 → only 3 published.
+     * POF LIMIT: 5 entries, batch size=3 → only 3 events published.
+     * WO-REL-12 (R-02): rows are NOT marked published by the processor — all 5 stay
+     * published=false (pending) and wait for the broker ACK.
      */
     @Test
     void processBatch_respectsBatchSize() {
@@ -69,7 +75,9 @@ public class OutboxBatchProcessorPgIT extends PostgresIT {
         verify(publisher, times(3)).publishEvent(any(com.zorrodev.bpm.exchange.ServiceTaskEnqueued.class));
         long remaining = jdbc.queryForObject(
             "SELECT COUNT(*) FROM outbox WHERE published = false AND status != 'FAILED'", Long.class);
-        assertThat(remaining).isEqualTo(2);
+        assertThat(remaining)
+            .as("WO-REL-12: processor must NOT mark published — all entries wait for broker ACK")
+            .isEqualTo(5);
     }
 
     /**
@@ -96,8 +104,10 @@ public class OutboxBatchProcessorPgIT extends PostgresIT {
             "SELECT attempts, status FROM outbox WHERE payload LIKE '%invalid%'");
         assertThat(poison.get("status")).isEqualTo("FAILED");
 
-        // Tick 3: poison is SKIPPED (status=FAILED)
+        // Tick 3: poison is SKIPPED (status=FAILED); the good entry is published again —
+        // WO-REL-12 R-02: it stays pending (no markPublished from the processor) until the
+        // broker ACK arrives, so it is re-published on every poll (at-least-once).
         txTemplate.executeWithoutResult(s -> processor.processBatch());
-        verify(publisher, times(1)).publishEvent(any(com.zorrodev.bpm.exchange.ServiceTaskEnqueued.class));
+        verify(publisher, times(3)).publishEvent(any(com.zorrodev.bpm.exchange.ServiceTaskEnqueued.class));
     }
 }

@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.DomainEventPublished;
 import com.zorrodev.bpm.exchange.JobDetailModel;
@@ -19,6 +20,15 @@ import java.util.Map;
  * WO-REL-10: Transactional batch processor for outbox entries.
  * - LIMIT :batchSize on fetch to avoid unbounded locking.
  * - After maxRetries failed attempts, entry is quarantined (status=FAILED).
+ *
+ * WO-REL-12 (R-01/R-02/R-06): routing is decided by the explicit {@link OutboxKind} column,
+ * NOT by substring guessing over the payload (a service-task payload that happens to contain
+ * "type"/"eventId" substrings must still go to the job queue). The processor only publishes
+ * the Spring event; the outbox row is marked {@code published} by
+ * {@link OutboxDeliveryResultListener} after the broker ACKs the message (publisher confirms).
+ * Until then the row stays pending and is re-published on the next poll — at-least-once
+ * delivery: consumers must dedupe by the stable messageId (= outbox id, carried in
+ * CorrelationData / message correlationId).
  */
 @Slf4j
 @Component
@@ -40,18 +50,23 @@ public class OutboxBatchProcessor {
         var pending = outboxRepository.findPendingBatch(batchSize);
         for (OutboxEntry entry : pending) {
             try {
-                if (isDomainEvent(entry.getPayload())) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> envelope = objectMapper.readValue(entry.getPayload(), Map.class);
-                    publisher.publishEvent(new DomainEventPublished(envelope));
-                    outboxRepository.markPublished(entry.getId());
-                    log.info("Published domain event outbox entry {}: type={}", entry.getId(), envelope.get("type"));
-                } else {
-                    JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
-                    publisher.publishEvent(new ServiceTaskEnqueued(detail));
-                    outboxRepository.markPublished(entry.getId());
-                    log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
+                OutboxKind kind = entry.getKind() != null ? entry.getKind() : OutboxKind.SERVICE_TASK;
+                switch (kind) {
+                    case DOMAIN_EVENT -> {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> envelope = objectMapper.readValue(entry.getPayload(), Map.class);
+                        publisher.publishEvent(new DomainEventPublished(envelope, entry.getId().toString()));
+                        log.info("Published domain event outbox entry {}: type={}", entry.getId(), envelope.get("type"));
+                    }
+                    case SERVICE_TASK -> {
+                        JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
+                        publisher.publishEvent(new ServiceTaskEnqueued(detail, entry.getId().toString()));
+                        log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
+                    }
                 }
+                // WO-REL-12 R-02: no markPublished here — the row is marked only after the
+                // broker ACK arrives (OutboxDeliveryResultListener), so a lost message can't
+                // look "delivered" in the DB.
             } catch (Exception e) {
                 int nextAttempt = entry.getAttempts() + 1;
                 String errorSummary = truncate(e.getMessage(), 500);
@@ -66,10 +81,6 @@ public class OutboxBatchProcessor {
                 }
             }
         }
-    }
-
-    private boolean isDomainEvent(String payload) {
-        return payload != null && payload.contains("\"type\"") && payload.contains("\"eventId\"");
     }
 
     private static String truncate(String s, int maxLen) {

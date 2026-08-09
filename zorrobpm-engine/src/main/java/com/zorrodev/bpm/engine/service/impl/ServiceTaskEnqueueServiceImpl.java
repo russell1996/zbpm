@@ -73,6 +73,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         try {
             OutboxEntry entry = new OutboxEntry();
             entry.setId(UUID.randomUUID());
+            // WO-REL-12 R-01: producer knows the type — no payload guessing downstream
+            entry.setKind(com.zorrodev.bpm.engine.entity.OutboxKind.SERVICE_TASK);
             entry.setPayload(objectMapper.writeValueAsString(detail));
             entry.setCreatedAt(Instant.now());
             entry.setPublished(false);

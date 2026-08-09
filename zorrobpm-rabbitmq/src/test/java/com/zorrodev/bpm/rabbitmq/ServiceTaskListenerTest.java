@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.core.MessagePostProcessor;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -71,8 +73,14 @@ class ServiceTaskListenerTest {
             "token", createVariable("token", "bearer-abc-xyz")
         ));
 
-        ServiceTaskEnqueued event = new ServiceTaskEnqueued(detail);
+        ServiceTaskEnqueued event = new ServiceTaskEnqueued(detail, "outbox-42");
         listener.on(event);
+
+        // WO-REL-12 R-06: sent with CorrelationData id = outbox entry id (stable messageId)
+        ArgumentCaptor<CorrelationData> correlationCaptor = ArgumentCaptor.forClass(CorrelationData.class);
+        verify(rabbitTemplate).convertAndSend(eq("zorrobpm.jobs.my-service-task"), eq(detail),
+            any(MessagePostProcessor.class), correlationCaptor.capture());
+        assertThat(correlationCaptor.getValue().getId()).isEqualTo("outbox-42");
 
         List<ILoggingEvent> events = logAppender.list;
         assertThat(events).isNotEmpty();

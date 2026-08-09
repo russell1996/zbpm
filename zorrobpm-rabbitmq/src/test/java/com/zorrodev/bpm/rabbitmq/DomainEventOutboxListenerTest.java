@@ -8,11 +8,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.core.MessagePostProcessor;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
@@ -36,17 +39,22 @@ class DomainEventOutboxListenerTest {
             "data", Map.of()
         );
 
-        listener.on(new DomainEventPublished(envelope));
+        listener.on(new DomainEventPublished(envelope, "outbox-1"));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<CorrelationData> correlationCaptor = ArgumentCaptor.forClass(CorrelationData.class);
         verify(rabbitTemplate).convertAndSend(
             eq(RabbitConfiguration.EVENTS_EXCHANGE),
             eq("process.vacation.process-instance.completed"),
-            captor.capture());
+            captor.capture(),
+            any(MessagePostProcessor.class),
+            correlationCaptor.capture());
 
         assertThat(captor.getValue()).containsEntry("type", "process-instance.completed");
         assertThat(captor.getValue()).containsEntry("processDefinitionKey", "vacation");
+        // WO-REL-12 R-06: CorrelationData id = outbox entry id (stable messageId)
+        assertThat(correlationCaptor.getValue().getId()).isEqualTo("outbox-1");
     }
 
     @Test
@@ -59,12 +67,14 @@ class DomainEventOutboxListenerTest {
             "data", Map.of()
         );
 
-        listener.on(new DomainEventPublished(envelope));
+        listener.on(new DomainEventPublished(envelope, "outbox-2"));
 
         verify(rabbitTemplate).convertAndSend(
             eq(RabbitConfiguration.EVENTS_EXCHANGE),
             eq("process.vacation.user-task.created.Approve"),
-            eq(envelope));
+            eq(envelope),
+            any(MessagePostProcessor.class),
+            any(CorrelationData.class));
     }
 
     @Test
@@ -75,12 +85,14 @@ class DomainEventOutboxListenerTest {
             "data", Map.of()
         );
 
-        listener.on(new DomainEventPublished(envelope));
+        listener.on(new DomainEventPublished(envelope, "outbox-3"));
 
         verify(rabbitTemplate).convertAndSend(
             eq(RabbitConfiguration.EVENTS_EXCHANGE),
             eq("incident.raised"),
-            eq(envelope));
+            eq(envelope),
+            any(MessagePostProcessor.class),
+            any(CorrelationData.class));
     }
 
     @Test
