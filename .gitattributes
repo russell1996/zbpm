@@ -1,3 +1,7 @@
 # Mimo→maintainer append-only channel: union merge keeps both sides automatically,
 # so maintainer never hand-resolves it on every feature-branch merge.
 docs/internal merge=union
+
+# WO-SEC-50: shell scripts run inside Linux containers via a shebang — CRLF (from a Windows
+# checkout with core.autocrlf=true) breaks `#!/bin/sh` ("bad interpreter" at container start).
+*.sh text eol=lf

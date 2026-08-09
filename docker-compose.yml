@@ -21,6 +21,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # WO-SEC-50 (H5): generous safety-net ceilings, not tight capacity tuning — real prod
+    # hardware specs weren't available to size these precisely; the goal here is only to stop a
+    # runaway leak/noisy-neighbor container from starving the whole host. Revisit once actual
+    # usage is measured.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g
+        reservations:
+          memory: 256m
     networks:
       - zorrobpm
 
@@ -49,6 +60,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+        reservations:
+          memory: 128m
     networks:
       - zorrobpm
 
@@ -88,6 +106,13 @@ services:
       - app-files:/app/files
     ports:
       - "${APP_PORT:-8080}:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+        reservations:
+          memory: 512m
     networks:
       - zorrobpm
 
@@ -106,6 +131,13 @@ services:
       - app
     ports:
       - "${FRONTEND_PORT:-8081}:80"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+        reservations:
+          memory: 32m
     networks:
       - zorrobpm
 

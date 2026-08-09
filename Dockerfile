@@ -22,10 +22,27 @@ RUN mvn -B -ntp clean verify
 # --- Runtime stage ---
 FROM eclipse-temurin:21-jre
 
+# WO-SEC-50: unprivileged user for the JVM process (RCE blast-radius reduction). Fixed uid/gid
+# (not dynamically allocated) so it's stable across image rebuilds and matches what entrypoint.sh
+# chowns the files volume to.
+RUN groupadd --system --gid 10001 zorrobpm \
+ && useradd --system --uid 10001 --gid zorrobpm --no-create-home --shell /usr/sbin/nologin zorrobpm
+
 WORKDIR /app
 ENV TZ=Asia/Almaty
 
 COPY --from=builder /build/zorrobpm-ce/target/*.jar app.jar
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && chown zorrobpm:zorrobpm /app/app.jar
 
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+
+# start-period accounts for Liquibase migrations + Spring context startup before the first
+# probe counts against the container.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=45s --retries=5 \
+  CMD wget -qO- http://localhost:8080/actuator/health || exit 1
+
+# Runs as root (image default) so entrypoint.sh can fix the files-volume ownership on every
+# start, then drops to `zorrobpm` before exec'ing java — see entrypoint.sh for why this is safer
+# than a Dockerfile-level `USER` for a service with a persistent named volume.
+ENTRYPOINT ["/entrypoint.sh"]
