@@ -157,6 +157,9 @@ public interface DBService {
     /** Atomically claim a timer job: sets fired=true only if currently false. Returns true if claimed. */
     boolean claimTimerJob(UUID timerJobId);
 
+    /** WO-REL-13: per-job failure bookkeeping (attempts++/last_error) in its own transaction. */
+    void recordTimerJobError(UUID timerJobId, String errorMessage);
+
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName);
 
     /** Creates a message subscription for a message boundary event attached to {@code activityId}. */
@@ -219,6 +222,9 @@ public interface DBService {
 
     /** Atomically claim a timer start job: sets fired=true only if currently false. Returns true if claimed. */
     boolean claimTimerStartJob(UUID timerStartJobId);
+
+    /** WO-REL-13: per-job failure bookkeeping (attempts++/last_error) in its own transaction. */
+    void recordTimerStartJobError(UUID timerStartJobId, String errorMessage);
 
     /**
      * Records that a branch has arrived at a parallel-gateway join through {@code enteredFlowId}.

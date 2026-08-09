@@ -38,4 +38,11 @@ public class TimerJobEntity {
      * Null = infinite repeat. 0 = done (no more re-arm).
      */
     private Integer remainingCount;
+    /**
+     * Number of failed fire attempts (WO-REL-13). Incremented per-job when {@code fire} throws,
+     * so a failing timer is visible for retry/quarantine instead of being silently lost.
+     */
+    private int attempts;
+    /** Last fire failure message (WO-REL-13), null while the job never failed. */
+    private String lastError;
 }

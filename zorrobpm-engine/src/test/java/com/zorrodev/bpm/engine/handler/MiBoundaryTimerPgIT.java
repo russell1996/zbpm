@@ -22,8 +22,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.sql.Timestamp;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -123,24 +121,21 @@ public class MiBoundaryTimerPgIT extends PostgresIT {
 
         UUID timerJobId = timerJobIds.get(0);
 
-        // Update due_at to past AND fire the timer within a single transaction,
-        // so no concurrent TimerScheduler can grab the job between update and fire.
-        tx.execute(status -> {
-            jdbc.update("UPDATE timer_jobs SET due_at = ? WHERE id = ?",
-                Timestamp.from(Instant.now().minusSeconds(60)), timerJobId);
+        // Fire the timer directly. WO-REL-13 (R-03): TimerJobExecutor.fire runs in its OWN
+        // REQUIRES_NEW transaction, so it must NOT be called inside an outer transaction that
+        // already holds a lock on this timer_jobs row (that would deadlock: the suspended outer
+        // tx keeps the row lock until fire returns). The job is not yet due, so the concurrent
+        // TimerScheduler poll (due_at <= now()) will not grab it between setup and fire.
+        TimerJobEntity entity = timerJobRepository.findById(timerJobId).orElseThrow();
+        TimerJob job = new TimerJob();
+        job.setId(entity.getId());
+        job.setActivityId(entity.getActivityId());
+        job.setDueAt(entity.getDueAt());
+        job.setBoundaryElementId(entity.getBoundaryElementId());
+        job.setProcessInstanceId(entity.getProcessInstanceId());
+        job.setRemainingCount(entity.getRemainingCount());
 
-            TimerJobEntity entity = timerJobRepository.findById(timerJobId).orElseThrow();
-            TimerJob job = new TimerJob();
-            job.setId(entity.getId());
-            job.setActivityId(entity.getActivityId());
-            job.setDueAt(entity.getDueAt());
-            job.setBoundaryElementId(entity.getBoundaryElementId());
-            job.setProcessInstanceId(entity.getProcessInstanceId());
-            job.setRemainingCount(entity.getRemainingCount());
-
-            timerJobExecutor.fire(job);
-            return null;
-        });
+        timerJobExecutor.fire(job);
 
         // After firing, verify that:
         //   - the boundary host MI task was cancelled (interrupting)

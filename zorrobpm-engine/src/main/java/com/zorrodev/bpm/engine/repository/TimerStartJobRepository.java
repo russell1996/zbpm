@@ -27,6 +27,14 @@ public interface TimerStartJobRepository extends JpaRepository<TimerStartJobEnti
     @Query("UPDATE TimerStartJobEntity t SET t.fired = true WHERE t.id = :id AND t.fired = false")
     int claimTimerStartJob(@Param("id") UUID id);
 
+    /**
+     * WO-REL-13: records a failed fire attempt per-job (attempts++/last_error) in its own
+     * transaction, so a failing timer start is visible for retry instead of being silently lost.
+     */
+    @Modifying
+    @Query("UPDATE TimerStartJobEntity t SET t.attempts = t.attempts + 1, t.lastError = :error WHERE t.id = :id")
+    int recordTimerStartJobError(@Param("id") UUID id, @Param("error") String error);
+
     @Modifying
     void deleteByProcessKey(String processKey);
 }

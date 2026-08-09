@@ -14,11 +14,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,27 +44,50 @@ public class TimerStartIntegrationTests {
     @Autowired
     private ActivityRepository activityRepository;
 
-    @Transactional
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    /** Runs the action in its own committed transaction (WO-REL-13: fires must see committed rows). */
+    private void inNewTx(Runnable action) {
+        TransactionTemplate tt = new TransactionTemplate(transactionManager);
+        tt.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        tt.execute(status -> {
+            action.run();
+            return null;
+        });
+    }
+
     @Test
     void deployRegistersTimerStartJobAndFiringStartsInstance() throws Exception {
         // timerStart (PT5M) -> endEvent. Deploy registers a timer start job; firing it starts and
         // runs a new instance.
         String bpmn = Files.readString(Paths.get("src/test/files/test-timer-start.bpmn"));
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
 
-        List<TimerStartJobEntity> jobs = timerStartJobRepository.findAll().stream()
-            .filter(j -> j.getProcessDefinitionId().equals(model.getId())).toList();
-        assertThat(jobs).hasSize(1);
-        assertThat(jobs.get(0).getElementId()).isEqualTo("timerStart");
+        UUID[] defId = new UUID[1];
+        UUID[] jobId = new UUID[1];
+        String[] elementId = new String[1];
+        inNewTx(() -> {
+            ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+            defId[0] = model.getId();
 
-        TimerStartJobEntity job = jobs.get(0);
-        timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId());
+            List<TimerStartJobEntity> jobs = timerStartJobRepository.findAll().stream()
+                .filter(j -> j.getProcessDefinitionId().equals(defId[0])).toList();
+            assertThat(jobs).hasSize(1);
+            assertThat(jobs.get(0).getElementId()).isEqualTo("timerStart");
+            jobId[0] = jobs.get(0).getId();
+            elementId[0] = jobs.get(0).getElementId();
+        });
+
+        inNewTx(() -> {
+            TimerStartJobEntity job = timerStartJobRepository.findById(jobId[0]).orElseThrow();
+            timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId());
+        });
 
         List<ProcessInstanceEntity> instances = processInstanceRepository.findAll().stream()
-            .filter(pi -> pi.getProcessDefinitionId().equals(model.getId())).toList();
+            .filter(pi -> pi.getProcessDefinitionId().equals(defId[0])).toList();
         assertThat(instances).hasSize(1);
         assertThat(instances.get(0).getCompletedAt()).isNotNull();
-        assertThat(timerStartJobRepository.findById(job.getId()).orElseThrow().isFired()).isTrue();
+        assertThat(timerStartJobRepository.findById(jobId[0]).orElseThrow().isFired()).isTrue();
 
         var activities = activityRepository.findAll().stream()
             .filter(a -> a.getProcessInstanceId().equals(instances.get(0).getId())).toList();

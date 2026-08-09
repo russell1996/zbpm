@@ -10,10 +10,12 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -46,12 +48,29 @@ class ActivityServiceCharacterizationTest {
     @Autowired private QueryService queryService;
     @Autowired private ActivityRepository activityRepository;
     @Autowired private IncidentRepository incidentRepository;
+    @Autowired private TimerJobRepository timerJobRepository;
     @Autowired private PlatformTransactionManager txManager;
 
     private TransactionTemplate tx;
 
+    private final List<UUID> startedProcessInstances = new java.util.ArrayList<>();
+
     @BeforeEach
     void setUp() { tx = new TransactionTemplate(txManager); }
+
+    /**
+     * WO-REL-13: the timer poller now commits each job independently (REQUIRES_NEW fire), so a
+     * failing sibling job no longer rolls back the whole batch. Timer jobs left behind by this
+     * characterization suite (e.g. due PT0S timers) are therefore fired and PERSIST as fired=true,
+     * polluting the shared H2 database for later tests. Clean them up per instance.
+     */
+    @AfterEach
+    void cleanupTimerJobs() {
+        for (UUID pi : startedProcessInstances) {
+            tx.executeWithoutResult(s -> timerJobRepository.deleteByProcessInstanceId(pi));
+        }
+        startedProcessInstances.clear();
+    }
 
     private ProcessVariable pv(String name, String value) {
         ProcessVariable v = new ProcessVariable(); v.setName(name); v.setValue(value);
@@ -68,7 +87,7 @@ class ActivityServiceCharacterizationTest {
     }
 
     private UUID startProcess(String bpmnFile) {
-        return tx.execute(s -> {
+        UUID pi = tx.execute(s -> {
             try {
                 String bpmn = Files.readString(Paths.get("src/test/files/" + bpmnFile));
                 ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
@@ -77,10 +96,12 @@ class ActivityServiceCharacterizationTest {
                 return runtimeService.startProcessInstance(dto).getId();
             } catch (Exception e) { throw new RuntimeException(e); }
         });
+        startedProcessInstances.add(pi);
+        return pi;
     }
 
     private UUID startProcess(String bpmnFile, List<ProcessVariable> vars) {
-        return tx.execute(s -> {
+        UUID pi = tx.execute(s -> {
             try {
                 String bpmn = Files.readString(Paths.get("src/test/files/" + bpmnFile));
                 ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
@@ -90,6 +111,8 @@ class ActivityServiceCharacterizationTest {
                 return runtimeService.startProcessInstance(dto).getId();
             } catch (Exception e) { throw new RuntimeException(e); }
         });
+        startedProcessInstances.add(pi);
+        return pi;
     }
 
     private UUID startProcessOrNull(String bpmnFile) {
