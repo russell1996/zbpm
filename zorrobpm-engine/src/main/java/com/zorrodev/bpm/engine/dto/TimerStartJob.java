@@ -14,4 +14,6 @@ public class TimerStartJob {
     private UUID processDefinitionId;
     private String elementId;
     private Instant dueAt;
+    /** WO-REL-14: remaining repetitions after current fire; null = infinite. */
+    private Integer remainingCount;
 }

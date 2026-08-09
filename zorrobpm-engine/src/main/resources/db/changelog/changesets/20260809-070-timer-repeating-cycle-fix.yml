@@ -1,0 +1,30 @@
+databaseChangeLog:
+  - logicalFilePath: 20260809-070
+  - changeSet:
+      id: 20260809-070
+      author: zorrodev
+      comment: WO-REL-14 (R-04) — persist the original timeCycle expression on timer_jobs (so
+        re-arm uses the real interval instead of a hardcoded R/PT0S burst), and add
+        remaining_count to timer_start_jobs (so a finite R<n>/... timer-start cycle can actually
+        be exhausted instead of being recomputed from scratch — and therefore never
+        decremented — on every fire).
+      changes:
+        - addColumn:
+            tableName: timer_jobs
+            columns:
+              - column:
+                  name: expression
+                  type: varchar(200)
+        - addColumn:
+            tableName: timer_start_jobs
+            columns:
+              - column:
+                  name: remaining_count
+                  type: int
+      rollback:
+        - dropColumn:
+            tableName: timer_jobs
+            columnName: expression
+        - dropColumn:
+            tableName: timer_start_jobs
+            columnName: remaining_count

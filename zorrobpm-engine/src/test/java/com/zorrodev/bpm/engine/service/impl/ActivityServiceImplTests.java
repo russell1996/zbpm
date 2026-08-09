@@ -827,7 +827,7 @@ public class ActivityServiceImplTests {
         activityService.execute(processInstanceId, token, "startEvent");
 
         ArgumentCaptor<Instant> dueAtCaptor = ArgumentCaptor.forClass(Instant.class);
-        verify(dbService).createTimerJob(eq(timerActivityId), dueAtCaptor.capture(), isNull(), isNull());
+        verify(dbService).createTimerJob(eq(timerActivityId), dueAtCaptor.capture(), isNull(), isNull(), isNull());
         // PT5M from now
         assertThat(dueAtCaptor.getValue()).isBetween(before.plusSeconds(290), Instant.now().plusSeconds(310));
         verify(dbService, times(0)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));

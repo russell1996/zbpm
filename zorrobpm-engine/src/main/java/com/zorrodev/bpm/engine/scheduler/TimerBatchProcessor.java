@@ -57,7 +57,7 @@ public class TimerBatchProcessor {
         List<TimerStartJob> dueStartJobs = dbService.findDueTimerStartJobsLocked(now, batchSize);
         for (TimerStartJob job : dueStartJobs) {
             try {
-                timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId());
+                timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId(), job.getDueAt(), job.getRemainingCount());
             } catch (Exception e) {
                 log.error("Failed to fire timer start job {} (definition {})", job.getId(), job.getProcessDefinitionId(), e);
                 try {

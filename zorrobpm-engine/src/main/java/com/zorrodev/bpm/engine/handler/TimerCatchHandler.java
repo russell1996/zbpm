@@ -43,7 +43,10 @@ public class TimerCatchHandler implements ElementHandler, TypedElementHandler {
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
         Instant dueAt = elementSupport.computeDueAt(bpmnElement, processInstanceId);
         Integer remainingCount = computeRemainingCount(bpmnElement);
-        dbService.createTimerJob(activityId, dueAt, null, remainingCount);
+        // WO-REL-14: persist the cycle expression so re-arm (TimerJobExecutor) uses the real
+        // interval instead of a hardcoded zero-second cycle. Null for non-CYCLE timers.
+        String expression = cycleExpression(bpmnElement);
+        dbService.createTimerJob(activityId, dueAt, null, remainingCount, expression);
         log.info("{}/{}: Timer scheduled for {} at {}: {}/{} (remaining={})", processInstanceId, tokenId, bpmnElement.getId(), dueAt, activityId, bpmnElement.getType(), remainingCount);
     }
 
@@ -54,6 +57,14 @@ public class TimerCatchHandler implements ElementHandler, TypedElementHandler {
             .map(t -> TimerExpressions.repeatCount(t.getExpression()))
             .filter(count -> count > 0)
             .map(count -> count - 1)
+            .orElse(null);
+    }
+
+    private String cycleExpression(BpmnElementModel bpmnElement) {
+        return Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getTimerEventExtension)
+            .filter(t -> t.getType() == TimerEventType.CYCLE)
+            .map(TimerEventExtensionModel::getExpression)
             .orElse(null);
     }
 }

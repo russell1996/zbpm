@@ -7,11 +7,13 @@ import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -31,6 +33,10 @@ public class TimerJobExecutor {
     private final DBService dbService;
     private final ActivityService activityService;
     private final ProcessInstanceRepository processInstanceRepository;
+
+    // WO-ENG-4 / WO-REL-14: explicit business zone for timer cycle/cron re-arm resolution
+    @Value("${zorrobpm.business-timezone:Asia/Almaty}")
+    private ZoneId businessZone;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void fire(TimerJob job) {
@@ -52,8 +58,20 @@ public class TimerJobExecutor {
                     log.debug("Skipping re-arm: process instance {} is cancelled/completed", job.getProcessInstanceId());
                     return;
                 }
-                Instant next = TimerExpressions.firstOccurrence("R/PT0S", Instant.now());
-                dbService.createTimerJob(job.getActivityId(), next, null, remaining - 1);
+                // WO-REL-14 (R-04, defect 1): re-arm from the REAL cycle expression (persisted at
+                // scheduling time), not a hardcoded "R/PT0S" (which fired every remaining
+                // repetition back-to-back instead of respecting the interval). Reference point is
+                // the PREVIOUS dueAt, not Instant.now(), so execution latency cannot accumulate
+                // drift across repetitions.
+                if (job.getExpression() == null) {
+                    // Pre-migration row with no persisted expression: cannot safely resolve the
+                    // real interval, so end the cycle here rather than reintroduce a burst.
+                    log.warn("Timer job {} has remaining={} but no persisted expression (pre-WO-REL-14 row) — ending cycle instead of bursting", job.getId(), remaining);
+                    activityService.signal(job.getActivityId(), List.of());
+                    return;
+                }
+                Instant next = TimerExpressions.firstOccurrence(job.getExpression(), job.getDueAt(), businessZone);
+                dbService.createTimerJob(job.getActivityId(), next, null, remaining - 1, job.getExpression());
                 return;
             }
             activityService.signal(job.getActivityId(), List.of());

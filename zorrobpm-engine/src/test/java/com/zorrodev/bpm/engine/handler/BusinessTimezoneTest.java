@@ -313,12 +313,13 @@ class BusinessTimezoneTest {
         when(ext.getTimerEventExtension()).thenReturn(timer);
         when(model.getKey()).thenReturn("testProc");
 
-        // Act
-        executor.fire(jobId, procDefId, elementId);
+        // Act (WO-REL-14: fire() also takes the previous dueAt and remainingCount; this cron
+        // expression is unbounded, so remainingCount is null both in and out)
+        executor.fire(jobId, procDefId, elementId, Instant.now(), null);
 
         // Assert: the next occurrence was computed using Asia/Almaty (09:00 Almaty = 04:00 UTC)
         ArgumentCaptor<Instant> captor = ArgumentCaptor.forClass(Instant.class);
-        verify(dbService).createTimerStartJob(eq("testProc"), eq(procDefId), eq(elementId), captor.capture());
+        verify(dbService).createTimerStartJob(eq("testProc"), eq(procDefId), eq(elementId), captor.capture(), eq((Integer) null));
 
         Instant next = captor.getValue();
         ZonedDateTime almatyTime = next.atZone(ALMATY);

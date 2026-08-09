@@ -564,6 +564,11 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId, Integer remainingCount) {
+        return createTimerJob(activityId, dueAt, boundaryElementId, remainingCount, null);
+    }
+
+    @Override
+    public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId, Integer remainingCount, String expression) {
         UUID id = UUID.randomUUID();
         TimerJobEntity entity = new TimerJobEntity();
         entity.setId(id);
@@ -573,6 +578,7 @@ public class DBServiceImpl implements DBService {
         entity.setCreatedAt(Instant.now());
         entity.setBoundaryElementId(boundaryElementId);
         entity.setRemainingCount(remainingCount);
+        entity.setExpression(expression);
         timerJobRepository.save(entity);
         return id;
     }
@@ -605,6 +611,7 @@ public class DBServiceImpl implements DBService {
                 job.setProcessInstanceId(e.getProcessInstanceId());
                 job.setEventSubprocessId(e.getEventSubprocessId());
                 job.setRemainingCount(e.getRemainingCount());
+                job.setExpression(e.getExpression());
                 return job;
             })
             .toList();
@@ -629,6 +636,7 @@ public class DBServiceImpl implements DBService {
                 job.setProcessInstanceId(e.getProcessInstanceId());
                 job.setEventSubprocessId(e.getEventSubprocessId());
                 job.setRemainingCount(e.getRemainingCount());
+                job.setExpression(e.getExpression());
                 return job;
             })
             .toList();
@@ -858,6 +866,11 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, Instant dueAt) {
+        createTimerStartJob(processKey, processDefinitionId, elementId, dueAt, null);
+    }
+
+    @Override
+    public void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, Instant dueAt, Integer remainingCount) {
         TimerStartJobEntity entity = new TimerStartJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setProcessKey(processKey);
@@ -866,6 +879,7 @@ public class DBServiceImpl implements DBService {
         entity.setDueAt(dueAt);
         entity.setFired(false);
         entity.setCreatedAt(Instant.now());
+        entity.setRemainingCount(remainingCount);
         timerStartJobRepository.save(entity);
     }
 
@@ -884,6 +898,7 @@ public class DBServiceImpl implements DBService {
                 job.setProcessDefinitionId(e.getProcessDefinitionId());
                 job.setElementId(e.getElementId());
                 job.setDueAt(e.getDueAt());
+                job.setRemainingCount(e.getRemainingCount());
                 return job;
             })
             .toList();
@@ -903,6 +918,7 @@ public class DBServiceImpl implements DBService {
                 job.setProcessDefinitionId(e.getProcessDefinitionId());
                 job.setElementId(e.getElementId());
                 job.setDueAt(e.getDueAt());
+                job.setRemainingCount(e.getRemainingCount());
                 return job;
             })
             .toList();

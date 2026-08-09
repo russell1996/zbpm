@@ -327,8 +327,21 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             // for CYCLE, and provides a single source of truth for all timer literal parsing.
             // This also eliminates the code-clone switch that duplicated ElementSupport.computeDueAtFallback.
             Instant dueAt = elementSupport.computeDueAt(timer, start.getId());
-            dbService.createTimerStartJob(key, processDefinitionId, start.getId(), dueAt);
+            // WO-REL-14 (R-04, defect 2): persist the initial remaining-repetitions count for a
+            // bounded cycle (R<n>/...) so TimerStartJobExecutor can decrement the PERSISTED value
+            // on each fire instead of recomputing repeatCount from the BPMN model every time
+            // (which meant a bounded cycle never actually exhausted). Null = infinite/non-cycle.
+            Integer remainingCount = timer.getType() == com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE
+                ? initialRemainingCount(timer.getExpression())
+                : null;
+            dbService.createTimerStartJob(key, processDefinitionId, start.getId(), dueAt, remainingCount);
         }
+    }
+
+    /** WO-REL-14: repeatCount - 1, or null for unbounded (R/...) / cron cycles. */
+    private Integer initialRemainingCount(String cycleExpression) {
+        int repeatCount = com.zorrodev.bpm.engine.scheduler.TimerExpressions.repeatCount(cycleExpression);
+        return repeatCount > 0 ? repeatCount - 1 : null;
     }
 
     @Override

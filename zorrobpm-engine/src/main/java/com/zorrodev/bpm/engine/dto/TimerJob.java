@@ -17,4 +17,6 @@ public class TimerJob {
     private UUID processInstanceId;
     private String eventSubprocessId;
     private Integer remainingCount;
+    /** WO-REL-14: the original timeCycle expression, used to re-arm at the real interval. */
+    private String expression;
 }

@@ -82,13 +82,15 @@ public class TimerStartCycleIntegrationTests {
         });
 
         TimerStartJobEntity first = pendingJob(defId[0]);
-        inNewTx(() -> timerStartJobExecutor.fire(first.getId(), first.getProcessDefinitionId(), first.getElementId()));
+        inNewTx(() -> timerStartJobExecutor.fire(first.getId(), first.getProcessDefinitionId(), first.getElementId(), first.getDueAt(), first.getRemainingCount()));
         assertThat(instanceCount(defId[0])).isEqualTo(1);
 
         // firing produced a fresh pending job (the reschedule); fire it too
         TimerStartJobEntity second = pendingJob(defId[0]);
         assertThat(second.getId()).isNotEqualTo(first.getId());
-        inNewTx(() -> timerStartJobExecutor.fire(second.getId(), second.getProcessDefinitionId(), second.getElementId()));
+        // WO-REL-14: unbounded R/PT0S cycle — remainingCount stays null (infinite) across reschedules.
+        assertThat(second.getRemainingCount()).isNull();
+        inNewTx(() -> timerStartJobExecutor.fire(second.getId(), second.getProcessDefinitionId(), second.getElementId(), second.getDueAt(), second.getRemainingCount()));
         assertThat(instanceCount(defId[0])).isEqualTo(2);
 
         // and it keeps repeating: another pending job is queued
