@@ -1,3 +1,7 @@
 # Mimo→CTO append-only channel: union merge keeps both sides automatically,
 # so CTO never hand-resolves it on every feature-branch merge.
 governance/mimo-to-cto.md merge=union
+
+# WO-SEC-50: shell scripts run inside Linux containers via a shebang — CRLF (from a Windows
+# checkout with core.autocrlf=true) breaks `#!/bin/sh` ("bad interpreter" at container start).
+*.sh text eol=lf
