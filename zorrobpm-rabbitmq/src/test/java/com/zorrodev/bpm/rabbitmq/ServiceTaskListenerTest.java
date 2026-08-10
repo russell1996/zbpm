@@ -34,7 +34,7 @@ import static org.mockito.Mockito.*;
  */
 class ServiceTaskListenerTest {
 
-    private AmqpAdmin amqpAdmin;
+    private JobQueueDeclarer jobQueueDeclarer;
     private RabbitTemplate rabbitTemplate;
     private ApplicationEventPublisher publisher;
     private ServiceTaskListener listener;
@@ -44,10 +44,10 @@ class ServiceTaskListenerTest {
 
     @BeforeEach
     void setUp() {
-        amqpAdmin = mock(AmqpAdmin.class);
+        jobQueueDeclarer = mock(JobQueueDeclarer.class);
         rabbitTemplate = mock(RabbitTemplate.class);
         publisher = mock(ApplicationEventPublisher.class);
-        listener = new ServiceTaskListener(amqpAdmin, rabbitTemplate, publisher);
+        listener = new ServiceTaskListener(jobQueueDeclarer, rabbitTemplate, publisher);
 
         logAppender = new ListAppender<>();
         logAppender.start();
@@ -64,8 +64,6 @@ class ServiceTaskListenerTest {
 
     @Test
     void criterion1_infoLogContainsJobAndQueue_notVariableValues() {
-        when(amqpAdmin.getQueueInfo(anyString())).thenReturn(null);
-
         JobDetailModel detail = new JobDetailModel();
         detail.setJob("my-service-task");
         detail.setVariables(Map.of(
@@ -103,6 +101,24 @@ class ServiceTaskListenerTest {
             .map(ILoggingEvent::getFormattedMessage)
             .reduce("", (a, b) -> a + " " + b);
         assertThat(allMessages).contains("my-service-task");
+    }
+
+    /**
+     * WO-REL-16 criterion #6: the queue is normally pre-declared at deployment/startup, but the
+     * send path keeps a declare as the fallback for job types those paths did not cover (an older
+     * definition version still running, or a broker that was down back then). It delegates to the
+     * declarer, which is idempotent and cached — no more per-message getQueueInfo round-trip.
+     */
+    @Test
+    void send_declaresJobQueueAsFallbackBeforePublishing() {
+        JobDetailModel detail = new JobDetailModel();
+        detail.setJob("legacy-job");
+
+        listener.on(new ServiceTaskEnqueued(detail, "outbox-7"));
+
+        verify(jobQueueDeclarer).declare("legacy-job");
+        verify(rabbitTemplate).convertAndSend(eq("zorrobpm.jobs.legacy-job"), eq(detail),
+            any(MessagePostProcessor.class), any(CorrelationData.class));
     }
 
     private com.zorrodev.bpm.exchange.ProcessVariable createVariable(String name, String value) {

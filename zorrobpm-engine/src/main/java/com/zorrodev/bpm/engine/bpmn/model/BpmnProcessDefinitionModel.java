@@ -4,8 +4,12 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class BpmnProcessDefinitionModel {
     @Getter
@@ -80,6 +84,24 @@ public class BpmnProcessDefinitionModel {
             .filter(e -> e.getType() == BpmnElementType.SIGNAL_START_EVENT)
             .filter(e -> e.getEventSubProcessId() == null)
             .toList();
+    }
+
+    /**
+     * WO-REL-16: distinct job-worker types this definition dispatches to. Deliberately not filtered
+     * by element type — a {@code zeebe:taskDefinition} turns a script task or a send task into a job
+     * worker too (see BpmnParseServiceImpl), so the presence of a job name is the criterion, not
+     * {@code SERVICE_TASK}. Used to declare the job queues at deployment time instead of lazily on
+     * the first message. Insertion-ordered for stable logs/tests.
+     */
+    public Set<String> getJobTypes() {
+        return elements.values().stream()
+            .map(BpmnElementModel::getExtensions)
+            .filter(Objects::nonNull)
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .filter(Objects::nonNull)
+            .map(ServiceTaskExtensionModel::getJob)
+            .filter(job -> job != null && !job.isBlank())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
 }

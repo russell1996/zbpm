@@ -72,6 +72,9 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private ElementSupport elementSupport;
 
+    @Mock
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
@@ -94,7 +97,8 @@ class ProcessDefinitionServiceImplTest {
             jdbcTemplate,
             transactionTemplate,
             dataSource,
-            elementSupport
+            elementSupport,
+            eventPublisher
         );
     }
 
@@ -151,6 +155,70 @@ class ProcessDefinitionServiceImplTest {
 
         assertThat(result.getKey()).isEqualTo("test1");
         assertThat(result.getVersion()).isEqualTo(3);
+    }
+
+    /**
+     * WO-REL-16 criterion #2: deploying a definition must announce its job types right away, so the
+     * queue exists without waiting for a process instance to reach the service task. Before the fix
+     * nothing was published here at all — the queue was only created on the first message sent.
+     */
+    @Test
+    void addProcessDefinition_announcesJobQueuesForDeployedDefinition() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/process2.bpmn"));
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
+        when(processDefinitionRepository.findMaxByKey("process2")).thenReturn(Optional.of(0));
+        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        service.addProcessDefinition(bpmn);
+
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher, org.mockito.Mockito.atLeastOnce()).publishEvent(captor.capture());
+
+        List<com.zorrodev.bpm.exchange.JobQueuesRequested> announcements = captor.getAllValues().stream()
+            .filter(com.zorrodev.bpm.exchange.JobQueuesRequested.class::isInstance)
+            .map(com.zorrodev.bpm.exchange.JobQueuesRequested.class::cast)
+            .toList();
+        assertThat(announcements)
+            .as("deployment must announce the definition's job types")
+            .hasSize(1);
+        assertThat(announcements.get(0).getJobTypes()).contains("job1");
+    }
+
+    /** WO-REL-16: a definition with no job workers must not publish an empty announcement. */
+    @Test
+    void addProcessDefinition_withoutServiceTasks_announcesNothing() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"));
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
+        when(processDefinitionRepository.findMaxByKey("test1")).thenReturn(Optional.of(0));
+        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        service.addProcessDefinition(bpmn);
+
+        verify(eventPublisher, never()).publishEvent(any(com.zorrodev.bpm.exchange.JobQueuesRequested.class));
+    }
+
+    /**
+     * WO-REL-16 criterion #5: a listener blowing up (broker unreachable) must not fail a deployment
+     * that has already committed.
+     */
+    @Test
+    void addProcessDefinition_announcementFailure_doesNotFailDeployment() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/process2.bpmn"));
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
+        when(processDefinitionRepository.findMaxByKey("process2")).thenReturn(Optional.of(0));
+        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+        org.mockito.Mockito.doThrow(new RuntimeException("broker down"))
+            .when(eventPublisher).publishEvent(any(com.zorrodev.bpm.exchange.JobQueuesRequested.class));
+
+        ProcessDefinition result = service.addProcessDefinition(bpmn);
+
+        assertThat(result.getKey()).isEqualTo("process2");
     }
 
     @Test
