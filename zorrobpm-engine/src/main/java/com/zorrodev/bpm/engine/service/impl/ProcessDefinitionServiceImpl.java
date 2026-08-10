@@ -16,9 +16,11 @@ import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import com.zorrodev.bpm.exchange.JobQueuesRequested;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -57,6 +59,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final TransactionTemplate transactionTemplate;
     private final DataSource dataSource;
     private final ElementSupport elementSupport;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** Cached database product name — detected once on first use. */
     private volatile String databaseProduct;
@@ -111,6 +114,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
                 processDefinitionRepository.save(processDefinitionEntity);
 
                 cacheModelAfterCommit(id, model);
+                requestJobQueuesAfterCommit(model);
             } else {
                 processDefinitionEntity = processDefinitionEntityOptional.get();
                 // WO-REL-15: idempotent repair — a redeploy of the same sha256 whose previous attempt
@@ -195,6 +199,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         processDefinitionRepository.save(entity);
 
         cacheModelAfterCommit(id, model);
+        requestJobQueuesAfterCommit(model);
     }
 
     /**
@@ -215,6 +220,43 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             });
         } else {
             bpmnService.addProcessDefinition(processDefinitionId, model);
+        }
+    }
+
+    /**
+     * WO-REL-16: announces this definition's job types so the messaging layer can declare their
+     * queues now, instead of lazily on the first message actually sent to them (a job type that
+     * had never run yet simply had no queue on the broker).
+     *
+     * <p>Deferred to afterCommit for the same reason as {@link #cacheModelAfterCommit} — a
+     * rolled-back deployment must not announce queues for a definition that does not exist — and
+     * so that a broker problem cannot fail the deployment transaction. Publishing is best-effort:
+     * the listener is expected to swallow its own broker errors, but the try/catch here guarantees
+     * that even a listener that throws cannot break a deployment that has already committed. The
+     * lazy declare on first send stays as the fallback.
+     */
+    private void requestJobQueuesAfterCommit(BpmnProcessDefinitionModel model) {
+        java.util.Set<String> jobTypes = model.getJobTypes();
+        if (jobTypes.isEmpty()) return;
+
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publishJobQueuesRequested(jobTypes);
+                }
+            });
+        } else {
+            publishJobQueuesRequested(jobTypes);
+        }
+    }
+
+    private void publishJobQueuesRequested(java.util.Set<String> jobTypes) {
+        try {
+            eventPublisher.publishEvent(new JobQueuesRequested(jobTypes));
+        } catch (Exception e) {
+            log.warn("WO-REL-16: could not announce job queues {} — they will be declared lazily "
+                + "on the first message instead", jobTypes, e);
         }
     }
 
