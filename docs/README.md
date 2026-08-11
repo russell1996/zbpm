@@ -1,7 +1,7 @@
 # ZorroBPM CE — Roadmap & Work Plan
 
 > Единый источник правды. Обновляется по мере выполнения задач.  
-> Анализ: [docs/analysis/](analysis/README.md) | Управление: [/docs/internal](..)
+> Управление: [/docs/internal](..)
 
 ---
 
