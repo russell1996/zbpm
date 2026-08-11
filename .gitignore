@@ -21,3 +21,8 @@ node_modules/
 zorrobpm-frontend/dist/
 
 # Local tooling (kept out of the repo)
+
+# Claude Code: локальные настройки и состояние — личные, не в репозиторий.
+# Ролевые агенты (.claude/agents/) версионируются намеренно: это часть протокола команды.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
