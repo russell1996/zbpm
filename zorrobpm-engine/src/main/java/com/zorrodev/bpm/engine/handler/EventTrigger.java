@@ -15,14 +15,19 @@ import com.zorrodev.bpm.engine.dto.SignalSubscription;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import com.zorrodev.bpm.engine.scheduler.TimerExpressions;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -43,6 +48,11 @@ public class EventTrigger {
     private final ScriptService scriptService;
     private final FlowNavigator flowNavigator;
     private final ElementSupport elementSupport;
+    private final TimerJobRepository timerJobRepository;
+
+    // WO-REL-17: explicit business zone for cycle re-arm resolution (same as TimerJobExecutor)
+    @Value("${zorrobpm.business-timezone:Asia/Almaty}")
+    private ZoneId businessZone;
 
     /**
      * Evaluates a conditional event's FEEL condition against the given variables (a leading {@code =} is stripped).
@@ -141,6 +151,24 @@ public class EventTrigger {
 
     /**
      * Re-arms a repeating non-interrupting boundary timer after it fires.
+     *
+     * WO-REL-17 (R-04, same defect class WO-REL-14 fixed for catch/start timers): the re-arm is
+     * driven by the PERSISTED state of the fired timer job (remaining count, cycle expression,
+     * previous dueAt), never recomputed from the BPMN model:
+     * <ul>
+     *   <li>remaining &gt; 0 → schedule the next occurrence with {@code remaining - 1};</li>
+     *   <li>remaining == 0 → the bounded cycle ({@code R<n>/...}) is exhausted: no re-arm;</li>
+     *   <li>remaining == null (with a persisted expression) → unbounded cycle ({@code R/...} or
+     *       cron): keep re-arming with {@code null} remaining;</li>
+     *   <li>no persisted expression (pre-REL-14/REL-17 row) → end the cycle with a warning
+     *       instead of re-arming forever or bursting (same policy as {@code TimerJobExecutor});</li>
+     *   <li>no fired job found (e.g. a direct API/test fire without a scheduled job) → end the
+     *       cycle with a warning; {@code fireBoundary} is also reachable for signal/message
+     *       boundaries, but those are not CYCLE timers so they never reach here.</li>
+     * </ul>
+     * The next occurrence is computed from the fired job's {@code dueAt} via
+     * {@link TimerExpressions#firstOccurrence(String, Instant, ZoneId)}, so execution latency
+     * cannot accumulate drift across repetitions.
      */
     private void rearmRepeatingBoundaryTimer(UUID hostActivityId, BpmnElementModel boundary, UUID processInstanceId) {
         if (boundary.getType() != BpmnElementType.BOUNDARY_TIMER_EVENT) {
@@ -152,17 +180,35 @@ public class EventTrigger {
         if (timer == null || timer.getType() != com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE) {
             return;
         }
-        String expression = timer.getExpression();
-        boolean infinite = com.zorrodev.bpm.engine.scheduler.TimerExpressions.isInfiniteCycle(expression);
-        int repeatCount = com.zorrodev.bpm.engine.scheduler.TimerExpressions.repeatCount(expression);
-        if (!infinite && repeatCount <= 0) {
+        // WO-REL-17: read the state from the fired job, not from the BPMN model. Boundary jobs
+        // carry no processInstanceId, so the lookup is scoped by (host activity, boundary element).
+        Optional<TimerJobEntity> firedJobRef = timerJobRepository
+            .findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc(hostActivityId, boundary.getId());
+        TimerJobEntity firedJob = (firedJobRef == null || firedJobRef.isEmpty()) ? null : firedJobRef.get();
+        if (firedJob == null) {
+            log.warn("Boundary timer {} on host activity {} fired without a matching timer job — ending cycle without re-arm",
+                boundary.getId(), hostActivityId);
             return;
         }
-        Integer remaining = infinite ? null : repeatCount - 1;
-        if (!infinite && remaining != null && remaining <= 0) {
+        String expression = firedJob.getExpression();
+        if (expression == null) {
+            // Pre-WO-REL-14/REL-17 row with no persisted expression: cannot safely resolve the
+            // real interval, so end the cycle here rather than burst or repeat forever.
+            log.warn("Boundary timer job {} ({} on {}) has no persisted expression — ending cycle instead of re-arming",
+                firedJob.getId(), boundary.getId(), hostActivityId);
             return;
         }
-        dbService.createTimerJob(hostActivityId, elementSupport.computeDueAt(boundary, processInstanceId), boundary.getId(), remaining);
+        Integer remaining = firedJob.getRemainingCount();
+        if (remaining != null && remaining <= 0) {
+            log.info("Boundary timer {} on host activity {} exhausted (remaining={}) — no re-arm",
+                boundary.getId(), hostActivityId, remaining);
+            return;
+        }
+        Instant next = TimerExpressions.firstOccurrence(expression, firedJob.getDueAt(), businessZone);
+        Integer nextRemaining = remaining == null ? null : remaining - 1;
+        dbService.createTimerJob(hostActivityId, next, boundary.getId(), nextRemaining, expression);
+        log.info("{}/{}: Re-arming boundary timer {} on host {} for {} (remaining={}, expression={})",
+            processInstanceId, hostActivityId, boundary.getId(), hostActivityId, next, nextRemaining, expression);
     }
 
     /**

@@ -103,8 +103,23 @@ public class BoundaryScheduler {
                 .orElse(null);
             if (host.getId().equals(attachedTo)) {
                 java.time.Instant dueAt = elementSupport.computeDueAt(element, processInstanceId);
-                dbService.createTimerJob(hostActivityId, dueAt, element.getId());
-                log.info("{}: Boundary timer {} scheduled for {} on host activity {}", processInstanceId, element.getId(), dueAt, hostActivityId);
+                // WO-REL-17: the FIRST job of a repeating (timeCycle) boundary must carry the
+                // persisted cycle expression and the remaining count (repeatCount - 1), exactly
+                // like TimerCatchHandler does for catch timers. Otherwise the re-arm in
+                // EventTrigger would see a pre-REL-14-style row (no expression) and end the
+                // cycle after the first fire — and the bounded R<n> counter would never persist.
+                Integer remainingCount = null;
+                String expression = null;
+                TimerEventExtensionModel timer = Optional.ofNullable(element.getExtensions())
+                    .map(BpmnElementExtensionModel::getTimerEventExtension)
+                    .orElse(null);
+                if (timer != null && timer.getType() == TimerEventType.CYCLE) {
+                    expression = timer.getExpression();
+                    remainingCount = com.zorrodev.bpm.engine.scheduler.TimerExpressions.remainingCount(expression);
+                }
+                dbService.createTimerJob(hostActivityId, dueAt, element.getId(), remainingCount, expression);
+                log.info("{}: Boundary timer {} scheduled for {} on host activity {} (remaining={}, expression={})",
+                    processInstanceId, element.getId(), dueAt, hostActivityId, remainingCount, expression);
             }
         }
     }

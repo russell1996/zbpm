@@ -10,11 +10,23 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface TimerJobRepository extends JpaRepository<TimerJobEntity, UUID>, JpaSpecificationExecutor<TimerJobEntity> {
 
     List<TimerJobEntity> findByFiredFalseAndDueAtLessThanEqual(Instant now);
+
+    /**
+     * WO-REL-17: the most recently fired timer job of a repeating (timeCycle) boundary timer on the
+     * given host activity. The re-arm path ({@code EventTrigger}) reads the persisted
+     * {@code remainingCount}/{@code expression}/{@code dueAt} from the fired job — exactly like
+     * {@code TimerJobExecutor} does for catch timers — instead of recomputing the state from the
+     * BPMN model (which never let a bounded cycle exhaust). Boundary jobs carry no
+     * {@code processInstanceId}, so the lookup is scoped by (activity, boundary element) only.
+     */
+    Optional<TimerJobEntity> findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc(
+        UUID activityId, String boundaryElementId);
 
     /**
      * L6 FIX: FOR UPDATE SKIP LOCKED prevents two pollers from picking up the same timer jobs.
