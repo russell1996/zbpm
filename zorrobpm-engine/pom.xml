@@ -175,37 +175,47 @@
                     <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.14</version>
-                <configuration>
-                    <excludes>
-                        <exclude>com/zorrodev/bpm/engine/entity/*</exclude>
-                        <exclude>com/zorrodev/bpm/engine/bpmn/**</exclude>
-                        <exclude>com/zorrodev/bpm/engine/event/**</exclude>
-                    </excludes>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>coverage-initialize</id>
-                        <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>coverage-report</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 
     <profiles>
+        <!-- WO-PERF-4: jacoco (prepare-agent instrumentation + report) is expensive on every
+             local run and only needed for coverage measurement. Default OFF; CI enables it via
+             `-Pcoverage` (see .gitlab-ci.yml test:backend / Dockerfile test stage). -->
+        <profile>
+            <id>coverage</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>0.8.14</version>
+                        <configuration>
+                            <excludes>
+                                <exclude>com/zorrodev/bpm/engine/entity/*</exclude>
+                                <exclude>com/zorrodev/bpm/engine/bpmn/**</exclude>
+                                <exclude>com/zorrodev/bpm/engine/event/**</exclude>
+                            </excludes>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>coverage-initialize</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>coverage-report</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>report</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>release</id>
             <build>

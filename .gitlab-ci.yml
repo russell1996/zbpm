@@ -73,8 +73,9 @@ test:backend:
     when: always
   script:
     # `--target test` runs `mvn -B clean verify` (full reactor: unit + integration) inside the build
+    # WO-PERF-4: -Pcoverage keeps the jacoco coverage report active in CI (profile is off by default locally)
     # Mount target/ out to capture test reports after build
-    - docker build --target test -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
+    - docker build --target test --build-arg MAVEN_PROFILES=-Pcoverage -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
     - docker run --rm -v "$CI_PROJECT_DIR/target-out":/out busybox sh -c 'rm -rf /out && true' || true
     - docker create --name test-extract zorrobpm-app-test:$IMAGE_TAG || true
     - docker cp test-extract:/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports || true

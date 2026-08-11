@@ -16,7 +16,11 @@ WORKDIR /build
 
 COPY . .
 
-RUN mvn -B -ntp clean verify
+# WO-PERF-4: the jacoco plugin lives behind the Maven `coverage` profile (see
+# zorrobpm-engine/pom.xml). CI passes --build-arg MAVEN_PROFILES=-Pcoverage so the coverage
+# report keeps being produced in CI; local builds default to no instrumentation.
+ARG MAVEN_PROFILES
+RUN mvn -B -ntp clean verify $MAVEN_PROFILES
 
 
 # --- Runtime stage ---
