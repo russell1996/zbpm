@@ -14,11 +14,11 @@ import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceContext;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Files;
@@ -33,7 +33,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-@TestPropertySource(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 public class QueryServiceBulkLoadingIntegrationTests {
 
     @Autowired
@@ -51,6 +50,17 @@ public class QueryServiceBulkLoadingIntegrationTests {
     // findAll (page) + findAll (count) + ONE batch loader (process-definition / activity
     // lookup) — matches WO-PERF-2 acceptance criterion #1 ("<=3, not one extra per row").
     private static final long MAX_QUERIES = 3;
+
+    /**
+     * WO-PERF-4: Hibernate statement statistics are enabled programmatically instead of via
+     * {@code @TestPropertySource(spring.jpa.properties.hibernate.generate_statistics=true)} —
+     * that property created a dedicated Spring context for this single test class (one extra
+     * full Spring startup per run). The counter works exactly the same either way.
+     */
+    @BeforeEach
+    void enableStatistics() {
+        statistics().setStatisticsEnabled(true);
+    }
 
     private Statistics statistics() {
         return entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
@@ -100,6 +110,9 @@ public class QueryServiceBulkLoadingIntegrationTests {
         assertThat(queryService.findProcessInstances(query, null).getData()).hasSize(N);
 
         assertThat(statistics().getPrepareStatementCount())
+            .as("statistics must actually be collecting (counter > 0), else the N+1 check is vacuous")
+            .isGreaterThan(0);
+        assertThat(statistics().getPrepareStatementCount())
             .as("query count must not scale with page size (N+1 regression)")
             .isLessThanOrEqualTo(MAX_QUERIES);
     }
@@ -120,6 +133,9 @@ public class QueryServiceBulkLoadingIntegrationTests {
         assertThat(queryService.findUserTasks(query, null).getData()).hasSize(N);
 
         assertThat(statistics().getPrepareStatementCount())
+            .as("statistics must actually be collecting (counter > 0), else the N+1 check is vacuous")
+            .isGreaterThan(0);
+        assertThat(statistics().getPrepareStatementCount())
             .as("query count must not scale with page size (N+1 regression)")
             .isLessThanOrEqualTo(MAX_QUERIES);
     }
@@ -139,6 +155,9 @@ public class QueryServiceBulkLoadingIntegrationTests {
         query.setPageSize(N);
         assertThat(queryService.findServiceTasks(query, null).getData()).hasSize(N);
 
+        assertThat(statistics().getPrepareStatementCount())
+            .as("statistics must actually be collecting (counter > 0), else the N+1 check is vacuous")
+            .isGreaterThan(0);
         assertThat(statistics().getPrepareStatementCount())
             .as("query count must not scale with page size (N+1 regression)")
             .isLessThanOrEqualTo(MAX_QUERIES);
