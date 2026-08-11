@@ -112,4 +112,18 @@ public final class TimerExpressions {
         }
         return -1; // bare duration or cron = unbounded
     }
+
+    /**
+     * Persisted {@code remaining_count} for the FIRST timer job of a cycle: one less than the
+     * repeat count (the first occurrence is the job itself), or {@code null} for unbounded cycles
+     * (infinite repeat) and non-cycle timers. Mirrors {@code TimerCatchHandler} — WO-REL-17 makes
+     * the boundary-timer primary scheduling use the same convention so the re-arm logic in
+     * {@code EventTrigger} can decrement a persisted value instead of recomputing it from the model.
+     *
+     * @return {@code repeatCount - 1} for bounded {@code R<n>/...}, {@code null} otherwise
+     */
+    public static Integer remainingCount(String cycle) {
+        int count = repeatCount(cycle);
+        return count > 0 ? count - 1 : null;
+    }
 }

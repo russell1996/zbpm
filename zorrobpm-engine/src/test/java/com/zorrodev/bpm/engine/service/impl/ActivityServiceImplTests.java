@@ -99,7 +99,9 @@ public class ActivityServiceImplTests {
         }
         // Create real EventTrigger with mocked dependencies and inject it
         var flowNavigator = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService);
-        var eventTrigger = new com.zorrodev.bpm.engine.handler.EventTrigger(dbService, bpmnService, scriptService, flowNavigator, elementSupport);
+        var eventTrigger = new com.zorrodev.bpm.engine.handler.EventTrigger(
+            dbService, bpmnService, scriptService, flowNavigator, elementSupport,
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.repository.TimerJobRepository.class));
         try {
             var etField = ActivityServiceImpl.class.getDeclaredField("eventTrigger");
             etField.setAccessible(true);
@@ -712,7 +714,9 @@ public class ActivityServiceImplTests {
         activityService.execute(processInstanceId, token, "startEvent");
 
         // token parks at the user task and a boundary timer is scheduled against it
-        verify(dbService).createTimerJob(eq(userActivityId), any(), eq("boundary1"));
+        // (WO-REL-17: the primary placement always goes through the 5-arg overload; a duration
+        // timer carries no remaining count / expression)
+        verify(dbService).createTimerJob(eq(userActivityId), any(), eq("boundary1"), isNull(), isNull());
         verify(dbService, times(0)).completeProcessInstance(any());
     }
 
