@@ -6,7 +6,7 @@
 
 ~~Статус: ПРИНЯТ (продукт-владелец, 2026-07-15)~~
 Автор: CTO / Chief Architect. Горизонт: многолетний независимый продукт экосистемы ZBPM.
-Связь: [ADR-3 (формы)](ADR-3-embedded-forms.md), [integration-guide](../../README.md), [EPIC-MODELER](../../governance/workorders/EPIC-MODELER.md).
+Связь: [ADR-3 (формы)](ADR-3-embedded-forms.md), [integration-guide](../../README.md), [EPIC-MODELER](../../governance/archive/workorders/EPIC-MODELER.md).
 
 ## Ратифицированные решения (2026-07-15)
 1. **D1 доставка:** **web-first** (встроенный `/ui/modeler`) → desktop (Electron, M3) на том же ядре.
