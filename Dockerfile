@@ -1,5 +1,5 @@
 # --- Build stage: package the runnable jar (tests skipped here; see the `test` stage / CI) ---
-FROM maven:3.9.9-eclipse-temurin-21 AS builder
+FROM maven:3.9.9-eclipse-temurin-21@sha256:3a4ab3276a087bf276f79cae96b1af04f53731bec53fb2e651aca79e4b10211e AS builder
 
 WORKDIR /build
 
@@ -10,7 +10,7 @@ RUN mvn -B -ntp clean package -DskipTests
 
 # --- Test stage: full reactor verify (unit + integration). Built in CI via `docker build --target test`.
 #     Not in the runtime dependency graph, so a plain `docker build` / `docker compose build` skips it. ---
-FROM maven:3.9.9-eclipse-temurin-21 AS test
+FROM maven:3.9.9-eclipse-temurin-21@sha256:3a4ab3276a087bf276f79cae96b1af04f53731bec53fb2e651aca79e4b10211e AS test
 
 WORKDIR /build
 
@@ -24,7 +24,7 @@ RUN mvn -B -ntp clean verify $MAVEN_PROFILES
 
 
 # --- Runtime stage ---
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre@sha256:8cef5fc7bebe421363ab543a2f4db5caf7d119d8db67d56b0f56c485d2de4d55
 
 # WO-SEC-50: unprivileged user for the JVM process (RCE blast-radius reduction). Fixed uid/gid
 # (not dynamically allocated) so it's stable across image rebuilds and matches what entrypoint.sh

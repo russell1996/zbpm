@@ -2,7 +2,7 @@ name: zorrobpm
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     container_name: zorrobpm-postgres
     restart: unless-stopped
     environment:
@@ -36,7 +36,7 @@ services:
       - zorrobpm
 
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine
+    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
     container_name: zorrobpm-rabbitmq
     restart: unless-stopped
     environment:

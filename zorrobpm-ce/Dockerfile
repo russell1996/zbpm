@@ -1,10 +1,10 @@
-FROM docker.io/amazoncorretto:17 AS builder
+FROM docker.io/amazoncorretto:21@sha256:ff30d87dbb7b21774b003ad16ec233b3173be069e861803008f87ff829a4e706 AS builder
 ARG JAR_FILE=target/*.jar
 COPY ${JAR_FILE} application.jar
 
 RUN java -Djarmode=layertools -jar application.jar extract
 
-FROM docker.io/amazoncorretto:17
+FROM docker.io/amazoncorretto:21@sha256:ff30d87dbb7b21774b003ad16ec233b3173be069e861803008f87ff829a4e706
 
 # WO-SEC-50: unprivileged user for the JVM process (RCE blast-radius reduction). This image is
 # not currently referenced by docker-compose.yml/CI (the root Dockerfile is what's deployed) —
