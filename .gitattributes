@@ -1,5 +1,7 @@
-# Mimo→maintainer append-only channel: union merge keeps both sides automatically,
-# so maintainer never hand-resolves it on every feature-branch merge.
+# Исполнитель→maintainer, append-only канал: union-merge оставляет обе стороны, чтобы maintainer не разбирал
+# конфликт в нём при каждом мерже feature-ветки.
+# Файл назывался mimo-to-cto.md до 2026-08: правило висело на несуществующем имени, а реальный
+# канал был не защищён — то есть не работало вообще.
 docs/internal merge=union
 
 # WO-SEC-50: shell scripts run inside Linux containers via a shebang — CRLF (from a Windows
