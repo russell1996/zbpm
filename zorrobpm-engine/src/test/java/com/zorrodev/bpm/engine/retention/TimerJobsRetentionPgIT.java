@@ -144,6 +144,32 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
         assertThat(indexName).isEqualTo("idx_timer_jobs__activity_boundary_fired_created");
     }
 
+    /**
+     * EXPLAIN ANALYZE: proves the planner chooses Index Scan (not Seq Scan) for the re-arm query.
+     * This mirrors the exact query from TimerJobRepository.findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc.
+     */
+    @Test
+    void boundaryTimerIndex_usedByReArmQuery() {
+        UUID actId = UUID.randomUUID();
+        // Insert data to make planner choose index
+        for (int i = 0; i < 20; i++) {
+            jdbc.update(
+                "INSERT INTO timer_jobs (id, activity_id, process_instance_id, boundary_element_id, due_at, fired, created_at) " +
+                "VALUES (?, ?, NULL, 'boundary1', ?, true, ?)",
+                UUID.randomUUID(), actId, ago(10), ago(90 - i));
+        }
+
+        String plan = jdbc.queryForObject(
+            "EXPLAIN ANALYZE " +
+            "SELECT id FROM timer_jobs " +
+            "WHERE activity_id = ? AND boundary_element_id = 'boundary1' AND fired = true " +
+            "ORDER BY created_at DESC LIMIT 1",
+            String.class, actId);
+
+        assertThat(plan).contains("Index Scan");
+        assertThat(plan).doesNotContain("Seq Scan");
+    }
+
     // ==================== POF (G-K): RED before backfill, GREEN after ====================
 
     /**
