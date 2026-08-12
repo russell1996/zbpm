@@ -111,7 +111,8 @@ test:frontend:
   stage: test
   tags: [zbpm]
   script:
-    # `--target builder` runs `npm ci && npm run build` (tsc typecheck + Vite build), stops before nginx
+    # WO-OPS-4a (C-01): builder stage now runs `npm ci && npm run build && npm test -- --run`
+    # (tsc typecheck + Vite build + vitest); a failing frontend test fails the build.
     - docker build --target builder -f zorrobpm-frontend/Dockerfile -t zorrobpm-frontend-build:$IMAGE_TAG zorrobpm-frontend
     - docker image rm zorrobpm-frontend-build:$IMAGE_TAG || true
 

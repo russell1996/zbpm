@@ -14,6 +14,11 @@ COPY . .
 # Vite picks up .env.production automatically in production mode (relative /api, origin-based redirect)
 RUN npm run build
 
+# WO-OPS-4a (C-01): frontend tests never ran in CI — build the same way locally and
+# in the pipeline, but make a failing test fail the builder stage (and therefore CI).
+# `--run` is mandatory: plain `vitest` would enter watch mode and hang until timeout.
+RUN npm test -- --run
+
 
 # --- Runtime stage: serve static assets + reverse-proxy /api to the backend ---
 FROM nginx:1.27-alpine
