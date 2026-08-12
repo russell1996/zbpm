@@ -44,14 +44,17 @@ default:
   # WO-A-02: self-heal runs as root container to reclaim file ownership
 
 # ---------------------------------------------------------------------------
-# Test gate — blocks PRs that change src/main without a test (WO-PROC-2).
-# Runs before docker builds (cheap shell check).
+# Test gate — blocks PRs that change src/main without a covering test
+# (WO-PROC-2 + WO-OPS-4a). Runs before docker builds (cheap shell check).
+# Self-test first: throwaway-commit fixtures assert the gate's own behaviour,
+# so a silent loosening of the gate fails on its own (WO-OPS-4a HOLD fix).
 # ---------------------------------------------------------------------------
 
 test:gate:
   stage: test
   tags: [zbpm]
   script:
+    - bash ci/test-gate-selftest.sh HEAD
     - bash ci/test-gate.sh origin/master HEAD
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
