@@ -148,6 +148,9 @@ public interface DBService {
     /** WO-REL-14: also persists the original timeCycle expression, so re-arm uses the real interval. */
     UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId, Integer remainingCount, String expression);
 
+    /** WO-PERF-3: creates a timer job with processInstanceId for retention cleanup. */
+    UUID createTimerJob(UUID activityId, java.time.Instant dueAt, String boundaryElementId, Integer remainingCount, String expression, UUID processInstanceId);
+
     /** Creates a timer job that triggers a timer-started event sub-process when due (no host activity). */
     UUID createEventSubprocessTimerJob(UUID processInstanceId, java.time.Instant dueAt, String eventSubprocessId);
 

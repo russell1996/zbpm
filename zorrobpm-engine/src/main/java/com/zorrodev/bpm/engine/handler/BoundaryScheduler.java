@@ -117,7 +117,7 @@ public class BoundaryScheduler {
                     expression = timer.getExpression();
                     remainingCount = com.zorrodev.bpm.engine.scheduler.TimerExpressions.remainingCount(expression);
                 }
-                dbService.createTimerJob(hostActivityId, dueAt, element.getId(), remainingCount, expression);
+                dbService.createTimerJob(hostActivityId, dueAt, element.getId(), remainingCount, expression, processInstanceId);
                 log.info("{}: Boundary timer {} scheduled for {} on host activity {} (remaining={}, expression={})",
                     processInstanceId, element.getId(), dueAt, hostActivityId, remainingCount, expression);
             }

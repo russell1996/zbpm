@@ -714,9 +714,8 @@ public class ActivityServiceImplTests {
         activityService.execute(processInstanceId, token, "startEvent");
 
         // token parks at the user task and a boundary timer is scheduled against it
-        // (WO-REL-17: the primary placement always goes through the 5-arg overload; a duration
-        // timer carries no remaining count / expression)
-        verify(dbService).createTimerJob(eq(userActivityId), any(), eq("boundary1"), isNull(), isNull());
+        // (WO-PERF-3: now uses the 6-arg overload with processInstanceId for retention cleanup)
+        verify(dbService).createTimerJob(eq(userActivityId), any(), eq("boundary1"), isNull(), isNull(), eq(processInstanceId));
         verify(dbService, times(0)).completeProcessInstance(any());
     }
 
@@ -831,7 +830,7 @@ public class ActivityServiceImplTests {
         activityService.execute(processInstanceId, token, "startEvent");
 
         ArgumentCaptor<Instant> dueAtCaptor = ArgumentCaptor.forClass(Instant.class);
-        verify(dbService).createTimerJob(eq(timerActivityId), dueAtCaptor.capture(), isNull(), isNull(), isNull());
+        verify(dbService).createTimerJob(eq(timerActivityId), dueAtCaptor.capture(), isNull(), isNull(), isNull(), eq(processInstanceId));
         // PT5M from now
         assertThat(dueAtCaptor.getValue()).isBetween(before.plusSeconds(290), Instant.now().plusSeconds(310));
         verify(dbService, times(0)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
