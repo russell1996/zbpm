@@ -206,7 +206,7 @@ public class EventTrigger {
         }
         Instant next = TimerExpressions.firstOccurrence(expression, firedJob.getDueAt(), businessZone);
         Integer nextRemaining = remaining == null ? null : remaining - 1;
-        dbService.createTimerJob(hostActivityId, next, boundary.getId(), nextRemaining, expression);
+        dbService.createTimerJob(hostActivityId, next, boundary.getId(), nextRemaining, expression, processInstanceId);
         log.info("{}/{}: Re-arming boundary timer {} on host {} for {} (remaining={}, expression={})",
             processInstanceId, hostActivityId, boundary.getId(), hostActivityId, next, nextRemaining, expression);
     }

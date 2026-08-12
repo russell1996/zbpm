@@ -71,7 +71,7 @@ public class TimerJobExecutor {
                     return;
                 }
                 Instant next = TimerExpressions.firstOccurrence(job.getExpression(), job.getDueAt(), businessZone);
-                dbService.createTimerJob(job.getActivityId(), next, null, remaining - 1, job.getExpression());
+                dbService.createTimerJob(job.getActivityId(), next, null, remaining - 1, job.getExpression(), job.getProcessInstanceId());
                 return;
             }
             activityService.signal(job.getActivityId(), List.of());
