@@ -159,15 +159,16 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
                 UUID.randomUUID(), actId, ago(10), ago(90 - i));
         }
 
-        String plan = jdbc.queryForObject(
+        List<String> plan = jdbc.queryForList(
             "EXPLAIN ANALYZE " +
             "SELECT id FROM timer_jobs " +
             "WHERE activity_id = ? AND boundary_element_id = 'boundary1' AND fired = true " +
             "ORDER BY created_at DESC LIMIT 1",
             String.class, actId);
 
-        assertThat(plan).contains("Index Scan");
-        assertThat(plan).doesNotContain("Seq Scan");
+        String fullPlan = String.join("\n", plan);
+        assertThat(fullPlan).contains("Index Scan");
+        assertThat(fullPlan).doesNotContain("Seq Scan");
     }
 
     // ==================== POF (G-K): RED before backfill, GREEN after ====================
