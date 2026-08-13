@@ -47,6 +47,19 @@ public class RetentionJob {
             if (eligible.size() < config.getBatchSize()) break; // last batch
         }
 
+        // WO-PERF-3: pre-fix boundary jobs carry NULL process_instance_id and are invisible to
+        // deleteInstances (NULL NOT IN (:ids) never matches). Clean them in bounded batches here,
+        // not at migration time — no startup block, no changelog lock, TTL-gated by the same cutoff.
+        int orphanDeleted = 0;
+        while (true) {
+            int deleted = batchProcessor.deleteOrphanedBoundaryTimers(cutoff, config.getBatchSize());
+            orphanDeleted += deleted;
+            if (deleted < config.getBatchSize()) break; // last batch
+        }
+
+        if (orphanDeleted > 0) {
+            log.info("Retention: deleted {} orphaned fired boundary timer jobs", orphanDeleted);
+        }
         if (totalDeleted > 0) {
             log.info("Retention: completed — {} total rows deleted", totalDeleted);
         }

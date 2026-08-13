@@ -23,42 +23,8 @@ databaseChangeLog:
             tableName: timer_jobs
             indexName: idx_timer_jobs__activity_boundary_fired_created
 
-  - changeSet:
-      id: 20260813-072-pg-cleanup
-      author: zorrodev
-      dbms: postgresql
-      comment: >-
-        WO-PERF-3 — Delete orphaned historical boundary jobs with NULL process_instance_id.
-        These are fired boundary jobs whose processInstanceId was never set (pre-fix) and whose
-        process_instances were already purged by retention. They cannot be re-armed (fired=true)
-        and accumulate forever. The backfill-through-activities approach was ruled out because
-        retention deletes activities along with instances, so the rows it targets are already gone.
-      changes:
-        - sql:
-            sql: >-
-              DELETE FROM timer_jobs
-              WHERE process_instance_id IS NULL
-              AND boundary_element_id IS NOT NULL
-              AND fired = true
-      rollback:
-        - sql:
-            sql: >-
-              -- Rollback not possible for DELETE; documented as irreversible cleanup.
-
-  - changeSet:
-      id: 20260813-072-h2-cleanup
-      author: zorrodev
-      dbms: h2
-      comment: >-
-        WO-PERF-3 — Delete orphaned historical boundary jobs with NULL process_instance_id (H2).
-      changes:
-        - sql:
-            sql: >-
-              DELETE FROM timer_jobs
-              WHERE process_instance_id IS NULL
-              AND boundary_element_id IS NOT NULL
-              AND fired = true
-      rollback:
-        - sql:
-            sql: >-
-              -- Rollback not possible for DELETE; documented as irreversible cleanup.
+  # WO-PERF-3 — orphaned fired boundary jobs (NULL process_instance_id, pre-fix rows) are NOT
+  # deleted here. A migration-time DELETE would run one irreversible statement over the whole
+  # growing table under the changelog lock, blocking startup. The cleanup lives in
+  # RetentionBatchProcessor.deleteOrphanedBoundaryTimers(): batched (LIMIT), TTL-gated
+  # (created_at < cutoff), inside the existing scheduled retention job.

@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.retention;
 
 import com.zorrodev.bpm.engine.PostgresIT;
+import com.zorrodev.bpm.engine.service.DBService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,7 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
 
     @Autowired JdbcTemplate jdbc;
     @Autowired RetentionBatchProcessor batchProcessor;
+    @Autowired DBService dbService;
 
     private UUID sharedPdId;
 
@@ -90,6 +92,46 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerId)).isEqualTo(0);
     }
 
+    /**
+     * POF (G-K, G-N): the WO deliverable is that {@link DBService#createTimerJob} persists
+     * processInstanceId, which makes fired boundary jobs reachable by retention.
+     * The job is created through the REAL production method (6-arg overload), claimed like
+     * TimerJobExecutor does (fired = true), then retention runs. RED: with the fix reverted
+     * (processInstanceId not persisted) the job survives; GREEN: with the fix it is deleted.
+     */
+    @Test
+    void pof_boundaryJobCreatedThroughProductionPath_isDeletedByRetention() {
+        UUID piId = UUID.randomUUID();
+        UUID actId = UUID.randomUUID();
+
+        jdbc.update(
+            "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
+            "VALUES (?, ?, ?, ?, false)",
+            piId, sharedPdId, ago(100), ago(50));
+        jdbc.update(
+            "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
+            "VALUES (?, ?, 'hostActivity', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
+            actId, piId, ago(90), ago(80), UUID.randomUUID());
+
+        // REAL production path: 6-arg overload persists processInstanceId (the WO-PERF-3 fix)
+        UUID timerId = dbService.createTimerJob(
+            actId, ago(10).toInstant(), "boundary1", 1, "R/PT1M", piId);
+
+        // Claim the job like TimerJobExecutor does before processing
+        jdbc.update("UPDATE timer_jobs SET fired = true WHERE id = ?", timerId);
+
+        // Retention: instance is eligible, deleteInstances() runs the real production code
+        List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now(), 100);
+        assertThat(eligible).contains(piId);
+        batchProcessor.deleteInstances(eligible);
+
+        // GREEN: with the fix the job carries process_instance_id → retention deletes it.
+        // RED (fix reverted): the job is created with NULL process_instance_id, NULL NOT IN (:ids)
+        // never matches, the row survives and this assertion fails.
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerId)).isEqualTo(0);
+    }
+
     // ==================== Criterion #3: active timer jobs NOT deleted ====================
 
     /**
@@ -134,7 +176,6 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
 
     /**
      * Verifies the index for the re-arm query exists.
-     * Full EXPLAIN ANALYZE should be done manually on ~50k rows.
      */
     @Test
     void boundaryTimerIndex_exists() {
@@ -145,19 +186,21 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
     }
 
     /**
-     * EXPLAIN ANALYZE: proves the planner chooses Index Scan (not Seq Scan) for the re-arm query.
-     * This mirrors the exact query from TimerJobRepository.findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc.
+     * EXPLAIN ANALYZE on ~50k rows (WO criterion #1): proves the planner chooses Index Scan
+     * (not Seq Scan) for the re-arm query. This mirrors the exact query from
+     * TimerJobRepository.findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc.
+     * RED: without the index changeset the planner falls back to Seq Scan and the test fails.
      */
     @Test
     void boundaryTimerIndex_usedByReArmQuery() {
         UUID actId = UUID.randomUUID();
-        // Insert data to make planner choose index
-        for (int i = 0; i < 20; i++) {
-            jdbc.update(
-                "INSERT INTO timer_jobs (id, activity_id, process_instance_id, boundary_element_id, due_at, fired, created_at) " +
-                "VALUES (?, ?, NULL, 'boundary1', ?, true, ?)",
-                UUID.randomUUID(), actId, ago(10), ago(90 - i));
-        }
+        // ~50k rows in a single statement (WO: "на объёме ~50k строк")
+        jdbc.update(
+            "INSERT INTO timer_jobs (id, activity_id, process_instance_id, boundary_element_id, due_at, fired, created_at) " +
+            "SELECT gen_random_uuid(), ?, NULL, 'boundary1', now() - interval '10 seconds', true, " +
+            "now() - (i * interval '1 second') " +
+            "FROM generate_series(1, 50000) i",
+            actId);
 
         List<String> plan = jdbc.queryForList(
             "EXPLAIN ANALYZE " +
@@ -238,12 +281,13 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
     // ==================== Historical NULL process_instance_id cleanup ====================
 
     /**
-     * Verifies the migration DELETE cleans up orphaned historical boundary jobs
-     * with NULL process_instance_id. These are fired boundary jobs whose instances
-     * were already purged by retention — they accumulate forever without this cleanup.
+     * Verifies RetentionBatchProcessor.deleteOrphanedBoundaryTimers() (the real production
+     * method — G-N) cleans up orphaned historical boundary jobs with NULL process_instance_id.
+     * These are fired boundary jobs whose instances were already purged by retention — they
+     * accumulate forever without this cleanup.
      */
     @Test
-    void historicalBoundaryJobs_deletedByMigration() {
+    void historicalBoundaryJobs_deletedByRetentionCleanup() {
         UUID actId = UUID.randomUUID();
 
         // Historical boundary timer job with NULL process_instance_id (pre-fix behavior)
@@ -253,16 +297,13 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             "VALUES (?, ?, NULL, 'boundary1', ?, true, ?)",
             timerId, actId, ago(10), ago(90));
 
-        // Verify row exists before migration
+        // Verify row exists before cleanup
         assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerId)).isEqualTo(1);
 
-        // Simulate the DELETE migration
-        jdbc.update(
-            "DELETE FROM timer_jobs " +
-            "WHERE process_instance_id IS NULL " +
-            "AND boundary_element_id IS NOT NULL " +
-            "AND fired = true");
+        // REAL production method: batched, TTL-gated orphan cleanup (moved out of the migration)
+        int deleted = batchProcessor.deleteOrphanedBoundaryTimers(Instant.now(), 100);
+        assertThat(deleted).isEqualTo(1);
 
         // Verify row is deleted
         assertThat(jdbc.queryForObject(
@@ -270,11 +311,12 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
     }
 
     /**
-     * Verifies the migration does NOT delete live unfired timers with NULL process_instance_id.
-     * Only fired=true, NULL process_instance_id, boundary_element_id NOT NULL are cleaned up.
+     * Verifies the orphan cleanup does NOT delete live unfired timers with NULL
+     * process_instance_id. Only fired=true, NULL process_instance_id, boundary_element_id
+     * NOT NULL rows are cleaned up.
      */
     @Test
-    void liveUnfiredTimer_notDeletedByMigration() {
+    void liveUnfiredTimer_notDeletedByRetentionCleanup() {
         UUID actId = UUID.randomUUID();
 
         // Live unfired timer job with NULL process_instance_id — must NOT be deleted
@@ -284,12 +326,9 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             "VALUES (?, ?, NULL, 'boundary1', ?, false, ?)",
             timerId, actId, ago(10), ago(90));
 
-        // Run the migration DELETE
-        jdbc.update(
-            "DELETE FROM timer_jobs " +
-            "WHERE process_instance_id IS NULL " +
-            "AND boundary_element_id IS NOT NULL " +
-            "AND fired = true");
+        // Real production cleanup method
+        int deleted = batchProcessor.deleteOrphanedBoundaryTimers(Instant.now(), 100);
+        assertThat(deleted).isEqualTo(0);
 
         // Verify live unfired timer is untouched
         assertThat(jdbc.queryForObject(

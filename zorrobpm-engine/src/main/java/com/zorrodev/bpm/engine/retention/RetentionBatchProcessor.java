@@ -70,4 +70,41 @@ public class RetentionBatchProcessor {
         log.info("Retention: deleted {} rows for {} instances (incl. {} tokens)", total, instanceIds.size(), tokenIds.size());
         return total;
     }
+
+    /**
+     * WO-PERF-3: deletes orphaned fired boundary timer jobs in bounded batches.
+     *
+     * Pre-fix boundary jobs were created with NULL process_instance_id, so
+     * {@link #deleteInstances(List)} (predicate {@code process_instance_id IN (:ids)}) can never
+     * reach them — even after their process instances were purged by retention. They are
+     * fired=true, cannot be re-armed, and accumulate forever.
+     *
+     * The cleanup deliberately lives here instead of a migration-time DELETE:
+     * <ul>
+     *   <li>batched via {@code LIMIT} — each transaction touches at most {@code batchSize} rows
+     *       instead of one unbounded statement over the whole table;</li>
+     *   <li>TTL-gated ({@code created_at < cutoff}) — the same age window retention already
+     *       applies to instances, so a just-fired row of a still-running cycle is never touched;</li>
+     *   <li>no startup block: no changelog lock, no irreversible statement at deploy time.</li>
+     * </ul>
+     *
+     * @param cutoff    delete only rows older than this instant
+     * @param batchSize maximum rows deleted in this call
+     * @return number of rows deleted
+     */
+    @Transactional
+    public int deleteOrphanedBoundaryTimers(Instant cutoff, int batchSize) {
+        MapSqlParameterSource params = new MapSqlParameterSource("cutoff", Timestamp.from(cutoff))
+            .addValue("limit", batchSize);
+        return jdbc.update(
+            "DELETE FROM timer_jobs WHERE id IN (" +
+            "  SELECT id FROM timer_jobs" +
+            "  WHERE process_instance_id IS NULL" +
+            "    AND boundary_element_id IS NOT NULL" +
+            "    AND fired = true" +
+            "    AND created_at < :cutoff" +
+            "  LIMIT :limit" +
+            ")",
+            params);
+    }
 }
