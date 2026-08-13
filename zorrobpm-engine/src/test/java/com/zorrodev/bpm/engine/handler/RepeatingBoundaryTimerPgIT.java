@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.within;
  * {@code remaining = repeatCount - 1} from the model on EVERY fire, so an R3 cycle never reached
  * 0 and fired forever; it also scheduled the next occurrence with a 4-arg {@code createTimerJob}
  * (no persisted expression) and from a fresh model-based dueAt instead of the fired job's dueAt.
+ * (Since WO-PERF-3 the re-arm uses the 6-arg overload that also persists the processInstanceId.)
  *
  * New behaviour (GREEN): the first job of a cycle carries {@code remaining = repeatCount - 1}
  * and the raw expression (BoundaryScheduler, same convention as TimerCatchHandler); the re-arm

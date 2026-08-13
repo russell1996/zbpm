@@ -553,37 +553,6 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public UUID createTimerJob(UUID activityId, Instant dueAt) {
-        return createTimerJob(activityId, dueAt, null);
-    }
-
-    @Override
-    public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId) {
-        return createTimerJob(activityId, dueAt, boundaryElementId, null);
-    }
-
-    @Override
-    public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId, Integer remainingCount) {
-        return createTimerJob(activityId, dueAt, boundaryElementId, remainingCount, null);
-    }
-
-    @Override
-    public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId, Integer remainingCount, String expression) {
-        UUID id = UUID.randomUUID();
-        TimerJobEntity entity = new TimerJobEntity();
-        entity.setId(id);
-        entity.setActivityId(activityId);
-        entity.setDueAt(dueAt);
-        entity.setFired(false);
-        entity.setCreatedAt(Instant.now());
-        entity.setBoundaryElementId(boundaryElementId);
-        entity.setRemainingCount(remainingCount);
-        entity.setExpression(expression);
-        timerJobRepository.save(entity);
-        return id;
-    }
-
-    @Override
     public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId, Integer remainingCount, String expression, UUID processInstanceId) {
         UUID id = UUID.randomUUID();
         TimerJobEntity entity = new TimerJobEntity();
