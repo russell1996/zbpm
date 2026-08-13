@@ -579,7 +579,7 @@ class DBServiceImplTest {
         UUID activityId = UUID.randomUUID();
         Instant dueAt = Instant.now().plusSeconds(60);
 
-        UUID id = dbService.createTimerJob(activityId, dueAt);
+        UUID id = dbService.createTimerJob(activityId, dueAt, null, null, null, null);
 
         assertThat(id).isNotNull();
         ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);

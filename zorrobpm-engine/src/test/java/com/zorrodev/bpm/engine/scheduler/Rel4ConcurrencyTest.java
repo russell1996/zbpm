@@ -127,7 +127,7 @@ class Rel4ConcurrencyTest {
                     }
                     // Re-arm: create next timer
                     Instant next = TimerExpressions.firstOccurrence("R/PT0S", Instant.now());
-                    dbService.createTimerJob(dto.getActivityId(), next, null, dto.getRemainingCount() - 1);
+                    dbService.createTimerJob(dto.getActivityId(), next, null, dto.getRemainingCount() - 1, null, dto.getProcessInstanceId());
                 });
             } catch (Exception e) {
                 reArmError.set(e);

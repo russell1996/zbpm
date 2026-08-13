@@ -22,8 +22,10 @@ public interface TimerJobRepository extends JpaRepository<TimerJobEntity, UUID>,
      * given host activity. The re-arm path ({@code EventTrigger}) reads the persisted
      * {@code remainingCount}/{@code expression}/{@code dueAt} from the fired job — exactly like
      * {@code TimerJobExecutor} does for catch timers — instead of recomputing the state from the
-     * BPMN model (which never let a bounded cycle exhaust). Boundary jobs carry no
-     * {@code processInstanceId}, so the lookup is scoped by (activity, boundary element) only.
+     * BPMN model (which never let a bounded cycle exhaust). The lookup is scoped by
+     * (activity, boundary element) only; since WO-PERF-3 the job also carries the
+     * {@code processInstanceId} (used by retention cleanup), but the re-arm lookup does not
+     * need it to find the previous fired job.
      */
     Optional<TimerJobEntity> findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc(
         UUID activityId, String boundaryElementId);

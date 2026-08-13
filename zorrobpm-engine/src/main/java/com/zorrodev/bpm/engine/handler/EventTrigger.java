@@ -180,8 +180,9 @@ public class EventTrigger {
         if (timer == null || timer.getType() != com.zorrodev.bpm.engine.bpmn.model.TimerEventType.CYCLE) {
             return;
         }
-        // WO-REL-17: read the state from the fired job, not from the BPMN model. Boundary jobs
-        // carry no processInstanceId, so the lookup is scoped by (host activity, boundary element).
+        // WO-REL-17: read the state from the fired job, not from the BPMN model. The lookup is
+        // scoped by (host activity, boundary element); since WO-PERF-3 the job also carries the
+        // processInstanceId (used by retention cleanup), see createTimerJob(...).
         Optional<TimerJobEntity> firedJobRef = timerJobRepository
             .findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc(hostActivityId, boundary.getId());
         TimerJobEntity firedJob = (firedJobRef == null || firedJobRef.isEmpty()) ? null : firedJobRef.get();
