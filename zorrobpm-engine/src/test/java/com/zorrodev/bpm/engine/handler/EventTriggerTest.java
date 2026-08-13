@@ -238,6 +238,6 @@ class EventTriggerTest {
         assertThat(fired).isTrue();
         verify(timerJobRepository).findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc(
             hostActivityId, "tmrCheck");
-        verify(dbService, never()).createTimerJob(any(), any(), any(), any(), any());
+        verify(dbService, never()).createTimerJob(any(), any(), any(), any(), any(), any());
     }
 }

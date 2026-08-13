@@ -171,7 +171,7 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
         assertThat(fullPlan).doesNotContain("Seq Scan");
     }
 
-    // ==================== POF (G-K): RED before backfill, GREEN after ====================
+    // ==================== POF (G-K): RED — NULL process_instance_id survives retention ====================
 
     /**
      * POF (G-K, G-N): demonstrates the pre-fix bug using the real retention code path.
@@ -179,12 +179,11 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
      * RetentionBatchProcessor.deleteInstances() uses WHERE process_instance_id IN (:ids),
      * and NULL IN (...) never matches — so fired boundary jobs accumulate forever.
      *
-     * Uses deleteInstances() (the real production code path) for BOTH phases:
-     * RED: deleteInstances(piId-A) cannot delete timer_job with NULL process_instance_id.
-     * GREEN: deleteInstances(piId-B) CAN delete timer_job with valid process_instance_id.
+     * RED: deleteInstances(piId-B) deletes timer_job with valid process_instance_id,
+     * but timer_job_A with NULL process_instance_id SURVIVES.
      */
     @Test
-    void pof_boundaryTimerWithNullProcessInstanceId_survivesRetention_beforeBackfill() {
+    void pof_boundaryTimerWithNullProcessInstanceId_survivesRetention() {
         UUID actIdA = UUID.randomUUID();
         UUID actIdB = UUID.randomUUID();
 
@@ -234,47 +233,18 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
         assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerIdA))
             .isEqualTo(1); // <-- RED: NULL process_instance_id → survives
-
-        // --- GREEN: apply backfill migration for PI-A's orphan timer_job ---
-        jdbc.update(
-            "UPDATE timer_jobs SET process_instance_id = (" +
-            "  SELECT a.process_instance_id FROM activities a" +
-            "  WHERE a.id = timer_jobs.activity_id" +
-            "  LIMIT 1" +
-            ") WHERE process_instance_id IS NULL AND boundary_element_id IS NOT NULL");
-        UUID backfilledPiId = jdbc.queryForObject(
-            "SELECT process_instance_id FROM timer_jobs WHERE id = ?", UUID.class, timerIdA);
-        assertThat(backfilledPiId).isEqualTo(piIdA);
-
-        // deleteInstances(piIdA) — now deletes the timer_job
-        batchProcessor.deleteInstances(List.of(piIdA));
-        assertThat(jdbc.queryForObject(
-            "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerIdA))
-            .isEqualTo(0); // <-- GREEN: after backfill, deleteInstances removes it
     }
 
-    // ==================== Historical NULL process_instance_id backfill ====================
+    // ==================== Historical NULL process_instance_id cleanup ====================
 
     /**
-     * Verifies the backfill migration works: boundary jobs with NULL process_instance_id
-     * get their process_instance_id populated from the activities table.
+     * Verifies the migration DELETE cleans up orphaned historical boundary jobs
+     * with NULL process_instance_id. These are fired boundary jobs whose instances
+     * were already purged by retention — they accumulate forever without this cleanup.
      */
     @Test
-    void historicalBoundaryJobs_backfilledProcessInstanceId() {
-        UUID piId = UUID.randomUUID();
+    void historicalBoundaryJobs_deletedByMigration() {
         UUID actId = UUID.randomUUID();
-
-        // Completed process instance
-        jdbc.update(
-            "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
-            "VALUES (?, ?, ?, ?, false)",
-            piId, sharedPdId, ago(100), ago(50));
-
-        // Completed activity
-        jdbc.update(
-            "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
-            "VALUES (?, ?, 'hostActivity', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
-            actId, piId, ago(90), ago(80), UUID.randomUUID());
 
         // Historical boundary timer job with NULL process_instance_id (pre-fix behavior)
         UUID timerId = UUID.randomUUID();
@@ -283,27 +253,46 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             "VALUES (?, ?, NULL, 'boundary1', ?, true, ?)",
             timerId, actId, ago(10), ago(90));
 
-        // Simulate backfill migration
+        // Verify row exists before migration
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerId)).isEqualTo(1);
+
+        // Simulate the DELETE migration
         jdbc.update(
-            "UPDATE timer_jobs SET process_instance_id = (" +
-            "  SELECT pi.id FROM process_instances pi" +
-            "  JOIN activities a ON a.process_instance_id = pi.id" +
-            "  WHERE a.id = timer_jobs.activity_id" +
-            "  LIMIT 1" +
-            ") WHERE process_instance_id IS NULL AND boundary_element_id IS NOT NULL");
+            "DELETE FROM timer_jobs " +
+            "WHERE process_instance_id IS NULL " +
+            "AND boundary_element_id IS NOT NULL " +
+            "AND fired = true");
 
-        // Verify backfill
-        UUID backfilledPiId = jdbc.queryForObject(
-            "SELECT process_instance_id FROM timer_jobs WHERE id = ?", UUID.class, timerId);
-        assertThat(backfilledPiId).isEqualTo(piId);
-
-        // Now retention should clean it up
-        List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now(), 100);
-        assertThat(eligible).contains(piId);
-
-        batchProcessor.deleteInstances(eligible);
-
+        // Verify row is deleted
         assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerId)).isEqualTo(0);
+    }
+
+    /**
+     * Verifies the migration does NOT delete live unfired timers with NULL process_instance_id.
+     * Only fired=true, NULL process_instance_id, boundary_element_id NOT NULL are cleaned up.
+     */
+    @Test
+    void liveUnfiredTimer_notDeletedByMigration() {
+        UUID actId = UUID.randomUUID();
+
+        // Live unfired timer job with NULL process_instance_id — must NOT be deleted
+        UUID timerId = UUID.randomUUID();
+        jdbc.update(
+            "INSERT INTO timer_jobs (id, activity_id, process_instance_id, boundary_element_id, due_at, fired, created_at) " +
+            "VALUES (?, ?, NULL, 'boundary1', ?, false, ?)",
+            timerId, actId, ago(10), ago(90));
+
+        // Run the migration DELETE
+        jdbc.update(
+            "DELETE FROM timer_jobs " +
+            "WHERE process_instance_id IS NULL " +
+            "AND boundary_element_id IS NOT NULL " +
+            "AND fired = true");
+
+        // Verify live unfired timer is untouched
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM timer_jobs WHERE id = ?", Integer.class, timerId)).isEqualTo(1);
     }
 }
