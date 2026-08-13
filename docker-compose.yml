@@ -96,6 +96,10 @@ services:
       APP_FILES_DIR: /app/files
       # REQUIRED in prod: strong secret, else the app refuses to start (WO-SEC-9). Generate: openssl rand -base64 48
       ZORROBPM_JWT_SECRET: ${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}
+      # WO-SEC-57: optional CSV of previously active JWT secrets, accepted for verification only.
+      # Used during rotation: put the OLD secret here + the NEW one in ZORROBPM_JWT_SECRET, restart,
+      # wait one access-token TTL, then remove the old one. See governance/runbooks/jwt-key-rotation.md.
+      ZORROBPM_JWT_LEGACY_SECRETS: ${ZORROBPM_JWT_LEGACY_SECRETS:-}
       # REQUIRED in prod: secure admin password, else the app refuses to start (WO-SEC-14 fail-fast).
       # Must NOT be "admin". Generate a strong one.
       ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}

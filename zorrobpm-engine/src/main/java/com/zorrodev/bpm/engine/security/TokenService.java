@@ -9,10 +9,12 @@ import org.springframework.stereotype.Component;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -20,6 +22,13 @@ import java.util.UUID;
 /**
  * Minimal stateless bearer token (JWT-like, HS256) issued on login and verified on each request.
  * Self-contained: HMAC-SHA256 via the JDK, JSON via Jackson — no extra dependencies, no Keycloak.
+ *
+ * WO-SEC-57: rotatable signing keys. One active key signs and verifies; an optional set of
+ * legacy keys (zorrobpm.security.jwt-legacy-secrets, CSV) is accepted for VERIFICATION ONLY,
+ * so a rotation does not invalidate tokens signed with the previous key. The token header carries
+ * a deterministic key id (kid = b64url(SHA-256(secret))[:16]) derived from the key itself — no
+ * separate id configuration to desync. Tokens WITHOUT kid (issued before this change) are verified
+ * with the active key, so a deploy does not log everyone out.
  */
 @Slf4j
 @Component
@@ -27,7 +36,9 @@ public class TokenService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    private byte[] secret;
+    private final byte[] activeSecret;
+    private final String activeKeyId;
+    private final Map<String, byte[]> acceptedKeys; // kid -> secret (active + legacy)
     private final long ttlSeconds;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Base64.Encoder b64 = Base64.getUrlEncoder().withoutPadding();
@@ -39,6 +50,7 @@ public class TokenService {
     public TokenService(
         @Value("${zorrobpm.security.jwt-secret:" + DEFAULT_SECRET + "}") String secret,
         @Value("${zorrobpm.security.jwt-ttl-minutes:30}") long ttlMinutes,
+        @Value("${zorrobpm.security.jwt-legacy-secrets:}") String legacySecrets,
         Environment environment) {
         boolean devOrTest = Arrays.stream(environment.getActiveProfiles())
             .anyMatch(SECRET_OPTIONAL_PROFILES::contains);
@@ -47,8 +59,33 @@ public class TokenService {
                 "FATAL: zorrobpm.security.jwt-secret must be set (default secret allowed only in dev/test profiles). "
                 + "Set ZORROBPM_JWT_SECRET or application-prod.yml.");
         }
-        this.secret = secret.getBytes(StandardCharsets.UTF_8);
+        this.activeSecret = secret.getBytes(StandardCharsets.UTF_8);
+        this.activeKeyId = keyId(this.activeSecret);
+        this.acceptedKeys = new LinkedHashMap<>();
+        this.acceptedKeys.put(activeKeyId, activeSecret);
+        if (legacySecrets != null && !legacySecrets.isBlank()) {
+            for (String legacy : legacySecrets.split(",")) {
+                String trimmed = legacy.trim();
+                if (!trimmed.isEmpty()) {
+                    byte[] legacyBytes = trimmed.getBytes(StandardCharsets.UTF_8);
+                    this.acceptedKeys.putIfAbsent(keyId(legacyBytes), legacyBytes);
+                }
+            }
+        }
         this.ttlSeconds = ttlMinutes * 60;
+    }
+
+    /**
+     * Deterministic key id: b64url(SHA-256(secret)) truncated to 16 bytes. Same secret -> same id,
+     * so rotation config never needs to carry explicit ids.
+     */
+    private static String keyId(byte[] secret) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(Arrays.copyOf(hash, 16));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to derive JWT key id", e);
+        }
     }
 
     public record Claims(UUID userId, String username, String role, long exp) {}
@@ -57,12 +94,13 @@ public class TokenService {
     public String issue(UUID userId, String username, String role) {
         long exp = Instant.now().getEpochSecond() + ttlSeconds;
         try {
-            String header = b64.encodeToString("{\"alg\":\"HS256\",\"typ\":\"JWT\"}".getBytes(StandardCharsets.UTF_8));
+            String header = b64.encodeToString(
+                ("{\"alg\":\"HS256\",\"kid\":\"" + activeKeyId + "\",\"typ\":\"JWT\"}").getBytes(StandardCharsets.UTF_8));
             byte[] payloadJson = mapper.writeValueAsBytes(Map.of(
                 "sub", userId.toString(), "username", username, "role", role, "exp", exp));
             String payload = b64.encodeToString(payloadJson);
             String signingInput = header + "." + payload;
-            return signingInput + "." + b64.encodeToString(hmac(signingInput));
+            return signingInput + "." + b64.encodeToString(hmac(signingInput, activeSecret));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to issue token", e);
         }
@@ -83,8 +121,22 @@ public class TokenService {
                 return null;
             }
 
+            String kid = (String) header.get("kid");
+            byte[] key;
+            if (kid == null) {
+                // WO-SEC-57: legacy token issued before kid existed — verify with the ACTIVE key,
+                // so a rotation deploy does not invalidate every live session at once.
+                key = activeSecret;
+            } else {
+                key = acceptedKeys.get(kid);
+                if (key == null) {
+                    log.debug("Rejected token with unknown key id: {}", kid);
+                    return null;
+                }
+            }
+
             String signingInput = parts[0] + "." + parts[1];
-            if (!constantTimeEquals(b64.encodeToString(hmac(signingInput)), parts[2])) return null;
+            if (!constantTimeEquals(b64.encodeToString(hmac(signingInput, key)), parts[2])) return null;
             Map<String, Object> payload = mapper.readValue(b64d.decode(parts[1]), Map.class);
             long exp = ((Number) payload.get("exp")).longValue();
             if (Instant.now().getEpochSecond() >= exp) return null;
@@ -98,9 +150,9 @@ public class TokenService {
         }
     }
 
-    private byte[] hmac(String data) throws Exception {
+    private byte[] hmac(String data, byte[] key) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(secret, "HmacSHA256"));
+        mac.init(new SecretKeySpec(key, "HmacSHA256"));
         return mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -125,7 +177,7 @@ public class TokenService {
     /** Deterministic SHA-256 hash for refresh token storage/lookup. */
     public String hashToken(String token) {
         try {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
             return b64.encodeToString(hash);
         } catch (Exception e) {
