@@ -24,44 +24,41 @@ databaseChangeLog:
             indexName: idx_timer_jobs__activity_boundary_fired_created
 
   - changeSet:
-      id: 20260813-072-pg-backfill
+      id: 20260813-072-pg-cleanup
       author: zorrodev
       dbms: postgresql
-      comment: WO-PERF-3 — PostgreSQL backfill for historical boundary jobs with NULL process_instance_id.
+      comment: >-
+        WO-PERF-3 — Delete orphaned historical boundary jobs with NULL process_instance_id.
+        These are fired boundary jobs whose processInstanceId was never set (pre-fix) and whose
+        process_instances were already purged by retention. They cannot be re-armed (fired=true)
+        and accumulate forever. The backfill-through-activities approach was ruled out because
+        retention deletes activities along with instances, so the rows it targets are already gone.
       changes:
         - sql:
             sql: >-
-              UPDATE timer_jobs SET process_instance_id = (
-                SELECT pi.id FROM process_instances pi
-                JOIN activities a ON a.process_instance_id = pi.id
-                WHERE a.id = timer_jobs.activity_id
-                LIMIT 1
-              )
+              DELETE FROM timer_jobs
               WHERE process_instance_id IS NULL
               AND boundary_element_id IS NOT NULL
+              AND fired = true
       rollback:
         - sql:
             sql: >-
-              UPDATE timer_jobs SET process_instance_id = NULL
-              WHERE boundary_element_id IS NOT NULL
+              -- Rollback not possible for DELETE; documented as irreversible cleanup.
 
   - changeSet:
-      id: 20260813-072-h2-backfill
+      id: 20260813-072-h2-cleanup
       author: zorrodev
       dbms: h2
-      comment: WO-PERF-3 — H2 backfill for historical boundary jobs with NULL process_instance_id.
+      comment: >-
+        WO-PERF-3 — Delete orphaned historical boundary jobs with NULL process_instance_id (H2).
       changes:
         - sql:
             sql: >-
-              UPDATE timer_jobs SET process_instance_id = (
-                SELECT a.process_instance_id FROM activities a
-                WHERE a.id = timer_jobs.activity_id
-                LIMIT 1
-              )
+              DELETE FROM timer_jobs
               WHERE process_instance_id IS NULL
               AND boundary_element_id IS NOT NULL
+              AND fired = true
       rollback:
         - sql:
             sql: >-
-              UPDATE timer_jobs SET process_instance_id = NULL
-              WHERE boundary_element_id IS NOT NULL
+              -- Rollback not possible for DELETE; documented as irreversible cleanup.
