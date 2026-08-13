@@ -6,6 +6,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
+
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -49,5 +52,17 @@ class RetentionJobTest {
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(10, 10, 4);
         job.run();
         verify(batchProcessor, times(3)).deleteOrphanedBoundaryTimers(any(), eq(10));
+    }
+
+    @Test
+    void enabled_batchSizeZero_doesNotLoopForever() {
+        config.setTtlDays(90);
+        config.setBatchSize(0);
+        when(batchProcessor.findEligibleInstances(any(), eq(0))).thenReturn(java.util.List.of());
+        when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(0))).thenReturn(0);
+        // Preemptive timeout: with the pre-fix guard "deleted < batchSize" the loop never exits
+        // (0 < 0 is false) and run() spins forever issuing DELETE LIMIT 0 — the timeout kills it.
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> job.run());
+        verify(batchProcessor, times(1)).deleteOrphanedBoundaryTimers(any(), eq(0));
     }
 }
