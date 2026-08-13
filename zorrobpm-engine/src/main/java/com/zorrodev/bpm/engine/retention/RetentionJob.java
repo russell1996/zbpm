@@ -54,7 +54,9 @@ public class RetentionJob {
         while (true) {
             int deleted = batchProcessor.deleteOrphanedBoundaryTimers(cutoff, config.getBatchSize());
             orphanDeleted += deleted;
-            if (deleted < config.getBatchSize()) break; // last batch
+            // batchSize=0 would make "deleted < batchSize" never true (0 < 0 is false) and the loop
+            // would spin forever issuing DELETE LIMIT 0; "deleted <= 0" makes the exit unconditional.
+            if (deleted <= 0 || deleted < config.getBatchSize()) break; // last batch
         }
 
         if (orphanDeleted > 0) {
