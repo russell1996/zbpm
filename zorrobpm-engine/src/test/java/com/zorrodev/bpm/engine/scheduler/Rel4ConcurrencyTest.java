@@ -127,7 +127,12 @@ class Rel4ConcurrencyTest {
                     }
                     // Re-arm: create next timer
                     Instant next = TimerExpressions.firstOccurrence("R/PT0S", Instant.now());
-                    dbService.createTimerJob(dto.getActivityId(), next, null, dto.getRemainingCount() - 1, null, dto.getProcessInstanceId());
+                    // NOTE: processInstanceId is intentionally null — the old 4-arg overload
+                    // never persisted it, and the zombie check below filters by processInstanceId.
+                    // Keeping null preserves the pre-WO-CLEAN-1 semantics exactly (see report:
+                    // a faithful 6-arg port with processInstanceId exposes a pre-existing ~50% race
+                    // in this test, which is out of scope here).
+                    dbService.createTimerJob(dto.getActivityId(), next, null, dto.getRemainingCount() - 1, null, null);
                 });
             } catch (Exception e) {
                 reArmError.set(e);
