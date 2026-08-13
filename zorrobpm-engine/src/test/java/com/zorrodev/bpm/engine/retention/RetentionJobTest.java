@@ -33,8 +33,21 @@ class RetentionJobTest {
         config.setTtlDays(90);
         config.setBatchSize(10);
         when(batchProcessor.findEligibleInstances(any(), eq(10))).thenReturn(java.util.List.of());
+        when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(0);
         job.run();
         verify(batchProcessor).findEligibleInstances(any(), eq(10));
+        verify(batchProcessor).deleteOrphanedBoundaryTimers(any(), eq(10));
         verify(batchProcessor, never()).deleteInstances(any());
+    }
+
+    @Test
+    void enabled_cleansOrphanedBoundaryTimersInBatches() {
+        config.setTtlDays(90);
+        config.setBatchSize(10);
+        when(batchProcessor.findEligibleInstances(any(), eq(10))).thenReturn(java.util.List.of());
+        // two full batches then a short one → loop must stop after the short batch
+        when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(10, 10, 4);
+        job.run();
+        verify(batchProcessor, times(3)).deleteOrphanedBoundaryTimers(any(), eq(10));
     }
 }

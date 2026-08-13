@@ -590,6 +590,20 @@ class DBServiceImplTest {
     }
 
     @Test
+    void createTimerJob_withProcessInstanceId_persistsIt() {
+        UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        Instant dueAt = Instant.now().plusSeconds(60);
+
+        UUID id = dbService.createTimerJob(activityId, dueAt, "boundary1", 1, "R/PT1M", processInstanceId);
+
+        assertThat(id).isNotNull();
+        ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);
+        verify(timerJobRepository).save(captor.capture());
+        assertThat(captor.getValue().getProcessInstanceId()).isEqualTo(processInstanceId);
+    }
+
+    @Test
     void findDueTimerJobs_mapsEntities() {
         Instant now = Instant.now();
         TimerJobEntity entity = new TimerJobEntity();

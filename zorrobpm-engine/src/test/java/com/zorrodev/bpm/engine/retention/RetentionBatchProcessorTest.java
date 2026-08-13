@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -53,5 +54,26 @@ class RetentionBatchProcessorTest {
 
         // Verify delete calls were made (at least process_instances deletion)
         verify(jdbc, atLeast(1)).update(anyString(), any(org.springframework.jdbc.core.namedparam.SqlParameterSource.class));
+    }
+
+    @Test
+    void deleteOrphanedBoundaryTimers_targetsOnlyOrphanedFiredBoundaryJobs() {
+        Instant cutoff = Instant.now().minusSeconds(86400);
+        when(jdbc.update(anyString(), any(org.springframework.jdbc.core.namedparam.SqlParameterSource.class))).thenReturn(7);
+
+        int deleted = processor.deleteOrphanedBoundaryTimers(cutoff, 100);
+
+        assertThat(deleted).isEqualTo(7);
+        org.mockito.ArgumentCaptor<String> sqlCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).update(sqlCaptor.capture(), any(org.springframework.jdbc.core.namedparam.SqlParameterSource.class));
+
+        String sql = sqlCaptor.getValue();
+        // predicate: only orphaned (NULL process_instance_id) fired boundary jobs
+        assertThat(sql).contains("process_instance_id IS NULL");
+        assertThat(sql).contains("boundary_element_id IS NOT NULL");
+        assertThat(sql).contains("fired = true");
+        // TTL gate and batch bound
+        assertThat(sql).contains("created_at < :cutoff");
+        assertThat(sql).contains("LIMIT :limit");
     }
 }
