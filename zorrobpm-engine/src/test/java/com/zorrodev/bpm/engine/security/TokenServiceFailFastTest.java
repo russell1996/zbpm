@@ -25,7 +25,7 @@ class TokenServiceFailFastTest {
     void criterion1_noProfile_defaultSecret_throwsIllegalState() {
         MockEnvironment env = new MockEnvironment();
         // No active profiles set
-        assertThatThrownBy(() -> new TokenService(DEFAULT_SECRET, 60, env))
+        assertThatThrownBy(() -> new TokenService(DEFAULT_SECRET, 60, "", env))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("jwt-secret");
     }
@@ -36,7 +36,7 @@ class TokenServiceFailFastTest {
     void criterion2_productionProfile_defaultSecret_throwsIllegalState() {
         MockEnvironment env = new MockEnvironment();
         env.setActiveProfiles("production");
-        assertThatThrownBy(() -> new TokenService(DEFAULT_SECRET, 60, env))
+        assertThatThrownBy(() -> new TokenService(DEFAULT_SECRET, 60, "", env))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("jwt-secret");
     }
@@ -47,7 +47,7 @@ class TokenServiceFailFastTest {
     void criterion3_testProfile_defaultSecret_doesNotThrow() {
         MockEnvironment env = new MockEnvironment();
         env.setActiveProfiles("test");
-        assertThatNoException().isThrownBy(() -> new TokenService(DEFAULT_SECRET, 60, env));
+        assertThatNoException().isThrownBy(() -> new TokenService(DEFAULT_SECRET, 60, "", env));
     }
 
     // --- Criterion #4: Custom secret → OK regardless of profile ---
@@ -56,12 +56,12 @@ class TokenServiceFailFastTest {
     void criterion4_customSecret_anyProfile_doesNotThrow() {
         MockEnvironment env = new MockEnvironment();
         env.setActiveProfiles("prod");
-        assertThatNoException().isThrownBy(() -> new TokenService(CUSTOM_SECRET, 60, env));
+        assertThatNoException().isThrownBy(() -> new TokenService(CUSTOM_SECRET, 60, "", env));
     }
 
     @Test
     void criterion4_noProfile_customSecret_doesNotThrow() {
         MockEnvironment env = new MockEnvironment();
-        assertThatNoException().isThrownBy(() -> new TokenService(CUSTOM_SECRET, 60, env));
+        assertThatNoException().isThrownBy(() -> new TokenService(CUSTOM_SECRET, 60, "", env));
     }
 }
