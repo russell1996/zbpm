@@ -22,6 +22,10 @@ variables:
   IMAGE_BACKEND: zorrobpm-app
   IMAGE_FRONTEND: zorrobpm-frontend
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  # WO-OPS-5: how many SHA-tagged runtime images to keep per repository. 3 = the just-built tag
+  # (which the next deploy will run), the previous deploy tag (.previous_tag, rollback target) and
+  # one spare build ahead of deploy; protected .current_tag/.previous_tag tags survive regardless.
+  RETAIN_IMAGES_KEEP: "3"
   # An earlier CI revision left root-owned target/ dirs on the shell runner that the gitlab-runner user
   # can't remove — `git clean` then fails the fetch *before* any script runs. Disable git clean so checkout
   # succeeds; before_script then reclaims ownership of the workspace (one-time, self-healing).
@@ -186,6 +190,16 @@ build:
     - docker build -t "$IMAGE_BACKEND:$IMAGE_TAG" -t "$IMAGE_BACKEND:latest" -f Dockerfile .
     - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" zorrobpm-frontend
     # `docker image ls` accepts at most one repository argument — list each separately
+    - docker image ls "$IMAGE_BACKEND"
+    - docker image ls "$IMAGE_FRONTEND"
+    # WO-OPS-5: SHA-tagged images accumulate one per push — `docker image prune -f` in deploy only
+    # removes dangling images, so prune here per repository, keeping RETAIN_IMAGES_KEEP newest
+    # plus the tags in $DEPLOY_DIR/.current_tag / .previous_tag (rollback must stay possible).
+    # RETAIN_IMAGES_PROTECT=$IMAGE_TAG: this job just built that tag, and .current_tag is written
+    # only later, in deploy — BuildKit cache hits share CreatedAt, so without an explicit protect
+    # the cleanup could deterministically untag the image it itself produced (HOLD round 2).
+    - RETAIN_IMAGES_PROTECT="$IMAGE_TAG" bash ci/retain-images.sh "$IMAGE_BACKEND"
+    - RETAIN_IMAGES_PROTECT="$IMAGE_TAG" bash ci/retain-images.sh "$IMAGE_FRONTEND"
     - docker image ls "$IMAGE_BACKEND"
     - docker image ls "$IMAGE_FRONTEND"
     # WO-OPS-2: save build manifest for traceability
