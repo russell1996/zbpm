@@ -67,6 +67,16 @@ public class TokenService {
             for (String legacy : legacySecrets.split(",")) {
                 String trimmed = legacy.trim();
                 if (!trimmed.isEmpty()) {
+                    // P-41: the legacy list is a key-material knob — it must pass the same fail-fast
+                    // as the active secret. Without this, the published default secret written into
+                    // jwt-legacy-secrets would become an accepted signing key in production, silently
+                    // bypassing the WO-SEC-9 invariant (full auth bypass to ADMIN).
+                    if (!devOrTest && DEFAULT_SECRET.equals(trimmed)) {
+                        throw new IllegalStateException(
+                            "FATAL: default secret must not appear in jwt-legacy-secrets "
+                            + "(default secret allowed only in dev/test profiles). "
+                            + "Set ZORROBPM_JWT_LEGACY_SECRETS to real rotation keys.");
+                    }
                     byte[] legacyBytes = trimmed.getBytes(StandardCharsets.UTF_8);
                     this.acceptedKeys.putIfAbsent(keyId(legacyBytes), legacyBytes);
                 }

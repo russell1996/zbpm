@@ -131,8 +131,14 @@ class TokenServiceKeyRotationTest {
 
     @Test
     void criterion5_algNoneWithKid_rejected() throws Exception {
-        // alg-confusion guard must apply to kid-carrying tokens as well
-        String token = buildToken("none", "whatever-kid", validPayload(), KEY_B);
+        // alg-confusion guard must apply to kid-carrying tokens as well. The kid MUST be a real
+        // active key's kid (taken from a live issued token): with a made-up kid the token is
+        // rejected by the kid lookup, not by the alg guard — the test would stay green even if
+        // the alg check were removed, promising more than it verifies.
+        String realKid = (String) mapper.readValue(
+            b64d.decode(serviceWith(KEY_B, "").issue(UUID.randomUUID(), "alice", "USER").split("\\.")[0]),
+            Map.class).get("kid");
+        String token = buildToken("none", realKid, validPayload(), KEY_B);
         assertThat(serviceWith(KEY_B, "").verify(token)).isNull();
     }
 
