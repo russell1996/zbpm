@@ -195,8 +195,11 @@ build:
     # WO-OPS-5: SHA-tagged images accumulate one per push — `docker image prune -f` in deploy only
     # removes dangling images, so prune here per repository, keeping RETAIN_IMAGES_KEEP newest
     # plus the tags in $DEPLOY_DIR/.current_tag / .previous_tag (rollback must stay possible).
-    - bash ci/retain-images.sh "$IMAGE_BACKEND"
-    - bash ci/retain-images.sh "$IMAGE_FRONTEND"
+    # RETAIN_IMAGES_PROTECT=$IMAGE_TAG: this job just built that tag, and .current_tag is written
+    # only later, in deploy — BuildKit cache hits share CreatedAt, so without an explicit protect
+    # the cleanup could deterministically untag the image it itself produced (HOLD round 2).
+    - RETAIN_IMAGES_PROTECT="$IMAGE_TAG" bash ci/retain-images.sh "$IMAGE_BACKEND"
+    - RETAIN_IMAGES_PROTECT="$IMAGE_TAG" bash ci/retain-images.sh "$IMAGE_FRONTEND"
     - docker image ls "$IMAGE_BACKEND"
     - docker image ls "$IMAGE_FRONTEND"
     # WO-OPS-2: save build manifest for traceability

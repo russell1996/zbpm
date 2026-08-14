@@ -18,7 +18,10 @@
 # protected .current_tag/.previous_tag tags survive regardless of the limit.
 #
 # Usage: retain-images.sh <repository>
-# Env:  RETAIN_IMAGES_KEEP (default 3), DEPLOY_DIR (default /opt/zorro-bpm)
+# Env:  RETAIN_IMAGES_KEEP (default 3), DEPLOY_DIR (default /opt/zorro-bpm),
+#       RETAIN_IMAGES_PROTECT (space-separated extra tags that must survive —
+#       the build job passes $IMAGE_TAG here; see below why .current_tag alone
+#       cannot protect the just-built tag)
 set -euo pipefail
 
 repo="${1:?usage: retain-images.sh <repository>}"
@@ -32,6 +35,16 @@ for f in "$deploy_dir/.current_tag" "$deploy_dir/.previous_tag"; do
     tag="$(cat "$f")"
     [ -n "$tag" ] && protected="$protected $tag"
   fi
+done
+# HOLD round 2: the tag this very build job just produced must survive too.
+# BuildKit cache hits stamp several builds with the SAME CreatedAt, so `sort -r`
+# below falls through to reverse-lexicographic order on a random hex-SHA and
+# build order stops meaning anything — the cleanup could untag the image it
+# just built. `.current_tag` cannot protect it: retention runs in `build`,
+# `.current_tag` is written later, in `deploy`. So the caller passes the tag
+# explicitly.
+for t in ${RETAIN_IMAGES_PROTECT:-}; do
+  [ -n "$t" ] && protected="$protected $t"
 done
 [ -n "$protected" ] && echo "retain-images: protected tags:$protected"
 
