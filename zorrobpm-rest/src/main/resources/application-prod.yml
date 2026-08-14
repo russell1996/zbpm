@@ -13,6 +13,9 @@ spring:
 zorrobpm:
   security:
     jwt-secret: ${ZORROBPM_JWT_SECRET:change-me-dev-secret-please-override-in-production}
+    # WO-SEC-57: CSV of previously active JWT secrets, accepted for VERIFICATION ONLY (key rotation).
+    # Empty by default = single-key mode, exactly as before. Format: comma-separated secrets.
+    jwt-legacy-secrets: ${ZORROBPM_JWT_LEGACY_SECRETS:}
     default-admin-password: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:admin}
     force-password-enforce: true
     rate-limit:
