@@ -33,7 +33,7 @@ if [ "$MECH" = "no-check" ]; then
     set -e
     echo "pre-fix deploy exit code on 95% usage: $rc"
     if [ "$rc" -eq 0 ]; then
-        echo "FAIL: pre-fix deploy exited 0 on a 95% full disk — criterion 1 violated (this is the expected RED)"
+        echo "FAIL: pre-fix deploy exited 0 on a 95% full disk — expected: non-zero (gate must refuse deploy), actual: 0 — criterion 1 violated (this is the expected RED)"
         exit 1
     fi
     echo "unexpected: pre-fix deploy did not exit 0"
@@ -131,4 +131,5 @@ grep -nE -- "--volumes|image prune|image rm|retain-images" ci/disk-space-check.s
   && { echo "FAIL: disk-space-check.sh touches volumes or image retention (OPS-5 territory)"; exit 1; }
 echo "OK: no --volumes, no image prune/rm, no retain-images call in disk-space-check.sh"
 
+echo "Tests run: 1, Failures: 0"
 echo "PASS: test-disk-space.sh ($MECH mode)"
