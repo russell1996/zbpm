@@ -56,5 +56,9 @@ for entry in "${entries[@]}"; do
   done
   [ "$skip" -eq 1 ] && { echo "retain-images: keeping protected $full"; continue; }
   echo "retain-images: removing $full (older than keep=$keep, not protected)"
-  docker image rm "$full"
+  # P-42: a maintenance script under `set -e` must survive a single element's
+  # failure. An image referenced by a container (even a stopped one) cannot be
+  # removed — `docker image rm` exits non-zero. Skipping it keeps the cleanup
+  # going instead of aborting the whole build job on an unrelated hygiene step.
+  docker image rm "$full" || echo "retain-images: in use, skipping $full"
 done
