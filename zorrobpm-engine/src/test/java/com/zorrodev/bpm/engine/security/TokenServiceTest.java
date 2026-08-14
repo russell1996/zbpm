@@ -10,7 +10,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TokenServiceTest {
 
     private static final String SECRET = "unit-test-secret-please-override";
-    private final TokenService tokens = new TokenService(SECRET, 60, new MockEnvironment());
+    private static final String OTHER_SECRET = "a-different-secret";
+    private final TokenService tokens = new TokenService(SECRET, 60, "", new MockEnvironment());
 
     @Test
     void issueThenVerifyReturnsClaims() {
@@ -33,13 +34,13 @@ class TokenServiceTest {
 
     @Test
     void tokenSignedWithAnotherSecretIsRejected() {
-        String token = new TokenService("a-different-secret", 60, new MockEnvironment()).issue(UUID.randomUUID(), "alice", "USER");
+        String token = new TokenService(OTHER_SECRET, 60, "", new MockEnvironment()).issue(UUID.randomUUID(), "alice", "USER");
         assertThat(tokens.verify(token)).isNull();
     }
 
     @Test
     void expiredTokenIsRejected() {
-        TokenService expired = new TokenService(SECRET, -1, new MockEnvironment()); // exp set in the past
+        TokenService expired = new TokenService(SECRET, -1, "", new MockEnvironment()); // exp set in the past
         String token = expired.issue(UUID.randomUUID(), "alice", "USER");
         assertThat(expired.verify(token)).isNull();
     }
