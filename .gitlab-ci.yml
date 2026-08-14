@@ -219,6 +219,11 @@ deploy:
   tags: [zbpm]
   script:
     - mkdir -p "$DEPLOY_DIR"
+    # WO-OPS-3-DISK: disk gate BEFORE anything is written. On a full disk both
+    # deploy and rollback die ('No space left on device') — the gate prunes
+    # build cache/stopped containers above 85% and refuses to deploy above 90%
+    # after cleanup, instead of stranding the stack mid-way.
+    - bash ci/disk-space-check.sh
     # remember the currently deployed tag so `rollback` can restore it
     - if [ -f "$DEPLOY_DIR/.current_tag" ]; then cp "$DEPLOY_DIR/.current_tag" "$DEPLOY_DIR/.previous_tag"; fi
     # sync sources, preserving host .env (DB/RabbitMQ secrets) and rollback bookkeeping
