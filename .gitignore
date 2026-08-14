@@ -26,3 +26,11 @@ zorrobpm-frontend/dist/
 # Ролевые агенты (.claude/agents/) версионируются намеренно: это часть протокола команды.
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Агентские настройки: определения ролей — в репозитории, локальное состояние — нет.
+# Промпты (.opencode/agents, .claude/agents), AGENTS.md и opencode.json СОЗНАТЕЛЬНО отслеживаются:
+# это сам процесс, а не среда. opencode.json к тому же подключает governance/cto-to-agent.md через
+# `instructions` — без него в клоне диспатч перестаёт доезжать до исполнителя автоматически.
+# Ниже — только то, что привязано к конкретной машине.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
