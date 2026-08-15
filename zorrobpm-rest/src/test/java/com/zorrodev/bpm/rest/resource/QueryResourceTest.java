@@ -45,7 +45,7 @@ class QueryResourceTest {
         when(request.getAttribute("principal")).thenReturn(
             new com.zorrodev.bpm.engine.security.Principal.UserPrincipal(
                 UUID.randomUUID(), "admin", "SUPER_ADMIN"));
-        when(eventAuthzResolver.resolve(any(), any())).thenReturn(null);
+        when(eventAuthzResolver.readableRuntimePdIds(any(), any())).thenReturn(null);
     }
 
     @Test

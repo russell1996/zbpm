@@ -112,7 +112,7 @@ public class QueryResource implements QueryContract {
         if (!(attr instanceof Principal principal)) {
             return Set.of();
         }
-        return eventAuthzResolver.resolve(principal, null);
+        return eventAuthzResolver.readableRuntimePdIds(principal, null);
     }
 
     /**

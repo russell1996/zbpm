@@ -84,7 +84,7 @@ public class SseEventStreamService {
     public String registerClient(SseEmitter emitter, Principal principal, String typeFilter,
                                   String processInstanceIdFilter, String processDefinitionKeyFilter) {
         String clientId = UUID.randomUUID().toString();
-        Collection<UUID> allowedPdIds = eventAuthzResolver.resolve(principal, processDefinitionKeyFilter);
+        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
 
         SseClientInfo info = new SseClientInfo(clientId, emitter, principal, allowedPdIds,
             typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
@@ -196,7 +196,7 @@ public class SseEventStreamService {
      */
     public void sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
                                    String processDefinitionKeyFilter) {
-        Collection<UUID> allowedPdIds = eventAuthzResolver.resolve(principal, processDefinitionKeyFilter);
+        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
 
         int limit = 100;
         List<DomainEventEntity> events;

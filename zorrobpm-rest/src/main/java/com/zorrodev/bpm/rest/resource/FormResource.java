@@ -67,16 +67,41 @@ public class FormResource implements FormContract {
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessRepository processRepository;
 
+    /**
+     * WO-ACL-1: form artifacts (list/get/start-form/bindings/schema-map) are DEFINITION
+     * reads — any authenticated user sees them (ADR-8 §1); ServicePrincipal stays
+     * grant-scoped.
+     */
     private Collection<UUID> resolveAllowedPdIds() {
         Object attr = request.getAttribute("principal");
         if (!(attr instanceof Principal principal)) {
             return Set.of();
         }
-        return eventAuthzResolver.resolve(principal, null);
+        return eventAuthzResolver.visibleDefinitionIds(principal, null);
+    }
+
+    /**
+     * WO-ACL-1: the task form of a concrete process instance is RUNTIME data — it is
+     * resolved per instance and prefilled with the instance's variables. Only process
+     * members (or SUPER_ADMIN / granted ServicePrincipal) may read it.
+     */
+    private Collection<UUID> resolveRuntimePdIds() {
+        Object attr = request.getAttribute("principal");
+        if (!(attr instanceof Principal principal)) {
+            return Set.of();
+        }
+        return eventAuthzResolver.readableRuntimePdIds(principal, null);
     }
 
     private void requirePdAccess(UUID pdId) {
         Collection<UUID> allowed = resolveAllowedPdIds();
+        if (allowed != null && !allowed.contains(pdId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found");
+        }
+    }
+
+    private void requireRuntimePdAccess(UUID pdId) {
+        Collection<UUID> allowed = resolveRuntimePdIds();
         if (allowed != null && !allowed.contains(pdId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found");
         }
@@ -200,7 +225,8 @@ public class FormResource implements FormContract {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found"));
         ProcessInstanceEntity pi = processInstanceRepository.findById(task.getProcessInstanceId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"));
-        requirePdAccess(pi.getProcessDefinitionId());
+        // WO-ACL-1: task form of a concrete instance = runtime read (variables prefill)
+        requireRuntimePdAccess(pi.getProcessDefinitionId());
         return resolveForm(task.getFormKey(), task.getProcessInstanceId());
     }
 
