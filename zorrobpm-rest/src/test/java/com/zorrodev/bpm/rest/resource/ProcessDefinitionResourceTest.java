@@ -50,7 +50,7 @@ class ProcessDefinitionResourceTest {
 
     private void stubSuperAdmin() {
         when(request.getAttribute("principal")).thenReturn(superAdmin());
-        when(eventAuthzResolver.resolve(any(), any())).thenReturn(null);
+        when(eventAuthzResolver.visibleDefinitionIds(any(), any())).thenReturn(null);
     }
 
     // --- addProcessDefinition ---
@@ -136,7 +136,7 @@ class ProcessDefinitionResourceTest {
         UUID pdIdB = UUID.randomUUID();
         when(request.getAttribute("principal")).thenReturn(new Principal.ServicePrincipal(
             UUID.randomUUID(), UUID.randomUUID(), java.util.Map.of(pdIdA, new Principal.Grant(Set.of("READ"), false))));
-        when(eventAuthzResolver.resolve(any(), any())).thenReturn(Set.of(pdIdA));
+        when(eventAuthzResolver.visibleDefinitionIds(any(), any())).thenReturn(Set.of(pdIdA));
 
         assertThatThrownBy(() -> resource.getProcessDefinitionById(pdIdB))
             .isInstanceOf(ResponseStatusException.class)
@@ -161,7 +161,7 @@ class ProcessDefinitionResourceTest {
         UUID pdIdB = UUID.randomUUID();
         when(request.getAttribute("principal")).thenReturn(new Principal.ServicePrincipal(
             UUID.randomUUID(), UUID.randomUUID(), java.util.Map.of(pdIdA, new Principal.Grant(Set.of("READ"), false))));
-        when(eventAuthzResolver.resolve(any(), any())).thenReturn(Set.of(pdIdA));
+        when(eventAuthzResolver.visibleDefinitionIds(any(), any())).thenReturn(Set.of(pdIdA));
 
         assertThatThrownBy(() -> resource.getProcessDefinitionXml(pdIdB))
             .isInstanceOf(ResponseStatusException.class)
@@ -199,7 +199,7 @@ class ProcessDefinitionResourceTest {
         UUID pdIdB = UUID.randomUUID();
         when(request.getAttribute("principal")).thenReturn(new Principal.ServicePrincipal(
             UUID.randomUUID(), UUID.randomUUID(), java.util.Map.of(pdIdA, new Principal.Grant(Set.of("READ"), false))));
-        when(eventAuthzResolver.resolve(any(), any())).thenReturn(Set.of(pdIdA));
+        when(eventAuthzResolver.visibleDefinitionIds(any(), any())).thenReturn(Set.of(pdIdA));
 
         assertThatThrownBy(() -> resource.getProcessDefinitionStructure(pdIdB))
             .isInstanceOf(ResponseStatusException.class)

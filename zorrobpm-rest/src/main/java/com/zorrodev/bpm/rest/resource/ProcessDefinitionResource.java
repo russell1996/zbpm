@@ -45,7 +45,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
         if (!(attr instanceof Principal principal)) {
             return Set.of();
         }
-        return eventAuthzResolver.resolve(principal, null);
+        return eventAuthzResolver.visibleDefinitionIds(principal, null);
     }
 
     private void requirePdAccess(UUID id) {

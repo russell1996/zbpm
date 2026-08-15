@@ -59,7 +59,7 @@ public class EventResource {
         }
 
         // Resolve allowed processDefinitionIds based on grants (null = see all)
-        Collection<UUID> allowedPdIds = eventAuthzResolver.resolve(principal, processDefinitionKey);
+        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKey);
         if (allowedPdIds != null && allowedPdIds.isEmpty()) {
             PagedDataDTO<Map<String, Object>> empty = new PagedDataDTO<>();
             empty.setData(List.of());

@@ -40,7 +40,7 @@ public class DmnResource implements DmnContract {
         if (!(attr instanceof Principal principal)) {
             return Set.of();
         }
-        return eventAuthzResolver.resolve(principal, null);
+        return eventAuthzResolver.visibleDefinitionIds(principal, null);
     }
 
     /**
