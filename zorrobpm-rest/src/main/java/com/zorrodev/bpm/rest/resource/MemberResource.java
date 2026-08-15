@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.MemberContract;
+import com.zorrodev.bpm.contract.ProcessRole;
 import com.zorrodev.bpm.contract.dto.AddMemberDTO;
 import com.zorrodev.bpm.contract.dto.ChangeRoleDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
@@ -48,10 +49,10 @@ public class MemberResource implements MemberContract {
         return attr instanceof Principal p ? p : null;
     }
 
-    private void requireManageMembers(String processKey) {
+    private void requireOperate(String processKey, AuthorizationService.Action action) {
         Principal principal = getPrincipal();
         if (principal == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
-        if (!authorizationService.canOperate(principal, processKey, AuthorizationService.Action.MANAGE_MEMBERS)) {
+        if (!authorizationService.canOperate(principal, processKey, action)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
     }
@@ -68,8 +69,29 @@ public class MemberResource implements MemberContract {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process not found"));
     }
 
-    private Principal getEffectivePrincipal() {
-        return getPrincipal();
+    /**
+     * WO-ACL-2: the invariant "a process always has at least one OWNER" is enforced in ONE place
+     * for both removeMember and changeRole. Previously only removeMember had it — demoting the
+     * single OWNER through changeRole left the process ownerless.
+     */
+    private void requireOwnerRemains(ProcessEntity process, ProcessMemberEntity member, ProcessRole targetRole) {
+        if (ProcessRole.fromName(member.getRole()) != ProcessRole.OWNER) return;
+        if (targetRole == ProcessRole.OWNER) return; // OWNER → OWNER keeps the invariant
+        long ownerCount = processMemberRepository.findByProcessId(process.getId()).stream()
+            .filter(m -> ProcessRole.fromName(m.getRole()) == ProcessRole.OWNER)
+            .count();
+        if (ownerCount <= 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot remove or demote the last OWNER");
+        }
+    }
+
+    /** Unknown/absent role → 400 with the list of valid roles (WO-ACL-2 п.1), not a rightless member. */
+    private ProcessRole requireValidRole(ProcessRole role) {
+        if (role == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid role. Valid roles: " + ProcessRole.validRolesDescription());
+        }
+        return role;
     }
 
     @Override
@@ -87,7 +109,8 @@ public class MemberResource implements MemberContract {
 
     @Override
     public List<MemberDTO> listMembers(@PathVariable String key) {
-        requireManageMembers(key);
+        // ADR-8 п.4: seeing members ≠ managing them — reading is a member right, not an OWNER/SA one
+        requireOperate(key, AuthorizationService.Action.VIEW_MEMBERS);
         ProcessEntity process = resolveProcess(key);
         return processMemberRepository.findByProcessId(process.getId()).stream()
             .map(this::toDTO)
@@ -97,8 +120,10 @@ public class MemberResource implements MemberContract {
     @Transactional
     @Override
     public MemberDTO addMember(@PathVariable String key, @RequestBody AddMemberDTO dto) {
-        requireManageMembers(key);
+        requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
         ProcessEntity process = resolveProcess(key);
+
+        ProcessRole role = requireValidRole(dto.getRole());
 
         // Validate user exists
         UiUserEntity user = uiUserRepository.findById(dto.getUserId())
@@ -120,7 +145,7 @@ public class MemberResource implements MemberContract {
         ProcessMemberEntity member = new ProcessMemberEntity();
         member.setProcessId(process.getId());
         member.setUserId(dto.getUserId());
-        member.setRole(dto.getRole());
+        member.setRole(role.name());
         member.setAddedBy(addedBy);
         member.setAddedAt(Instant.now());
         processMemberRepository.save(member);
@@ -132,14 +157,18 @@ public class MemberResource implements MemberContract {
     @Transactional
     @Override
     public MemberDTO changeRole(@PathVariable String key, @PathVariable UUID userId, @RequestBody ChangeRoleDTO dto) {
-        requireManageMembers(key);
+        requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
         ProcessEntity process = resolveProcess(key);
+
+        ProcessRole role = requireValidRole(dto.getRole());
 
         ProcessMemberEntity member = processMemberRepository.findById(
             new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), userId))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Member not found"));
 
-        member.setRole(dto.getRole());
+        requireOwnerRemains(process, member, role);
+
+        member.setRole(role.name());
         processMemberRepository.save(member);
         auditLogService.record(getPrincipal(), "MEMBER_ROLE_CHANGE", key, userId.toString());
         return toDTO(member);
@@ -148,22 +177,15 @@ public class MemberResource implements MemberContract {
     @Transactional
     @Override
     public IdDTO removeMember(@PathVariable String key, @PathVariable UUID userId) {
-        requireManageMembers(key);
+        requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
         ProcessEntity process = resolveProcess(key);
 
         ProcessMemberEntity member = processMemberRepository.findById(
             new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), userId))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Member not found"));
 
-        // Cannot remove last OWNER (U2 fail-closed)
-        if ("OWNER".equals(member.getRole())) {
-            long ownerCount = processMemberRepository.findByProcessId(process.getId()).stream()
-                .filter(m -> "OWNER".equals(m.getRole()))
-                .count();
-            if (ownerCount <= 1) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot remove the last OWNER");
-            }
-        }
+        // Last-OWNER guard — single function shared with changeRole (WO-ACL-2 п.3)
+        requireOwnerRemains(process, member, null);
 
         processMemberRepository.delete(member);
 

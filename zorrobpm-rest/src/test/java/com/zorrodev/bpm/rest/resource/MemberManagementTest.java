@@ -183,10 +183,14 @@ class MemberManagementTest {
                 .andExpect(status().isOk());
     }
 
-    // ==================== Criterion #3: USER-OWNER adds member → 403 ====================
+    // ==================== Criterion #3: OWNER of his own process adds member → 200 ====================
 
+    /**
+     * ADR-8/WO-ACL-2: behaviour changed — MANAGE_MEMBERS is granted to the OWNER of the process
+     * (was SUPER_ADMIN-only under ADR-2). OWNER adds a member to HIS process → 200.
+     */
     @Test
-    void criterion3_ownerAddMember_returns403() throws Exception {
+    void criterion3_ownerAddMember_nowAllowed_returns200() throws Exception {
         // First, SUPER_ADMIN deploys and adds OWNER as member
         String key = uniqueKey();
         deployBpmnAs(adminToken, key);
@@ -196,12 +200,12 @@ class MemberManagementTest {
                         .content("{\"userId\":\"" + ownerId + "\",\"role\":\"OWNER\"}"))
                 .andExpect(status().isOk());
 
-        // OWNER tries to add a member → 403 (MANAGE_MEMBERS → super-admin only)
+        // OWNER adds a member to his own process → 200 (ADR-8 п.7)
         mockMvc.perform(post("/processes/" + key + "/members")
                         .header("Authorization", "Bearer " + ownerToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"" + designerId + "\",\"role\":\"DESIGNER\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
     }
 
     // ==================== Criterion #4: SUPER_ADMIN adds member → 200 ====================
@@ -269,29 +273,6 @@ class MemberManagementTest {
                         .header("Authorization", "Bearer " + ownerToken)
                         .content(mapper.writeValueAsString(new AddProcessDefinitionDTO()))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isForbidden());
-    }
-
-    /**
-     * Proof-of-failure (V3): On CURRENT code, OWNER can add members (200).
-     * After ADR-2 fix: OWNER add member → 403.
-     */
-    @Test
-    void criterion8_proofOfFailure_ownerAddMemberWas200_now403() throws Exception {
-        String key = uniqueKey();
-        deployBpmnAs(adminToken, key);
-        // Add OWNER as member
-        mockMvc.perform(post("/processes/" + key + "/members")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"" + ownerId + "\",\"role\":\"OWNER\"}"))
-                .andExpect(status().isOk());
-
-        // OWNER tries to add member → 403 (was 200 before fix)
-        mockMvc.perform(post("/processes/" + key + "/members")
-                        .header("Authorization", "Bearer " + ownerToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"" + designerId + "\",\"role\":\"DESIGNER\"}"))
                 .andExpect(status().isForbidden());
     }
 }
