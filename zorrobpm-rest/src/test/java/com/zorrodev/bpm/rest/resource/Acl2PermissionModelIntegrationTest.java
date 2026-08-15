@@ -4,13 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
+import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberId;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -25,6 +28,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -56,9 +60,11 @@ class Acl2PermissionModelIntegrationTest {
     @Autowired private UiUserRepository userRepository;
     @Autowired private ProcessRepository processRepository;
     @Autowired private ProcessMemberRepository processMemberRepository;
+    @Autowired private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired private PasswordHasher passwordHasher;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    private final List<String> createdKeys = new ArrayList<>();
     private String adminToken;
     private UUID adminId;
     private String ownerToken;
@@ -122,7 +128,28 @@ class Acl2PermissionModelIntegrationTest {
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
+        createdKeys.add(key);
         return key;
+    }
+
+    /**
+     * Tests share one Spring context and one in-memory DB. Deployed definitions accumulate in
+     * process_definition and shift the pageSize=50 boundary of ProcessDefinitionResourceIntegrationTests
+     * (name-desc binary collation pushes lowercase keys above "Assignee Process"). Clean up what
+     * THIS class created so the shared state returns to the pre-class shape.
+     */
+    @AfterEach
+    void cleanupDeployedDefinitions() {
+        for (String key : createdKeys) {
+            processRepository.findByDefinitionKey(key).ifPresent(p -> {
+                processMemberRepository.findByProcessId(p.getId()).forEach(processMemberRepository::delete);
+                processRepository.delete(p);
+            });
+            List<ProcessDefinitionEntity> defs = processDefinitionRepository.findAll(
+                (root, q, cb) -> cb.equal(root.get("key"), key));
+            processDefinitionRepository.deleteAll(defs);
+        }
+        createdKeys.clear();
     }
 
     private void addMemberAs(String token, String key, UUID userId, String role) throws Exception {
