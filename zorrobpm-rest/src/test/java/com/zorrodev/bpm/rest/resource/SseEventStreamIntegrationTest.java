@@ -5,6 +5,7 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import org.junit.jupiter.api.BeforeAll;
@@ -48,6 +49,7 @@ class SseEventStreamIntegrationTest {
     @Autowired private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired private DomainEventRepository domainEventRepository;
     @Autowired private ProcessRepository processRepository;
+    @Autowired private ProcessMemberRepository processMemberRepository;
     @Autowired private SseEventStreamService sseEventStreamService;
 
     private String adminToken;
@@ -304,8 +306,9 @@ class SseEventStreamIntegrationTest {
         assertThat(stubResult).isNull(); // proves: old stub → null → sees everything
 
         // GREEN proof: the REAL resolver returns a filtered set
-        EventAuthzResolver resolver = new EventAuthzResolver(processRepository, processDefinitionRepository);
-        Collection<UUID> resolved = resolver.resolve(restrictedPrincipal, null);
+        EventAuthzResolver resolver = new EventAuthzResolver(processRepository, processDefinitionRepository,
+            processMemberRepository);
+        Collection<UUID> resolved = resolver.readableRuntimePdIds(restrictedPrincipal, null);
 
         // The resolver must NOT return null (which would be the old stub behavior)
         assertThat(resolved).isNotNull();
@@ -316,7 +319,7 @@ class SseEventStreamIntegrationTest {
 
         // Admin still sees all (null = bypass filter)
         Principal adminPrincipal = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
-        Collection<UUID> adminResolved = resolver.resolve(adminPrincipal, null);
+        Collection<UUID> adminResolved = resolver.readableRuntimePdIds(adminPrincipal, null);
         assertThat(adminResolved).isNull(); // null = see all, correct for admin
 
         // Full-access ServicePrincipal: isFull=true grant is SCOPED to its granted process (WO-SEC-54).
@@ -325,7 +328,7 @@ class SseEventStreamIntegrationTest {
             UUID.randomUUID(), UUID.randomUUID(),
             Map.of(processIdA, new Principal.Grant(Set.of("READ"), true))
         );
-        Collection<UUID> fullResolved = resolver.resolve(fullPrincipal, null);
+        Collection<UUID> fullResolved = resolver.readableRuntimePdIds(fullPrincipal, null);
         assertThat(fullResolved).isNotNull(); // full grant is NOT global see-all (S-02 fix)
         assertThat(fullResolved).containsExactly(pdIdA);
         assertThat(fullResolved).doesNotContain(pdIdB);
@@ -335,7 +338,7 @@ class SseEventStreamIntegrationTest {
             UUID.randomUUID(), UUID.randomUUID(),
             Map.of()
         );
-        Collection<UUID> noGrantResolved = resolver.resolve(noGrantPrincipal, null);
+        Collection<UUID> noGrantResolved = resolver.readableRuntimePdIds(noGrantPrincipal, null);
         assertThat(noGrantResolved).isNotNull();
         assertThat(noGrantResolved).isEmpty(); // DENY: no grants
     }
