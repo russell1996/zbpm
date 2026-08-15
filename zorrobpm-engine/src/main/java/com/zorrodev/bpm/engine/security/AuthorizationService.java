@@ -33,7 +33,9 @@ public class AuthorizationService {
         // Management actions — SUPER_ADMIN only (ADR-2)
         DEPLOY, MANAGE_MEMBERS, MANAGE_KEYS, DELETE_PROCESS,
         // Runtime actions — SA with grant + correct process
-        START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE
+        START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE,
+        // Read action: process member list (ADR-8 п.4 — members are visible to members of the process)
+        VIEW_MEMBERS
     }
 
     public boolean canOperate(Principal principal, String processDefinitionKey, Action action) {
