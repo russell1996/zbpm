@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
+import com.zorrodev.bpm.contract.dto.DeployFormDTO;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.entity.DomainEventEntity;
@@ -77,16 +78,21 @@ class Acl1ReadAccessIntegrationTest {
     private UUID pdIdB;
     private UUID instanceA;
     private UUID userTaskA;
+    private String formAKey;
 
     @BeforeAll
     void setup() throws Exception {
         adminToken = loginAndGetToken("admin", "admin");
 
-        // Two deployed processes (definitions + registry rows)
+        // Two deployed processes (definitions + registry rows).
+        // procA's user task carries a formKey so GET /user-tasks/{id}/form resolves a real
+        // embedded form with variable prefill (runtime read — WO-ACL-1 HOLD). procB has none.
         procAKey = "acl1-procA-" + UUID.randomUUID().toString().substring(0, 8);
         procBKey = "acl1-procB-" + UUID.randomUUID().toString().substring(0, 8);
-        pdIdA = deployProcess(procAKey);
-        pdIdB = deployProcess(procBKey);
+        formAKey = "acl1-formA-" + UUID.randomUUID().toString().substring(0, 8);
+        deployForm(formAKey);
+        pdIdA = deployProcess(procAKey, formAKey);
+        pdIdB = deployProcess(procBKey, null);
 
         // Real runtime for procA: instance with a variable + a blocking user task
         instanceA = startInstanceWithVariables(pdIdA);
@@ -190,6 +196,16 @@ class Acl1ReadAccessIntegrationTest {
     }
 
     @Test
+    void criterion3_outsider_foreignUserTaskForm_returns404() throws Exception {
+        // POF (WO-ACL-1 HOLD): task form of an instance = runtime read — carries variable prefill.
+        // If requireRuntimePdAccess were swapped back to requirePdAccess (definition set = null for
+        // a user = "see all"), the outsider would get 200 with the instance's variables.
+        mockMvc.perform(get("/user-tasks/" + userTaskA + "/form")
+                        .header("Authorization", "Bearer " + outsiderToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void criterion3_outsider_seesNoForeignEvents() throws Exception {
         MvcResult result = mockMvc.perform(get("/events")
                         .header("Authorization", "Bearer " + outsiderToken))
@@ -231,6 +247,17 @@ class Acl1ReadAccessIntegrationTest {
                         .header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(userTaskA.toString()));
+    }
+
+    @Test
+    void criterion4_member_seesOwnUserTaskForm_withVariablePrefill() throws Exception {
+        // Member of procA resolves the task form of the instance and receives the variable prefill
+        // (amount=100) — the data this WO's new guard protects from outsiders.
+        mockMvc.perform(get("/user-tasks/" + userTaskA + "/form")
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("embedded"))
+                .andExpect(jsonPath("$.data.amount").value("100"));
     }
 
     @Test
@@ -294,9 +321,21 @@ class Acl1ReadAccessIntegrationTest {
     }
 
     private UUID deployProcess(String key) throws Exception {
+        return deployProcess(key, null);
+    }
+
+    private UUID deployProcess(String key, String formKey) throws Exception {
         String bpmn = new String(Files.readAllBytes(Paths.get("src/test/files/sec43-process.bpmn")));
         bpmn = bpmn.replace("id=\"sec43-process\"", "id=\"" + key + "\"")
                    .replace("name=\"SEC43 Process\"", "name=\"" + key + "\"");
+        if (formKey != null) {
+            // Give procA's user task a real form (resolved by getUserTaskForm → task.getFormKey())
+            String formDef = "<bpmn:extensionElements>"
+                + "<zeebe:formDefinition formKey=\"" + formKey + "\" />"
+                + "</bpmn:extensionElements>";
+            bpmn = bpmn.replace("<bpmn:userTask id=\"userTask1\" name=\"User Task\">",
+                "<bpmn:userTask id=\"userTask1\" name=\"User Task\">" + formDef);
+        }
         AddProcessDefinitionDTO dto = new AddProcessDefinitionDTO();
         dto.setBpmn(bpmn);
         MvcResult result = mockMvc.perform(post("/process-definitions")
@@ -306,6 +345,26 @@ class Acl1ReadAccessIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
+    }
+
+    private void deployForm(String formKey) throws Exception {
+        DeployFormDTO dto = new DeployFormDTO();
+        dto.setKey(formKey);
+        dto.setKind("FORM_JS");
+        dto.setSchema("{\"type\":\"form\",\"components\":[],\"properties\":{}}");
+        mockMvc.perform(post("/forms")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
+    private void bindFormToUserTask(String processKey, String formKey) throws Exception {
+        mockMvc.perform(post("/process-definitions/" + processKey + "/element-bindings")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content("{\"elementId\":\"userTask1\",\"artifactKey\":\"" + formKey + "\"}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
     }
 
     private UUID startInstanceWithVariables(UUID pdId) throws Exception {
