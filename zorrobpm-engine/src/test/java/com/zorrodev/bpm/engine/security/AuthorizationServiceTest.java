@@ -50,6 +50,7 @@ class AuthorizationServiceTest {
         Principal sa = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
         assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DEPLOY)).isTrue();
         assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.MANAGE_MEMBERS)).isTrue();
+        assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.VIEW_MEMBERS)).isTrue();
         assertThat(auth.canOperate(sa, "any-process", AuthorizationService.Action.DELETE_PROCESS)).isTrue();
     }
 
@@ -59,7 +60,7 @@ class AuthorizationServiceTest {
         assertThat(auth.canCompleteUserTask(sa, UUID.randomUUID())).isTrue();
     }
 
-    // --- ADR-2: Owner can only do runtime actions, not management ---
+    // --- ADR-8 (WO-ACL-2): OWNER manages his own process (members + model update), runtime included ---
 
     @Test
     void owner_canOperateRuntime() {
@@ -79,7 +80,7 @@ class AuthorizationServiceTest {
     }
 
     @Test
-    void owner_cannotDeploy_ADR2_superAdminOnly() {
+    void owner_canDeployOwnProcess_ADR8() {
         UUID userId = UUID.randomUUID();
         UUID processId = UUID.randomUUID();
         ProcessEntity process = new ProcessEntity();
@@ -91,11 +92,11 @@ class AuthorizationServiceTest {
             .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
 
         Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
-        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.DEPLOY)).isFalse();
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.DEPLOY)).isTrue();
     }
 
     @Test
-    void owner_cannotManageMembers_ADR2_superAdminOnly() {
+    void owner_canManageMembersOwnProcess_ADR8() {
         UUID userId = UUID.randomUUID();
         UUID processId = UUID.randomUUID();
         ProcessEntity process = new ProcessEntity();
@@ -107,7 +108,8 @@ class AuthorizationServiceTest {
             .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
 
         Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
-        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isTrue();
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.VIEW_MEMBERS)).isTrue();
     }
 
     // --- ADR-2 SA with grants (scoped keys) ---
@@ -278,7 +280,7 @@ class AuthorizationServiceTest {
         assertThat(auth.canOperate(sa, "other-process", AuthorizationService.Action.START)).isFalse();
     }
 
-    // --- Designer ---
+    // --- Designer (ADR-8 п.3): may update the model (DEPLOY), but only OWNER manages members ---
 
     @Test
     void designer_canDeployButNotManageMembers() {
@@ -293,8 +295,49 @@ class AuthorizationServiceTest {
             .thenReturn(Optional.of(createMember(processId, userId, "DESIGNER")));
 
         Principal designer = new Principal.UserPrincipal(userId, "designer", "USER");
-        assertThat(auth.canOperate(designer, "test-proc", AuthorizationService.Action.DEPLOY)).isFalse(); // DEPLOY = OWNER only
-        assertThat(auth.canOperate(designer, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
+        assertThat(auth.canOperate(designer, "test-proc", AuthorizationService.Action.DEPLOY)).isTrue(); // ADR-8 п.3
+        assertThat(auth.canOperate(designer, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse(); // ADR-8 п.7
+        assertThat(auth.canOperate(designer, "test-proc", AuthorizationService.Action.VIEW_MEMBERS)).isTrue();
+    }
+
+    // --- Viewer: read-only — may see members, cannot operate ---
+
+    @Test
+    void viewer_canViewMembersButCannotOperate() {
+        UUID userId = UUID.randomUUID();
+        UUID processId = UUID.randomUUID();
+        ProcessEntity process = new ProcessEntity();
+        process.setId(processId);
+        process.setDefinitionKey("test-proc");
+
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "VIEWER")));
+
+        Principal viewer = new Principal.UserPrincipal(userId, "viewer", "USER");
+        assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.VIEW_MEMBERS)).isTrue();
+        assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.START)).isFalse();
+        assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.DEPLOY)).isFalse();
+        assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
+    }
+
+    // --- Unknown role in DB (legacy garbage, e.g. "Owner") → DENY, not silent elevation ---
+
+    @Test
+    void unknownRoleInDb_isDenied() {
+        UUID userId = UUID.randomUUID();
+        UUID processId = UUID.randomUUID();
+        ProcessEntity process = new ProcessEntity();
+        process.setId(processId);
+        process.setDefinitionKey("test-proc");
+
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "Owner")));
+
+        Principal user = new Principal.UserPrincipal(userId, "user", "USER");
+        assertThat(auth.canOperate(user, "test-proc", AuthorizationService.Action.START)).isFalse();
+        assertThat(auth.canOperate(user, "test-proc", AuthorizationService.Action.VIEW_MEMBERS)).isFalse();
     }
 
     // --- No membership ---
