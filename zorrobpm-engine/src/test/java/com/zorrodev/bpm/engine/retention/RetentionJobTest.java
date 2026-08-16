@@ -7,6 +7,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Duration;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.Mockito.*;
@@ -64,5 +65,35 @@ class RetentionJobTest {
         // (0 < 0 is false) and run() spins forever issuing DELETE LIMIT 0 — the timeout kills it.
         assertTimeoutPreemptively(Duration.ofSeconds(2), () -> job.run());
         verify(batchProcessor, times(1)).deleteOrphanedBoundaryTimers(any(), eq(0));
+    }
+
+    /**
+     * WO-ACL-3 criterion 8 (P-42): terminal process submissions are purged in batches and a
+     * single failing row (locked, FK race) must NOT abort the pass — the remaining rows of the
+     * batch are still deleted and the job completes normally.
+     */
+    @Test
+    void enabled_deletesTerminalSubmissionsSurvivingSingleRowFailure() {
+        config.setTtlDays(90);
+        config.setBatchSize(2);
+        UUID id1 = UUID.randomUUID();
+        UUID id2 = UUID.randomUUID();
+        UUID id3 = UUID.randomUUID();
+
+        when(batchProcessor.findEligibleInstances(any(), eq(2))).thenReturn(java.util.List.of());
+        when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(2))).thenReturn(0);
+        // one full batch (2) + one partial (1), then an empty poll ends the loop
+        when(batchProcessor.findEligibleSubmissions(any(), eq(2)))
+            .thenReturn(java.util.List.of(id1, id2, id3), java.util.List.of());
+        // row id2 is broken — the job must log a warning and continue with id3
+        when(batchProcessor.deleteSubmission(id1)).thenReturn(1);
+        when(batchProcessor.deleteSubmission(id2)).thenThrow(new RuntimeException("row locked"));
+        when(batchProcessor.deleteSubmission(id3)).thenReturn(1);
+
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> job.run());
+
+        verify(batchProcessor).deleteSubmission(id1);
+        verify(batchProcessor).deleteSubmission(id2);
+        verify(batchProcessor).deleteSubmission(id3);
     }
 }
