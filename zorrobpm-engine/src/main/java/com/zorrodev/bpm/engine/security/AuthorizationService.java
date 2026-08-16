@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.security;
 
+import com.zorrodev.bpm.contract.ProcessRole;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
@@ -14,7 +15,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -30,11 +33,29 @@ public class AuthorizationService {
     private final UserGroupRepository userGroupRepository;
 
     public enum Action {
-        // Management actions — SUPER_ADMIN only (ADR-2)
+        // Management actions — SUPER_ADMIN only (ADR-2), unless granted to a process role (ADR-8 п.7)
         DEPLOY, MANAGE_MEMBERS, MANAGE_KEYS, DELETE_PROCESS,
         // Runtime actions — SA with grant + correct process
-        START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE
+        START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE,
+        // Read action: process member list (ADR-8 п.4 — members are visible to members of the process)
+        VIEW_MEMBERS
     }
+
+    /**
+     * Process role → allowed actions (ADR-8 п.4: fixed mapping, defined in code).
+     * <ul>
+     *   <li>OWNER — everything process-scoped: runtime, DEPLOY (model update, ADR-8 п.3), MANAGE_MEMBERS (п.7).</li>
+     *   <li>DESIGNER — runtime + DEPLOY (model update, ADR-8 п.3); members are managed by OWNER only (п.7).</li>
+     *   <li>VIEWER — read-only: may see members and their roles (ADR-8 п.4).</li>
+     * </ul>
+     */
+    private static final Map<ProcessRole, Set<Action>> ROLE_RIGHTS = Map.of(
+        ProcessRole.OWNER, EnumSet.of(Action.DEPLOY, Action.MANAGE_MEMBERS, Action.VIEW_MEMBERS,
+            Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE),
+        ProcessRole.DESIGNER, EnumSet.of(Action.DEPLOY, Action.VIEW_MEMBERS,
+            Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE),
+        ProcessRole.VIEWER, EnumSet.of(Action.VIEW_MEMBERS)
+    );
 
     public boolean canOperate(Principal principal, String processDefinitionKey, Action action) {
         if (principal.isSuperAdmin()) return true;
@@ -49,19 +70,16 @@ public class AuthorizationService {
             return grant.isFull() || grant.permissions().contains(action.name());
         }
 
-        // ADR-2: User — management SUPER_ADMIN only; runtime requires membership
+        // ADR-8: User — rights come from the process role (DB, not token); membership required
         if (principal instanceof Principal.UserPrincipal user) {
             ProcessEntity process = processRepository.findByDefinitionKey(processDefinitionKey).orElse(null);
             if (process == null) return false;
             ProcessMemberEntity membership = processMemberRepository.findById(
                 new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), user.userId())).orElse(null);
             if (membership == null) return false;
-            if (isManagementAction(action)) return false;
-            return switch (action) {
-                case START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE ->
-                    "OWNER".equals(membership.getRole()) || "DESIGNER".equals(membership.getRole());
-                default -> false;
-            };
+            ProcessRole role = ProcessRole.fromName(membership.getRole());
+            if (role == null) return false; // unknown role in DB → deny, never a silent fallback (G-L)
+            return ROLE_RIGHTS.get(role).contains(action);
         }
         return false;
     }
@@ -186,7 +204,8 @@ public class AuthorizationService {
             ProcessMemberEntity membership = processMemberRepository.findById(
                 new ProcessMemberId(registryProcessId, user.userId())).orElse(null);
             if (membership == null) return false;
-            return "OWNER".equals(membership.getRole()) || "DESIGNER".equals(membership.getRole());
+            ProcessRole role = ProcessRole.fromName(membership.getRole());
+            return role == ProcessRole.OWNER || role == ProcessRole.DESIGNER;
         }
         return false;
     }

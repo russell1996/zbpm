@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.contract.dto;
 
+import com.zorrodev.bpm.contract.ProcessRole;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -9,5 +10,5 @@ import java.util.UUID;
 @Setter
 public class AddMemberDTO {
     private UUID userId;
-    private String role;
+    private ProcessRole role;
 }
