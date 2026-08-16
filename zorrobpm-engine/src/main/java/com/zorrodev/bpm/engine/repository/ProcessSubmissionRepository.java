@@ -1,10 +1,8 @@
 package com.zorrodev.bpm.engine.repository;
 
 import com.zorrodev.bpm.engine.entity.ProcessSubmissionEntity;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,8 +18,4 @@ public interface ProcessSubmissionRepository extends JpaRepository<ProcessSubmis
     /** Latest submission of the same process key by the same user — for the resubmission chain. */
     Optional<ProcessSubmissionEntity> findFirstBySubmittedByAndProcessKeyOrderBySubmittedAtDesc(
             UUID submittedBy, String processKey);
-
-    /** Retention: terminal submissions older than the cutoff, oldest first, bounded by batch size. */
-    List<ProcessSubmissionEntity> findByStatusInAndSubmittedAtBeforeOrderBySubmittedAtAsc(
-            List<String> statuses, Instant submittedAt, Pageable pageable);
 }
