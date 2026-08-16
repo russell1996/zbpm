@@ -107,4 +107,36 @@ public class RetentionBatchProcessor {
             ")",
             params);
     }
+
+    /**
+     * WO-ACL-3 criterion 8: process submissions in terminal state (APPROVED/REJECTED) older
+     * than the TTL become eligible for cleanup. Oldest first, bounded by batch size — the same
+     * shape as {@link #findEligibleInstances}, so a retention cycle never scans the whole table.
+     *
+     * @return submission ids eligible for deletion (a partial batch means "no more left")
+     */
+    @Transactional(readOnly = true)
+    public List<UUID> findEligibleSubmissions(Instant cutoff, int batchSize) {
+        MapSqlParameterSource params = new MapSqlParameterSource("cutoff", Timestamp.from(cutoff))
+            .addValue("limit", batchSize);
+        return jdbc.queryForList(
+            "SELECT id FROM process_submission " +
+            "WHERE status IN ('APPROVED', 'REJECTED') " +
+            "  AND submitted_at < :cutoff " +
+            "ORDER BY submitted_at ASC LIMIT :limit",
+            params, UUID.class);
+    }
+
+    /**
+     * Deletes ONE submission in its own transaction. Called per row from RetentionJob so a
+     * single failing row (locked, FK race) cannot abort the whole cleanup pass (P-42).
+     *
+     * @return 1 if a row was deleted, 0 if it vanished concurrently
+     */
+    @Transactional
+    public int deleteSubmission(UUID submissionId) {
+        return jdbc.update(
+            "DELETE FROM process_submission WHERE id = :id",
+            new MapSqlParameterSource("id", submissionId));
+    }
 }
