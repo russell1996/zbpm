@@ -5,12 +5,17 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import {
   LayoutDashboard,
-  GitBranch,
+  Workflow,
+  Play,
   ListTodo,
   AlertTriangle,
   Users,
   BarChart3,
   Cpu,
+  Timer,
+  Mail,
+  Table2,
+  Inbox,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-vue-next'
@@ -34,17 +39,18 @@ const navItems = computed<NavItem[]>(() => [
   { labelKey: 'dashboard', icon: LayoutDashboard, to: '/' },
   // WO-ACL-8 criterion 14: two top-level sections instead of a collapsible group.
   // criterion 10 moved My Submissions into a dialog on the definitions page.
-  { labelKey: 'definitions', icon: GitBranch, to: '/processes/definitions' },
-  { labelKey: 'instances', icon: GitBranch, to: '/processes/instances' },
+  // criterion 34: each menu item has a unique icon for readability in collapsed mode.
+  { labelKey: 'definitions', icon: Workflow, to: '/processes/definitions' },
+  { labelKey: 'instances', icon: Play, to: '/processes/instances' },
   { labelKey: 'tasks', icon: ListTodo, to: '/tasks' },
   { labelKey: 'serviceTasks', icon: Cpu, to: '/service-tasks' },
   { labelKey: 'incidents', icon: AlertTriangle, to: '/incidents' },
-  { labelKey: 'timers', icon: GitBranch, to: '/timers' },
-  { labelKey: 'messages', icon: GitBranch, to: '/messages' },
-  { labelKey: 'dmn', icon: GitBranch, to: '/dmn' },
+  { labelKey: 'timers', icon: Timer, to: '/timers' },
+  { labelKey: 'messages', icon: Mail, to: '/messages' },
+  { labelKey: 'dmn', icon: Table2, to: '/dmn' },
   { labelKey: 'analytics', icon: BarChart3, to: '/analytics' },
   { labelKey: 'users', icon: Users, to: '/admin/users', adminOnly: true },
-  { labelKey: 'submissionQueue', icon: Users, to: '/admin/submissions', adminOnly: true },
+  { labelKey: 'submissionQueue', icon: Inbox, to: '/admin/submissions', adminOnly: true },
 ])
 
 // WO-ACL-8 criteria 1-2: non-super-admins don't see admin-only items.

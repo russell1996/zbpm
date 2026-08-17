@@ -130,11 +130,19 @@ watch([search, latestOnly], () => { resetPage(); load() })
         <input v-model="latestOnly" type="checkbox" class="rounded" />
         {{ t('latestOnly') }}
       </label>
-      <!-- WO-ACL-8 criterion 8: "my processes" — empty result is a normal state. -->
-      <label class="flex items-center gap-2 text-sm">
-        <input v-model="myOnly" type="checkbox" class="rounded" @change="toggleMyOnly" />
-        {{ t('myProcessesOnly') }}
-      </label>
+      <!-- WO-ACL-8 criterion 22: "All / My" segment toggle instead of checkbox. -->
+      <div class="flex items-center border border-border rounded-md overflow-hidden text-sm">
+        <button
+          class="px-3 py-1.5 transition-colors"
+          :class="!myOnly ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+          @click="myOnly = false; toggleMyOnly()"
+        >{{ t('all') }}</button>
+        <button
+          class="px-3 py-1.5 transition-colors"
+          :class="myOnly ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+          @click="myOnly = true; toggleMyOnly()"
+        >{{ t('my') }}</button>
+      </div>
       <span v-if="myMembershipsLoading" class="text-xs text-muted-foreground">{{ t('loading') }}</span>
     </div>
 
