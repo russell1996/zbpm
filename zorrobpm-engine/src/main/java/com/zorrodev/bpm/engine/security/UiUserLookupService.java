@@ -21,4 +21,15 @@ public class UiUserLookupService {
             .map(u -> u.isForcePasswordChange())
             .orElse(false);
     }
+
+    /**
+     * WO-ACL-5 criterion #4: is the user still active? A deactivated owner's API key
+     * must stop working — checked on every request in JwtAuthFilter.resolveApiKey.
+     * Unknown/deleted user → false (DENY, never a silent allow).
+     */
+    public boolean isActive(UUID userId) {
+        return repository.findById(userId)
+            .map(u -> u.isActive())
+            .orElse(false);
+    }
 }

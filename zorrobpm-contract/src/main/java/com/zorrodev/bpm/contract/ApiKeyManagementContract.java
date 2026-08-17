@@ -11,7 +11,7 @@ import java.util.UUID;
 /**
  * ADR-2: One API key per user + per-process grants.
  * Super-admin manages any user's key/grants.
- * User manages own key (view/rotate/revoke).
+ * User manages own key (view/rotate/revoke/issue, and grants on processes the user is a member of — WO-ACL-5).
  */
 public interface ApiKeyManagementContract {
 
@@ -36,6 +36,20 @@ public interface ApiKeyManagementContract {
 
     @GetExchange("/me/api-key")
     ApiKeyDTO getMyApiKey();
+
+    /**
+     * WO-ACL-5 criterion #1: a user issues their own API key (secret shown once).
+     * One active key per user — second issue while active → 409.
+     */
+    @PostExchange("/me/api-key")
+    ApiKeyWithSecretDTO createMyApiKey();
+
+    /**
+     * WO-ACL-5 criterion #2: a user sets grants for their own key, but only on
+     * processes they are a member of (a grant on an inaccessible process → 400).
+     */
+    @PutExchange("/me/api-key/grants")
+    List<ApiKeyGrantDTO> setMyGrants(@RequestBody SetGrantsDTO dto);
 
     @PostExchange("/me/api-key/rotate")
     ApiKeyWithSecretDTO rotateMyApiKey();
