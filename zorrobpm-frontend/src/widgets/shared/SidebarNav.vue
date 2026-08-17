@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 import {
   LayoutDashboard,
   GitBranch,
@@ -22,12 +23,15 @@ const emit = defineEmits<{ navigate: []; toggleCollapse: [] }>()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const auth = useAuthStore()
 
 interface NavItem {
   labelKey: string
   icon: typeof LayoutDashboard
   to?: string
   children?: NavItem[]
+  /** WO-ACL-8 criteria 1-2: admin-only items are hidden from non-super-admins. */
+  adminOnly?: boolean
 }
 
 const expanded = ref<Record<string, boolean>>({
@@ -52,9 +56,14 @@ const navItems = computed<NavItem[]>(() => [
   { labelKey: 'messages', icon: GitBranch, to: '/messages' },
   { labelKey: 'dmn', icon: GitBranch, to: '/dmn' },
   { labelKey: 'analytics', icon: BarChart3, to: '/analytics' },
-  { labelKey: 'users', icon: Users, to: '/admin/users' },
-  { labelKey: 'submissionQueue', icon: Users, to: '/admin/submissions' },
+  { labelKey: 'users', icon: Users, to: '/admin/users', adminOnly: true },
+  { labelKey: 'submissionQueue', icon: Users, to: '/admin/submissions', adminOnly: true },
 ])
+
+// WO-ACL-8 criteria 1-2: non-super-admins don't see admin-only items.
+const visibleNavItems = computed<NavItem[]>(() =>
+  auth.isSuperAdmin ? navItems.value : navItems.value.filter((i) => !i.adminOnly),
+)
 
 function toggle(key: string) {
   expanded.value[key] = !expanded.value[key]
@@ -94,7 +103,7 @@ function navigate(to: string) {
       </button>
     </div>
     <nav class="flex-1 py-2 overflow-y-auto min-h-0">
-      <template v-for="item in navItems" :key="item.labelKey">
+      <template v-for="item in visibleNavItems" :key="item.labelKey">
         <div v-if="item.children && !collapsed">
           <button
             class="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"

@@ -43,3 +43,10 @@ export async function deployProcessDefinition(bpmn: string): Promise<ProcessDefi
   const { data } = await api.post<ProcessDefinition>('/process-definitions', { bpmn })
   return data
 }
+
+/** WO-ACL-4 endpoint surfaced for WO-ACL-8 criterion 5: new version of an EXISTING
+ *  process — the server authorizes it by the target definition id (DEPLOY action). */
+export async function addProcessDefinitionVersion(id: string, bpmn: string): Promise<ProcessDefinition> {
+  const { data } = await api.post<ProcessDefinition>(`/process-definitions/${id}/versions`, { bpmn })
+  return data
+}

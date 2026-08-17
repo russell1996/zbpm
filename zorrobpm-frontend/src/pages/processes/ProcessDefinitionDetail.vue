@@ -32,7 +32,21 @@ const myMembership = computed(() => {
   if (!auth.user) return null
   return members.value.find((m) => m.userId === auth.user?.id) || null
 })
-const canManageMembers = computed(() => myMembership.value?.role === 'OWNER')
+// WO-ACL-8 criterion 11: the super-admin manages members even without being a
+// member — the backend allows everything for SUPER_ADMIN, so hiding the controls
+// would make the UI contradict the API (canOperate checks isSuperAdmin first).
+const canManageMembers = computed(() => auth.isSuperAdmin || myMembership.value?.role === 'OWNER')
+
+// WO-ACL-8 criteria 3-4: START requires OWNER/DESIGNER membership (backend role
+// grants), and the super-admin can do everything.
+const canStart = computed(
+  () => auth.isSuperAdmin || myMembership.value?.role === 'OWNER' || myMembership.value?.role === 'DESIGNER',
+)
+// WO-ACL-8 criterion 5: new version upload requires DEPLOY — OWNER/DESIGNER on
+// the backend (ADR-8 п.3), plus the super-admin.
+const canDeployVersion = computed(
+  () => auth.isSuperAdmin || myMembership.value?.role === 'OWNER' || myMembership.value?.role === 'DESIGNER',
+)
 
 async function loadMembers() {
   const def = store.currentDefinition
@@ -80,6 +94,59 @@ const newVarName = ref('')
 const newVarType = ref('STRING')
 const newVarValue = ref('')
 const jsonError = ref('')
+
+// --- WO-ACL-8 criterion 5: "upload new version" (POST /process-definitions/{id}/versions) ---
+const showVersionModal = ref(false)
+const versionBpmn = ref('')
+const versionFileName = ref('')
+const versionLoading = ref(false)
+const versionError = ref<string | null>(null)
+const versionSuccess = ref(false)
+
+function onVersionFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  versionFileName.value = file.name
+  const reader = new FileReader()
+  reader.onload = () => {
+    versionBpmn.value = reader.result as string
+  }
+  reader.readAsText(file)
+}
+
+async function submitNewVersion() {
+  const def = store.currentDefinition
+  if (!def || !versionBpmn.value.trim()) {
+    versionError.value = t('bpmnRequired')
+    return
+  }
+  versionLoading.value = true
+  versionError.value = null
+  versionSuccess.value = false
+  try {
+    const created = await processService.addProcessDefinitionVersion(def.id, versionBpmn.value)
+    versionSuccess.value = true
+    toast.success(t('deploySuccessToast'), {
+      action: { label: t('viewDefinition'), onClick: () => router.push(`/processes/definitions/${created.id}`) },
+    })
+    await store.fetchVersions(def.key)
+    await store.fetchDefinition(created.id)
+  } catch (e) {
+    versionError.value = errorMessage(e, t('failedToDeploy'))
+    toast.error(versionError.value)
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+function closeVersionModal() {
+  showVersionModal.value = false
+  versionBpmn.value = ''
+  versionFileName.value = ''
+  versionError.value = null
+  versionSuccess.value = false
+}
 
 // --- BPMN breakdown: find / flatten nodes from the parsed structure ---
 function findNode(nodes: BpmnNode[], id: string): BpmnNode | null {
@@ -237,6 +304,14 @@ async function downloadBpmn() {
             {{ t('downloadBpmn') }}
           </button>
           <button
+            v-if="canDeployVersion"
+            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+            @click="showVersionModal = true"
+          >
+            {{ t('uploadNewVersion') }}
+          </button>
+          <button
+            v-if="canStart"
             class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
             @click="showStartModal = true"
           >
@@ -480,6 +555,53 @@ async function downloadBpmn() {
         <div class="flex justify-end gap-2 pt-2">
           <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showStartModal = false">Cancel</button>
           <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="startProcess">Start</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- WO-ACL-8 criterion 5: upload a NEW VERSION of this process (DEPLOY-scoped). -->
+    <div
+      v-if="showVersionModal"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      @click.self="closeVersionModal"
+    >
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-lg p-6 space-y-4">
+        <h2 class="text-lg font-bold">{{ t('uploadNewVersion') }}</h2>
+        <p class="text-xs text-muted-foreground">{{ t('uploadNewVersionHint') }}</p>
+
+        <div
+          class="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
+          @click="($refs.versionFileInput as HTMLInputElement).click()"
+        >
+          <p class="text-sm font-medium mb-1">{{ t('dropBpmn') }}</p>
+          <p class="text-xs text-muted-foreground">{{ versionFileName || t('supportsBpmn') }}</p>
+          <input ref="versionFileInput" type="file" accept=".bpmn,.xml" class="hidden" @change="onVersionFileChange" />
+        </div>
+
+        <textarea
+          v-model="versionBpmn"
+          class="w-full h-48 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+          :placeholder="t('pasteBpmnHere')"
+        />
+
+        <div v-if="versionError" class="flex items-center gap-2 text-sm text-red-500">
+          {{ versionError }}
+        </div>
+        <div v-if="versionSuccess" class="flex items-center gap-2 text-sm text-green-600">
+          {{ t('deploySuccess') }}
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="closeVersionModal">
+            {{ t('cancel') }}
+          </button>
+          <button
+            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+            :disabled="versionLoading || !versionBpmn.trim()"
+            @click="submitNewVersion"
+          >
+            {{ versionLoading ? t('deploying') : t('uploadNewVersion') }}
+          </button>
         </div>
       </div>
     </div>
