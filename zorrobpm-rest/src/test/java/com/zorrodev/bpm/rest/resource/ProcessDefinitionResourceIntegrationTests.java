@@ -113,9 +113,12 @@ class ProcessDefinitionResourceIntegrationTests {
         deploy("process1.bpmn");
 
         // When: query with order=desc
+        // pageSize is deliberately generous: this test checks SORTING, not pagination —
+        // with ~50 process definitions deployed across the full suite (incl. the
+        // ACL-epic deployers), pageSize=50 pushed "Assignee Process" off the page.
         MvcResult result = mockMvc.perform(get("/process-definitions")
                         .param("order", "desc")
-                        .param("pageSize", "50")
+                        .param("pageSize", "500")
                         .header("Authorization", "Bearer " + validToken))
                 .andExpect(status().isOk())
                 .andReturn();

@@ -57,37 +57,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public ApiKeyWithSecretDTO createApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-
-        var existingKey = apiKeyRepository.findByOwnerUserId(userId);
-        if (existingKey.isPresent()) {
-            ApiKeyEntity existing = existingKey.get();
-            if (existing.getRevokedAt() == null) {
-                // Active key → 409
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
-            }
-            // Revoked key → replace it (delete old + its grants, create new)
-            apiKeyGrantRepository.deleteByApiKeyId(existing.getId());
-            apiKeyRepository.delete(existing);
-            apiKeyRepository.flush();
-        }
-
-        UiUserEntity user = uiUserRepository.findById(userId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
-
-        String rawKey = generateKey();
-        String keyHash = KeyHasher.sha256(rawKey);
-
-        ApiKeyEntity apiKey = new ApiKeyEntity();
-        apiKey.setId(UUID.randomUUID());
-        apiKey.setOwnerUserId(userId);
-        apiKey.setKeyHash(keyHash);
-        apiKey.setPrefix(rawKey.substring(0, Math.min(16, rawKey.length())));
-        apiKey.setCreatedAt(Instant.now());
-        apiKeyRepository.save(apiKey);
-
-        log.info("API key created for user={}", user.getUsername());
-        auditLogService.record(getPrincipal(), "KEY_CREATE", null, userId.toString());
-        return toWithSecret(apiKey, rawKey);
+        return issueKeyForUser(userId);
     }
 
     @Override
@@ -103,44 +73,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         requireSuperAdmin();
 
         ApiKeyEntity apiKey = findByUserIdOr404(userId);
-
-        // Validate grants: each process must exist, user must be member
-        for (SetGrantsDTO.GrantEntry entry : dto.getGrants()) {
-            ProcessEntity process = processRepository.findByDefinitionKey(entry.getProcessKey())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Process not found: " + entry.getProcessKey()));
-
-            if (entry.isFull() && (entry.getPermissions() != null && !entry.getPermissions().isBlank())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Cannot specify both permissions and full=true");
-            }
-
-            // Validate user is member of the process
-            var membership = processMemberRepository.findById(
-                new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), userId));
-            if (membership.isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "User is not a member of process: " + entry.getProcessKey());
-            }
-        }
-
-        // Delete existing grants and insert new ones
-        apiKeyGrantRepository.deleteByApiKeyId(apiKey.getId());
-
-        for (SetGrantsDTO.GrantEntry entry : dto.getGrants()) {
-            ProcessEntity process = processRepository.findByDefinitionKey(entry.getProcessKey()).orElseThrow();
-
-            ApiKeyGrantEntity grant = new ApiKeyGrantEntity();
-            grant.setApiKeyId(apiKey.getId());
-            grant.setProcessId(process.getId());
-            grant.setPermissions(entry.getPermissions());
-            grant.setFull(entry.isFull());
-            apiKeyGrantRepository.save(grant);
-        }
-
-        log.info("Grants updated for user={}, count={}", userId, dto.getGrants().size());
-        auditLogService.record(getPrincipal(), "KEY_GRANTS_UPDATE", null, userId.toString());
-        return getGrants(apiKey.getId());
+        return replaceGrants(apiKey, dto);
     }
 
     @Transactional
@@ -185,6 +118,31 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         return toDTO(apiKey);
     }
 
+    /**
+     * WO-ACL-5 criterion #1: a user issues their own API key. Same one-key-per-user
+     * semantics as the super-admin path (409 while an active key exists, replacement
+     * after revoke) — shared implementation, not a copy.
+     */
+    @Transactional
+    @Override
+    public ApiKeyWithSecretDTO createMyApiKey() {
+        Principal.UserPrincipal user = selfPrincipal();
+        return issueKeyForUser(user.userId());
+    }
+
+    /**
+     * WO-ACL-5 criterion #2: a user sets grants for their own key. Grant validation
+     * is the same as the super-admin path (process must exist, user must be a member,
+     * full/permissions are mutually exclusive) — shared implementation, not a copy.
+     */
+    @Transactional
+    @Override
+    public List<ApiKeyGrantDTO> setMyGrants(@RequestBody SetGrantsDTO dto) {
+        Principal.UserPrincipal user = selfPrincipal();
+        ApiKeyEntity apiKey = findByUserIdOr404(user.userId());
+        return replaceGrants(apiKey, dto);
+    }
+
     @Transactional
     @Override
     public ApiKeyWithSecretDTO rotateMyApiKey() {
@@ -217,6 +175,97 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     }
 
     // ==================== Helpers ====================
+
+    /** WO-ACL-5: current caller as a UserPrincipal, or 401. Shared by all self-service endpoints. */
+    private Principal.UserPrincipal selfPrincipal() {
+        Principal principal = getPrincipal();
+        if (principal == null || !(principal instanceof Principal.UserPrincipal u)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        return u;
+    }
+
+    /**
+     * One key per user, shared by the super-admin and self-service create paths:
+     * active key → 409, revoked key → replaced (old key + its grants deleted, new key issued).
+     */
+    private ApiKeyWithSecretDTO issueKeyForUser(UUID userId) {
+        var existingKey = apiKeyRepository.findByOwnerUserId(userId);
+        if (existingKey.isPresent()) {
+            ApiKeyEntity existing = existingKey.get();
+            if (existing.getRevokedAt() == null) {
+                // Active key → 409
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
+            }
+            // Revoked key → replace it (delete old + its grants, create new)
+            apiKeyGrantRepository.deleteByApiKeyId(existing.getId());
+            apiKeyRepository.delete(existing);
+            apiKeyRepository.flush();
+        }
+
+        UiUserEntity user = uiUserRepository.findById(userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        String rawKey = generateKey();
+        String keyHash = KeyHasher.sha256(rawKey);
+
+        ApiKeyEntity apiKey = new ApiKeyEntity();
+        apiKey.setId(UUID.randomUUID());
+        apiKey.setOwnerUserId(userId);
+        apiKey.setKeyHash(keyHash);
+        apiKey.setPrefix(rawKey.substring(0, Math.min(16, rawKey.length())));
+        apiKey.setCreatedAt(Instant.now());
+        apiKeyRepository.save(apiKey);
+
+        log.info("API key created for user={}", user.getUsername());
+        auditLogService.record(getPrincipal(), "KEY_CREATE", null, userId.toString());
+        return toWithSecret(apiKey, rawKey);
+    }
+
+    /**
+     * Validate-and-replace grants, shared by the super-admin and self-service paths:
+     * each process must exist, the owner must be a member of it, full/permissions are
+     * mutually exclusive. Any violation → 400 before any grant is touched.
+     */
+    private List<ApiKeyGrantDTO> replaceGrants(ApiKeyEntity apiKey, SetGrantsDTO dto) {
+        // Validate grants: each process must exist, user must be member
+        for (SetGrantsDTO.GrantEntry entry : dto.getGrants()) {
+            ProcessEntity process = processRepository.findByDefinitionKey(entry.getProcessKey())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Process not found: " + entry.getProcessKey()));
+
+            if (entry.isFull() && (entry.getPermissions() != null && !entry.getPermissions().isBlank())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot specify both permissions and full=true");
+            }
+
+            // Validate user is member of the process
+            var membership = processMemberRepository.findById(
+                new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), apiKey.getOwnerUserId()));
+            if (membership.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "User is not a member of process: " + entry.getProcessKey());
+            }
+        }
+
+        // Delete existing grants and insert new ones
+        apiKeyGrantRepository.deleteByApiKeyId(apiKey.getId());
+
+        for (SetGrantsDTO.GrantEntry entry : dto.getGrants()) {
+            ProcessEntity process = processRepository.findByDefinitionKey(entry.getProcessKey()).orElseThrow();
+
+            ApiKeyGrantEntity grant = new ApiKeyGrantEntity();
+            grant.setApiKeyId(apiKey.getId());
+            grant.setProcessId(process.getId());
+            grant.setPermissions(entry.getPermissions());
+            grant.setFull(entry.isFull());
+            apiKeyGrantRepository.save(grant);
+        }
+
+        log.info("Grants updated for user={}, count={}", apiKey.getOwnerUserId(), dto.getGrants().size());
+        auditLogService.record(getPrincipal(), "KEY_GRANTS_UPDATE", null, apiKey.getOwnerUserId().toString());
+        return getGrants(apiKey.getId());
+    }
 
     private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");

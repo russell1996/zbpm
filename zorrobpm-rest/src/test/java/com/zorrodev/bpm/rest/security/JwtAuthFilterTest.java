@@ -35,8 +35,9 @@ class JwtAuthFilterTest {
         ApiKeyRepository apiKeyRepo = mock(ApiKeyRepository.class);
         ApiKeyGrantRepository apiKeyGrantRepo = mock(ApiKeyGrantRepository.class);
         var userLookup = mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class);
+        var authz = mock(com.zorrodev.bpm.engine.security.AuthorizationService.class);
         var env = mock(org.springframework.core.env.Environment.class);
-        filter = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo, userLookup, env);
+        filter = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo, userLookup, authz, env);
     }
 
     private void setRequireApiAuth(boolean value) {
@@ -177,10 +178,13 @@ class JwtAuthFilterTest {
         when(apiKeyGrantRepo.findByApiKeyId(any())).thenReturn(java.util.List.of());
 
         var userLookup = mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class);
+        when(userLookup.isActive(any())).thenReturn(true);
+        var authz = mock(com.zorrodev.bpm.engine.security.AuthorizationService.class);
+        when(authz.effectiveGrants(any(), any())).thenReturn(java.util.Map.of());
         var env = mock(org.springframework.core.env.Environment.class);
         when(env.getActiveProfiles()).thenReturn(new String[]{"test"});
 
-        JwtAuthFilter f = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo, userLookup, env);
+        JwtAuthFilter f = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo, userLookup, authz, env);
         f.setRequireApiAuth(true);
 
         // First request — should save
