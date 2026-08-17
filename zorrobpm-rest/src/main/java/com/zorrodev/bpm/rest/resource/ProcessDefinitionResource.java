@@ -4,12 +4,15 @@ import com.zorrodev.bpm.contract.ProcessDefinitionContract;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
+import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
@@ -37,6 +40,8 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
     private final BpmnStructureService bpmnStructureService;
     private final ProcessRepository processRepository;
     private final AuditLogService auditLogService;
+    private final AuthorizationService authorizationService;
+    private final BpmnParseService bpmnParseService;
     private final HttpServletRequest request;
     private final EventAuthzResolver eventAuthzResolver;
 
@@ -67,6 +72,58 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
         ensureProcessRegistry(result.getKey());
         auditLogService.record(getPrincipal(), "DEPLOY", result.getKey(), result.getId().toString());
         return result;
+    }
+
+    /**
+     * WO-ACL-4 (ADR-8 п.3): new version of an EXISTING process, authorized by the target
+     * definition {@code id} from the path — the resource the server knows before parsing the
+     * file. Order is the point: authorize → parse → verify key → save. A model whose key does
+     * not match the target process is rejected BEFORE anything is persisted, so the owner of
+     * process A cannot capture process B by uploading a model with B's key.
+     */
+    @Override
+    public ProcessDefinition addProcessDefinitionVersion(UUID id, AddProcessDefinitionDTO dto) {
+        ProcessDefinition target = requireDeployAccess(id);
+
+        BpmnProcessDefinitionModel model;
+        try {
+            model = bpmnParseService.parse(dto.getBpmn());
+        } catch (BpmnParseException e) {
+            // Deliberately NOT exposing parser internals (WO-SEC-33 pattern).
+            log.warn("Version rejected: BPMN does not parse (targetId={})", id);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "BPMN could not be parsed — fix the XML and resubmit");
+        }
+
+        String targetKey = target.getKey();
+        if (!targetKey.equals(model.getKey())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "The process key inside the BPMN XML ('" + model.getKey() + "') does not match "
+                    + "the key of the target process ('" + targetKey + "'). The key cannot be "
+                    + "changed — update the model, not the key.");
+        }
+
+        ProcessDefinition result = processDefinitionService.addProcessDefinition(dto.getBpmn());
+        auditLogService.record(getPrincipal(), "DEPLOY", result.getKey(), result.getId().toString());
+        return result;
+    }
+
+    /**
+     * WO-ACL-4: DEPLOY on the target process (ADR-8 п.3 — OWNER/DESIGNER; SUPER_ADMIN always).
+     * Unknown {@code id} → 404; authenticated user without the role → 403; no principal → 401.
+     */
+    private ProcessDefinition requireDeployAccess(UUID id) {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        ProcessDefinition target = processDefinitionService.getProcessDefinitionById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        if (!authorizationService.canOperate(principal, target.getKey(), AuthorizationService.Action.DEPLOY)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Deploying a new version requires OWNER or DESIGNER role on this process");
+        }
+        return target;
     }
 
     /**
