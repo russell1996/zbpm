@@ -386,5 +386,7 @@
   "apiDocs": "API Docs",
   "all": "All",
   "my": "My",
-  "owner": "Owner"
+  "owner": "Owner",
+  "file": "File",
+  "openExistingProcess": "Open existing process"
 }

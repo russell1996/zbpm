@@ -1,25 +1,40 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #3b82f6;
+  /* WO-ACL-8 criterion 37: KT Docs color tokens.
+     Primary changed from #3b82f6 (Tailwind blue) to #0075e3 (KT Docs blue). */
+  --color-primary: #0075e3;
+  --color-primary-hover: #0068ca;
   --color-primary-foreground: #ffffff;
-  --color-background: #ffffff;
-  --color-foreground: #0f172a;
+  /* KT Docs background: #f7f8fa (slightly warmer than Tailwind's white) */
+  --color-background: #f7f8fa;
+  --color-foreground: #363636;
   --color-card: #ffffff;
-  --color-card-foreground: #0f172a;
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
-  --color-border: #e2e8f0;
-  --color-input: #e2e8f0;
-  --color-ring: #3b82f6;
-  --color-sidebar: #f8fafc;
-  --color-sidebar-foreground: #0f172a;
-  --color-sidebar-accent: #e2e8f0;
+  --color-card-foreground: #363636;
+  --color-muted: #f5f6f8;
+  --color-muted-foreground: #667085;
+  --color-border: #e1e4e8;
+  --color-border-soft: #edf0f2;
+  --color-input: #e1e4e8;
+  /* KT Docs focus ring: rgba(0,117,227,.14) */
+  --color-ring: 0 0 0 3px rgba(0,117,227,.14);
+  --color-placeholder: #8f969e;
+  --color-icon: #7b828a;
+  --color-sidebar: #f7f8fa;
+  --color-sidebar-foreground: #363636;
+  --color-sidebar-accent: #edf0f2;
   --color-destructive: #ef4444;
   --radius: 0.5rem;
+  --radius-pill: 999px;
+  /* WO-ACL-8 criterion 38: Golos Text font (self-hosted via @fontsource) */
+  --font-sans: 'Golos Text', system-ui, -apple-system, sans-serif;
+  /* KT Docs transition */
+  --transition-base: 180ms ease;
 }
 
 .dark {
+  /* WO-ACL-8 criterion 40: dark theme —KT Docs has no dark theme,
+     so we keep our existing dark tokens as-is. */
   --color-background: #0f172a;
   --color-foreground: #f8fafc;
   --color-card: #1e293b;
@@ -34,7 +49,7 @@
 }
 
 body {
-  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   color: var(--color-foreground);
   background: var(--color-background);
 }

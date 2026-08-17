@@ -74,6 +74,10 @@ async function mountDetail() {
     global: { stubs: { teleport: true }, plugins: [createPinia()] },
   })
   await flushPromises()
+  // click the "Members" tab so member content is visible
+  const membersTab = wrapper.findAll('button').find((b) => b.text() === 'members')
+  await membersTab?.trigger('click')
+  await flushPromises()
   return wrapper
 }
 
