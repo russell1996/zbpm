@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.ProcessRole;
 import com.zorrodev.bpm.contract.dto.AddMemberDTO;
 import com.zorrodev.bpm.contract.dto.ChangeRoleDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
+import com.zorrodev.bpm.contract.dto.MemberCandidateDTO;
 import com.zorrodev.bpm.contract.dto.MemberDTO;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
@@ -19,6 +20,9 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,13 +31,24 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
 @RequiredArgsConstructor
 public class MemberResource implements MemberContract {
+
+    /**
+     * WO-ACL-7: minimum username fragment for the candidates search. Below this the
+     * query would match almost everything and the endpoint would act as a directory.
+     */
+    static final int MIN_CANDIDATE_QUERY_LENGTH = 3;
+
+    /** Hard cap on the candidate result set — never the whole user table. */
+    static final int MAX_CANDIDATES = 20;
 
     private final ProcessRepository processRepository;
     private final ProcessMemberRepository processMemberRepository;
@@ -62,6 +77,19 @@ public class MemberResource implements MemberContract {
         if (principal == null || !principal.isSuperAdmin()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "SUPER_ADMIN required");
         }
+    }
+
+    /** WO-ACL-7: memberships are a USER self-service — API keys must not see the owner's memberships. */
+    private Principal.UserPrincipal requireUserPrincipal() {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (!(principal instanceof Principal.UserPrincipal u)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Memberships are a user self-service — API keys cannot use this endpoint");
+        }
+        return u;
     }
 
     private ProcessEntity resolveProcess(String key) {
@@ -102,6 +130,64 @@ public class MemberResource implements MemberContract {
                 MemberDTO dto = toDTO(m);
                 processRepository.findById(m.getProcessId())
                     .ifPresent(p -> dto.setProcessKey(p.getDefinitionKey()));
+                return dto;
+            })
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * WO-ACL-7 criterion 1: the caller's OWN memberships only — the userId comes from the
+     * authenticated principal, never from a path/query parameter. "My memberships" is
+     * self-data: no cross-user access, no admin directory leak.
+     */
+    @Override
+    public List<MemberDTO> listMyMemberships() {
+        Principal.UserPrincipal user = requireUserPrincipal();
+        return processMemberRepository.findByUserId(user.userId()).stream()
+            .map(m -> {
+                MemberDTO dto = toDTO(m);
+                processRepository.findById(m.getProcessId())
+                    .ifPresent(p -> dto.setProcessKey(p.getDefinitionKey()));
+                return dto;
+            })
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * WO-ACL-7 (ADR-8 п.7): who can be ADDED to this process. OWNER-scoped candidate
+     * search: MANAGE_MEMBERS on the process, a mandatory non-empty {@code q} (min 3 chars —
+     * an empty query would return the user table), active users only, members excluded,
+     * result capped. Output is deliberately minimal: userId + username.
+     */
+    @Override
+    public List<MemberCandidateDTO> candidateMembers(@PathVariable String key, String q) {
+        requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
+        ProcessEntity process = resolveProcess(key);
+
+        String query = q == null ? "" : q.trim();
+        if (query.length() < MIN_CANDIDATE_QUERY_LENGTH) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Search query 'q' must be at least " + MIN_CANDIDATE_QUERY_LENGTH + " characters");
+        }
+
+        Set<UUID> memberIds = processMemberRepository.findByProcessId(process.getId()).stream()
+            .map(ProcessMemberEntity::getUserId)
+            .collect(Collectors.toSet());
+
+        List<Specification<UiUserEntity>> specs = new ArrayList<>();
+        specs.add(UiUserRepository.byUsernameContains(query));
+        specs.add(UiUserRepository.byActive(true));
+        if (!memberIds.isEmpty()) {
+            specs.add((root, cbq, cb) -> cb.not(root.get("id").in(memberIds)));
+        }
+
+        return uiUserRepository.findAll(Specification.allOf(specs),
+                PageRequest.of(0, MAX_CANDIDATES, Sort.by("username").ascending()))
+            .getContent().stream()
+            .map(u -> {
+                MemberCandidateDTO dto = new MemberCandidateDTO();
+                dto.setUserId(u.getId());
+                dto.setUsername(u.getUsername());
                 return dto;
             })
             .collect(Collectors.toList());
@@ -210,8 +296,12 @@ public class MemberResource implements MemberContract {
         dto.setAddedBy(entity.getAddedBy());
         dto.setAddedAt(entity.getAddedAt());
 
-        // Resolve username
-        uiUserRepository.findById(entity.getUserId()).ifPresent(u -> dto.setUsername(u.getUsername()));
+        // Resolve username, fullName, email from the same lookup (WO-ACL-7 пункт 4)
+        uiUserRepository.findById(entity.getUserId()).ifPresent(u -> {
+            dto.setUsername(u.getUsername());
+            dto.setFullName(u.getFullName());
+            dto.setEmail(u.getEmail());
+        });
 
         return dto;
     }

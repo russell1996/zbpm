@@ -73,6 +73,17 @@ public class ProcessSubmissionResource implements ProcessSubmissionContract {
         return submissionService.listPending();
     }
 
+    /**
+     * WO-ACL-7: raw BPMN of a submission — the reviewer sees the model BEFORE approving.
+     * SUPER_ADMIN only (mirrors {@code /process-definitions/{id}/xml}): an admin approving
+     * a model they cannot look at turns approval into theatre.
+     */
+    @Override
+    public String getSubmissionBpmn(@PathVariable UUID id) {
+        requireSuperAdmin();
+        return submissionService.getBpmn(id);
+    }
+
     @Override
     public ProcessSubmissionDTO approve(@PathVariable UUID id) {
         requireSuperAdmin();

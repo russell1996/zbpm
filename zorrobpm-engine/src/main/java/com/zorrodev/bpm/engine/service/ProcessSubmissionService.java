@@ -29,6 +29,14 @@ public interface ProcessSubmissionService {
     List<ProcessSubmissionDTO> listPending();
 
     /**
+     * WO-ACL-7: the raw BPMN stored with the submission — the reviewer must be able to
+     * see the model before approving it. The resource layer enforces SUPER_ADMIN.
+     *
+     * @throws org.springframework.web.server.ResponseStatusException 404 if the submission does not exist
+     */
+    String getBpmn(UUID submissionId);
+
+    /**
      * Approve a PENDING submission: deploy the stored BPMN, register the submitter as OWNER
      * of the created process, mark the submission APPROVED — all in ONE transaction.
      *
