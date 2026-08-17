@@ -383,5 +383,8 @@
   "userTasks": "User Tasks",
   "serviceTask": "Service Task",
   "userTask": "User Task",
-  "apiDocs": "API Docs"
+  "apiDocs": "API Docs",
+  "all": "All",
+  "my": "My",
+  "owner": "Owner"
 }
