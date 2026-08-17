@@ -285,14 +285,26 @@ class Acl1ReadAccessIntegrationTest {
 
     @Test
     void criterion5_admin_seesAllEvents() throws Exception {
+        // Ask per process instead of scanning the global feed: /events returns a PAGE, so once
+        // enough events from other tests sit ahead of ours they fall outside it and the assertion
+        // fails for a reason that has nothing to do with authorization. That is what reddened CI
+        // on 2026-08-17 while every local run stayed green — the page filled differently there.
+        // "Admin sees a foreign process's events" is what criterion 5 claims, and asking for that
+        // process states the claim directly instead of hoping it survives the window.
+        assertAdminSeesEventsOf(procAKey, pdIdA);
+        assertAdminSeesEventsOf(procBKey, pdIdB);
+    }
+
+    private void assertAdminSeesEventsOf(String processKey, UUID expectedPdId) throws Exception {
         MvcResult result = mockMvc.perform(get("/events")
+                        .param("processDefinitionKey", processKey)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode data = mapper.readTree(result.getResponse().getContentAsString()).get("data");
         Set<String> pdIds = new HashSet<>();
         data.forEach(e -> pdIds.add(e.get("processDefinitionId").asText()));
-        assertThat(pdIds).contains(pdIdA.toString(), pdIdB.toString());
+        assertThat(pdIds).contains(expectedPdId.toString());
     }
 
     // ==================== Criterion #6: ServicePrincipal isFull NOT expanded (WO-SEC-54) ====================
