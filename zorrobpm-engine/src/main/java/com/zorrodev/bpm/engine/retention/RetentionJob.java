@@ -11,9 +11,10 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Scheduled retention job that cleans up terminal process instances.
- * Disabled by default (ttlDays=0). When enabled, periodically finds and deletes
- * COMPLETED/CANCELLED instances older than TTL, with fail-safe guards.
+ * Scheduled retention job that cleans up terminal process instances and (WO-ACL-3) terminal
+ * process submissions. Disabled by default (ttlDays=0). When enabled, periodically finds and
+ * deletes COMPLETED/CANCELLED instances and APPROVED/REJECTED submissions older than TTL,
+ * with fail-safe guards.
  *
  * Delegates to RetentionBatchProcessor (@Transactional) to ensure proper transaction
  * boundaries and FK-safe cascade deletion.
@@ -62,6 +63,29 @@ public class RetentionJob {
         if (orphanDeleted > 0) {
             log.info("Retention: deleted {} orphaned fired boundary timer jobs", orphanDeleted);
         }
+
+        // WO-ACL-3 criterion 8: purge terminal process submissions (APPROVED/REJECTED) past the
+        // TTL. Rows are deleted one by one, each in its own transaction, so one failing row
+        // (concurrent FK race, lock) logs a warning and the pass continues (P-42).
+        int submissionsDeleted = 0;
+        while (true) {
+            List<UUID> eligibleSubmissions = batchProcessor.findEligibleSubmissions(cutoff, config.getBatchSize());
+            if (eligibleSubmissions.isEmpty()) break;
+
+            for (UUID submissionId : eligibleSubmissions) {
+                try {
+                    submissionsDeleted += batchProcessor.deleteSubmission(submissionId);
+                } catch (RuntimeException e) {
+                    log.warn("Retention: failed to delete process submission {} — continuing with the rest", submissionId, e);
+                }
+            }
+
+            if (eligibleSubmissions.size() < config.getBatchSize()) break; // last batch
+        }
+        if (submissionsDeleted > 0) {
+            log.info("Retention: deleted {} terminal process submissions", submissionsDeleted);
+        }
+
         if (totalDeleted > 0) {
             log.info("Retention: completed — {} total rows deleted", totalDeleted);
         }
