@@ -56,6 +56,12 @@ const router = createRouter({
           meta: { title: 'Start Process' },
         },
         {
+          path: 'processes/submissions',
+          name: 'my-submissions',
+          component: () => import('@/pages/processes/MySubmissions.vue'),
+          meta: { title: 'My Submissions' },
+        },
+        {
           path: 'processes/instances',
           name: 'process-instances',
           component: () => import('@/pages/processes/ProcessInstanceList.vue'),
@@ -66,12 +72,6 @@ const router = createRouter({
           name: 'process-instance-detail',
           component: () => import('@/pages/processes/ProcessInstanceDetail.vue'),
           meta: { title: 'Process Instance', parentTitle: 'Process Instances', parentTo: { name: 'process-instances' } },
-        },
-        {
-          path: 'processes/deploy',
-          name: 'deploy-process',
-          component: () => import('@/pages/processes/DeployProcess.vue'),
-          meta: { title: 'Deploy Process' },
         },
         {
           path: 'tasks',
@@ -138,6 +138,12 @@ const router = createRouter({
           name: 'admin-users',
           component: () => import('@/pages/admin/UserList.vue'),
           meta: { title: 'Users', requiresSuperAdmin: true },
+        },
+        {
+          path: 'admin/submissions',
+          name: 'admin-submissions',
+          component: () => import('@/pages/admin/SubmissionQueue.vue'),
+          meta: { title: 'Submission Queue', requiresSuperAdmin: true },
         },
         {
           path: 'admin/forms',

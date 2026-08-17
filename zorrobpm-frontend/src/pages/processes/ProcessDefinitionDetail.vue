@@ -8,6 +8,9 @@ import { useProcessStore } from '@/stores/process'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 import * as processService from '@/services/processService'
+import { listMembers, changeMemberRole, removeMember, type Member } from '@/services/adminService'
+import { useAuthStore } from '@/stores/auth'
+import { errorMessage } from '@/shared/lib/utils'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 
@@ -17,6 +20,57 @@ const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 const toast = useToast()
 const store = useProcessStore()
+const auth = useAuthStore()
+
+// --- WO-ACL-6: members and roles (ADR-8 п.4: seeing members is a member right;
+// managing them belongs to the OWNER only) ---
+const members = ref<Member[]>([])
+const membersLoading = ref(false)
+const membersError = ref<string | null>(null)
+
+const myMembership = computed(() => {
+  if (!auth.user) return null
+  return members.value.find((m) => m.userId === auth.user?.id) || null
+})
+const canManageMembers = computed(() => myMembership.value?.role === 'OWNER')
+
+async function loadMembers() {
+  const def = store.currentDefinition
+  if (!def?.key) return
+  membersLoading.value = true
+  membersError.value = null
+  try {
+    members.value = await listMembers(def.key)
+  } catch (e) {
+    membersError.value = errorMessage(e, t('failedToLoadMembers'))
+  } finally {
+    membersLoading.value = false
+  }
+}
+
+async function changeRole(member: Member, targetRole: string) {
+  const def = store.currentDefinition
+  if (!def?.key || targetRole === member.role) return
+  try {
+    await changeMemberRole(def.key, member.userId, targetRole)
+    toast.success(t('roleChanged'))
+    await loadMembers()
+  } catch (e) {
+    toast.error(errorMessage(e, t('failedToChangeRole')))
+  }
+}
+
+async function removeMemberOf(member: Member) {
+  const def = store.currentDefinition
+  if (!def?.key) return
+  try {
+    await removeMember(def.key, member.userId)
+    toast.success(t('memberRemoved'))
+    await loadMembers()
+  } catch (e) {
+    toast.error(errorMessage(e, t('failedToRemoveMember')))
+  }
+}
 
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
@@ -111,6 +165,9 @@ async function loadDefinition(id: string) {
   ])
   if (store.currentDefinition) {
     await store.fetchVersions(store.currentDefinition.key)
+    // Members load in parallel: a slow/blocked members request must not stall
+    // the BPMN viewer or the version switch (WO-ACL-6; keeps WO-FE-20 green).
+    loadMembers()
   }
   try {
     bpmnXml.value = await processService.getProcessDefinitionXml(id)
@@ -186,6 +243,60 @@ async function downloadBpmn() {
             Start Process
           </button>
         </div>
+      </div>
+
+      <!-- WO-ACL-6 criterion 2/3: members and their roles — visible to any member
+           (ADR-8 п.4: seeing members ≠ managing them), managed by the OWNER only. -->
+      <div class="border border-border rounded-lg overflow-hidden bg-card">
+        <div class="px-4 py-3 border-b border-border">
+          <h2 class="text-lg font-bold">{{ t('members') }}</h2>
+          <p class="text-xs text-muted-foreground">{{ t('membersHint') }}</p>
+        </div>
+        <div v-if="membersLoading" class="px-4 py-3 text-sm text-muted-foreground">{{ t('loading') }}</div>
+        <div v-else-if="membersError" class="px-4 py-3 text-sm text-red-500">{{ membersError }}</div>
+        <table v-else-if="members.length" class="w-full text-sm">
+          <thead class="bg-muted">
+            <tr>
+              <th class="px-4 py-2 text-left font-medium">{{ t('username') }}</th>
+              <th class="px-4 py-2 text-left font-medium">{{ t('role') }}</th>
+              <th v-if="canManageMembers" class="px-4 py-2 text-left font-medium">{{ t('actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in members" :key="m.userId" class="border-t border-border">
+              <td class="px-4 py-2">
+                {{ m.username || m.userId }}
+                <span v-if="m.userId === auth.user?.id" class="ml-2 text-xs text-muted-foreground">({{ t('you') }})</span>
+              </td>
+              <td class="px-4 py-2">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" :class="m.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : m.role === 'DESIGNER' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'">
+                  {{ m.role }}
+                </span>
+              </td>
+              <td v-if="canManageMembers" class="px-4 py-2">
+                <div class="flex items-center gap-2">
+                  <select
+                    class="px-2 py-1 border border-input rounded text-xs"
+                    :value="m.role"
+                    @change="changeRole(m, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="OWNER">{{ t('ownerRole') }}</option>
+                    <option value="DESIGNER">{{ t('designerRole') }}</option>
+                    <option value="VIEWER">{{ t('viewerRole') }}</option>
+                  </select>
+                  <button
+                    class="text-xs text-red-500 hover:underline"
+                    :disabled="m.userId === auth.user?.id"
+                    @click="removeMemberOf(m)"
+                  >
+                    {{ t('remove') }}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="px-4 py-3 text-sm text-muted-foreground">{{ t('noMembers') }}</p>
       </div>
 
       <div v-if="bpmnXml" class="border border-border rounded-lg bg-card">

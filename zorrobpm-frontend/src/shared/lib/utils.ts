@@ -22,3 +22,20 @@ export function taskStatusBadge(status: string | null | undefined, completedAt: 
     default: return { label: 'Active', cls: 'bg-yellow-100 text-yellow-800' }
   }
 }
+
+/**
+ * Extract a human-readable error message (WO-ACL-6 criterion 7): backend
+ * validation rejections arrive as {code, message} (GlobalExceptionHandler),
+ * e.g. "Process with key 'x' already exists — update the model from inside
+ * the process". Show THAT text, never the generic axios "Request failed with
+ * status code 400".
+ */
+export function errorMessage(e: unknown, fallback: string): string {
+  if (e && typeof e === 'object' && 'response' in e) {
+    const data = (e as { response?: { data?: { message?: unknown } } }).response?.data
+    if (data && typeof data.message === 'string' && data.message.trim()) {
+      return data.message
+    }
+  }
+  return e instanceof Error && e.message ? e.message : fallback
+}
