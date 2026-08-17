@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -87,6 +88,60 @@ public class AuthorizationService {
     private boolean isManagementAction(Action action) {
         return action == Action.DEPLOY || action == Action.MANAGE_MEMBERS
             || action == Action.MANAGE_KEYS || action == Action.DELETE_PROCESS;
+    }
+
+    /**
+     * WO-ACL-5 (ADR-8 п.5): effective rights of a service key are the INTERSECTION of
+     * the key's grants and the owner's CURRENT process rights — recomputed on every
+     * request, never frozen at issue time.
+     * <ul>
+     *   <li>process no longer exists / owner lost membership / unknown role → grant DROPPED
+     *       (the process disappears from the key's visibility — DENY, G-L);</li>
+     *   <li>full grant → narrowed to the role's action set (full never exceeds the owner);</li>
+     *   <li>partial grant → action permissions are intersected with the role's action set.
+     *       Non-action markers (e.g. "READ") are dropped from permissions, but the grant
+     *       itself survives with empty permissions: read visibility is keySet-driven
+     *       (EventAuthzResolver.resolveByGrants), so a member-owner keeps seeing the
+     *       process data while gaining no runtime rights (START etc. stay DENY).</li>
+     * </ul>
+     * Reuses the ROLE_RIGHTS mapping — the single source of process-role rights (P-24).
+     */
+    public Map<UUID, Principal.Grant> effectiveGrants(UUID ownerUserId, Map<UUID, Principal.Grant> keyGrants) {
+        if (keyGrants == null || keyGrants.isEmpty()) return Map.of();
+
+        Map<UUID, Principal.Grant> effective = new HashMap<>();
+        for (Map.Entry<UUID, Principal.Grant> entry : keyGrants.entrySet()) {
+            UUID processId = entry.getKey();
+            Principal.Grant grant = entry.getValue();
+
+            ProcessEntity process = processRepository.findById(processId).orElse(null);
+            if (process == null) continue; // process gone → deny
+
+            ProcessMemberEntity membership = processMemberRepository.findById(
+                new ProcessMemberId(processId, ownerUserId)).orElse(null);
+            if (membership == null) continue; // owner lost membership → grant dropped
+
+            ProcessRole role = ProcessRole.fromName(membership.getRole());
+            if (role == null) continue; // unknown role in DB → deny, never a silent fallback (G-L)
+
+            Set<String> rolePermissions = ROLE_RIGHTS.get(role).stream()
+                .map(Enum::name)
+                .collect(Collectors.toSet());
+
+            Set<String> narrowed;
+            if (grant.isFull()) {
+                narrowed = rolePermissions;
+            } else {
+                Set<String> granted = grant.permissions() != null ? grant.permissions() : Set.of();
+                narrowed = granted.stream().filter(rolePermissions::contains).collect(Collectors.toSet());
+            }
+
+            // Grant survives with (possibly empty) permissions: the process stays visible
+            // to a member-owner, but only with the role's runtime rights (empty → DENY for
+            // every Action; read visibility is keySet-driven and stays).
+            effective.put(processId, new Principal.Grant(narrowed, false));
+        }
+        return effective;
     }
 
     public boolean canCompleteUserTask(Principal principal, UUID processInstanceId) {

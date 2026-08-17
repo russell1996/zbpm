@@ -4,6 +4,7 @@ import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
 import com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity;
 import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
 import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
+import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.KeyHasher;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.TokenService;
@@ -39,6 +40,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyGrantRepository apiKeyGrantRepository;
     private final UiUserLookupService userLookupService;
+    private final AuthorizationService authorizationService;
     private final Environment environment;
     /** WO-SEC-34: in-memory debounce tracker — apiKeyId → last write timestamp */
     private final ConcurrentHashMap<UUID, Instant> lastWriteTimestamps = new ConcurrentHashMap<>();
@@ -53,11 +55,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                          ApiKeyRepository apiKeyRepository,
                          ApiKeyGrantRepository apiKeyGrantRepository,
                          UiUserLookupService userLookupService,
+                         AuthorizationService authorizationService,
                          Environment environment) {
         this.tokenService = tokenService;
         this.apiKeyRepository = apiKeyRepository;
         this.apiKeyGrantRepository = apiKeyGrantRepository;
         this.userLookupService = userLookupService;
+        this.authorizationService = authorizationService;
         this.environment = environment;
     }
 
@@ -246,8 +250,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return null;
         }
 
-        // Load grants
-        Map<UUID, Principal.Grant> grants = loadGrants(apiKey.getId());
+        // WO-ACL-5 criterion #4: a deactivated (or deleted) owner's key stops working —
+        // checked on every request, not only when the key was issued.
+        if (!userLookupService.isActive(apiKey.getOwnerUserId())) {
+            log.debug("API key owner deactivated: prefix={}", apiKey.getPrefix());
+            return null;
+        }
+
+        // WO-ACL-5 (ADR-8 п.5): effective grants = key grants ∩ the owner's CURRENT
+        // process rights — membership/role changes narrow the key immediately (criterion #3),
+        // and no grant can ever exceed what the owner could do directly (criterion #6).
+        Map<UUID, Principal.Grant> grants =
+            authorizationService.effectiveGrants(apiKey.getOwnerUserId(), loadGrants(apiKey.getId()));
 
         // WO-SEC-34: debounce — only update lastUsedAt if stale (>DEBOUNCE_MS since last write)
         Instant now = Instant.now();
