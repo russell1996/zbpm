@@ -133,6 +133,13 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
             .toList();
     }
 
+    @Override
+    public String getBpmn(UUID submissionId) {
+        return submissionRepository.findById(submissionId)
+            .map(ProcessSubmissionEntity::getBpmn)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found"));
+    }
+
     /**
      * WO-ACL-3 criterion 4 — the atomicity guarantee this WO exists for:
      * deploy + registry process + OWNER membership + submission status update happen in ONE
