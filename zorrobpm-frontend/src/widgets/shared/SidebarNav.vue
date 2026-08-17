@@ -42,7 +42,7 @@ const navItems = computed<NavItem[]>(() => [
     children: [
       { labelKey: 'definitions', icon: GitBranch, to: '/processes/definitions' },
       { labelKey: 'instances', icon: GitBranch, to: '/processes/instances' },
-      { labelKey: 'deploy', icon: GitBranch, to: '/processes/deploy' },
+      { labelKey: 'mySubmissions', icon: GitBranch, to: '/processes/submissions' },
     ],
   },
   { labelKey: 'tasks', icon: ListTodo, to: '/tasks' },
@@ -53,6 +53,7 @@ const navItems = computed<NavItem[]>(() => [
   { labelKey: 'dmn', icon: GitBranch, to: '/dmn' },
   { labelKey: 'analytics', icon: BarChart3, to: '/analytics' },
   { labelKey: 'users', icon: Users, to: '/admin/users' },
+  { labelKey: 'submissionQueue', icon: Users, to: '/admin/submissions' },
 ])
 
 function toggle(key: string) {

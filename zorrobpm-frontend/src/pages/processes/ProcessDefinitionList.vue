@@ -6,6 +6,7 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
+import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import { Download, RefreshCw } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -73,6 +74,10 @@ watch([search, latestOnly], () => { resetPage(); load() })
         </button>
       </div>
     </div>
+
+    <!-- WO-ACL-6: upload lives INSIDE the definitions list — the old standalone
+         /processes/deploy page and its sidebar entry are gone. -->
+    <ProcessDeploySection />
 
     <div class="flex items-center gap-4">
       <input
