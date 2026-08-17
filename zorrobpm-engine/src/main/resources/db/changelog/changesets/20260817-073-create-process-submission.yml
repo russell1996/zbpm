@@ -1,0 +1,99 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260817-073-create-process-submission
+      author: mimo
+      changes:
+        - createTable:
+            tableName: process_submission
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: bpmn
+                  type: text
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_key
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: name
+                  type: text
+              - column:
+                  name: submitted_by
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: submitted_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: varchar(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: reviewed_by
+                  type: uuid
+              - column:
+                  name: reviewed_at
+                  type: datetime with timezone
+              - column:
+                  name: reject_reason
+                  type: varchar(500)
+              - column:
+                  name: approved_definition_id
+                  type: uuid
+              - column:
+                  name: previous_submission_id
+                  type: uuid
+        - addForeignKeyConstraint:
+            baseTableName: process_submission
+            baseColumnNames: submitted_by
+            referencedTableName: ui_users
+            referencedColumnNames: id
+            constraintName: fk_process_submission_submitter
+        - addForeignKeyConstraint:
+            baseTableName: process_submission
+            baseColumnNames: reviewed_by
+            referencedTableName: ui_users
+            referencedColumnNames: id
+            constraintName: fk_process_submission_reviewer
+        - addForeignKeyConstraint:
+            baseTableName: process_submission
+            baseColumnNames: approved_definition_id
+            referencedTableName: process_definitions
+            referencedColumnNames: id
+            constraintName: fk_process_submission_definition
+        - addForeignKeyConstraint:
+            baseTableName: process_submission
+            baseColumnNames: previous_submission_id
+            referencedTableName: process_submission
+            referencedColumnNames: id
+            constraintName: fk_process_submission_previous
+        # Admin review queue: oldest PENDING first
+        - createIndex:
+            tableName: process_submission
+            indexName: idx_process_submission_queue
+            columns:
+              - column:
+                  name: status
+              - column:
+                  name: submitted_at
+        # "My submissions" for a user
+        - createIndex:
+            tableName: process_submission
+            indexName: idx_process_submission_mine
+            columns:
+              - column:
+                  name: submitted_by
+              - column:
+                  name: submitted_at
