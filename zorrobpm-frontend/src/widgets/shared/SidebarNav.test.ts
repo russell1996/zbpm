@@ -34,4 +34,23 @@ describe('SidebarNav', () => {
     const processSchemasBtn = buttons.find(b => b.text().includes('processSchemas'))
     expect(processSchemasBtn).toBeFalsy()
   })
+
+  it('WO-ACL-6 criterion 4: standalone "Deploy Process" menu item removed — upload lives inside definitions', () => {
+    const wrapper = mount(SidebarNav)
+    const buttons = wrapper.findAll('button')
+    const deployBtn = buttons.find(b => b.text().includes('deploy'))
+    expect(deployBtn).toBeFalsy()
+  })
+
+  it('WO-ACL-6: My Submissions item present (criterion 6)', () => {
+    const wrapper = mount(SidebarNav)
+    const buttons = wrapper.findAll('button')
+    expect(buttons.some(b => b.text().includes('mySubmissions'))).toBe(true)
+  })
+
+  it('WO-ACL-6: Submission Queue item present (criterion 6)', () => {
+    const wrapper = mount(SidebarNav)
+    const buttons = wrapper.findAll('button')
+    expect(buttons.some(b => b.text().includes('submissionQueue'))).toBe(true)
+  })
 })
