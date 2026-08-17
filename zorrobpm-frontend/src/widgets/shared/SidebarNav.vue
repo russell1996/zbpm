@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -9,8 +9,6 @@ import {
   ListTodo,
   AlertTriangle,
   Users,
-  ChevronDown,
-  ChevronRight,
   BarChart3,
   Cpu,
   PanelLeftClose,
@@ -29,26 +27,15 @@ interface NavItem {
   labelKey: string
   icon: typeof LayoutDashboard
   to?: string
-  children?: NavItem[]
-  /** WO-ACL-8 criteria 1-2: admin-only items are hidden from non-super-admins. */
   adminOnly?: boolean
 }
 
-const expanded = ref<Record<string, boolean>>({
-  processes: true,
-})
-
 const navItems = computed<NavItem[]>(() => [
   { labelKey: 'dashboard', icon: LayoutDashboard, to: '/' },
-  {
-    labelKey: 'processes',
-    icon: GitBranch,
-    children: [
-      { labelKey: 'definitions', icon: GitBranch, to: '/processes/definitions' },
-      { labelKey: 'instances', icon: GitBranch, to: '/processes/instances' },
-      { labelKey: 'mySubmissions', icon: GitBranch, to: '/processes/submissions' },
-    ],
-  },
+  // WO-ACL-8 criterion 14: two top-level sections instead of a collapsible group.
+  // criterion 10 moved My Submissions into a dialog on the definitions page.
+  { labelKey: 'definitions', icon: GitBranch, to: '/processes/definitions' },
+  { labelKey: 'instances', icon: GitBranch, to: '/processes/instances' },
   { labelKey: 'tasks', icon: ListTodo, to: '/tasks' },
   { labelKey: 'serviceTasks', icon: Cpu, to: '/service-tasks' },
   { labelKey: 'incidents', icon: AlertTriangle, to: '/incidents' },
@@ -65,19 +52,9 @@ const visibleNavItems = computed<NavItem[]>(() =>
   auth.isSuperAdmin ? navItems.value : navItems.value.filter((i) => !i.adminOnly),
 )
 
-function toggle(key: string) {
-  expanded.value[key] = !expanded.value[key]
-}
-
 function isActive(to?: string) {
   if (!to) return false
   return route.path === to || route.path.startsWith(to + '/')
-}
-
-function isActiveGroup(item: NavItem) {
-  if (item.to) return isActive(item.to)
-  if (item.children) return item.children.some((c) => isActive(c.to))
-  return false
 }
 
 function navigate(to: string) {
@@ -103,41 +80,18 @@ function navigate(to: string) {
       </button>
     </div>
     <nav class="flex-1 py-2 overflow-y-auto min-h-0">
+      <!-- WO-ACL-8 criterion 15: children support removed — no items use it after
+           flattening the processes group (criterion 14). If nesting is needed again,
+           re-add the child rendering block. -->
       <template v-for="item in visibleNavItems" :key="item.labelKey">
-        <div v-if="item.children && !collapsed">
-          <button
-            class="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
-            :class="{ 'bg-sidebar-accent font-medium': isActiveGroup(item) }"
-            @click="toggle(item.labelKey)"
-          >
-            <span class="flex items-center gap-3">
-              <component :is="item.icon" class="h-4 w-4" />
-              {{ t(item.labelKey) }}
-            </span>
-            <component :is="expanded[item.labelKey] ? ChevronDown : ChevronRight" class="h-4 w-4" />
-          </button>
-          <div v-if="expanded[item.labelKey]" class="ml-4">
-            <button
-              v-for="child in item.children"
-              :key="child.to"
-              class="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-sidebar-accent transition-colors"
-              :class="{ 'bg-sidebar-accent font-medium': isActive(child.to) }"
-              @click="child.to && navigate(child.to)"
-            >
-              <component :is="child.icon" class="h-4 w-4" />
-              {{ t(child.labelKey) }}
-            </button>
-          </div>
-        </div>
         <button
-          v-else
           class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
           :class="[
             { 'bg-sidebar-accent font-medium': isActive(item.to) },
             collapsed ? 'justify-center px-2' : '',
           ]"
           :title="collapsed ? t(item.labelKey) : undefined"
-          @click="item.children ? (collapsed ? null : toggle(item.labelKey)) : item.to && navigate(item.to)"
+          @click="item.to && navigate(item.to)"
         >
           <component :is="item.icon" class="h-4 w-4 shrink-0" />
           <span v-if="!collapsed">{{ t(item.labelKey) }}</span>

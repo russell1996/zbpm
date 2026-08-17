@@ -56,8 +56,8 @@ vi.mock('@/composables/useDateFormat', () => ({
 }))
 
 const MEMBERS = [
-  { userId: 'u-owner', username: 'alice', role: 'OWNER', addedBy: null, addedAt: '2026-01-01', processKey: 'test-proc' },
-  { userId: 'u-viewer', username: 'bob', role: 'VIEWER', addedBy: 'u-owner', addedAt: '2026-01-02', processKey: 'test-proc' },
+  { userId: 'u-owner', username: 'alice', fullName: 'Alice A.', email: 'alice@test.com', role: 'OWNER', addedBy: null, addedAt: '2026-01-01', processKey: 'test-proc' },
+  { userId: 'u-viewer', username: 'bob', fullName: 'Bob B.', email: 'bob@test.com', role: 'VIEWER', addedBy: 'u-owner', addedAt: '2026-01-02', processKey: 'test-proc' },
 ]
 
 async function mountDetail() {
