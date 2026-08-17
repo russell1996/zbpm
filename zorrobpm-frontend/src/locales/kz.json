@@ -386,5 +386,7 @@
   "apiDocs": "API құжаттамасы",
   "all": "Барлығы",
   "my": "Менің",
-  "owner": "Иесі"
+  "owner": "Иесі",
+  "file": "Файл",
+  "openExistingProcess": "Бар процесті ашу"
 }

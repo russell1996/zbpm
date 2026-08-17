@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { deployProcessDefinition } from '@/services/processService'
 import { submitProcessSubmission } from '@/services/submissionService'
@@ -21,10 +21,30 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const success = ref(false)
 const submitted = ref(false)
+// WO-ACL-8 criterion 29: segment toggle for file vs XML text input.
+const inputMode = ref<'file' | 'xml'>('file')
+// WO-ACL-8 criterion 30: parsed key and name shown before submit.
+const parsedKey = ref<string | null>(null)
+const parsedName = ref<string | null>(null)
+// WO-ACL-8 criterion 31: error "already exists" shows a button to navigate.
+const existingProcessKey = ref<string | null>(null)
 
 /** WO-ACL-6 criterion 5: the button names what will happen — SUPER_ADMIN deploys,
  * everyone else creates an approval request. Same input, two outcomes. */
 const isAdmin = auth.isSuperAdmin
+
+function parseBpmnMetadata(xml: string) {
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(xml, 'text/xml')
+    const process = doc.querySelector('process')
+    parsedKey.value = process?.getAttribute('id') || null
+    parsedName.value = process?.getAttribute('name') || null
+  } catch {
+    parsedKey.value = null
+    parsedName.value = null
+  }
+}
 
 function onFileChange(event: Event) {
   const input = event.target as HTMLInputElement
@@ -34,8 +54,13 @@ function onFileChange(event: Event) {
   const reader = new FileReader()
   reader.onload = () => {
     bpmnText.value = reader.result as string
+    parseBpmnMetadata(bpmnText.value)
   }
   reader.readAsText(file)
+}
+
+function onXmlInput() {
+  parseBpmnMetadata(bpmnText.value)
 }
 
 function onDrop(event: DragEvent) {
@@ -46,6 +71,7 @@ function onDrop(event: DragEvent) {
   const reader = new FileReader()
   reader.onload = () => {
     bpmnText.value = reader.result as string
+    parseBpmnMetadata(bpmnText.value)
   }
   reader.readAsText(file)
 }
@@ -63,6 +89,7 @@ async function submit() {
   error.value = null
   success.value = false
   submitted.value = false
+  existingProcessKey.value = null
   try {
     if (isAdmin) {
       const result = await deployProcessDefinition(bpmnText.value)
@@ -76,12 +103,25 @@ async function submit() {
       toast.success(t('submissionSentToast'))
     }
   } catch (e) {
-    // WO-ACL-6 criterion 7: show the backend's own text (e.g. "Process with key 'x'
-    // already exists…"), not a generic "Failed to deploy".
-    error.value = errorMessage(e, t('failedToDeploy'))
-    toast.error(error.value)
+    const msg = errorMessage(e, t('failedToDeploy'))
+    error.value = msg
+    // WO-ACL-8 criterion 31: extract process key from "already exists" error
+    // and offer a direct navigation button.
+    const keyMatch = msg.match(/key\s+'([^']+)'/i)
+    if (keyMatch && msg.toLowerCase().includes('already exists')) {
+      existingProcessKey.value = keyMatch[1]
+    }
+    toast.error(msg)
   } finally {
     loading.value = false
+  }
+}
+
+function navigateToExisting() {
+  if (existingProcessKey.value) {
+    // Search for the process by key and navigate to its detail page.
+    router.push(`/processes/definitions?search=${existingProcessKey.value}`)
+    clear()
   }
 }
 
@@ -91,6 +131,9 @@ function clear() {
   error.value = null
   success.value = false
   submitted.value = false
+  parsedKey.value = null
+  parsedName.value = null
+  existingProcessKey.value = null
 }
 </script>
 
@@ -108,8 +151,23 @@ function clear() {
     </button>
 
     <div v-if="expanded" class="px-4 pb-4 space-y-4">
+      <!-- WO-ACL-8 criterion 29: segment toggle — File or XML text, one at a time. -->
+      <div v-if="!bpmnText" class="flex items-center border border-border rounded-md overflow-hidden text-sm">
+        <button
+          class="px-3 py-1.5 transition-colors"
+          :class="inputMode === 'file' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+          @click="inputMode = 'file'"
+        >{{ t('file') }}</button>
+        <button
+          class="px-3 py-1.5 transition-colors"
+          :class="inputMode === 'xml' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+          @click="inputMode = 'xml'"
+        >XML</button>
+      </div>
+
+      <!-- File mode -->
       <div
-        v-if="!bpmnText"
+        v-if="!bpmnText && inputMode === 'file'"
         class="border-2 border-dashed border-border rounded-lg p-10 text-center hover:border-primary/50 transition-colors cursor-pointer"
         @drop="onDrop"
         @dragover="onDragOver"
@@ -121,7 +179,17 @@ function clear() {
         <input ref="fileInput" type="file" accept=".bpmn,.xml" class="hidden" @change="onFileChange" />
       </div>
 
-      <template v-else>
+      <!-- XML text mode -->
+      <div v-if="!bpmnText && inputMode === 'xml'" class="space-y-3">
+        <textarea
+          v-model="bpmnText"
+          class="w-full h-72 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+          :placeholder="t('pasteBpmnHere')"
+          @input="onXmlInput"
+        />
+      </div>
+
+      <template v-if="bpmnText">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
             <FileText class="h-5 w-5 text-primary" />
@@ -133,15 +201,32 @@ function clear() {
           <button class="text-sm text-muted-foreground hover:text-foreground" @click="clear">{{ t('clear') }}</button>
         </div>
 
+        <!-- WO-ACL-8 criterion 30: parsed key and name before submit. -->
+        <div v-if="parsedKey" class="bg-muted/50 rounded-md px-4 py-2 text-sm space-y-1">
+          <p><span class="text-muted-foreground">{{ t('key') }}:</span> <code class="font-mono">{{ parsedKey }}</code></p>
+          <p v-if="parsedName"><span class="text-muted-foreground">{{ t('name') }}:</span> {{ parsedName }}</p>
+        </div>
+
         <textarea
           v-model="bpmnText"
           class="w-full h-72 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
           :placeholder="t('pasteBpmnHere')"
+          @input="onXmlInput"
         />
 
-        <div v-if="error" class="flex items-center gap-2 text-sm text-red-500">
-          <AlertCircle class="h-4 w-4 shrink-0" />
-          {{ error }}
+        <div v-if="error" class="space-y-2">
+          <div class="flex items-center gap-2 text-sm text-red-500">
+            <AlertCircle class="h-4 w-4 shrink-0" />
+            {{ error }}
+          </div>
+          <!-- WO-ACL-8 criterion 31: "already exists" error offers a button to navigate. -->
+          <button
+            v-if="existingProcessKey"
+            class="text-sm text-primary hover:underline"
+            @click="navigateToExisting"
+          >
+            {{ t('openExistingProcess') }} →
+          </button>
         </div>
 
         <div v-if="success" class="flex items-center gap-2 text-sm text-green-600">
