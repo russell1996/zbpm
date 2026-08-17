@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Copy, Check } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   value: string
@@ -36,7 +39,7 @@ const truncated = computed(() => {
     <span>{{ display }}<span v-if="truncated && !showFull">...</span></span>
     <button
       class="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
-      title="Copy to clipboard"
+      :title="t('copyToClipboard')"
       @click.stop="copy"
     >
       <Check v-if="copied" class="h-3 w-3 text-green-500" />

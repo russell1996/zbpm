@@ -451,13 +451,13 @@ watch(activeTab, onTabChange)
                   <div class="text-xs text-muted-foreground font-mono">{{ selectedFlow.sourceRef }} → {{ selectedFlow.targetRef }}</div>
                 </div>
                 <div class="pt-2 border-t border-border space-y-1">
-                  <h4 class="text-xs font-semibold text-muted-foreground uppercase">Condition (FEEL)</h4>
+                  <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('conditionFeel') }}</h4>
                   <p v-if="selectedFlow.conditionExpression" class="text-xs font-mono break-all bg-muted rounded px-2 py-1">{{ selectedFlow.conditionExpression }}</p>
                   <p v-else class="text-xs text-muted-foreground">No condition (default / unconditional).</p>
                 </div>
               </template>
 
-              <div v-if="!selectedNode && !selectedFlow" class="pt-2 border-t border-border text-xs text-muted-foreground">No details for this element.</div>
+              <div v-if="!selectedNode && !selectedFlow" class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('noDetailsForElement') }}</div>
             </div>
           </div>
           <div v-else class="p-6 text-sm text-muted-foreground">{{ t('bpmnNotAvailable') }}</div>
@@ -797,7 +797,7 @@ watch(activeTab, onTabChange)
           </div>
 
           <div v-if="!dialogUserTasks.length && !dialogServiceTasks.length && !dialogIncidents.length" class="text-sm text-muted-foreground py-4 text-center">
-            No tasks or incidents for this element.
+            {{ t('noTasksOrIncidents') }}
           </div>
 
           <div class="flex justify-end pt-2">

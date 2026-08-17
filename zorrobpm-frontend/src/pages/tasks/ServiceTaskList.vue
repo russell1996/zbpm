@@ -55,7 +55,7 @@ watch(filterCompleted, () => { resetPage(); load() })
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">Service Tasks</h1>
+      <h1 class="text-2xl font-bold">{{ t('serviceTasks') }}</h1>
       <div class="flex items-center gap-2">
         <button
           class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
