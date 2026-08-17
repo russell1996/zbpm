@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { usePagination } from '@/composables/usePagination'
+import { getMyMemberships } from '@/services/adminService'
 import { exportToCsv } from '@/shared/lib/export'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -20,6 +21,19 @@ const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useP
   () => store.definitions?.totalElements,
 )
 
+// WO-ACL-8 criterion 8: "my processes" filter — narrows the list to processes the
+// caller is a member of, via GET /me/memberships (WO-ACL-7). Client-side filtering
+// since the backend has no membership filter parameter and the contract is out of scope (G-C).
+const myOnly = ref(false)
+const myProcessKeys = ref<Set<string>>(new Set())
+const myMembershipsLoading = ref(false)
+
+const visibleDefinitions = computed(() => {
+  const data = store.definitions?.data || []
+  if (!myOnly.value) return data
+  return data.filter((d) => myProcessKeys.value.has(d.key))
+})
+
 async function load() {
   await store.fetchDefinitions({
     pageIndex: page.value,
@@ -27,6 +41,21 @@ async function load() {
     name: search.value || undefined,
     latestVersionOnly: latestOnly.value || undefined,
   })
+}
+
+async function toggleMyOnly() {
+  myProcessKeys.value = new Set()
+  if (myOnly.value) {
+    myMembershipsLoading.value = true
+    try {
+      const memberships = await getMyMemberships()
+      myProcessKeys.value = new Set(memberships.map((m) => m.processKey).filter((k): k is string => !!k))
+    } finally {
+      myMembershipsLoading.value = false
+    }
+  }
+  resetPage()
+  load()
 }
 
 function goNextPage() { nextPage(); load() }
@@ -90,6 +119,12 @@ watch([search, latestOnly], () => { resetPage(); load() })
         <input v-model="latestOnly" type="checkbox" class="rounded" />
         {{ t('latestOnly') }}
       </label>
+      <!-- WO-ACL-8 criterion 8: "my processes" — empty result is a normal state. -->
+      <label class="flex items-center gap-2 text-sm">
+        <input v-model="myOnly" type="checkbox" class="rounded" @change="toggleMyOnly" />
+        {{ t('myProcessesOnly') }}
+      </label>
+      <span v-if="myMembershipsLoading" class="text-xs text-muted-foreground">{{ t('loading') }}</span>
     </div>
 
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
@@ -108,7 +143,7 @@ watch([search, latestOnly], () => { resetPage(); load() })
         </thead>
         <tbody>
           <tr
-            v-for="def in (store.definitions?.data || [])"
+            v-for="def in visibleDefinitions"
             :key="def.id"
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
             @click="viewDetail(def.id)"
@@ -127,8 +162,10 @@ watch([search, latestOnly], () => { resetPage(); load() })
               </button>
             </td>
           </tr>
-          <tr v-if="!store.definitions?.data?.length">
-            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noDefinitions') }}</td>
+          <tr v-if="!visibleDefinitions.length">
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">
+              {{ myOnly ? t('noMyProcesses') : t('noDefinitions') }}
+            </td>
           </tr>
         </tbody>
       </table>

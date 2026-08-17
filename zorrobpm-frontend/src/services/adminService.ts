@@ -34,6 +34,13 @@ export async function listUserMemberships(userId: string): Promise<Member[]> {
   return data
 }
 
+/** WO-ACL-7 endpoint surfaced for WO-ACL-8 criterion 8: the caller's OWN memberships
+ *  (userId comes from the server-side principal — no cross-user access). */
+export async function getMyMemberships(): Promise<Member[]> {
+  const { data } = await api.get<Member[]>('/me/memberships')
+  return data
+}
+
 // --- API Key management ---
 export interface ApiKeyGrant {
   processId: string
