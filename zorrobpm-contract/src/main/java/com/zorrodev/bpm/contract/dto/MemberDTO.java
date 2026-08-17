@@ -11,6 +11,10 @@ import java.util.UUID;
 public class MemberDTO {
     private UUID userId;
     private String username;
+    /** WO-ACL-7 пункт 4: display name for the member list. */
+    private String fullName;
+    /** WO-ACL-7 пункт 4: contact for the member list (ADR-8: visible to any authenticated user — accepted by the product owner). */
+    private String email;
     private String role;
     private UUID addedBy;
     private Instant addedAt;

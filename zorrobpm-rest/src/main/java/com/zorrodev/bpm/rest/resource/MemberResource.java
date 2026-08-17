@@ -296,8 +296,12 @@ public class MemberResource implements MemberContract {
         dto.setAddedBy(entity.getAddedBy());
         dto.setAddedAt(entity.getAddedAt());
 
-        // Resolve username
-        uiUserRepository.findById(entity.getUserId()).ifPresent(u -> dto.setUsername(u.getUsername()));
+        // Resolve username, fullName, email from the same lookup (WO-ACL-7 пункт 4)
+        uiUserRepository.findById(entity.getUserId()).ifPresent(u -> {
+            dto.setUsername(u.getUsername());
+            dto.setFullName(u.getFullName());
+            dto.setEmail(u.getEmail());
+        });
 
         return dto;
     }
