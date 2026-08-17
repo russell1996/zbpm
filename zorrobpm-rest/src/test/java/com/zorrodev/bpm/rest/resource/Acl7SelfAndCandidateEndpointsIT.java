@@ -153,6 +153,35 @@ class Acl7SelfAndCandidateEndpointsIT {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // Criteria 9/10 (WO-ACL-7 пункт 4): MemberDTO carries fullName+email, nothing more
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    void meMemberships_carriesFullNameAndEmail() throws Exception {
+        MvcResult a = mockMvc.perform(get("/me/memberships")
+                .header("Authorization", "Bearer " + userAToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        String body = a.getResponse().getContentAsString();
+        assertTrue(body.contains("ACL7 acl7-user-a"), "fullName must be present: " + body);
+        assertTrue(body.contains("acl7-user-a@example.com"), "email must be present: " + body);
+    }
+
+    @Test
+    void meMemberships_dtoHasNoExtraFields() throws Exception {
+        MvcResult a = mockMvc.perform(get("/me/memberships")
+                .header("Authorization", "Bearer " + userAToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(a.getResponse().getContentAsString());
+        assertTrue(arr.isArray() && arr.size() >= 1, "expected own memberships: " + arr);
+        Set<String> fields = new HashSet<>();
+        arr.get(0).fieldNames().forEachRemaining(fields::add);
+        assertEquals(Set.of("userId", "username", "fullName", "email", "role", "addedBy", "addedAt", "processKey"),
+            fields, "MemberDTO must expose exactly the agreed fields: " + arr);
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Criterion 2: unauthenticated → 401; someone else's memberships unreachable
     // ─────────────────────────────────────────────────────────────
 
@@ -304,6 +333,7 @@ class Acl7SelfAndCandidateEndpointsIT {
         user.setUsername(username);
         user.setPasswordHash(passwordHasher.hash("pass"));
         user.setFullName("ACL7 " + username);
+        user.setEmail(username + "@example.com");
         user.setRole(globalRole);
         user.setActive(true);
         user.setCreatedAt(Instant.now());
