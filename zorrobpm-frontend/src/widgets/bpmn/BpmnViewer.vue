@@ -2,6 +2,9 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import NavigatedViewer from 'bpmn-js/lib/NavigatedViewer'
 import { ZoomIn, ZoomOut, Maximize, Map } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   xml: string
@@ -142,13 +145,13 @@ onUnmounted(() => { viewer?.destroy() })
 <template>
   <div class="bpmn-viewer-wrapper border border-border rounded-lg overflow-hidden">
     <div class="flex items-center gap-1 px-3 py-2 border-b border-border bg-muted/50">
-      <button class="p-1.5 hover:bg-muted rounded transition-colors" title="Zoom in" @click="zoomIn">
+      <button class="p-1.5 hover:bg-muted rounded transition-colors" :title="t('zoomIn')" @click="zoomIn">
         <ZoomIn class="h-4 w-4" />
       </button>
-      <button class="p-1.5 hover:bg-muted rounded transition-colors" title="Zoom out" @click="zoomOut">
+      <button class="p-1.5 hover:bg-muted rounded transition-colors" :title="t('zoomOut')" @click="zoomOut">
         <ZoomOut class="h-4 w-4" />
       </button>
-      <button class="p-1.5 hover:bg-muted rounded transition-colors" title="Fit to viewport" @click="fitViewport">
+      <button class="p-1.5 hover:bg-muted rounded transition-colors" :title="t('fitToViewport')" @click="fitViewport">
         <Maximize class="h-4 w-4" />
       </button>
     </div>

@@ -107,7 +107,7 @@ watch(filterCompleted, () => { resetPage(); load() })
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">User Tasks</h1>
+      <h1 class="text-2xl font-bold">{{ t('userTasks') }}</h1>
       <div class="flex items-center gap-2">
         <button
           v-if="selectedIds.size > 0"
@@ -190,7 +190,7 @@ watch(filterCompleted, () => { resetPage(); load() })
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
             <td class="px-4 py-3">
-              <button class="text-sm text-primary hover:underline" @click="viewDetail(task.id)">View</button>
+              <button class="text-sm text-primary hover:underline" @click="viewDetail(task.id)">{{ t('view') }}</button>
             </td>
           </tr>
           <tr v-if="!store.userTasks?.data?.length">

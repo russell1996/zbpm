@@ -46,7 +46,7 @@ const { t } = useI18n()
         target="_blank"
         rel="noopener noreferrer"
         class="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
-        title="API Docs"
+        :title="t('apiDocs')"
       >
         <FileCode class="h-4 w-4" />
       </a>

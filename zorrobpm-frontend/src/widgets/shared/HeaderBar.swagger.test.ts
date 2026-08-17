@@ -59,6 +59,6 @@ describe('WO-FE-23: Swagger link in HeaderBar', () => {
     })
 
     const link = wrapper.find('a[href="/swagger-ui/index.html"]')
-    expect(link.attributes('title')).toBe('API Docs')
+    expect(link.attributes('title')).toBe('apiDocs')
   })
 })

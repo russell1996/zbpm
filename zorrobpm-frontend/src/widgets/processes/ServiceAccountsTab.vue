@@ -148,7 +148,7 @@ onMounted(loadAccounts)
     </div>
 
     <!-- Accounts list -->
-    <div v-if="loading" class="text-sm text-muted-foreground">Loading...</div>
+    <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
     <table v-else-if="accounts.length" class="w-full text-sm border border-border rounded-lg overflow-hidden">
       <thead class="bg-muted">

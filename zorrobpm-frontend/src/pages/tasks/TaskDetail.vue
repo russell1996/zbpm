@@ -88,7 +88,7 @@ onMounted(async () => {
 
     <template v-else-if="store.currentTask">
       <div>
-        <h1 class="text-2xl font-bold">User Task</h1>
+        <h1 class="text-2xl font-bold">{{ t('userTask') }}</h1>
         <CopyableId :value="store.currentTask.id" />
       </div>
 

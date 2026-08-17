@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { Search, X } from 'lucide-vue-next'
 import { getProcessDefinitions } from '@/services/processService'
 import { getProcessInstances } from '@/services/instanceService'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const router = useRouter()
 const isOpen = ref(false)
 const query = ref('')
@@ -92,7 +94,7 @@ onUnmounted(() => {
     @click="open"
   >
     <Search class="h-4 w-4" />
-    <span>Search...</span>
+    <span>{{ t('searchPlaceholder') }}</span>
     <kbd class="ml-2 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border border-border">⌘K</kbd>
   </button>
 
@@ -110,7 +112,7 @@ onUnmounted(() => {
             ref="inputRef"
             v-model="query"
             type="text"
-            placeholder="Search processes, instances..."
+            :placeholder="t('searchProcessesInstances')"
             class="flex-1 text-sm bg-transparent focus:outline-none"
             @input="search"
           />
@@ -119,9 +121,9 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="max-h-80 overflow-y-auto p-2">
-          <div v-if="loading" class="px-4 py-3 text-sm text-muted-foreground">Searching...</div>
+          <div v-if="loading" class="px-4 py-3 text-sm text-muted-foreground">{{ t('searching') }}</div>
           <div v-else-if="results.length === 0 && query.length >= 2" class="px-4 py-3 text-sm text-muted-foreground">
-            No results found
+            {{ t('noResultsFound') }}
           </div>
           <button
             v-for="(r, i) in results"

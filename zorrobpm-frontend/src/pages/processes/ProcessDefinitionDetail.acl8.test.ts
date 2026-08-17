@@ -80,7 +80,7 @@ async function mountDetail() {
 type DetailWrapper = Awaited<ReturnType<typeof mountDetail>>
 
 function startButton(wrapper: DetailWrapper) {
-  return wrapper.findAll('button').find((b) => b.text().includes('Start Process'))
+  return wrapper.findAll('button').find((b) => b.text().includes('startProcess'))
 }
 
 function versionButton(wrapper: DetailWrapper) {

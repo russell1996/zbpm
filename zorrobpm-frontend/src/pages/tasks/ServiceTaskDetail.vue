@@ -49,7 +49,7 @@ onMounted(async () => {
 
     <template v-else-if="store.currentServiceTask">
       <div>
-        <h1 class="text-2xl font-bold">Service Task</h1>
+        <h1 class="text-2xl font-bold">{{ t('serviceTask') }}</h1>
         <CopyableId :value="store.currentServiceTask.id" />
       </div>
 
