@@ -67,10 +67,10 @@ describe('SidebarNav', () => {
     expect(deployBtn).toBeFalsy()
   })
 
-  it('WO-ACL-6: My Submissions item present (criterion 6)', () => {
+  it('WO-ACL-8 criterion 10: My Submissions removed from sidebar (now a dialog on definitions page)', () => {
     const wrapper = mount(SidebarNav)
     const buttons = wrapper.findAll('button')
-    expect(buttons.some(b => b.text().includes('mySubmissions'))).toBe(true)
+    expect(buttons.some(b => b.text().includes('mySubmissions'))).toBe(false)
   })
 
   it('WO-ACL-6: Submission Queue item present for super-admin (criterion 6)', () => {

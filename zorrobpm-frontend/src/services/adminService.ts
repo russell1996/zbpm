@@ -1,9 +1,12 @@
 import api from './api'
 
 // --- Member management ---
+// WO-ACL-6/7: fullName and email come from the backend MemberDTO (added in ACL-7).
 export interface Member {
   userId: string
   username: string | null
+  fullName: string | null
+  email: string | null
   role: string
   addedBy: string | null
   addedAt: string

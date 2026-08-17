@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -232,8 +232,9 @@ async function loadDefinition(id: string) {
   ])
   if (store.currentDefinition) {
     await store.fetchVersions(store.currentDefinition.key)
-    // Members load in parallel: a slow/blocked members request must not stall
-    // the BPMN viewer or the version switch (WO-ACL-6; keeps WO-FE-20 green).
+    // WO-ACL-8 criterion 12: provide the process name for the breadcrumb.
+    // BreadcrumbNav injects this to replace the static "Process Definition" title.
+    provide('processName', store.currentDefinition.name || store.currentDefinition.key)
     loadMembers()
   }
   try {
@@ -320,60 +321,8 @@ async function downloadBpmn() {
         </div>
       </div>
 
-      <!-- WO-ACL-6 criterion 2/3: members and their roles — visible to any member
-           (ADR-8 п.4: seeing members ≠ managing them), managed by the OWNER only. -->
-      <div class="border border-border rounded-lg overflow-hidden bg-card">
-        <div class="px-4 py-3 border-b border-border">
-          <h2 class="text-lg font-bold">{{ t('members') }}</h2>
-          <p class="text-xs text-muted-foreground">{{ t('membersHint') }}</p>
-        </div>
-        <div v-if="membersLoading" class="px-4 py-3 text-sm text-muted-foreground">{{ t('loading') }}</div>
-        <div v-else-if="membersError" class="px-4 py-3 text-sm text-red-500">{{ membersError }}</div>
-        <table v-else-if="members.length" class="w-full text-sm">
-          <thead class="bg-muted">
-            <tr>
-              <th class="px-4 py-2 text-left font-medium">{{ t('username') }}</th>
-              <th class="px-4 py-2 text-left font-medium">{{ t('role') }}</th>
-              <th v-if="canManageMembers" class="px-4 py-2 text-left font-medium">{{ t('actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="m in members" :key="m.userId" class="border-t border-border">
-              <td class="px-4 py-2">
-                {{ m.username || m.userId }}
-                <span v-if="m.userId === auth.user?.id" class="ml-2 text-xs text-muted-foreground">({{ t('you') }})</span>
-              </td>
-              <td class="px-4 py-2">
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" :class="m.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : m.role === 'DESIGNER' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'">
-                  {{ m.role }}
-                </span>
-              </td>
-              <td v-if="canManageMembers" class="px-4 py-2">
-                <div class="flex items-center gap-2">
-                  <select
-                    class="px-2 py-1 border border-input rounded text-xs"
-                    :value="m.role"
-                    @change="changeRole(m, ($event.target as HTMLSelectElement).value)"
-                  >
-                    <option value="OWNER">{{ t('ownerRole') }}</option>
-                    <option value="DESIGNER">{{ t('designerRole') }}</option>
-                    <option value="VIEWER">{{ t('viewerRole') }}</option>
-                  </select>
-                  <button
-                    class="text-xs text-red-500 hover:underline"
-                    :disabled="m.userId === auth.user?.id"
-                    @click="removeMemberOf(m)"
-                  >
-                    {{ t('remove') }}
-                  </button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-else class="px-4 py-3 text-sm text-muted-foreground">{{ t('noMembers') }}</p>
-      </div>
-
+      <!-- WO-ACL-8 criterion 13: model first — the diagram is the primary reason
+           users open this page; members are reference material. -->
       <div v-if="bpmnXml" class="border border-border rounded-lg bg-card">
         <div class="px-4 py-3 border-b border-border">
           <h2 class="text-lg font-bold">BPMN Process</h2>
@@ -444,6 +393,64 @@ async function downloadBpmn() {
             <span v-if="node.name" class="text-muted-foreground">— {{ node.name }}</span>
           </div>
         </div>
+      </div>
+
+      <!-- WO-ACL-6 criterion 2/3: members — visible to any member, managed by OWNER/SA.
+           Placed AFTER the model (WO-ACL-8 criterion 13). -->
+      <div class="border border-border rounded-lg overflow-hidden bg-card">
+        <div class="px-4 py-3 border-b border-border">
+          <h2 class="text-lg font-bold">{{ t('members') }}</h2>
+          <p class="text-xs text-muted-foreground">{{ t('membersHint') }}</p>
+        </div>
+        <div v-if="membersLoading" class="px-4 py-3 text-sm text-muted-foreground">{{ t('loading') }}</div>
+        <div v-else-if="membersError" class="px-4 py-3 text-sm text-red-500">{{ membersError }}</div>
+        <table v-else-if="members.length" class="w-full text-sm">
+          <thead class="bg-muted">
+            <tr>
+              <th class="px-4 py-2 text-left font-medium">{{ t('username') }}</th>
+              <th class="px-4 py-2 text-left font-medium">{{ t('fullName') }}</th>
+              <th class="px-4 py-2 text-left font-medium">{{ t('email') }}</th>
+              <th class="px-4 py-2 text-left font-medium">{{ t('role') }}</th>
+              <th v-if="canManageMembers" class="px-4 py-2 text-left font-medium">{{ t('actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in members" :key="m.userId" class="border-t border-border">
+              <td class="px-4 py-2">
+                {{ m.username || m.userId }}
+                <span v-if="m.userId === auth.user?.id" class="ml-2 text-xs text-muted-foreground">({{ t('you') }})</span>
+              </td>
+              <td class="px-4 py-2">{{ m.fullName || '—' }}</td>
+              <td class="px-4 py-2">{{ m.email || '—' }}</td>
+              <td class="px-4 py-2">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" :class="m.role === 'OWNER' ? 'bg-amber-100 text-amber-800' : m.role === 'DESIGNER' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'">
+                  {{ m.role }}
+                </span>
+              </td>
+              <td v-if="canManageMembers" class="px-4 py-2">
+                <div class="flex items-center gap-2">
+                  <select
+                    class="px-2 py-1 border border-input rounded text-xs"
+                    :value="m.role"
+                    @change="changeRole(m, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="OWNER">{{ t('ownerRole') }}</option>
+                    <option value="DESIGNER">{{ t('designerRole') }}</option>
+                    <option value="VIEWER">{{ t('viewerRole') }}</option>
+                  </select>
+                  <button
+                    class="text-xs text-red-500 hover:underline"
+                    :disabled="m.userId === auth.user?.id"
+                    @click="removeMemberOf(m)"
+                  >
+                    {{ t('remove') }}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="px-4 py-3 text-sm text-muted-foreground">{{ t('noMembers') }}</p>
       </div>
 
       <!-- Requirements: process-level + per-element BPMN documentation -->

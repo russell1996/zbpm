@@ -1,21 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { useRoute } from 'vue-router'
 import { ChevronRight } from 'lucide-vue-next'
 
 const route = useRoute()
 
+// WO-ACL-8 criterion 12: the process detail page provides its name so the
+// breadcrumb shows the actual process name instead of the static "Process Definition".
+const processName = inject<string | undefined>('processName')
+
 const breadcrumbs = computed(() => {
   const items: { label: string; to?: string | object }[] = []
   const meta = route.meta as { title?: string; parentTitle?: string; parentTo?: string | object }
 
-  // Parent item (clickable link back to list)
   if (meta.parentTitle && meta.parentTo) {
     items.push({ label: meta.parentTitle, to: meta.parentTo })
   }
-  // Current page
   if (meta?.title) {
-    items.push({ label: meta.title })
+    items.push({ label: processName || meta.title })
   }
   return items
 })

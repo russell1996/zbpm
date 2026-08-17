@@ -17,7 +17,7 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('@/services/adminService', () => ({
   listMembers: vi.fn(),
   listUserMemberships: vi.fn().mockResolvedValue([
-    { userId: 'u1', username: 'user1', role: 'OWNER', processKey: 'proc-a', addedBy: null, addedAt: '' },
+    { userId: 'u1', username: 'user1', fullName: null, email: null, role: 'OWNER', processKey: 'proc-a', addedBy: null, addedAt: '' },
   ]),
   addMember: vi.fn(),
   removeMember: vi.fn(),
@@ -51,7 +51,7 @@ describe('UserDetailPanel', () => {
     vi.mocked(admin.getApiKey).mockRejectedValue({ response: { status: 404 } })
     // Default memberships: proc-a only
     vi.mocked(admin.listUserMemberships).mockResolvedValue([
-      { userId: 'u1', username: 'user1', role: 'OWNER', processKey: 'proc-a', addedBy: null, addedAt: '' },
+      { userId: 'u1', username: 'user1', fullName: null, email: null, role: 'OWNER', processKey: 'proc-a', addedBy: null, addedAt: '' },
     ])
   })
 

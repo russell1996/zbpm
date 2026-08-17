@@ -8,7 +8,8 @@ import { usePagination } from '@/composables/usePagination'
 import { getMyMemberships } from '@/services/adminService'
 import { exportToCsv } from '@/shared/lib/export'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
-import { Download, RefreshCw } from 'lucide-vue-next'
+import MySubmissions from '@/pages/processes/MySubmissions.vue'
+import { Download, RefreshCw, FileText } from 'lucide-vue-next'
 
 const router = useRouter()
 const store = useProcessStore()
@@ -76,6 +77,9 @@ function exportData() {
   })), 'process-definitions.csv')
 }
 
+// WO-ACL-8 criterion 10: My Submissions as a dialog from the definitions page.
+const showSubmissions = ref(false)
+
 onMounted(load)
 watch([search, latestOnly], () => { resetPage(); load() })
 </script>
@@ -92,6 +96,13 @@ watch([search, latestOnly], () => { resetPage(); load() })
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
           {{ t('refresh') }}
+        </button>
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          @click="showSubmissions = true"
+        >
+          <FileText class="h-4 w-4" />
+          {{ t('mySubmissions') }}
         </button>
         <button
           v-if="store.definitions?.data?.length"
@@ -189,6 +200,24 @@ watch([search, latestOnly], () => { resetPage(); load() })
         >
           {{ t('next') }}
         </button>
+      </div>
+    </div>
+
+    <!-- WO-ACL-8 criterion 10: My Submissions as a dialog from the definitions page.
+         The sidebar entry is gone (criterion 14); this is the only entry point now. -->
+    <div
+      v-if="showSubmissions"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      @click.self="showSubmissions = false"
+    >
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold">{{ t('mySubmissions') }}</h2>
+          <button class="text-sm text-muted-foreground hover:text-foreground" @click="showSubmissions = false">
+            {{ t('close') }}
+          </button>
+        </div>
+        <MySubmissions />
       </div>
     </div>
   </div>
