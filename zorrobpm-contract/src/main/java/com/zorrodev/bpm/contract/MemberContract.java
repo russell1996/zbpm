@@ -3,9 +3,11 @@ package com.zorrodev.bpm.contract;
 import com.zorrodev.bpm.contract.dto.AddMemberDTO;
 import com.zorrodev.bpm.contract.dto.ChangeRoleDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
+import com.zorrodev.bpm.contract.dto.MemberCandidateDTO;
 import com.zorrodev.bpm.contract.dto.MemberDTO;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.service.annotation.DeleteExchange;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.PatchExchange;
@@ -19,8 +21,21 @@ public interface MemberContract {
     @GetExchange("/admin/users/{userId}/memberships")
     List<MemberDTO> listUserMemberships(@PathVariable UUID userId);
 
+    /** WO-ACL-7: the current user's own memberships — self-service, no admin endpoint needed. */
+    @GetExchange("/me/memberships")
+    List<MemberDTO> listMyMemberships();
+
     @GetExchange("/processes/{key}/members")
     List<MemberDTO> listMembers(@PathVariable String key);
+
+    /**
+     * WO-ACL-7: user candidates to add to a process — MANAGE_MEMBERS on the process.
+     * A non-empty {@code q} (username fragment, min 3 chars) is mandatory: an empty query
+     * would make this a user directory, which is exactly what /users staying
+     * SUPER_ADMIN-only is meant to prevent.
+     */
+    @GetExchange("/processes/{key}/members/candidates")
+    List<MemberCandidateDTO> candidateMembers(@PathVariable String key, @RequestParam String q);
 
     @PostExchange("/processes/{key}/members")
     MemberDTO addMember(@PathVariable String key, @RequestBody AddMemberDTO dto);

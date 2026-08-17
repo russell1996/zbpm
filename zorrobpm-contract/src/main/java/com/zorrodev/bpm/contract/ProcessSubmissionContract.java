@@ -3,6 +3,7 @@ package com.zorrodev.bpm.contract;
 import com.zorrodev.bpm.contract.dto.ProcessSubmissionDTO;
 import com.zorrodev.bpm.contract.dto.RejectSubmissionDTO;
 import com.zorrodev.bpm.contract.dto.SubmitProcessSubmissionDTO;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.service.annotation.GetExchange;
@@ -28,6 +29,13 @@ public interface ProcessSubmissionContract {
     /** PENDING review queue, oldest first. SUPER_ADMIN only. */
     @GetExchange("/process-submissions")
     List<ProcessSubmissionDTO> listPending();
+
+    /**
+     * WO-ACL-7: the raw BPMN of a submission, so a reviewer can SEE the model before
+     * approving it. SUPER_ADMIN only — mirrors /process-definitions/{id}/xml.
+     */
+    @GetExchange(url = "/process-submissions/{id}/bpmn", accept = MediaType.APPLICATION_JSON_VALUE)
+    String getSubmissionBpmn(@PathVariable UUID id);
 
     /** Deploy the submitted BPMN and register the submitter as OWNER. SUPER_ADMIN only. */
     @PostExchange("/process-submissions/{id}/approve")
