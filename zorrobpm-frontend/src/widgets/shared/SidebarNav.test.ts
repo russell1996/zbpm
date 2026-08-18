@@ -129,17 +129,21 @@ describe('SidebarNav', () => {
   })
 
   // WO-ACL-10 criterion 21: the same rework kills the horizontal scrollbar — the
-  // flyout lives outside the scroll container, so it cannot widen it. One mutation
-  // (overflow-y-auto back on the nav) breaks both this test and criterion 1.
-  it('WO-ACL-10 criterion 21: collapsed flyout does not create horizontal overflow', async () => {
+  // flyout lives OUTSIDE every scrolling ancestor, so it cannot widen any of them.
+  // One mutation (overflow-y-auto back on the nav) breaks BOTH this test and
+  // criterion 1, because an overflow on any ancestor of the flyout produces the
+  // clipped flyout AND the horizontal scrollbar the product owner reported.
+  it('WO-ACL-10 criterion 21: collapsed flyout has no scrolling ancestor', async () => {
     const wrapper = mount(SidebarNav, { props: { collapsed: true } })
     const btn = wrapper.findAll('nav button')[2]
     await btn.trigger('mouseenter')
     const flyout = wrapper.find('.sidebar-flyout')
     expect(flyout.exists()).toBe(true)
-    // the flyout must not be inside the scrolling element at all
-    const scroller = wrapper.find('nav > div')
-    expect(scroller.element.contains(flyout.element)).toBe(false)
+    let p = flyout.element.parentElement
+    while (p && p !== document.body) {
+      expect(p.className).not.toMatch(/(^|\s)overflow-(y|x)-(auto|scroll)/)
+      p = p.parentElement
+    }
   })
 
   // WO-ACL-10 criterion 15: labels must never wrap — every label span carries
