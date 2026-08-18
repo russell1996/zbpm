@@ -16,9 +16,10 @@ import en from './en.json'
 import kz from './kz.json'
 
 // All app source files (vue/ts), excluding test/spec files, as raw text.
+// query: '?raw' (vite 8 recommended form; 'as: raw' is deprecated).
 const sourceFiles: Record<string, string> = import.meta.glob(
   '../**/*.{vue,ts}',
-  { as: 'raw', eager: true },
+  { query: '?raw', import: 'default', eager: true },
 )
 
 // t('key'), t("key"), t(\n 'key' \n) — single static string args only.
