@@ -8,6 +8,7 @@ import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const router = useRouter()
 const store = useIncidentStore()
@@ -110,9 +111,7 @@ function exportData() {
             <td class="px-4 py-3 text-sm max-w-xs truncate" :title="inc.message">{{ inc.message }}</td>
             <td class="px-4 py-3"><CopyableId :value="inc.activityId" :length="8" /></td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', inc.completedAt ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-                {{ inc.completedAt ? t('resolved') : t('open') }}
-              </span>
+              <StatusBadge :status="inc.completedAt ? 'RESOLVED' : 'OPEN'" />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(inc.createdAt) }}</td>
             <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? formatDateTime(inc.completedAt) : '—' }}</td>

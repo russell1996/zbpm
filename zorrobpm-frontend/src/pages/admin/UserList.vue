@@ -5,6 +5,7 @@ import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const toast = useToast()
 const { t } = useI18n()
@@ -155,12 +156,7 @@ onMounted(loadUsers)
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span>
             </td>
             <td class="px-4 py-3">
-              <span
-                class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                :class="user.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
-              >
-                {{ user.active ? t('active') : t('inactive') }}
-              </span>
+              <StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" />
             </td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">

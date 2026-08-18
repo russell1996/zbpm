@@ -38,9 +38,6 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ success: vi.fn(), error: vi.fn() }),
 }))
 vi.mock('@/shared/lib/export', () => ({ exportToCsv: vi.fn() }))
-vi.mock('@/shared/lib/utils', () => ({
-  taskStatusBadge: () => ({ label: 'Active', cls: 'bg-blue-100 text-blue-800' }),
-}))
 
 function makeRouter() {
   return createRouter({
