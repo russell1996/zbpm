@@ -57,7 +57,9 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('@/composables/useDateFormat', () => ({
   useDateFormat: () => ({ formatDateTime: (v: string) => v }),
 }))
-vi.mock('@/widgets/bpmn/BpmnViewer.vue', () => ({ default: { template: '<div class="bpmn-viewer-stub" />' } }))
+vi.mock('@/widgets/bpmn/BpmnViewer.vue', () => ({
+  default: { template: '<div class="bpmn-viewer-stub" @click="$emit(\'element-click\', \'e1\')" />' },
+}))
 vi.mock('@/widgets/shared/SchemaEditorPanel.vue', () => ({ default: { template: '<div class="schema-editor-stub" />' } }))
 vi.mock('@/widgets/shared/CopyableId.vue', () => ({ default: { template: '<span class="copyable-stub" />' } }))
 
@@ -142,6 +144,22 @@ describe('WO-ACL-11 criteria 14–15: translated markers and tab hints', () => {
     const schemasTab = wrapper.findAll('button[role="tab"]').find((b) => b.text() === 'Схемы элементов')
     await schemasTab!.trigger('click')
     expect(wrapper.text()).toContain('Привязка и редактирование схем форм и переменных')
+  })
+})
+
+describe('WO-ACL-11 criterion 38: properties panel — same height as the canvas, scrolls inside itself', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('the panel has no fixed max-height and scrolls internally', async () => {
+    const wrapper = await mountDetail('v2')
+    // select an element in the (stubbed) viewer — the panel appears
+    await wrapper.find('.bpmn-viewer-stub').trigger('click')
+    await flushPromises()
+    const panel = wrapper.find('.w-80')
+    expect(panel.exists()).toBe(true)
+    // the fixed max-height (540px) is gone — height comes from the flex row
+    expect(panel.attributes('style') ?? '').not.toContain('max-height')
+    expect(panel.classes()).toContain('overflow-y-auto')
   })
 })
 

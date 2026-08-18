@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { getMySubmissions, type ProcessSubmission } from '@/services/submissionService'
@@ -8,7 +7,6 @@ import { errorMessage } from '@/shared/lib/utils'
 import { AlertCircle, RefreshCw } from 'lucide-vue-next'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
-const router = useRouter()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
@@ -26,12 +24,6 @@ async function load() {
   } finally {
     loading.value = false
   }
-}
-
-/** WO-ACL-6 criterion 6: resubmission creates a new record chained to the previous
- * one (the backend links previousSubmissionId) — the UI just opens the uploader. */
-function resubmit() {
-  router.push('/processes/definitions')
 }
 
 onMounted(load)
@@ -66,7 +58,6 @@ onMounted(load)
             <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('submittedAt') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('reason') }}</th>
-            <th class="px-4 py-3 text-left font-medium"></th>
           </tr>
         </thead>
         <tbody>
@@ -83,15 +74,6 @@ onMounted(load)
                 <span>{{ s.rejectReason || t('noReason') }}</span>
               </div>
               <span v-else class="text-muted-foreground">—</span>
-            </td>
-            <td class="px-4 py-3 text-right">
-              <button
-                v-if="s.status === 'REJECTED'"
-                class="text-sm text-primary hover:underline"
-                @click="resubmit"
-              >
-                {{ t('resubmit') }}
-              </button>
             </td>
           </tr>
         </tbody>

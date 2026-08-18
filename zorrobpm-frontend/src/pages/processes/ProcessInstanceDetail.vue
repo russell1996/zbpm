@@ -326,7 +326,9 @@ watch(activeTab, onTabChange)
 </script>
 
 <template>
-  <div class="space-y-6">
+  <!-- WO-ACL-11 criteria 37-38: min-h-full + flex so the bpmn tab can stretch
+       to the bottom edge of the window (layout, not fixed pixels). -->
+  <div class="space-y-6 min-h-full flex flex-col">
     <div v-if="processStore.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="processStore.error" class="text-sm text-red-500">{{ processStore.error }}</div>
 
@@ -384,20 +386,22 @@ watch(activeTab, onTabChange)
       <div v-if="tabLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
       <template v-if="!tabLoading">
-        <div v-if="activeTab === 'bpmn'" class="border border-border rounded-lg bg-card">
-          <div v-if="bpmnXml" class="flex">
-            <div class="flex-1">
+        <div v-if="activeTab === 'bpmn'" class="flex-1 min-h-0 flex flex-col">
+          <div v-if="bpmnXml" class="border border-border rounded-lg bg-card flex flex-1 min-h-0">
+            <div class="flex-1 min-h-0">
               <BpmnViewer
                 :xml="bpmnXml"
                 :active-element-ids="activeElementIds"
                 :incident-element-ids="incidentElementIds"
                 :completed-element-ids="completedElementIds"
                 :element-counts="elementCounts"
-                style="height: 500px;"
                 @element-click="selectedElement = $event"
               />
             </div>
-            <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto" style="max-height: 500px;">
+            <!-- WO-ACL-11 criterion 38: the properties panel is the same height as
+                 the canvas (flex stretch) and scrolls INSIDE itself (overflow-y-auto);
+                 the fixed max-height is gone. -->
+            <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto">
               <div class="flex items-center justify-between">
                 <h3 class="text-sm font-bold">{{ t('elementDetails') }}</h3>
                 <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">{{ t('close') }}</button>
