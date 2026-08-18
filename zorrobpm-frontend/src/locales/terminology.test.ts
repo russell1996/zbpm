@@ -26,8 +26,10 @@ const i18n = createI18n({ legacy: false, locale: 'ru', fallbackLocale: 'en', mes
 
 describe('WO-ACL-11 criteria 1-2: "Схемы процессов" everywhere', () => {
   it('criterion 1: ru.json contains no "Определени" (definition) anywhere', () => {
+    // case-insensitive: the verifier found "определения" (lowercase) in
+    // filterByDefId, bpmnNotAvailable, noStartEvents, viewDefinition
     for (const [key, value] of Object.entries(ru)) {
-      expect(String(value), `ru.${key}`).not.toContain('Определени')
+      expect(String(value).toLowerCase(), `ru.${key}`).not.toContain('определени')
     }
     expect(ru.processDefinitions).toBe('Схемы процессов')
     expect(ru.processDefinition).toBe('Схема процесса')
@@ -35,8 +37,9 @@ describe('WO-ACL-11 criteria 1-2: "Схемы процессов" everywhere', (
   })
 
   it('criterion 1: kz.json contains no "анықтама" (definition) anywhere', () => {
+    // case-insensitive: "Анықтама" (capitalized) survived the first round
     for (const [key, value] of Object.entries(kz)) {
-      expect(String(value), `kz.${key}`).not.toContain('анықтама')
+      expect(String(value).toLowerCase(), `kz.${key}`).not.toContain('анықтама')
     }
     expect(kz.processDefinitions).toBe('Процесс схемалары')
     expect(kz.processDefinition).toBe('Процесс схемасы')
