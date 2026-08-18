@@ -92,4 +92,23 @@ describe('SidebarNav', () => {
     expect(svgs.length).toBeGreaterThanOrEqual(10)
     expect(unique.size).toBeGreaterThanOrEqual(10)
   })
+
+  // WO-ACL-8 criterion 35: custom flyout tooltip appears on hover when collapsed
+  it('WO-ACL-8 criterion 35: flyout tooltip is present when collapsed', () => {
+    const wrapper = mount(SidebarNav, { props: { collapsed: true } })
+    // flyout divs have the class 'opacity-0' (hidden by default, shown on group-hover)
+    const flyouts = wrapper.findAll('.opacity-0')
+    // one flyout per nav item (10 items)
+    expect(flyouts.length).toBeGreaterThanOrEqual(10)
+    // each flyout contains the nav label text
+    expect(flyouts[0].text()).toBeTruthy()
+  })
+
+  // WO-ACL-8 criterion 36: no flyout tooltip when sidebar is expanded
+  it('WO-ACL-8 criterion 36: no flyout tooltip when expanded', () => {
+    const wrapper = mount(SidebarNav, { props: { collapsed: false } })
+    // flyout divs should NOT exist when expanded (v-if="collapsed" is false)
+    const flyouts = wrapper.findAll('.opacity-0')
+    expect(flyouts.length).toBe(0)
+  })
 })
