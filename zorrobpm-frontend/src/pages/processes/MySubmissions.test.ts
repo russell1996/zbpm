@@ -4,14 +4,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 import MySubmissions from './MySubmissions.vue'
 
 const mockGetMy = vi.hoisted(() => vi.fn())
-const mockRouterPush = vi.hoisted(() => vi.fn())
 vi.mock('@/services/submissionService', () => ({
   getMySubmissions: mockGetMy,
 }))
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: mockRouterPush }) }))
 vi.mock('@/composables/useDateFormat', () => ({
   useDateFormat: () => ({ formatDateTime: (v: string) => v }),
 }))
@@ -74,20 +72,13 @@ describe('MySubmissions (WO-ACL-6 criterion 6)', () => {
     expect(wrapper.text()).toContain('Duplicate of existing process')
   })
 
-  it('a REJECTED submission offers resubmit, which routes to the definitions page', async () => {
+  it('WO-ACL-11 criterion 35: the "resubmit" button is GONE — no row offers it', async () => {
     const wrapper = mount(MySubmissions)
     await flushPromises()
-    const resubmitBtns = wrapper.findAll('button').filter((b) => b.text() === 'resubmit')
-    expect(resubmitBtns.length).toBe(1)
-    await resubmitBtns[0].trigger('click')
-    expect(mockRouterPush).toHaveBeenCalledWith('/processes/definitions')
-  })
-
-  it('PENDING/APPROVED rows do not offer resubmit', async () => {
-    const wrapper = mount(MySubmissions)
-    await flushPromises()
-    const resubmitBtns = wrapper.findAll('button').filter((b) => b.text() === 'resubmit')
-    expect(resubmitBtns.length).toBe(1) // only the REJECTED row
+    const buttons = wrapper.findAll('button').filter((b) => b.text() === 'resubmit')
+    expect(buttons.length).toBe(0)
+    // the action column itself is gone too (the header cell is empty)
+    expect(wrapper.text()).not.toContain('resubmit')
   })
 
   it('shows an empty-state when there are no submissions', async () => {
@@ -97,7 +88,7 @@ describe('MySubmissions (WO-ACL-6 criterion 6)', () => {
     expect(wrapper.text()).toContain('noSubmissions')
   })
 
-  it('WO-ACL-11 criterion 6: no detail page exists for a submission — rows stay non-navigable, no "view" button, only the resubmit action for REJECTED', async () => {
+  it('WO-ACL-11 criterion 6: no detail page exists for a submission — rows stay non-navigable, no "view" button', async () => {
     const wrapper = mount(MySubmissions)
     await flushPromises()
     // no view button, no clickable rows (documented in the report as the
@@ -109,6 +100,5 @@ describe('MySubmissions (WO-ACL-6 criterion 6)', () => {
       expect(row.attributes('tabindex')).toBeUndefined()
     }
     await rows[0].trigger('click')
-    expect(mockRouterPush).not.toHaveBeenCalled()
   })
 })

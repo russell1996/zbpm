@@ -311,7 +311,9 @@ async function downloadBpmn() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <!-- WO-ACL-11 criteria 37-38: min-h-full + flex so the model tab can stretch
+       to the bottom edge of the window (layout, not fixed pixels). -->
+  <div class="space-y-6 min-h-full flex flex-col">
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
@@ -391,18 +393,21 @@ async function downloadBpmn() {
         </nav>
       </div>
 
-      <!-- Tab: Model -->
-      <div v-if="activeTab === 'model'">
-        <div v-if="bpmnXml" class="border border-border rounded-lg bg-card">
+      <!-- Tab: Model — stretches to the bottom edge (criterion 37). -->
+      <div v-if="activeTab === 'model'" class="flex-1 min-h-0 flex flex-col">
+        <div v-if="bpmnXml" class="border border-border rounded-lg bg-card flex-1 min-h-0 flex flex-col">
           <div class="px-4 py-3 border-b border-border">
             <h2 class="text-lg font-bold">{{ t('bpmnProcess') }}</h2>
             <p class="text-xs text-muted-foreground">{{ t('modelTabHint') }}</p>
           </div>
-          <div class="flex">
-            <div class="flex-1">
-              <BpmnViewer :xml="bpmnXml" style="height: 500px;" @element-click="selectedElement = $event" />
+          <div class="flex flex-1 min-h-0">
+            <div class="flex-1 min-h-0">
+              <BpmnViewer :xml="bpmnXml" @element-click="selectedElement = $event" />
             </div>
-            <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto" style="max-height: 540px;">
+            <!-- WO-ACL-11 criterion 38: the properties panel is the same height as
+                 the canvas (flex stretch) and scrolls INSIDE itself (overflow-y-auto);
+                 the fixed max-height is gone. -->
+            <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto">
               <div class="flex items-center justify-between">
                 <h3 class="text-sm font-bold">{{ selectedFlow ? t('sequenceFlow') : t('element') }}</h3>
                 <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">{{ t('close') }}</button>

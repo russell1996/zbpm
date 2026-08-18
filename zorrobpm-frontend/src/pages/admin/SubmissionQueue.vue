@@ -214,7 +214,11 @@ onMounted(load)
         </div>
         <div v-if="viewLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
         <div v-else-if="viewError" class="text-sm text-red-500">{{ viewError }}</div>
-        <BpmnViewer v-else :xml="viewXml" />
+        <!-- WO-ACL-11 criterion 37: BpmnViewer stretches by layout now (h-full),
+             the modal preview gives it a viewport-based height (vh, not px). -->
+        <div v-else class="h-[70vh]">
+          <BpmnViewer :xml="viewXml" />
+        </div>
       </div>
     </div>
   </div>

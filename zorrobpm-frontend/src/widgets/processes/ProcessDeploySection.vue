@@ -166,6 +166,11 @@ function onDragOver(event: DragEvent) {
 }
 
 async function submit() {
+  // WO-ACL-11 criteria 25-26: the button is blocked FROM THE MOMENT OF THE CLICK,
+  // not after the response — double-clicks in the 300-800ms window must not fire
+  // a second request. The guard lives here, not only in the disabled attribute:
+  // a programmatic/dispatch click would otherwise re-enter submit().
+  if (loading.value) return
   if (!bpmnText.value.trim()) {
     error.value = t('bpmnRequired')
     return
@@ -202,6 +207,9 @@ async function submit() {
       await submitProcessSubmission(bpmnText.value)
       submitted.value = true
       toast.success(t('submissionSentToast'))
+      // WO-ACL-11 criterion 23: a successful submission CLOSES the dialog — the
+      // parent listens to `done` (same contract as deploy/add-version above).
+      emit('done')
     }
   } catch (e) {
     const msg = errorMessage(e, t('failedToDeploy'))

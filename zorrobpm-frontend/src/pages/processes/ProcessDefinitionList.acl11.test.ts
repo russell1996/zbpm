@@ -21,6 +21,9 @@ vi.mock('@/services/processService', () => ({
 }))
 vi.mock('@/services/submissionService', () => ({
   submitProcessSubmission: vi.fn().mockResolvedValue({ id: 'sub-1' }),
+  getMySubmissions: vi.fn().mockResolvedValue([
+    { id: 'sub-1', processKey: 'vacation', name: 'Vacation', status: 'PENDING', submittedBy: 'alice', submittedAt: '2026-08-01T10:00:00Z', rejectReason: null, previousSubmissionId: null },
+  ]),
 }))
 vi.mock('@/services/adminService', () => ({
   getMyMemberships: vi.fn().mockResolvedValue([]),
@@ -103,5 +106,27 @@ describe('WO-ACL-11 criteria 6/9: ProcessDefinitionList rows', () => {
     const wrapper = mount(ProcessDefinitionList)
     await flushPromises()
     expect(wrapper.text()).not.toContain('view')
+  })
+
+  it('criterion 32: "My Submissions" opens as a right-side DRAWER panel with the table inside', async () => {
+    const wrapper = mount(ProcessDefinitionList, { attachTo: document.body })
+    await flushPromises()
+    // closed drawer: panel exists but is off-screen (translated away)
+    expect(wrapper.get('[data-testid="drawer-panel"]').classes()).toContain('translate-x-full')
+    const openBtn = wrapper.findAll('button').find((b) => b.text() === 'mySubmissions')!
+    await openBtn.trigger('click')
+    await flushPromises()
+    const panel = wrapper.get('[data-testid="drawer-panel"]')
+    // drawer: slides from the right, width capped, table lives inside it
+    expect(panel.classes()).toContain('translate-x-0')
+    expect(panel.classes()).toContain('sm:max-w-2xl')
+    expect(wrapper.text()).toContain('vacation')
+    // closing by Esc returns to the list state (panel leaves the screen)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.get('[data-testid="drawer-panel"]').classes()).toContain('translate-x-full')
+    expect(document.body.style.overflow).toBe('')
+    wrapper.unmount()
+    document.body.innerHTML = ''
   })
 })

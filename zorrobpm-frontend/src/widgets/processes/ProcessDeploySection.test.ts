@@ -182,6 +182,64 @@ describe('ProcessDeploySection (WO-ACL-6 / WO-ACL-10 criteria 3-6)', () => {
   })
 })
 
+// --- WO-ACL-11 criteria 23-26: submit dialog lifecycle ---
+describe('ProcessDeploySection submit dialog (WO-ACL-11 criteria 23-26)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockAuth.isSuperAdmin = false
+    mockAuth.username = 'alice'
+    mockGetDefinitions.mockResolvedValue({ data: [], totalElements: 0 })
+    mockListMembers.mockResolvedValue([])
+  })
+
+  it('criterion 23: a successful submission emits done — the parent closes the dialog', async () => {
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    await btn.trigger('click')
+    await flushPromises()
+    expect(mockSubmit).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('done')).toHaveLength(1)
+  })
+
+  it('criterion 24: an error keeps the dialog open and shows the reason', async () => {
+    mockSubmit.mockRejectedValueOnce({ response: { data: { message: 'already in review' } } })
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    await btn.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('done')).toBeUndefined()
+    expect(wrapper.text()).toContain('already in review')
+  })
+
+  it('criterion 25: the button is disabled from the moment of the click until the response', async () => {
+    let resolveSubmit!: (v: unknown) => void
+    mockSubmit.mockImplementationOnce(() => new Promise((res) => { resolveSubmit = res }))
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    await btn.trigger('click')
+    await wrapper.vm.$nextTick()
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+    resolveSubmit({ id: 'sub-1' })
+    await flushPromises()
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('criterion 26 POF: five clicks while the request is in flight produce exactly ONE service call', async () => {
+    let resolveSubmit!: (v: unknown) => void
+    mockSubmit.mockImplementationOnce(() => new Promise((res) => { resolveSubmit = res }))
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    for (let i = 0; i < 5; i++) {
+      await btn.trigger('click')
+    }
+    expect(mockSubmit).toHaveBeenCalledTimes(1)
+    resolveSubmit({ id: 'sub-1' })
+    await flushPromises()
+    expect(mockSubmit).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('done')).toHaveLength(1)
+  })
+})
+
 // --- WO-ACL-11 criteria 21-22: bound mode (opened from a process card) ---
 describe('ProcessDeploySection bound mode (WO-ACL-11 criteria 21-22)', () => {
   const BOUND = { id: 'def-1', key: 'p1', name: 'P1' }
