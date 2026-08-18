@@ -9,7 +9,7 @@ import { useBreadcrumbStore } from '@/stores/breadcrumb'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 import * as processService from '@/services/processService'
-import { listMembers, changeMemberRole, removeMember, type Member } from '@/services/adminService'
+import { listMembers, changeMemberRole, removeMember, addMember, searchMemberCandidates, type Member, type MemberCandidate } from '@/services/adminService'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/shared/lib/utils'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
@@ -96,6 +96,57 @@ async function removeMemberOf(member: Member) {
   }
 }
 
+// --- WO-ACL-11 criteria 17-19: add a member straight from the process card ---
+// Candidates come from the WO-ACL-7 endpoint (GET /processes/{key}/members/candidates?q=),
+// NOT from /users — the user directory stays closed from this screen. The whole
+// block is gated by canManageMembers (super-admin or OWNER, see above).
+const candidateQuery = ref('')
+const candidates = ref<MemberCandidate[]>([])
+const candidatesLoading = ref(false)
+const candidatesError = ref<string | null>(null)
+const newMemberUserId = ref('')
+const newMemberRole = ref('VIEWER')
+const addingMember = ref(false)
+
+async function searchCandidates() {
+  const def = store.currentDefinition
+  const q = candidateQuery.value.trim()
+  if (!def?.key || q.length < 3) {
+    candidates.value = []
+    candidatesError.value = null
+    return
+  }
+  candidatesLoading.value = true
+  candidatesError.value = null
+  try {
+    candidates.value = await searchMemberCandidates(def.key, q)
+  } catch (e) {
+    candidates.value = []
+    candidatesError.value = errorMessage(e, t('failedToLoadCandidates'))
+  } finally {
+    candidatesLoading.value = false
+  }
+}
+
+async function addMemberToProcess() {
+  const def = store.currentDefinition
+  if (!def?.key || !newMemberUserId.value) return
+  addingMember.value = true
+  try {
+    await addMember(def.key, newMemberUserId.value, newMemberRole.value)
+    toast.success(t('memberAdded'))
+    candidateQuery.value = ''
+    candidates.value = []
+    newMemberUserId.value = ''
+    newMemberRole.value = 'VIEWER'
+    await loadMembers()
+  } catch (e) {
+    toast.error(errorMessage(e, t('failedToAddMember')))
+  } finally {
+    addingMember.value = false
+  }
+}
+
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
 const activeTab = ref('model')
@@ -106,60 +157,18 @@ const newVarType = ref('STRING')
 const newVarValue = ref('')
 const jsonError = ref('')
 
-// --- WO-ACL-8 criterion 5: "upload new version" (POST /process-definitions/{id}/versions) ---
-const showVersionModal = ref(false)
-const versionBpmn = ref('')
-const versionFileName = ref('')
-const versionLoading = ref(false)
-const versionError = ref<string | null>(null)
-const versionSuccess = ref(false)
+// --- WO-ACL-11 criteria 20-22: ONE upload component, two ways to open it ---
+// The card opens ProcessDeploySection BOUND to this process (target shown,
+// mode "new version", foreign keys rejected). The old inline showVersionModal
+// is gone — it was a second implementation of the same action (WO-ACL-10 defect).
+import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 
-function onVersionFileChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  versionFileName.value = file.name
-  const reader = new FileReader()
-  reader.onload = () => {
-    versionBpmn.value = reader.result as string
-  }
-  reader.readAsText(file)
-}
+const showDeployDialog = ref(false)
 
-async function submitNewVersion() {
+function onDeployDone() {
+  showDeployDialog.value = false
   const def = store.currentDefinition
-  if (!def || !versionBpmn.value.trim()) {
-    versionError.value = t('bpmnRequired')
-    return
-  }
-  versionLoading.value = true
-  versionError.value = null
-  versionSuccess.value = false
-  try {
-    const created = await processService.addProcessDefinitionVersion(def.id, versionBpmn.value)
-    versionSuccess.value = true
-    // WO-ACL-10 criterion 7: on success the dialog closes…
-    showVersionModal.value = false
-    toast.success(t('deploySuccessToast'), {
-      action: { label: t('viewDefinition'), onClick: () => router.push(`/processes/definitions/${created.id}`) },
-    })
-    await store.fetchVersions(def.key)
-    await store.fetchDefinition(created.id)
-  } catch (e) {
-    // …on failure it stays open with the error text (WO-ACL-10 criterion 8).
-    versionError.value = errorMessage(e, t('failedToDeploy'))
-    toast.error(versionError.value)
-  } finally {
-    versionLoading.value = false
-  }
-}
-
-function closeVersionModal() {
-  showVersionModal.value = false
-  versionBpmn.value = ''
-  versionFileName.value = ''
-  versionError.value = null
-  versionSuccess.value = false
+  if (def?.key) store.fetchVersions(def.key)
 }
 
 // --- BPMN breakdown: find / flatten nodes from the parsed structure ---
@@ -321,7 +330,7 @@ async function downloadBpmn() {
                 @change="openVersion(($event.target as HTMLSelectElement).value)"
               >
                 <option v-for="v in store.currentVersions" :key="v.id" :value="v.id">
-                  v{{ v.version }} — {{ formatDateTime(v.createdAt) }}{{ v.id === route.params.id ? ' (current)' : '' }}
+                  v{{ v.version }} — {{ formatDateTime(v.createdAt) }}{{ v.id === route.params.id ? t('currentVersionMarker') : '' }}
                 </option>
               </select>
             </template>
@@ -341,7 +350,7 @@ async function downloadBpmn() {
           <button
             v-if="canDeployVersion"
             class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-            @click="showVersionModal = true"
+            @click="showDeployDialog = true"
           >
             {{ t('uploadNewVersion') }}
           </button>
@@ -387,7 +396,7 @@ async function downloadBpmn() {
         <div v-if="bpmnXml" class="border border-border rounded-lg bg-card">
           <div class="px-4 py-3 border-b border-border">
             <h2 class="text-lg font-bold">{{ t('bpmnProcess') }}</h2>
-            <p class="text-xs text-muted-foreground">Click an element to inspect its configuration (conditions, FEEL, job type, forms…)</p>
+            <p class="text-xs text-muted-foreground">{{ t('modelTabHint') }}</p>
           </div>
           <div class="flex">
             <div class="flex-1">
@@ -395,7 +404,7 @@ async function downloadBpmn() {
             </div>
             <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto" style="max-height: 540px;">
               <div class="flex items-center justify-between">
-                <h3 class="text-sm font-bold">{{ selectedFlow ? 'Sequence flow' : 'Element' }}</h3>
+                <h3 class="text-sm font-bold">{{ selectedFlow ? t('sequenceFlow') : t('element') }}</h3>
                 <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">{{ t('close') }}</button>
               </div>
 
@@ -433,7 +442,7 @@ async function downloadBpmn() {
                 <div class="pt-2 border-t border-border space-y-1">
                   <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('conditionFeel') }}</h4>
                   <p v-if="selectedFlow.conditionExpression" class="text-xs font-mono break-all bg-muted rounded px-2 py-1">{{ selectedFlow.conditionExpression }}</p>
-                  <p v-else class="text-xs text-muted-foreground">No condition (default / unconditional flow).</p>
+                  <p v-else class="text-xs text-muted-foreground">{{ t('noConditionFlow') }}</p>
                 </div>
               </template>
 
@@ -495,7 +504,7 @@ async function downloadBpmn() {
               <tr>
                 <th class="px-4 py-3 text-left font-medium">{{ t('element') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('type') }}</th>
-                <th class="px-4 py-3 text-left font-medium">Requirement</th>
+                <th class="px-4 py-3 text-left font-medium">{{ t('requirement') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -517,7 +526,7 @@ async function downloadBpmn() {
         <div class="border border-border rounded-lg p-4 bg-card">
           <div class="px-0 pb-3">
             <h2 class="text-lg font-bold">{{ t('elementSchemas') }}</h2>
-            <p class="text-xs text-muted-foreground">Bind and edit form/variable schemas for start events and user tasks</p>
+            <p class="text-xs text-muted-foreground">{{ t('schemasTabHint') }}</p>
           </div>
           <SchemaEditorPanel :process-key="store.currentDefinition.key" />
         </div>
@@ -583,6 +592,48 @@ async function downloadBpmn() {
           <p v-else class="px-4 py-3 text-sm text-muted-foreground">
             {{ t('noMembers') }}
           </p>
+          <!-- WO-ACL-11 criteria 17-18: add a member from the card. Visible only to
+               super-admin/OWNER (canManageMembers); candidates come from the ACL-7
+               endpoint, the /users directory is not touched. -->
+          <div v-if="canManageMembers" class="border-t border-border px-4 py-3 space-y-3">
+            <h3 class="text-sm font-semibold">{{ t('addMember') }}</h3>
+            <input
+              v-model="candidateQuery"
+              class="w-full px-2 py-1.5 border border-input rounded text-sm"
+              :placeholder="t('searchCandidatePlaceholder')"
+              @input="searchCandidates"
+            />
+            <div v-if="candidatesLoading" class="text-xs text-muted-foreground">{{ t('loading') }}</div>
+            <div v-else-if="candidatesError" class="text-xs text-red-500">{{ candidatesError }}</div>
+            <div v-else-if="candidates.length" class="space-y-1">
+              <button
+                v-for="c in candidates"
+                :key="c.userId"
+                class="w-full flex items-center justify-between px-2 py-1.5 rounded text-sm hover:bg-muted transition-colors"
+                :class="newMemberUserId === c.userId ? 'bg-sidebar-accent font-medium' : ''"
+                @click="newMemberUserId = c.userId"
+              >
+                <span>{{ c.username }}</span>
+                <span v-if="newMemberUserId === c.userId" class="text-xs text-muted-foreground">{{ t('selected') }}</span>
+              </button>
+            </div>
+            <p v-else-if="candidateQuery.trim().length >= 3" class="text-xs text-muted-foreground">{{ t('noCandidates') }}</p>
+            <p v-else class="text-xs text-muted-foreground">{{ t('searchCandidateHint') }}</p>
+            <div v-if="newMemberUserId" class="flex items-center gap-2 pt-1">
+              <select v-model="newMemberRole" class="px-2 py-1 border border-input rounded text-xs">
+                <option value="OWNER">{{ t('ownerRole') }}</option>
+                <option value="DESIGNER">{{ t('designerRole') }}</option>
+                <option value="VIEWER">{{ t('viewerRole') }}</option>
+              </select>
+              <button
+                class="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+                :disabled="addingMember"
+                @click="addMemberToProcess"
+              >
+                {{ addingMember ? t('adding') : t('addMember') }}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -609,10 +660,10 @@ async function downloadBpmn() {
               >
                 <td class="px-4 py-3">
                   v{{ v.version }}
-                  <span v-if="v.id === (route.params.id as string)" class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">current</span>
+                  <span v-if="v.id === (route.params.id as string)" class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{{ t('current') }}</span>
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(v.createdAt) }}</td>
-                <td class="px-4 py-3 text-right text-primary text-xs">{{ v.id === (route.params.id as string) ? '' : 'Open →' }}</td>
+                <td class="px-4 py-3 text-right text-primary text-xs">{{ v.id === (route.params.id as string) ? '' : t('openVersion') }}</td>
               </tr>
             </tbody>
           </table>
@@ -639,7 +690,7 @@ async function downloadBpmn() {
             <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
           </div>
           <div class="grid grid-cols-[6rem_5.5rem_1fr] gap-2">
-            <input v-model="newVarName" placeholder="name" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
+            <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
             <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
               <option>STRING</option>
               <option>UUID</option>
@@ -648,9 +699,9 @@ async function downloadBpmn() {
               <option>BOOLEAN</option>
               <option>JSON</option>
             </select>
-            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" placeholder="value" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
+            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
           </div>
-          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" placeholder='e.g. ["u1","u2"] or {"key":"val"}' class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
+          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('jsonPlaceholder')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
           <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
           <button
             class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
@@ -667,50 +718,26 @@ async function downloadBpmn() {
       </div>
     </div>
 
-    <!-- WO-ACL-8 criterion 5: upload a NEW VERSION of this process (DEPLOY-scoped). -->
+    <!-- WO-ACL-11 criteria 20-22: ONE upload component — the card opens the shared
+      ProcessDeploySection BOUND to this process. All ACL-10 behavior (parse key
+      and name before submit, close only on success, owner shown, rights block)
+      lives in that single component now. -->
     <div
-      v-if="showVersionModal"
+      v-if="showDeployDialog"
       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      @click.self="closeVersionModal"
+      @click.self="showDeployDialog = false"
     >
-      <div class="bg-card rounded-lg shadow-lg w-full max-w-lg p-6 space-y-4">
-        <h2 class="text-lg font-bold">{{ t('uploadNewVersion') }}</h2>
-        <p class="text-xs text-muted-foreground">{{ t('uploadNewVersionHint') }}</p>
-
-        <div
-          class="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
-          @click="($refs.versionFileInput as HTMLInputElement).click()"
-        >
-          <p class="text-sm font-medium mb-1">{{ t('dropBpmn') }}</p>
-          <p class="text-xs text-muted-foreground">{{ versionFileName || t('supportsBpmn') }}</p>
-          <input ref="versionFileInput" type="file" accept=".bpmn,.xml" class="hidden" @change="onVersionFileChange" />
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold">{{ t('uploadNewVersion') }}</h2>
+          <button class="text-sm text-muted-foreground hover:text-foreground" @click="showDeployDialog = false">
+            {{ t('close') }}
+          </button>
         </div>
-
-        <textarea
-          v-model="versionBpmn"
-          class="w-full h-48 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-          :placeholder="t('pasteBpmnHere')"
+        <ProcessDeploySection
+          :bound="{ id: store.currentDefinition.id, key: store.currentDefinition.key, name: store.currentDefinition.name }"
+          @done="onDeployDone"
         />
-
-        <div v-if="versionError" class="flex items-center gap-2 text-sm text-red-500">
-          {{ versionError }}
-        </div>
-        <div v-if="versionSuccess" class="flex items-center gap-2 text-sm text-green-600">
-          {{ t('deploySuccess') }}
-        </div>
-
-        <div class="flex justify-end gap-2 pt-2">
-          <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="closeVersionModal">
-            {{ t('cancel') }}
-          </button>
-          <button
-            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
-            :disabled="versionLoading || !versionBpmn.trim()"
-            @click="submitNewVersion"
-          >
-            {{ versionLoading ? t('deploying') : t('uploadNewVersion') }}
-          </button>
-        </div>
       </div>
     </div>
   </div>

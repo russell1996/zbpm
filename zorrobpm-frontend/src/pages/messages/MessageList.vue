@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useDateFormat } from '@/composables/useDateFormat'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -107,9 +108,9 @@ function exportData() {
             </td>
             <td class="px-4 py-3"><CopyableId v-if="msg.processInstanceId" :value="msg.processInstanceId" :length="8" /><span v-else class="text-muted-foreground">—</span></td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', msg.consumed ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
+              <span class="inline-flex items-center gap-1">
                 <CheckCircle v-if="msg.consumed" class="h-3 w-3" />
-                {{ msg.consumed ? t('consumed') : t('pending') }}
+                <StatusBadge :status="msg.consumed ? 'CONSUMED' : 'WAITING'" />
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(msg.createdAt) }}</td>

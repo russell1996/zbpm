@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useDateFormat } from '@/composables/useDateFormat'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -107,10 +108,10 @@ function exportData() {
             </td>
             <td class="px-4 py-3 text-sm">{{ formatDateTime(timer.dueAt) }}</td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', timer.fired ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
+              <span class="inline-flex items-center gap-1">
                 <CheckCircle v-if="timer.fired" class="h-3 w-3" />
                 <Clock v-else class="h-3 w-3" />
-                {{ timer.fired ? t('fired') : t('pending') }}
+                <StatusBadge :status="timer.fired ? 'FIRED' : 'WAITING'" />
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(timer.createdAt) }}</td>

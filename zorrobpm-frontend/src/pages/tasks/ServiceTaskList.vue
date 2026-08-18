@@ -6,9 +6,9 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
-import { taskStatusBadge } from '@/shared/lib/utils'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const router = useRouter()
 const store = useTaskStore()
@@ -110,9 +110,7 @@ watch(filterCompleted, () => { resetPage(); load() })
             <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
             <td class="px-4 py-3 font-mono text-xs">{{ task.job }}</td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
-                {{ taskStatusBadge(task.status, task.completedAt).label }}
-              </span>
+              <StatusBadge :status="task.status" :completed-at="task.completedAt" />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
           </tr>

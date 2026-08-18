@@ -10,9 +10,10 @@ import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
-import { taskStatusBadge, isTaskActive } from '@/shared/lib/utils'
+import { isTaskActive } from '@/shared/lib/utils'
 import { RefreshCw, ArrowRight, Download } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
 
 const route = useRoute()
@@ -214,7 +215,7 @@ async function confirmComplete() {
     error = incidentStore.error
   }
   if (!error) {
-    toast.success(completingTaskType.value === 'resolve' ? 'Incident resolved' : 'Task completed')
+    toast.success(completingTaskType.value === 'resolve' ? t('incidentResolved') : t('taskCompleted'))
     showCompleteModal.value = false
     showElementDialog.value = false
     elementDialogView.value = 'list'
@@ -333,7 +334,7 @@ watch(activeTab, onTabChange)
       <div class="flex items-center justify-between">
         <div>
           <h1 class="text-2xl font-bold">
-            {{ processStore.currentInstance.processName || processStore.currentInstance.processKey || 'Process Instance' }}
+            {{ processStore.currentInstance.processName || processStore.currentInstance.processKey || t('processInstance') }}
             <span v-if="processStore.currentInstance.processVersion" class="text-base font-normal text-muted-foreground">v{{ processStore.currentInstance.processVersion }}</span>
           </h1>
           <p v-if="processStore.currentInstance.processKey" class="text-xs text-muted-foreground font-mono">{{ processStore.currentInstance.processKey }}</p>
@@ -359,12 +360,7 @@ watch(activeTab, onTabChange)
       </div>
 
       <div class="flex items-center gap-4 text-sm">
-        <span
-          :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-            processStore.currentInstance.completedAt ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800']"
-        >
-          {{ processStore.currentInstance.completedAt ? t('completed') : t('running') }}
-        </span>
+        <StatusBadge :status="processStore.currentInstance.completedAt ? 'COMPLETED' : 'RUNNING'" />
         <span class="text-muted-foreground">
           {{ t('startedAt') }}: {{ formatDateTime(processStore.currentInstance.startedAt) }}
         </span>
@@ -453,7 +449,7 @@ watch(activeTab, onTabChange)
                 <div class="pt-2 border-t border-border space-y-1">
                   <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('conditionFeel') }}</h4>
                   <p v-if="selectedFlow.conditionExpression" class="text-xs font-mono break-all bg-muted rounded px-2 py-1">{{ selectedFlow.conditionExpression }}</p>
-                  <p v-else class="text-xs text-muted-foreground">No condition (default / unconditional).</p>
+                  <p v-else class="text-xs text-muted-foreground">{{ t('noConditionFlow') }}</p>
                 </div>
               </template>
 
@@ -504,9 +500,7 @@ watch(activeTab, onTabChange)
                 <td class="px-4 py-3"><CopyableId :value="task.id" /></td>
                 <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
-                    {{ taskStatusBadge(task.status, task.completedAt).label }}
-                  </span>
+                  <StatusBadge :status="task.status" :completed-at="task.completedAt" />
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? formatDateTime(task.completedAt) : '—' }}</td>
@@ -546,9 +540,7 @@ watch(activeTab, onTabChange)
                 <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
                 <td class="px-4 py-3 font-mono text-xs">{{ task.job }}</td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
-                    {{ taskStatusBadge(task.status, task.completedAt).label }}
-                  </span>
+                  <StatusBadge :status="task.status" :completed-at="task.completedAt" />
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ task.completedAt ? formatDateTime(task.completedAt) : '—' }}</td>
@@ -586,9 +578,7 @@ watch(activeTab, onTabChange)
                 <td class="px-4 py-3"><CopyableId :value="inc.id" /></td>
                 <td class="px-4 py-3 text-sm max-w-xs truncate" :title="inc.message">{{ inc.message }}</td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', inc.completedAt ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-                    {{ inc.completedAt ? t('resolved') : t('open') }}
-                  </span>
+                  <StatusBadge :status="inc.completedAt ? 'RESOLVED' : 'OPEN'" />
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(inc.createdAt) }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? formatDateTime(inc.completedAt) : '—' }}</td>
@@ -625,13 +615,7 @@ watch(activeTab, onTabChange)
                 <td class="px-4 py-3 font-mono text-xs">{{ act.bpmnElementId }}</td>
                 <td class="px-4 py-3 text-muted-foreground text-xs">{{ act.type }}</td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-                    act.status === 'ERROR' ? 'bg-red-100 text-red-800'
-                    : act.status === 'COMPLETED' ? 'bg-green-100 text-green-800'
-                    : act.status === 'CANCELLED' ? 'bg-gray-100 text-gray-800'
-                    : 'bg-yellow-100 text-yellow-800']">
-                    {{ act.status }}
-                  </span>
+                  <StatusBadge :status="act.status" />
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(act.createdAt) }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ act.completedAt ? formatDateTime(act.completedAt) : '—' }}</td>
@@ -662,9 +646,7 @@ watch(activeTab, onTabChange)
                   <span v-if="sp.processVersion" class="ml-1 text-xs text-muted-foreground">v{{ sp.processVersion }}</span>
                 </td>
                 <td class="px-4 py-3">
-                  <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', sp.completedAt ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800']">
-                    {{ sp.completedAt ? t('completed') : t('running') }}
-                  </span>
+                  <StatusBadge :status="sp.completedAt ? 'COMPLETED' : 'RUNNING'" />
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(sp.startedAt) }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ sp.completedAt ? formatDateTime(sp.completedAt) : '—' }}</td>
@@ -742,9 +724,7 @@ watch(activeTab, onTabChange)
             <div v-for="task in dialogUserTasks" :key="task.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
               <div class="flex items-center gap-2 min-w-0">
                 <span class="font-mono truncate">{{ task.name || task.code || task.id }}</span>
-                <span v-if="task.status" :class="['inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
-                  {{ taskStatusBadge(task.status, task.completedAt).label }}
-                </span>
+                <span v-if="task.status"><StatusBadge :status="task.status" :completed-at="task.completedAt" /></span>
               </div>
               <button
                 v-if="isTaskActive(task.status, task.completedAt)"
@@ -761,9 +741,7 @@ watch(activeTab, onTabChange)
             <div v-for="task in dialogServiceTasks" :key="task.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
               <div class="flex items-center gap-2 min-w-0">
                 <span class="font-mono truncate">{{ task.name || task.code || task.id }}</span>
-                <span v-if="task.status" :class="['inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
-                  {{ taskStatusBadge(task.status, task.completedAt).label }}
-                </span>
+                <span v-if="task.status"><StatusBadge :status="task.status" :completed-at="task.completedAt" /></span>
               </div>
               <button
                 v-if="isTaskActive(task.status, task.completedAt)"
@@ -780,7 +758,7 @@ watch(activeTab, onTabChange)
             <div v-for="inc in dialogIncidents" :key="inc.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
               <div class="flex items-center gap-2 min-w-0">
                 <span class="text-xs truncate" :title="inc.message">{{ inc.message }}</span>
-                <span v-if="!inc.completedAt" class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">{{ t('open') }}</span>
+                <span v-if="!inc.completedAt"><StatusBadge status="OPEN" /></span>
               </div>
               <button
                 v-if="!inc.completedAt"

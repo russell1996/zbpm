@@ -181,3 +181,75 @@ describe('ProcessDeploySection (WO-ACL-6 / WO-ACL-10 criteria 3-6)', () => {
     expect(wrapper.text()).toContain('willAddVersion')
   })
 })
+
+// --- WO-ACL-11 criteria 21-22: bound mode (opened from a process card) ---
+describe('ProcessDeploySection bound mode (WO-ACL-11 criteria 21-22)', () => {
+  const BOUND = { id: 'def-1', key: 'p1', name: 'P1' }
+  const BOUND_BPMN = '<bpmn><process id="p1" name="P1" isExecutable="true"/></bpmn>'
+  const FOREIGN_BPMN = '<bpmn><process id="other" name="Other" isExecutable="true"/></bpmn>'
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockAuth.isSuperAdmin = false
+    mockAuth.username = 'alice'
+    mockGetDefinitions.mockResolvedValue({ data: [], totalElements: 0 })
+    mockListMembers.mockResolvedValue([])
+  })
+
+  async function mountBound(isAdmin: boolean, xml: string, bound = BOUND) {
+    mockAuth.isSuperAdmin = isAdmin
+    const wrapper = mount(ProcessDeploySection, { props: { bound } })
+    const vm = wrapper.vm as any
+    vm.bpmnText = xml
+    await wrapper.vm.$nextTick()
+    // feed through the real input path so parseBpmnMetadata runs (same as mountWithBpmn)
+    await wrapper.find('textarea').setValue(xml)
+    await flushPromises()
+    return wrapper
+  }
+
+  it('criterion 21: the target process is shown in the header with its key', async () => {
+    const wrapper = await mountBound(false, BOUND_BPMN)
+    expect(wrapper.text()).toContain('targetProcess')
+    expect(wrapper.text()).toContain('P1')
+    expect(wrapper.text()).toContain('p1')
+  })
+
+  it('criterion 21: a model with the right key resolves immediately to "new version"', async () => {
+    const wrapper = await mountBound(false, BOUND_BPMN)
+    expect(wrapper.text()).toContain('willAddVersion')
+    // bound mode does NOT hit the directory lookup
+    expect(mockGetDefinitions).not.toHaveBeenCalled()
+  })
+
+  it('criterion 21: bound submit adds a version of the bound process — even for the super-admin', async () => {
+    const wrapper = await mountBound(true, BOUND_BPMN)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('deployBpmn'))!
+    await btn.trigger('click')
+    await flushPromises()
+    // the super-admin MUST NOT deploy a brand-new process here — bound wins
+    expect(mockAddVersion).toHaveBeenCalledWith('def-1', BOUND_BPMN)
+    expect(mockDeploy).not.toHaveBeenCalled()
+    expect(mockSubmit).not.toHaveBeenCalled()
+  })
+
+  it('criterion 22 POF: a model with a foreign key is rejected with an explaining text', async () => {
+    const wrapper = await mountBound(false, FOREIGN_BPMN)
+    expect(wrapper.text()).toContain('boundKeyMismatch')
+    expect(wrapper.text()).toContain('other')
+    expect(wrapper.text()).toContain('p1')
+    // no "new version will be added" — the foreign model must not be accepted
+    expect(wrapper.text()).not.toContain('willAddVersion')
+  })
+
+  it('criterion 22: submit is blocked while the key mismatch is shown', async () => {
+    const wrapper = await mountBound(false, FOREIGN_BPMN)
+    const submitBtn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    expect((submitBtn.element as HTMLButtonElement).disabled).toBe(true)
+    await submitBtn.trigger('click')
+    await flushPromises()
+    expect(mockAddVersion).not.toHaveBeenCalled()
+    expect(mockDeploy).not.toHaveBeenCalled()
+    expect(mockSubmit).not.toHaveBeenCalled()
+  })
+})
