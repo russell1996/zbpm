@@ -24,6 +24,8 @@
   --color-sidebar-foreground: #363636;
   --color-sidebar-accent: #edf0f2;
   --color-destructive: #ef4444;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #363636;
   --radius: 0.5rem;
   --radius-pill: 999px;
   /* WO-ACL-8 criterion 38: Golos Text font (self-hosted via @fontsource) */

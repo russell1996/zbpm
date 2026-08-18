@@ -32,6 +32,9 @@ const myMembership = computed(() => {
   if (!auth.user) return null
   return members.value.find((m) => m.userId === auth.user?.id) || null
 })
+// WO-ACL-8 criterion 27: "is the user a member?" — used to distinguish
+// "no access" from "no data" empty states in tabs.
+const isMember = computed(() => auth.isSuperAdmin || myMembership.value !== null)
 // WO-ACL-8 criterion 11: the super-admin manages members even without being a
 // member — the backend allows everything for SUPER_ADMIN, so hiding the controls
 // would make the UI contradict the API (canOperate checks isSuperAdmin first).
@@ -450,7 +453,9 @@ async function downloadBpmn() {
                 <span v-if="node.name" class="text-muted-foreground">— {{ node.name }}</span>
               </div>
             </div>
-            <p v-if="!store.currentStructure.nodes.length" class="text-sm text-muted-foreground">{{ t('noMembers') }}</p>
+            <p v-if="!store.currentStructure.nodes.length" class="text-sm text-muted-foreground">
+              {{ isMember ? t('noDataYet') : t('noAccess') }}
+            </p>
           </div>
           <p v-else class="p-4 text-sm text-muted-foreground">{{ t('loading') }}</p>
         </div>
@@ -484,7 +489,9 @@ async function downloadBpmn() {
               </tr>
             </tbody>
           </table>
-          <p v-if="!requirements.length && !store.currentStructure?.documentation" class="p-4 text-sm text-muted-foreground">{{ t('noMembers') }}</p>
+          <p v-if="!requirements.length && !store.currentStructure?.documentation" class="p-4 text-sm text-muted-foreground">
+            {{ isMember ? t('noDataYet') : t('noAccess') }}
+          </p>
         </div>
       </div>
 
@@ -554,7 +561,9 @@ async function downloadBpmn() {
               </tr>
             </tbody>
           </table>
-          <p v-else class="px-4 py-3 text-sm text-muted-foreground">{{ t('noMembers') }}</p>
+          <p v-else class="px-4 py-3 text-sm text-muted-foreground">
+            {{ isMember ? t('noMembers') : t('noAccess') }}
+          </p>
         </div>
       </div>
 
@@ -588,7 +597,9 @@ async function downloadBpmn() {
               </tr>
             </tbody>
           </table>
-          <p v-else class="px-4 py-3 text-sm text-muted-foreground">{{ t('noMembers') }}</p>
+          <p v-else class="px-4 py-3 text-sm text-muted-foreground">
+            {{ isMember ? t('noMembers') : t('noAccess') }}
+          </p>
         </div>
       </div>
 
