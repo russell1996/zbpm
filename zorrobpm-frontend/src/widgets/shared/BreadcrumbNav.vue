@@ -1,23 +1,30 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
+import { computed, inject, type Ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 
 const route = useRoute()
+const { t } = useI18n()
 
 // WO-ACL-8 criterion 12: the process detail page provides its name so the
-// breadcrumb shows the actual process name instead of the static "Process Definition".
-const processName = inject<string | undefined>('processName')
+// breadcrumb shows the actual process name instead of the static title.
+// WO-ACL-10 criterion 19: the provided value is a REACTIVE ref — the detail page
+// provides it synchronously in setup() and fills it when data arrives, so the
+// last crumb updates when the process changes.
+const processName = inject<Ref<string | null> | undefined>('processName')
 
+// WO-ACL-10 criterion 18: route meta carries locale KEYS (titleKey/parentTitleKey)
+// instead of raw English literals; labels are resolved through t().
 const breadcrumbs = computed(() => {
   const items: { label: string; to?: string | object }[] = []
-  const meta = route.meta as { title?: string; parentTitle?: string; parentTo?: string | object }
+  const meta = route.meta as { titleKey?: string; parentTitleKey?: string; parentTo?: string | object }
 
-  if (meta.parentTitle && meta.parentTo) {
-    items.push({ label: meta.parentTitle, to: meta.parentTo })
+  if (meta.parentTitleKey && meta.parentTo) {
+    items.push({ label: t(meta.parentTitleKey), to: meta.parentTo })
   }
-  if (meta?.title) {
-    items.push({ label: processName || meta.title })
+  if (meta.titleKey) {
+    items.push({ label: processName?.value || t(meta.titleKey) })
   }
   return items
 })

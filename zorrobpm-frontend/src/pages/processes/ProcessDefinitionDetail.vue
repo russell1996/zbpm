@@ -22,6 +22,13 @@ const toast = useToast()
 const store = useProcessStore()
 const auth = useAuthStore()
 
+// WO-ACL-10 criterion 19: provide the process name SYNCHRONOUSLY in setup() as a
+// reactive ref. BreadcrumbNav injects it and shows the last crumb as the process
+// name; the ref is filled by loadDefinition when the definition arrives, so the
+// crumb updates when the route switches to another process.
+const processName = ref<string | null>(null)
+provide('processName', processName)
+
 // --- WO-ACL-6: members and roles (ADR-8 п.4: seeing members is a member right;
 // managing them belongs to the OWNER only) ---
 const members = ref<Member[]>([])
@@ -131,12 +138,15 @@ async function submitNewVersion() {
   try {
     const created = await processService.addProcessDefinitionVersion(def.id, versionBpmn.value)
     versionSuccess.value = true
+    // WO-ACL-10 criterion 7: on success the dialog closes…
+    showVersionModal.value = false
     toast.success(t('deploySuccessToast'), {
       action: { label: t('viewDefinition'), onClick: () => router.push(`/processes/definitions/${created.id}`) },
     })
     await store.fetchVersions(def.key)
     await store.fetchDefinition(created.id)
   } catch (e) {
+    // …on failure it stays open with the error text (WO-ACL-10 criterion 8).
     versionError.value = errorMessage(e, t('failedToDeploy'))
     toast.error(versionError.value)
   } finally {
@@ -236,9 +246,9 @@ async function loadDefinition(id: string) {
   ])
   if (store.currentDefinition) {
     await store.fetchVersions(store.currentDefinition.key)
-    // WO-ACL-8 criterion 12: provide the process name for the breadcrumb.
-    // BreadcrumbNav injects this to replace the static "Process Definition" title.
-    provide('processName', store.currentDefinition.name || store.currentDefinition.key)
+    // WO-ACL-8 criterion 12 / WO-ACL-10 criterion 19: fill the process name ref
+    // provided in setup() — the breadcrumb shows the real process name.
+    processName.value = store.currentDefinition.name || store.currentDefinition.key
     loadMembers()
   }
   try {
@@ -340,7 +350,9 @@ async function downloadBpmn() {
         </div>
       </div>
 
-      <!-- Tabs -->
+      <!-- Tabs: only the <nav> carries -mb-px; the buttons must NOT repeat it,
+           otherwise the active border-b-2 is pushed under the container border
+           and the highlight disappears (WO-ACL-10 criteria 9-10). -->
       <div class="border-b border-border">
         <nav class="flex gap-0 -mb-px" role="tablist">
           <button
@@ -354,7 +366,7 @@ async function downloadBpmn() {
             ]"
             :key="tab.id"
             role="tab"
-            class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px"
+            class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
             :class="activeTab === tab.id
               ? 'border-primary text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'"

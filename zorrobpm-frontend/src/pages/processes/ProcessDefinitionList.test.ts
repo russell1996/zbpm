@@ -1,19 +1,25 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import ProcessDefinitionList from './ProcessDefinitionList.vue'
 
-// DeploySection is rendered inside the list — its own deps must be mocked here too
-// (vitest module mocks are per test file).
+// DeploySection is rendered inside the list dialog — its own deps must be mocked
+// here too (vitest module mocks are per test file).
 const mockAuth = vi.hoisted(() => ({ isSuperAdmin: false }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ isSuperAdmin: mockAuth.isSuperAdmin }),
+  useAuthStore: () => ({ isSuperAdmin: mockAuth.isSuperAdmin, user: { username: 'alice' } }),
 }))
 vi.mock('@/services/processService', () => ({
   deployProcessDefinition: vi.fn().mockResolvedValue({ id: 'def-1' }),
+  addProcessDefinitionVersion: vi.fn().mockResolvedValue({ id: 'def-2' }),
+  getProcessDefinitions: vi.fn().mockResolvedValue({ data: [], totalElements: 0 }),
 }))
 vi.mock('@/services/submissionService', () => ({
   submitProcessSubmission: vi.fn().mockResolvedValue({ id: 'sub-1' }),
+}))
+vi.mock('@/services/adminService', () => ({
+  getMyMemberships: vi.fn().mockResolvedValue([]),
+  listMembers: vi.fn().mockResolvedValue([]),
 }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ success: vi.fn(), error: vi.fn() }),
@@ -40,24 +46,33 @@ vi.mock('@/composables/usePagination', () => ({
 }))
 vi.mock('@/shared/lib/export', () => ({ exportToCsv: vi.fn() }))
 
-describe('ProcessDefinitionList (WO-ACL-6 criterion 4)', () => {
+describe('ProcessDefinitionList (WO-ACL-6 criterion 4 / WO-ACL-10 criterion 3)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('upload lives INSIDE the definitions list (uploadProcess section is rendered)', () => {
+  it('WO-ACL-10 criterion 3: upload is a header button; no inline upload section on the page', () => {
     const wrapper = mount(ProcessDefinitionList)
-    expect(wrapper.text()).toContain('uploadProcess')
+    const buttons = wrapper.findAll('button')
+    expect(buttons.some((b) => b.text().includes('uploadProcess'))).toBe(true)
+    // the inline section is gone — the page text has no drop zone or BPMN hint
+    expect(wrapper.text()).not.toContain('dropBpmn')
   })
 
-  it('the empty list still renders the upload section above the table', () => {
+  it('WO-ACL-10 criterion 3: clicking the header button opens the upload dialog', async () => {
+    const wrapper = mount(ProcessDefinitionList)
+    const openBtn = wrapper.findAll('button').find((b) => b.text().includes('uploadProcess'))!
+    await openBtn.trigger('click')
+    await flushPromises()
+    // the dialog contains the upload section content
+    expect(wrapper.text()).toContain('dropBpmn')
+  })
+
+  it('the empty list still renders the table below the header (upload no longer sits above it)', () => {
     const wrapper = mount(ProcessDefinitionList)
     const h1 = wrapper.find('h1')
-    const sectionIndex = wrapper.text().indexOf('uploadProcess')
-    const noDefinitionsIndex = wrapper.text().indexOf('noDefinitions')
     expect(h1.exists()).toBe(true)
-    // upload section comes before the (empty) table
-    expect(sectionIndex).toBeGreaterThan(0)
-    expect(noDefinitionsIndex).toBeGreaterThan(sectionIndex)
+    // table placeholder text is present
+    expect(wrapper.text()).toContain('noDefinitions')
   })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -67,6 +67,39 @@ function navigate(to: string) {
   router.push(to)
   emit('navigate')
 }
+
+// WO-ACL-10 criteria 1/21: the flyout is rendered OUTSIDE the scroll container
+// and positioned with position:fixed from the hovered button's rect, so neither
+// the inner vertical scroller nor the nav itself can clip it, and collapsed
+// mode creates no horizontal overflow.
+const flyout = ref<{ labelKey: string; x: number; y: number } | null>(null)
+
+function showFlyoutFor(el: HTMLElement, item: NavItem) {
+  const rect = el.getBoundingClientRect()
+  flyout.value = { labelKey: item.labelKey, x: rect.right + 8, y: rect.top + rect.height / 2 }
+}
+
+function onItemEnter(item: NavItem, e: MouseEvent) {
+  if (!props.collapsed) return
+  showFlyoutFor(e.currentTarget as HTMLElement, item)
+}
+
+function onItemLeave() {
+  flyout.value = null
+}
+
+// WO-ACL-10 criterion 23: in expanded mode a truncated label shows the full
+// text on hover; labels that fit never show a tooltip.
+function onLabelEnter(item: NavItem, e: MouseEvent) {
+  const el = e.currentTarget as HTMLElement
+  if (el.scrollWidth > el.clientWidth) {
+    showFlyoutFor(el, item)
+  }
+}
+
+function onLabelLeave() {
+  flyout.value = null
+}
 </script>
 
 <template>
@@ -85,35 +118,46 @@ function navigate(to: string) {
         <PanelLeftOpen v-else class="h-4 w-4" />
       </button>
     </div>
-    <nav class="flex-1 py-2 overflow-y-auto min-h-0">
-      <!-- WO-ACL-8 criterion 15: children support removed — no items use it after
-           flattening the processes group (criterion 14). If nesting is needed again,
-           re-add the child rendering block. -->
-      <template v-for="item in visibleNavItems" :key="item.labelKey">
-        <!-- WO-ACL-8 criterion 35: custom flyout tooltip on collapsed sidebar.
-             group-hover triggers an absolutely positioned block with the label,
-             transition duration-150, no native title (avoids double tooltip). -->
-        <div class="relative group">
-          <button
-            class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
-            :class="[
-              { 'bg-sidebar-accent font-medium': isActive(item.to) },
-              collapsed ? 'justify-center px-2' : '',
-            ]"
-            @click="item.to && navigate(item.to)"
-          >
-            <component :is="item.icon" class="h-4 w-4 shrink-0" />
-            <span v-if="!collapsed">{{ t(item.labelKey) }}</span>
-          </button>
-          <!-- Flyout: only when collapsed, appears immediately on hover -->
-          <div
-            v-if="collapsed"
-            class="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-3 py-1.5 bg-popover text-popover-foreground text-sm rounded-md shadow-md border border-border whitespace-nowrap opacity-0 translate-x-1 pointer-events-none group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50"
-          >
-            {{ t(item.labelKey) }}
+    <!-- WO-ACL-10 criteria 1/21: <nav> is NOT a scroll container. Only the inner
+         div scrolls, so the flyout rendered below is never clipped by it and the
+         collapsed state produces no horizontal scrollbar. -->
+    <nav class="flex-1 min-h-0 relative">
+      <div class="h-full overflow-y-auto py-2">
+        <template v-for="item in visibleNavItems" :key="item.labelKey">
+          <div class="relative">
+            <button
+              class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
+              :class="[
+                { 'bg-sidebar-accent font-medium': isActive(item.to) },
+                collapsed ? 'justify-center px-2' : '',
+              ]"
+              @click="item.to && navigate(item.to)"
+              @mouseenter="onItemEnter(item, $event)"
+              @mouseleave="onItemLeave"
+            >
+              <component :is="item.icon" class="h-4 w-4 shrink-0" />
+              <!-- WO-ACL-10 criteria 15/22: labels never wrap (whitespace-nowrap)
+                   and truncate with an ellipsis (min-w-0 lets truncate work inside
+                   the flex button). -->
+              <span
+                v-if="!collapsed"
+                class="truncate min-w-0 whitespace-nowrap"
+                @mouseenter="onLabelEnter(item, $event)"
+                @mouseleave="onLabelLeave"
+              >{{ t(item.labelKey) }}</span>
+            </button>
           </div>
-        </div>
-      </template>
+        </template>
+      </div>
+      <!-- Flyout: outside the scroll container, fixed position keeps it clear of
+           any ancestor clipping; shown via JS on hover (WO-ACL-10 criteria 1/21/23). -->
+      <div
+        v-if="flyout"
+        class="sidebar-flyout fixed z-50 px-3 py-1.5 bg-popover text-popover-foreground text-sm rounded-md shadow-md border border-border whitespace-nowrap pointer-events-none"
+        :style="{ left: flyout.x + 'px', top: flyout.y + 'px', transform: 'translateY(-50%)' }"
+      >
+        {{ t(flyout.labelKey) }}
+      </div>
     </nav>
   </aside>
 </template>

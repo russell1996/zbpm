@@ -9,7 +9,7 @@ import { getMyMemberships } from '@/services/adminService'
 import { exportToCsv } from '@/shared/lib/export'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import MySubmissions from '@/pages/processes/MySubmissions.vue'
-import { Download, RefreshCw, FileText } from 'lucide-vue-next'
+import { Download, RefreshCw, FileText, Upload } from 'lucide-vue-next'
 
 const router = useRouter()
 const store = useProcessStore()
@@ -79,6 +79,8 @@ function exportData() {
 
 // WO-ACL-8 criterion 10: My Submissions as a dialog from the definitions page.
 const showSubmissions = ref(false)
+// WO-ACL-10 criterion 3: uploading is a dialog now, not an inline section.
+const showDeployDialog = ref(false)
 
 onMounted(load)
 watch([search, latestOnly], () => { resetPage(); load() })
@@ -96,6 +98,13 @@ watch([search, latestOnly], () => { resetPage(); load() })
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': store.loading }" />
           {{ t('refresh') }}
+        </button>
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity"
+          @click="showDeployDialog = true"
+        >
+          <Upload class="h-4 w-4" />
+          {{ t('uploadProcess') }}
         </button>
         <button
           class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
@@ -116,8 +125,8 @@ watch([search, latestOnly], () => { resetPage(); load() })
     </div>
 
     <!-- WO-ACL-6: upload lives INSIDE the definitions list — the old standalone
-         /processes/deploy page and its sidebar entry are gone. -->
-    <ProcessDeploySection />
+         /processes/deploy page and its sidebar entry are gone. WO-ACL-10 criterion 3:
+         it opens as a dialog from the header button, not as an inline section. -->
 
     <div class="flex items-center gap-4">
       <input
@@ -208,6 +217,23 @@ watch([search, latestOnly], () => { resetPage(); load() })
         >
           {{ t('next') }}
         </button>
+      </div>
+    </div>
+
+    <!-- WO-ACL-10 criterion 3: process upload as a dialog, opened from the header. -->
+    <div
+      v-if="showDeployDialog"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      @click.self="showDeployDialog = false"
+    >
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold">{{ t('uploadProcess') }}</h2>
+          <button class="text-sm text-muted-foreground hover:text-foreground" @click="showDeployDialog = false">
+            {{ t('close') }}
+          </button>
+        </div>
+        <ProcessDeploySection @done="showDeployDialog = false" />
       </div>
     </div>
 

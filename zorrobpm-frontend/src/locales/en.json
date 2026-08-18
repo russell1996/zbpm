@@ -337,6 +337,7 @@
   "submissionQueueHint": "Requests awaiting review — approving deploys the process and makes the submitter its owner",
   "statusApproved": "Approved",
   "statusRejected": "Rejected",
+  "statusPending": "Pending",
   "submittedAt": "Submitted",
   "submittedBy": "Submitted by",
   "reason": "Reason",
@@ -390,5 +391,13 @@
   "file": "File",
   "openExistingProcess": "Open existing process",
   "noAccess": "You are not a member of this process, so you cannot see its instances, tasks, or variables.",
-  "noDataYet": "No data yet."
+  "noDataYet": "No data yet.",
+  "willCreateProcess": "A new process will be created",
+  "willAddVersion": "A new version of the process will be added",
+  "noDeployAccess": "You do not have rights to add a version of this process",
+  "processDefinition": "Process Definition",
+  "processInstances": "Process Instances",
+  "myTasks": "My Tasks",
+  "task": "Task",
+  "dmnDecision": "DMN Decision"
 }
