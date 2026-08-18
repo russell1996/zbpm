@@ -8,9 +8,11 @@ import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.ProcessSubmissionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessSubmissionStatus;
+import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.ProcessSubmissionRepository;
+import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
@@ -25,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -43,16 +46,17 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
     static final int MAX_BPMN_LENGTH = 262_144;
 
     /**
-     * Naming convention for NEW process keys (WO-ACL-3): lowercase letter first, then
-     * lowercase letters/digits/underscore/hyphen, 3..64 chars. Underscore is allowed because
-     * existing registry keys use it (mt7_*, acl2_*); dots and uppercase are not (URL/extension
-     * ambiguity, XML id case-sensitivity, uniformity).
+     * Naming convention for NEW process keys (WO-ACL-3, updated WO-ACL-9): letter first (any case),
+     * then letters/digits/underscore/hyphen, 3..64 chars. Underscore is allowed because
+     * existing registry keys use it (mt7_*, acl2_*); dots are not (URL/extension ambiguity).
+     * Uppercase is now allowed — BPMN id is case-sensitive, and camelCase keys like
+     * approvalProcess are standard Camunda convention.
      */
-    private static final Pattern KEY_PATTERN = Pattern.compile("^[a-z][a-z0-9_-]{2,63}$");
+    private static final Pattern KEY_PATTERN = Pattern.compile("^[a-zA-Z][a-zA-Z0-9_-]{2,63}$");
 
     private static final String KEY_CONVENTION_MESSAGE =
-        "Process key must match the naming convention: ^[a-z][a-z0-9_-]{2,63}$ "
-            + "(3-64 characters, starts with a lowercase letter, lowercase/digits/underscore/hyphen only)";
+        "Process key must match the naming convention: ^[a-zA-Z][a-zA-Z0-9_-]{2,63}$ "
+            + "(3-64 characters, starts with a letter, letters/digits/underscore/hyphen only, case-sensitive)";
 
     private final ProcessSubmissionRepository submissionRepository;
     private final ProcessRepository processRepository;
@@ -60,6 +64,7 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
     private final ProcessDefinitionService processDefinitionService;
     private final BpmnParseService bpmnParseService;
     private final AuditLogService auditLogService;
+    private final UiUserRepository uiUserRepository;
 
     @Override
     public ProcessSubmissionDTO submit(String bpmn, Principal principal) {
@@ -264,6 +269,24 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
         dto.setRejectReason(entity.getRejectReason());
         dto.setApprovedDefinitionId(entity.getApprovedDefinitionId());
         dto.setPreviousSubmissionId(entity.getPreviousSubmissionId());
+
+        // WO-ACL-9: enrich submitter identity (null fields if user was deleted)
+        enrichIdentity(dto.getSubmittedBy()).ifPresent(u -> {
+            dto.setSubmittedByUsername(u.getUsername());
+            dto.setSubmittedByFullName(u.getFullName());
+            dto.setSubmittedByEmail(u.getEmail());
+        });
+        // WO-ACL-9: enrich reviewer identity
+        enrichIdentity(entity.getReviewedBy()).ifPresent(u ->
+            dto.setReviewedByUsername(u.getUsername())
+        );
+
         return dto;
+    }
+
+    /** WO-ACL-9: look up user by ID; returns empty if user was deleted (criteria 4). */
+    private Optional<UiUserEntity> enrichIdentity(UUID userId) {
+        if (userId == null) return Optional.empty();
+        return uiUserRepository.findById(userId);
     }
 }
