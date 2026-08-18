@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale } from '@/app/i18n'
 import { Globe } from 'lucide-vue-next'
 
 const { locale } = useI18n()
 const showLangMenu = ref(false)
+const rootEl = ref<HTMLElement | null>(null)
 
 const languages = [
   { code: 'ru', label: 'Русский' },
@@ -19,10 +20,34 @@ function switchLang(code: string) {
 }
 
 const currentLang = () => languages.find((l) => l.code === locale.value)?.label || 'RU'
+
+// WO-ACL-10 criterion 11: the menu closes on outside click and on Escape.
+// Listeners are attached on mount and removed on unmount.
+function onDocumentClick(e: MouseEvent) {
+  if (!rootEl.value || !rootEl.value.contains(e.target as Node)) {
+    showLangMenu.value = false
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    showLangMenu.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+  document.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
-  <div class="relative">
+  <div ref="rootEl" class="relative">
     <button
       type="button"
       class="flex items-center gap-1.5 px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"

@@ -93,22 +93,85 @@ describe('SidebarNav', () => {
     expect(unique.size).toBeGreaterThanOrEqual(10)
   })
 
-  // WO-ACL-8 criterion 35: custom flyout tooltip appears on hover when collapsed
-  it('WO-ACL-8 criterion 35: flyout tooltip is present when collapsed', () => {
+  // WO-ACL-8 criterion 35 (WO-ACL-10 rework): the flyout tooltip appears on hover
+  // when collapsed. Rendered by JS as .sidebar-flyout outside the scroll container.
+  it('WO-ACL-8 criterion 35: flyout tooltip is present when collapsed', async () => {
     const wrapper = mount(SidebarNav, { props: { collapsed: true } })
-    // flyout divs have the class 'opacity-0' (hidden by default, shown on group-hover)
-    const flyouts = wrapper.findAll('.opacity-0')
-    // one flyout per nav item (10 items)
-    expect(flyouts.length).toBeGreaterThanOrEqual(10)
-    // each flyout contains the nav label text
-    expect(flyouts[0].text()).toBeTruthy()
+    const btn = wrapper.findAll('nav button')[2]
+    await btn.trigger('mouseenter')
+    const flyout = wrapper.find('.sidebar-flyout')
+    expect(flyout.exists()).toBe(true)
+    expect(flyout.text()).toBe('instances')
   })
 
-  // WO-ACL-8 criterion 36: no flyout tooltip when sidebar is expanded
-  it('WO-ACL-8 criterion 36: no flyout tooltip when expanded', () => {
+  // WO-ACL-8 criterion 36 (WO-ACL-10 rework): no flyout on button hover when
+  // expanded — only a truncated label shows one (criterion 23).
+  it('WO-ACL-8 criterion 36: no flyout tooltip when expanded', async () => {
     const wrapper = mount(SidebarNav, { props: { collapsed: false } })
-    // flyout divs should NOT exist when expanded (v-if="collapsed" is false)
-    const flyouts = wrapper.findAll('.opacity-0')
-    expect(flyouts.length).toBe(0)
+    const btn = wrapper.findAll('nav button')[2]
+    await btn.trigger('mouseenter')
+    expect(wrapper.find('.sidebar-flyout').exists()).toBe(false)
+  })
+
+  // WO-ACL-10 criterion 1: the flyout must not be clipped — it must have no
+  // ancestor with a scrolling/hiding overflow class between it and the root.
+  it('WO-ACL-10 criterion 1: flyout is not clipped by any overflow ancestor', async () => {
+    const wrapper = mount(SidebarNav, { props: { collapsed: true } })
+    const btn = wrapper.findAll('nav button')[2]
+    await btn.trigger('mouseenter')
+    const flyout = wrapper.find('.sidebar-flyout')
+    expect(flyout.exists()).toBe(true)
+    let p = flyout.element.parentElement
+    while (p && p !== document.body) {
+      expect(p.className).not.toMatch(/(^|\s)overflow-(y|x|hidden)/)
+      p = p.parentElement
+    }
+  })
+
+  // WO-ACL-10 criterion 21: the same rework kills the horizontal scrollbar — the
+  // flyout lives outside the scroll container, so it cannot widen it. One mutation
+  // (overflow-y-auto back on the nav) breaks both this test and criterion 1.
+  it('WO-ACL-10 criterion 21: collapsed flyout does not create horizontal overflow', async () => {
+    const wrapper = mount(SidebarNav, { props: { collapsed: true } })
+    const btn = wrapper.findAll('nav button')[2]
+    await btn.trigger('mouseenter')
+    const flyout = wrapper.find('.sidebar-flyout')
+    expect(flyout.exists()).toBe(true)
+    // the flyout must not be inside the scrolling element at all
+    const scroller = wrapper.find('nav > div')
+    expect(scroller.element.contains(flyout.element)).toBe(false)
+  })
+
+  // WO-ACL-10 criterion 15: labels must never wrap — every label span carries
+  // whitespace-nowrap (plus truncate, which implies the same).
+  it('WO-ACL-10 criterion 15: nav labels never wrap', () => {
+    const wrapper = mount(SidebarNav)
+    const spans = wrapper.findAll('nav button span')
+    expect(spans.length).toBeGreaterThanOrEqual(10)
+    for (const s of spans) {
+      expect(s.classes()).toContain('whitespace-nowrap')
+    }
+  })
+
+  // WO-ACL-10 criterion 23: a truncated label shows the full text on hover…
+  it('WO-ACL-10 criterion 23: truncated label shows full text on hover', async () => {
+    const wrapper = mount(SidebarNav) // expanded
+    const span = wrapper.findAll('nav button span')[0]
+    // simulate truncation: content wider than the box
+    Object.defineProperty(span.element, 'scrollWidth', { value: 300, configurable: true })
+    Object.defineProperty(span.element, 'clientWidth', { value: 100, configurable: true })
+    await span.trigger('mouseenter')
+    const flyout = wrapper.find('.sidebar-flyout')
+    expect(flyout.exists()).toBe(true)
+    expect(flyout.text()).toBe('dashboard')
+  })
+
+  // WO-ACL-10 criterion 23: …while a label that fits shows no tooltip at all.
+  it('WO-ACL-10 criterion 23: non-truncated label shows no tooltip', async () => {
+    const wrapper = mount(SidebarNav) // expanded
+    const span = wrapper.findAll('nav button span')[0]
+    // jsdom default: scrollWidth === clientWidth (0), nothing is truncated
+    await span.trigger('mouseenter')
+    expect(wrapper.find('.sidebar-flyout').exists()).toBe(false)
   })
 })

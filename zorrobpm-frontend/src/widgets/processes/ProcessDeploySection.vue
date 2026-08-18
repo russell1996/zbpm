@@ -1,20 +1,26 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { deployProcessDefinition } from '@/services/processService'
+import {
+  deployProcessDefinition,
+  addProcessDefinitionVersion,
+  getProcessDefinitions,
+} from '@/services/processService'
 import { submitProcessSubmission } from '@/services/submissionService'
+import { listMembers } from '@/services/adminService'
+import type { Member } from '@/services/adminService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/shared/lib/utils'
-import { Upload, FileText, AlertCircle, CheckCircle, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { Upload, FileText, AlertCircle, CheckCircle, ShieldAlert } from 'lucide-vue-next'
 
 const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
 const auth = useAuthStore()
+const emit = defineEmits<{ done: [] }>()
 
-const expanded = ref(true)
 const bpmnText = ref('')
 const fileName = ref('')
 const loading = ref(false)
@@ -29,9 +35,22 @@ const parsedName = ref<string | null>(null)
 // WO-ACL-8 criterion 31: error "already exists" shows a button to navigate.
 const existingProcessKey = ref<string | null>(null)
 
+// WO-ACL-10 criteria 3-6: after parsing, the section looks the existing process
+// up and tells the user exactly what will happen:
+//   'new'       — no definition with this key → "a new process will be created"
+//   'version'   — key exists and the user may deploy → "a new version will be added"
+//   'no-access' — key exists but the user has no deploy rights → owner shown, submit blocked
+const mode = ref<'new' | 'version' | 'no-access' | null>(null)
+const existingDef = ref<{ id: string; key: string; name: string | null } | null>(null)
+const owner = ref<Member | null>(null)
+const pendingCheck = ref(false)
+const checkSeq = ref(0)
+
 /** WO-ACL-6 criterion 5: the button names what will happen — SUPER_ADMIN deploys,
  * everyone else creates an approval request. Same input, two outcomes. */
 const isAdmin = auth.isSuperAdmin
+
+const canDeploy = computed(() => mode.value === 'version' || mode.value === 'new')
 
 function parseBpmnMetadata(xml: string) {
   try {
@@ -43,6 +62,48 @@ function parseBpmnMetadata(xml: string) {
   } catch {
     parsedKey.value = null
     parsedName.value = null
+  }
+  if (parsedKey.value) {
+    checkExistingKey(parsedKey.value)
+  } else {
+    mode.value = null
+    existingDef.value = null
+    owner.value = null
+  }
+}
+
+// WO-ACL-10 criteria 4-6: resolve what would happen with this key.
+async function checkExistingKey(key: string) {
+  const seq = ++checkSeq.value
+  pendingCheck.value = true
+  error.value = null
+  try {
+    const page = await getProcessDefinitions({ processDefinitionKey: key, latestVersionOnly: true })
+    if (seq !== checkSeq.value) return
+    const def = page.data.find((d) => d.key === key) ?? null
+    existingDef.value = def ? { id: def.id, key: def.key, name: def.name ?? null } : null
+    if (!def) {
+      mode.value = 'new'
+      owner.value = null
+      return
+    }
+    const members = await listMembers(key)
+    if (seq !== checkSeq.value) return
+    const me = auth.user?.username ? members.find((m) => m.username === auth.user!.username) : undefined
+    owner.value = members.find((m) => m.role === 'OWNER') ?? null
+    if (isAdmin || (me && (me.role === 'OWNER' || me.role === 'DESIGNER'))) {
+      mode.value = 'version'
+    } else {
+      mode.value = 'no-access'
+    }
+  } catch {
+    if (seq !== checkSeq.value) return
+    // look-up failed — stay neutral, keep the old behavior of attempting a deploy
+    mode.value = null
+    existingDef.value = null
+    owner.value = null
+  } finally {
+    if (seq === checkSeq.value) pendingCheck.value = false
   }
 }
 
@@ -91,9 +152,18 @@ async function submit() {
   submitted.value = false
   existingProcessKey.value = null
   try {
-    if (isAdmin) {
+    // WO-ACL-10 criterion 4: an existing key with deploy rights adds a new version.
+    if (mode.value === 'version' && existingDef.value) {
+      const result = await addProcessDefinitionVersion(existingDef.value.id, bpmnText.value)
+      success.value = true
+      emit('done')
+      toast.success(t('deploySuccessToast'), {
+        action: { label: t('viewDefinition'), onClick: () => router.push(`/processes/definitions/${result.id}`) },
+      })
+    } else if (isAdmin) {
       const result = await deployProcessDefinition(bpmnText.value)
       success.value = true
+      emit('done')
       toast.success(t('deploySuccessToast'), {
         action: { label: t('viewDefinition'), onClick: () => router.push(`/processes/definitions/${result.id}`) },
       })
@@ -134,127 +204,142 @@ function clear() {
   parsedKey.value = null
   parsedName.value = null
   existingProcessKey.value = null
+  mode.value = null
+  existingDef.value = null
+  owner.value = null
+  pendingCheck.value = false
+  checkSeq.value++
 }
 </script>
 
 <template>
-  <div class="border border-border rounded-lg overflow-hidden bg-card">
-    <button
-      class="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-muted/50 transition-colors"
-      @click="expanded = !expanded"
-    >
-      <span class="flex items-center gap-2 font-bold text-lg">
-        <Upload class="h-5 w-5 text-primary" />
-        {{ t('uploadProcess') }}
-      </span>
-      <component :is="expanded ? ChevronDown : ChevronRight" class="h-4 w-4 text-muted-foreground" />
-    </button>
-
-    <div v-if="expanded" class="px-4 pb-4 space-y-4">
-      <!-- WO-ACL-8 criterion 29: segment toggle — File or XML text, one at a time. -->
-      <div v-if="!bpmnText" class="flex items-center border border-border rounded-md overflow-hidden text-sm">
-        <button
-          class="px-3 py-1.5 transition-colors"
-          :class="inputMode === 'file' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
-          @click="inputMode = 'file'"
-        >{{ t('file') }}</button>
-        <button
-          class="px-3 py-1.5 transition-colors"
-          :class="inputMode === 'xml' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
-          @click="inputMode = 'xml'"
-        >XML</button>
-      </div>
-
-      <!-- File mode -->
-      <div
-        v-if="!bpmnText && inputMode === 'file'"
-        class="border-2 border-dashed border-border rounded-lg p-10 text-center hover:border-primary/50 transition-colors cursor-pointer"
-        @drop="onDrop"
-        @dragover="onDragOver"
-        @click="($refs.fileInput as HTMLInputElement).click()"
-      >
-        <Upload class="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
-        <p class="text-base font-medium mb-1">{{ t('dropBpmn') }}</p>
-        <p class="text-sm text-muted-foreground">{{ t('supportsBpmn') }}</p>
-        <input ref="fileInput" type="file" accept=".bpmn,.xml" class="hidden" @change="onFileChange" />
-      </div>
-
-      <!-- XML text mode -->
-      <div v-if="!bpmnText && inputMode === 'xml'" class="space-y-3">
-        <textarea
-          v-model="bpmnText"
-          class="w-full h-72 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-          :placeholder="t('pasteBpmnHere')"
-          @input="onXmlInput"
-        />
-      </div>
-
-      <template v-if="bpmnText">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <FileText class="h-5 w-5 text-primary" />
-            <div>
-              <p class="font-medium">{{ fileName || t('bpmnXml') }}</p>
-              <p class="text-xs text-muted-foreground">{{ bpmnText.length }} {{ t('characters') }}</p>
-            </div>
-          </div>
-          <button class="text-sm text-muted-foreground hover:text-foreground" @click="clear">{{ t('clear') }}</button>
-        </div>
-
-        <!-- WO-ACL-8 criterion 30: parsed key and name before submit. -->
-        <div v-if="parsedKey" class="bg-muted/50 rounded-md px-4 py-2 text-sm space-y-1">
-          <p><span class="text-muted-foreground">{{ t('key') }}:</span> <code class="font-mono">{{ parsedKey }}</code></p>
-          <p v-if="parsedName"><span class="text-muted-foreground">{{ t('name') }}:</span> {{ parsedName }}</p>
-        </div>
-
-        <textarea
-          v-model="bpmnText"
-          class="w-full h-72 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-          :placeholder="t('pasteBpmnHere')"
-          @input="onXmlInput"
-        />
-
-        <div v-if="error" class="space-y-2">
-          <div class="flex items-center gap-2 text-sm text-red-500">
-            <AlertCircle class="h-4 w-4 shrink-0" />
-            {{ error }}
-          </div>
-          <!-- WO-ACL-8 criterion 31: "already exists" error offers a button to navigate. -->
-          <button
-            v-if="existingProcessKey"
-            class="text-sm text-primary hover:underline"
-            @click="navigateToExisting"
-          >
-            {{ t('openExistingProcess') }} →
-          </button>
-        </div>
-
-        <div v-if="success" class="flex items-center gap-2 text-sm text-green-600">
-          <CheckCircle class="h-4 w-4" />
-          {{ t('deploySuccess') }}
-        </div>
-
-        <div v-if="submitted" class="flex items-center gap-2 text-sm text-green-600">
-          <CheckCircle class="h-4 w-4" />
-          {{ t('submissionSent') }}
-        </div>
-
-        <div class="flex justify-end gap-3">
-          <button
-            class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-            @click="clear"
-          >
-            {{ t('cancel') }}
-          </button>
-          <button
-            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
-            :disabled="loading || !bpmnText.trim()"
-            @click="submit"
-          >
-            {{ loading ? (isAdmin ? t('deploying') : t('submitting')) : (isAdmin ? t('deployBpmn') : t('submitForApproval')) }}
-          </button>
-        </div>
-      </template>
+  <div class="space-y-4">
+    <div class="flex items-center gap-2 font-bold text-lg">
+      <Upload class="h-5 w-5 text-primary" />
+      {{ t('uploadProcess') }}
     </div>
+
+    <!-- WO-ACL-8 criterion 29: segment toggle — File or XML text, one at a time. -->
+    <div v-if="!bpmnText" class="flex items-center border border-border rounded-md overflow-hidden text-sm">
+      <button
+        class="px-3 py-1.5 transition-colors"
+        :class="inputMode === 'file' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+        @click="inputMode = 'file'"
+      >{{ t('file') }}</button>
+      <button
+        class="px-3 py-1.5 transition-colors"
+        :class="inputMode === 'xml' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+        @click="inputMode = 'xml'"
+      >XML</button>
+    </div>
+
+    <!-- File mode -->
+    <div
+      v-if="!bpmnText && inputMode === 'file'"
+      class="border-2 border-dashed border-border rounded-lg p-10 text-center hover:border-primary/50 transition-colors cursor-pointer"
+      @drop="onDrop"
+      @dragover="onDragOver"
+      @click="($refs.fileInput as HTMLInputElement).click()"
+    >
+      <Upload class="h-10 w-10 mx-auto mb-3 text-muted-foreground" />
+      <p class="text-base font-medium mb-1">{{ t('dropBpmn') }}</p>
+      <p class="text-sm text-muted-foreground">{{ t('supportsBpmn') }}</p>
+      <input ref="fileInput" type="file" accept=".bpmn,.xml" class="hidden" @change="onFileChange" />
+    </div>
+
+    <!-- XML text mode -->
+    <div v-if="!bpmnText && inputMode === 'xml'" class="space-y-3">
+      <textarea
+        v-model="bpmnText"
+        class="w-full h-72 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+        :placeholder="t('pasteBpmnHere')"
+        @input="onXmlInput"
+      />
+    </div>
+
+    <template v-if="bpmnText">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <FileText class="h-5 w-5 text-primary" />
+          <div>
+            <p class="font-medium">{{ fileName || t('bpmnXml') }}</p>
+            <p class="text-xs text-muted-foreground">{{ bpmnText.length }} {{ t('characters') }}</p>
+          </div>
+        </div>
+        <button class="text-sm text-muted-foreground hover:text-foreground" @click="clear">{{ t('clear') }}</button>
+      </div>
+
+      <!-- WO-ACL-8 criterion 30: parsed key and name before submit. -->
+      <div v-if="parsedKey" class="bg-muted/50 rounded-md px-4 py-2 text-sm space-y-1">
+        <p><span class="text-muted-foreground">{{ t('key') }}:</span> <code class="font-mono">{{ parsedKey }}</code></p>
+        <p v-if="parsedName"><span class="text-muted-foreground">{{ t('name') }}:</span> {{ parsedName }}</p>
+      </div>
+
+      <!-- WO-ACL-10 criteria 4-6: tell the user exactly what will happen. -->
+      <div v-if="pendingCheck" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
+      <div v-else-if="mode === 'new'" class="bg-muted/50 rounded-md px-4 py-2 text-sm">
+        {{ t('willCreateProcess') }} <code class="font-mono">{{ parsedKey }}</code>
+      </div>
+      <div v-else-if="mode === 'version'" class="bg-muted/50 rounded-md px-4 py-2 text-sm">
+        {{ t('willAddVersion') }} <strong>{{ existingDef?.name || parsedName }}</strong>
+      </div>
+      <div v-else-if="mode === 'no-access'" class="bg-amber-50 border border-amber-200 rounded-md px-4 py-2 text-sm space-y-1">
+        <p class="flex items-center gap-2">
+          <ShieldAlert class="h-4 w-4 shrink-0 text-amber-600" />
+          {{ t('noDeployAccess') }}
+        </p>
+        <p v-if="owner" class="pl-6 text-muted-foreground">
+          {{ t('owner') }}: {{ owner.fullName || owner.username }}
+        </p>
+      </div>
+
+      <textarea
+        v-model="bpmnText"
+        class="w-full h-72 px-4 py-3 border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+        :placeholder="t('pasteBpmnHere')"
+        @input="onXmlInput"
+      />
+
+      <div v-if="error" class="space-y-2">
+        <div class="flex items-center gap-2 text-sm text-red-500">
+          <AlertCircle class="h-4 w-4 shrink-0" />
+          {{ error }}
+        </div>
+        <!-- WO-ACL-8 criterion 31: "already exists" error offers a button to navigate. -->
+        <button
+          v-if="existingProcessKey"
+          class="text-sm text-primary hover:underline"
+          @click="navigateToExisting"
+        >
+          {{ t('openExistingProcess') }} →
+        </button>
+      </div>
+
+      <div v-if="success" class="flex items-center gap-2 text-sm text-green-600">
+        <CheckCircle class="h-4 w-4" />
+        {{ t('deploySuccess') }}
+      </div>
+
+      <div v-if="submitted" class="flex items-center gap-2 text-sm text-green-600">
+        <CheckCircle class="h-4 w-4" />
+        {{ t('submissionSent') }}
+      </div>
+
+      <div class="flex justify-end gap-3">
+        <button
+          class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+          @click="clear"
+        >
+          {{ t('cancel') }}
+        </button>
+        <button
+          class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+          :disabled="loading || !bpmnText.trim() || pendingCheck || mode === 'no-access'"
+          @click="submit"
+        >
+          {{ loading ? (isAdmin ? t('deploying') : t('submitting')) : (isAdmin ? t('deployBpmn') : t('submitForApproval')) }}
+        </button>
+      </div>
+    </template>
   </div>
 </template>

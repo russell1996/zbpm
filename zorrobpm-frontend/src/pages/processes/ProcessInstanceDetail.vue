@@ -377,7 +377,7 @@ watch(activeTab, onTabChange)
         <button
           v-for="tab in (['bpmn', 'variables', 'tasks', 'serviceTasks', 'incidents', 'history', 'subprocesses'] as const)"
           :key="tab"
-          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap -mb-px"
           :class="activeTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = tab"
         >
