@@ -11,8 +11,14 @@ export interface ProcessSubmission {
   /** PENDING / APPROVED / REJECTED */
   status: string
   submittedBy: string
+  /** WO-ACL-9: enriched submitter identity (null if user was deleted). */
+  submittedByUsername: string | null
+  submittedByFullName: string | null
+  submittedByEmail: string | null
   submittedAt: string
   reviewedBy: string | null
+  /** WO-ACL-9: reviewer username (null if not yet reviewed or user was deleted). */
+  reviewedByUsername: string | null
   reviewedAt: string | null
   rejectReason: string | null
   approvedDefinitionId: string | null
@@ -46,5 +52,12 @@ export async function approveSubmission(id: string): Promise<ProcessSubmission> 
 /** Decline the submission with a mandatory reason. SUPER_ADMIN only. */
 export async function rejectSubmission(id: string, reason: string): Promise<ProcessSubmission> {
   const { data } = await api.post<ProcessSubmission>(`/process-submissions/${id}/reject`, { reason })
+  return data
+}
+
+/** WO-ACL-10 criterion 13: raw BPMN of a submission — the reviewer sees the
+ *  model BEFORE approving (endpoint exists since WO-ACL-7). SUPER_ADMIN only. */
+export async function getSubmissionBpmn(id: string): Promise<string> {
+  const { data } = await api.get<string>(`/process-submissions/${id}/bpmn`)
   return data
 }

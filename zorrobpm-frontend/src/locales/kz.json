@@ -350,6 +350,7 @@
   "submissionApproved": "Өтінім мақұлданды — процес орналастырылды, жіберуші иесі болды",
   "submissionRejected": "Өтінім қабылданбады",
   "failedToLoadSubmissions": "Өтінімдерді жүктеу мүмкін болмады",
+  "failedToLoadSubmissionModel": "Өтінім моделін жүктеу мүмкін болмады",
   "failedToApproveSubmission": "Өтінімді мақұлдау мүмкін болмады",
   "failedToRejectSubmission": "Өтінімді қабылдамау мүмкін болмады",
   "rejectSubmissionTitle": "Өтінімді қабылдамау",

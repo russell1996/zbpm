@@ -350,6 +350,7 @@
   "submissionApproved": "Заявка одобрена — процесс развёрнут, отправитель стал владельцем",
   "submissionRejected": "Заявка отклонена",
   "failedToLoadSubmissions": "Не удалось загрузить заявки",
+  "failedToLoadSubmissionModel": "Не удалось загрузить модель заявки",
   "failedToApproveSubmission": "Не удалось одобрить заявку",
   "failedToRejectSubmission": "Не удалось отклонить заявку",
   "rejectSubmissionTitle": "Отклонить заявку",
