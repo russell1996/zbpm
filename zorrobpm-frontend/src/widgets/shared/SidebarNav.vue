@@ -90,18 +90,29 @@ function navigate(to: string) {
            flattening the processes group (criterion 14). If nesting is needed again,
            re-add the child rendering block. -->
       <template v-for="item in visibleNavItems" :key="item.labelKey">
-        <button
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
-          :class="[
-            { 'bg-sidebar-accent font-medium': isActive(item.to) },
-            collapsed ? 'justify-center px-2' : '',
-          ]"
-          :title="collapsed ? t(item.labelKey) : undefined"
-          @click="item.to && navigate(item.to)"
-        >
-          <component :is="item.icon" class="h-4 w-4 shrink-0" />
-          <span v-if="!collapsed">{{ t(item.labelKey) }}</span>
-        </button>
+        <!-- WO-ACL-8 criterion 35: custom flyout tooltip on collapsed sidebar.
+             group-hover triggers an absolutely positioned block with the label,
+             transition duration-150, no native title (avoids double tooltip). -->
+        <div class="relative group">
+          <button
+            class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-sidebar-accent transition-colors"
+            :class="[
+              { 'bg-sidebar-accent font-medium': isActive(item.to) },
+              collapsed ? 'justify-center px-2' : '',
+            ]"
+            @click="item.to && navigate(item.to)"
+          >
+            <component :is="item.icon" class="h-4 w-4 shrink-0" />
+            <span v-if="!collapsed">{{ t(item.labelKey) }}</span>
+          </button>
+          <!-- Flyout: only when collapsed, appears immediately on hover -->
+          <div
+            v-if="collapsed"
+            class="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-3 py-1.5 bg-popover text-popover-foreground text-sm rounded-md shadow-md border border-border whitespace-nowrap opacity-0 translate-x-1 pointer-events-none group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50"
+          >
+            {{ t(item.labelKey) }}
+          </div>
+        </div>
       </template>
     </nav>
   </aside>

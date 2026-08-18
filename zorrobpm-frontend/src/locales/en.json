@@ -388,5 +388,7 @@
   "my": "My",
   "owner": "Owner",
   "file": "File",
-  "openExistingProcess": "Open existing process"
+  "openExistingProcess": "Open existing process",
+  "noAccess": "You are not a member of this process, so you cannot see its instances, tasks, or variables.",
+  "noDataYet": "No data yet."
 }

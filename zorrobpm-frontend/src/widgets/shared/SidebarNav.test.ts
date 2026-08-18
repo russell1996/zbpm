@@ -79,4 +79,17 @@ describe('SidebarNav', () => {
     const buttons = wrapper.findAll('button')
     expect(buttons.some(b => b.text().includes('submissionQueue'))).toBe(true)
   })
+
+  // WO-ACL-8 criterion 34: each menu item has a unique icon for readability in collapsed mode
+  it('WO-ACL-8 criterion 34: each visible nav item has a unique icon component', () => {
+    const wrapper = mount(SidebarNav)
+    // find all icon components (the <svg> elements rendered by lucide)
+    const svgs = wrapper.findAll('svg')
+    const classes = svgs.map(s => s.classes().join(' '))
+    // all icon SVGs should have different class sets (each icon renders differently)
+    const unique = new Set(classes)
+    // 10 nav items → 10 unique icons (plus collapse button = 11 total SVGs)
+    expect(svgs.length).toBeGreaterThanOrEqual(10)
+    expect(unique.size).toBeGreaterThanOrEqual(10)
+  })
 })
