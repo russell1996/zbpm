@@ -6,8 +6,10 @@ import { Mail, CheckCircle, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useDateFormat } from '@/composables/useDateFormat'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -15,6 +17,13 @@ const { formatDateTime } = useDateFormat()
 const messages = ref<MessageSubscription[]>([])
 const total = ref(0)
 const loading = ref(false)
+const router = useRouter()
+
+/** WO-ACL-11 criterion 6: no message-subscription detail page — the row opens
+ * its process instance; the full instance id is visible/copyable (criterion 10). */
+function openInstance(msg: MessageSubscription) {
+  if (msg.processInstanceId) router.push(`/processes/instances/${msg.processInstanceId}`)
+}
 
 async function load() {
   loading.value = true
@@ -81,15 +90,22 @@ function exportData() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="msg in messages" :key="msg.id" class="border-t border-border">
-            <td class="px-4 py-3 font-mono text-xs">{{ msg.id }}</td>
+          <tr
+            v-for="msg in messages"
+            :key="msg.id"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            :tabindex="msg.processInstanceId ? 0 : -1"
+            @click="openInstance(msg)"
+            @keydown.enter="openInstance(msg)"
+          >
+            <td class="px-4 py-3"><CopyableId :value="msg.id" :length="8" /></td>
             <td class="px-4 py-3">
               <span class="inline-flex items-center gap-1.5">
                 <Mail class="h-3.5 w-3.5 text-muted-foreground" />
                 {{ msg.messageName }}
               </span>
             </td>
-            <td class="px-4 py-3 font-mono text-xs">{{ msg.processInstanceId ? msg.processInstanceId.slice(0, 8) + '...' : '—' }}</td>
+            <td class="px-4 py-3"><CopyableId v-if="msg.processInstanceId" :value="msg.processInstanceId" :length="8" /><span v-else class="text-muted-foreground">—</span></td>
             <td class="px-4 py-3">
               <span :class="['inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', msg.consumed ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']">
                 <CheckCircle v-if="msg.consumed" class="h-3 w-3" />

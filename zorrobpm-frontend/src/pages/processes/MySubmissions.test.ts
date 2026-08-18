@@ -96,4 +96,19 @@ describe('MySubmissions (WO-ACL-6 criterion 6)', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('noSubmissions')
   })
+
+  it('WO-ACL-11 criterion 6: no detail page exists for a submission — rows stay non-navigable, no "view" button, only the resubmit action for REJECTED', async () => {
+    const wrapper = mount(MySubmissions)
+    await flushPromises()
+    // no view button, no clickable rows (documented in the report as the
+    // "no card exists" exception per the WO)
+    expect(wrapper.text()).not.toContain('view')
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows.length).toBe(3)
+    for (const row of rows) {
+      expect(row.attributes('tabindex')).toBeUndefined()
+    }
+    await rows[0].trigger('click')
+    expect(mockRouterPush).not.toHaveBeenCalled()
+  })
 })

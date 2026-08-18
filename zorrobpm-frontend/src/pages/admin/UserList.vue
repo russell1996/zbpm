@@ -142,7 +142,12 @@ onMounted(loadUsers)
         </thead>
         <tbody>
           <template v-for="user in users" :key="user.id">
-          <tr class="border-t border-border hover:bg-muted/50">
+          <tr
+            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
+            @click="expandedUserId = expandedUserId === user.id ? null : user.id"
+            @keydown.enter="expandedUserId = expandedUserId === user.id ? null : user.id"
+          >
             <td class="px-4 py-3 font-mono">{{ user.username }}</td>
             <td class="px-4 py-3">{{ user.fullName || '—' }}</td>
             <td class="px-4 py-3">{{ user.email || '—' }}</td>
@@ -159,14 +164,11 @@ onMounted(loadUsers)
             </td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">
-                <button class="text-sm text-primary hover:underline" @click="expandedUserId = expandedUserId === user.id ? null : user.id">
-                  {{ expandedUserId === user.id ? t('collapse') : t('details') }}
-                </button>
-                <button class="text-sm text-primary hover:underline" @click="openEdit(user)">{{ t('edit') }}</button>
+                <button class="text-sm text-primary hover:underline" @click.stop="openEdit(user)">{{ t('edit') }}</button>
                 <button
                   class="text-sm hover:underline"
                   :class="user.active ? 'text-red-600' : 'text-green-600'"
-                  @click="toggleActive(user)"
+                  @click.stop="toggleActive(user)"
                 >
                   {{ user.active ? t('deactivate') : t('activate') }}
                 </button>
