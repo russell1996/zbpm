@@ -163,14 +163,16 @@ watch(filterCompleted, () => { resetPage(); load() })
             <th class="px-4 py-3 text-left font-medium">{{ t('name') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
-            <th class="px-4 py-3 text-left font-medium"></th>
           </tr>
         </thead>
         <tbody>
           <tr
             v-for="task in (store.userTasks?.data || [])"
             :key="task.id"
-            class="border-t border-border hover:bg-muted/50"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
+            @click="viewDetail(task.id)"
+            @keydown.enter="viewDetail(task.id)"
           >
             <td class="px-4 py-3">
               <input
@@ -178,6 +180,7 @@ watch(filterCompleted, () => { resetPage(); load() })
                 type="checkbox"
                 class="rounded"
                 :checked="selectedIds.has(task.id)"
+                @click.stop
                 @change="toggleSelect(task.id)"
               />
             </td>
@@ -189,12 +192,9 @@ watch(filterCompleted, () => { resetPage(); load() })
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
-            <td class="px-4 py-3">
-              <button class="text-sm text-primary hover:underline" @click="viewDetail(task.id)">{{ t('view') }}</button>
-            </td>
           </tr>
           <tr v-if="!store.userTasks?.data?.length">
-            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noTasks') }}</td>
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noTasks') }}</td>
           </tr>
         </tbody>
       </table>

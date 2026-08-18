@@ -6,8 +6,10 @@ import { Clock, CheckCircle, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useDateFormat } from '@/composables/useDateFormat'
+import CopyableId from '@/widgets/shared/CopyableId.vue'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -15,6 +17,14 @@ const { formatDateTime } = useDateFormat()
 const timers = ref<TimerJob[]>([])
 const total = ref(0)
 const loading = ref(false)
+const router = useRouter()
+
+/** WO-ACL-11 criterion 6/10: a timer row navigates to its process instance —
+ * there is no timer detail page. The full id is always visible/copyable via
+ * CopyableId, so the truncated `4394c7b1…` text is gone. */
+function openInstance(timer: TimerJob) {
+  if (timer.processInstanceId) router.push(`/processes/instances/${timer.processInstanceId}`)
+}
 
 async function load() {
   loading.value = true
@@ -81,17 +91,18 @@ function exportData() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="timer in timers" :key="timer.id" class="border-t border-border">
-            <td class="px-4 py-3 font-mono text-xs">{{ timer.id.slice(0, 8) }}...</td>
-            <td class="px-4 py-3 font-mono text-xs">
-              <router-link
-                v-if="timer.processInstanceId"
-                :to="{ name: 'process-instance-detail', params: { id: timer.processInstanceId } }"
-                class="text-primary hover:underline"
-              >
-                {{ timer.processInstanceId.slice(0, 8) }}...
-              </router-link>
-              <span v-else-if="timer.activityId">{{ timer.activityId.slice(0, 8) }}...</span>
+          <tr
+            v-for="timer in timers"
+            :key="timer.id"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            :tabindex="timer.processInstanceId ? 0 : -1"
+            @click="openInstance(timer)"
+            @keydown.enter="openInstance(timer)"
+          >
+            <td class="px-4 py-3"><CopyableId :value="timer.id" :length="8" /></td>
+            <td class="px-4 py-3">
+              <CopyableId v-if="timer.processInstanceId" :value="timer.processInstanceId" :length="8" />
+              <span v-else-if="timer.activityId" class="font-mono text-xs"><CopyableId :value="timer.activityId" :length="8" /></span>
               <span v-else class="text-muted-foreground">—</span>
             </td>
             <td class="px-4 py-3 text-sm">{{ formatDateTime(timer.dueAt) }}</td>

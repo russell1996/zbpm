@@ -102,7 +102,9 @@ watch(filterCompleted, () => { resetPage(); load() })
             v-for="task in (store.serviceTasks?.data || [])"
             :key="task.id"
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
             @click="viewDetail(task.id)"
+            @keydown.enter="viewDetail(task.id)"
           >
             <td class="px-4 py-3"><CopyableId :value="task.id" /></td>
             <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>

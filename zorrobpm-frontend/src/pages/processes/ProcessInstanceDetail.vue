@@ -652,11 +652,10 @@ watch(activeTab, onTabChange)
                 <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('started') }}</th>
                 <th class="px-4 py-3 text-left font-medium">{{ t('completed') }}</th>
-                <th class="px-4 py-3 text-left font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="sp in processStore.currentSubprocesses" :key="sp.id" class="border-t border-border hover:bg-muted/50">
+              <tr v-for="sp in processStore.currentSubprocesses" :key="sp.id" class="border-t border-border hover:bg-muted/50 cursor-pointer" tabindex="0" @click="router.push(`/processes/instances/${sp.id}`)" @keydown.enter="router.push(`/processes/instances/${sp.id}`)">
                 <td class="px-4 py-3"><CopyableId :value="sp.id" /></td>
                 <td class="px-4 py-3">
                   {{ sp.processName || sp.processKey || '—' }}
@@ -669,12 +668,9 @@ watch(activeTab, onTabChange)
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(sp.startedAt) }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ sp.completedAt ? formatDateTime(sp.completedAt) : '—' }}</td>
-                <td class="px-4 py-3">
-                  <button class="text-sm text-primary hover:underline" @click="router.push(`/processes/instances/${sp.id}`)">{{ t('view') }}</button>
-                </td>
               </tr>
               <tr v-if="!processStore.currentSubprocesses.length">
-                <td colspan="6" class="px-4 py-6 text-center text-muted-foreground">{{ t('noSubprocesses') }}</td>
+                <td colspan="5" class="px-4 py-6 text-center text-muted-foreground">{{ t('noSubprocesses') }}</td>
               </tr>
             </tbody>
           </table>

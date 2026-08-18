@@ -34,7 +34,7 @@ const truncated = computed(() => {
   <span
     class="inline-flex items-center gap-1 font-mono text-xs group cursor-pointer"
     :title="value"
-    @click="showFull = !showFull"
+    @click.stop="showFull = !showFull"
   >
     <span>{{ display }}<span v-if="truncated && !showFull">...</span></span>
     <button

@@ -110,7 +110,9 @@ watch(filterKey, () => { resetPage(); load() })
             v-for="pi in (store.instances?.data || [])"
             :key="pi.id"
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
             @click="viewDetail(pi.id)"
+            @keydown.enter="viewDetail(pi.id)"
           >
             <td class="px-4 py-3"><CopyableId :value="pi.id" /></td>
             <td class="px-4 py-3">

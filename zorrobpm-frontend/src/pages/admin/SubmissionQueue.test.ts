@@ -68,13 +68,13 @@ describe('SubmissionQueue (WO-ACL-6 criterion 6, WO-ACL-10 criteria 12-13)', () 
     expect(text).not.toContain('e58f1a42-0000-4000-8000-000000000001')
   })
 
-  it('criterion 13: the View button opens the submission model via /process-submissions/{id}/bpmn', async () => {
+  it('criterion 13: clicking the ROW opens the submission model via /process-submissions/{id}/bpmn (WO-ACL-11 criterion 6: the row is the control, the view button is gone)', async () => {
     mockGetBpmn.mockResolvedValue('<bpmn:definitions />')
     const wrapper = mount(SubmissionQueue)
     await flushPromises()
-    const viewBtn = wrapper.findAll('button').find((b) => b.text() === 'view')!
-    expect(viewBtn).toBeTruthy()
-    await viewBtn.trigger('click')
+    // the old "view" button must be gone
+    expect(wrapper.text()).not.toContain('view')
+    await wrapper.findAll('tbody tr')[0].trigger('click')
     await flushPromises()
     expect(mockGetBpmn).toHaveBeenCalledWith('sub-1')
     // modal with the model title and the BpmnViewer (rendered once xml arrives)
@@ -88,13 +88,34 @@ describe('SubmissionQueue (WO-ACL-6 criterion 6, WO-ACL-10 criteria 12-13)', () 
     mockGetBpmn.mockResolvedValue('<bpmn:definitions />')
     const wrapper = mount(SubmissionQueue)
     await flushPromises()
-    const viewBtn = wrapper.findAll('button').find((b) => b.text() === 'view')!
-    await viewBtn.trigger('click')
+    await wrapper.findAll('tbody tr')[0].trigger('click')
     await flushPromises()
     const closeBtn = wrapper.findAll('button').find((b) => b.text() === 'close')!
     await closeBtn.trigger('click')
     await flushPromises()
     expect(wrapper.find('.fixed.inset-0').exists()).toBe(false)
+  })
+
+  it('WO-ACL-11 criterion 9: Enter on the focused row opens the model preview', async () => {
+    mockGetBpmn.mockResolvedValue('<bpmn:definitions />')
+    const wrapper = mount(SubmissionQueue)
+    await flushPromises()
+    const row = wrapper.findAll('tbody tr')[0]
+    expect(row.attributes('tabindex')).toBe('0')
+    await row.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(mockGetBpmn).toHaveBeenCalledWith('sub-1')
+  })
+
+  it('WO-ACL-11 criterion 8: clicking approve/reject does NOT open the model preview', async () => {
+    const wrapper = mount(SubmissionQueue)
+    await flushPromises()
+    const approveBtn = wrapper.findAll('button').find((b) => b.text() === 'approve')!
+    await approveBtn.trigger('click')
+    await flushPromises()
+    expect(mockGetBpmn).not.toHaveBeenCalled()
+    expect(wrapper.find('.fixed.inset-0').exists()).toBe(false)
+    expect(mockApprove).toHaveBeenCalledWith('sub-1')
   })
 
   it('approving calls approveSubmission and refreshes the list', async () => {
