@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -32,6 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -57,6 +60,7 @@ class Acl9SubmissionIdentityIntegrationTest {
     @Autowired private ProcessMemberRepository processMemberRepository;
     @Autowired private ProcessSubmissionRepository submissionRepository;
     @Autowired private PasswordHasher passwordHasher;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private final List<String> createdKeys = new ArrayList<>();
@@ -142,6 +146,35 @@ class Acl9SubmissionIdentityIntegrationTest {
     // === CRITERIA 5-7: camelCase key ===
 
     @Test
+    void criterion4_deletedUserFieldsNull() throws Exception {
+        // Create a temporary user, submit as them, then delete them
+        UUID tempUserId = createOrUpdateUser("acl9-temp", "Temp User", "temp@test.com", "USER");
+        String tempToken = login("acl9-temp");
+
+        String key = uniqueKey("deleted");
+        ProcessSubmissionDTO dto = submit(tempToken, bpmnFor(key));
+
+        // Delete user with FK checks disabled (H2 enforces FK, can't delete normally)
+        jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY FALSE");
+        userRepository.deleteById(tempUserId);
+        jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY TRUE");
+
+        // Fetch submission again — enrichment should return nulls, not crash
+        String result = mockMvc.perform(get("/process-submissions")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<ProcessSubmissionDTO> all = List.of(mapper.readValue(result, ProcessSubmissionDTO[].class));
+        ProcessSubmissionDTO fetched = all.stream()
+                .filter(s -> s.getId().equals(dto.getId()))
+                .findFirst().orElseThrow();
+
+        assertNull(fetched.getSubmittedByUsername());
+        assertNull(fetched.getSubmittedByFullName());
+        assertNull(fetched.getSubmittedByEmail());
+    }
+
+    @Test
     void criterion5_approvalProcessKeyAccepted() throws Exception {
         String key = "approvalProcess";
         ProcessSubmissionDTO dto = submit(userToken, bpmnFor(key));
@@ -159,6 +192,9 @@ class Acl9SubmissionIdentityIntegrationTest {
         submitExpect(userToken, bpmnFor("1key"), 400);
         // Too short (< 3)
         submitExpect(userToken, bpmnFor("ab"), 400);
+        // Too long (> 64)
+        String longKey = "a".repeat(65);
+        submitExpect(userToken, bpmnFor(longKey), 400);
     }
 
     @Test
@@ -205,6 +241,18 @@ class Acl9SubmissionIdentityIntegrationTest {
                 .header("Authorization", "Bearer " + user2Token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
+                .andExpect(status().isForbidden());
+
+        // user2 (non-member) gets 403 on changeRole
+        mockMvc.perform(patch("/processes/" + key + "/members/" + user2Id)
+                .header("Authorization", "Bearer " + user2Token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"role\":\"VIEWER\"}"))
+                .andExpect(status().isForbidden());
+
+        // user2 (non-member) gets 403 on removeMember
+        mockMvc.perform(delete("/processes/" + key + "/members/" + user2Id)
+                .header("Authorization", "Bearer " + user2Token))
                 .andExpect(status().isForbidden());
     }
 
