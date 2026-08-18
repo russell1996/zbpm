@@ -8,11 +8,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createI18n } from 'vue-i18n'
 import BreadcrumbNav from './BreadcrumbNav.vue'
+import { useBreadcrumbStore } from '@/stores/breadcrumb'
 import en from '@/locales/en.json'
 import ru from '@/locales/ru.json'
 import kz from '@/locales/kz.json'
@@ -113,6 +113,7 @@ describe('WO-FE-18: BreadcrumbNav', () => {
     { titleKey: 'task', parentTitleKey: 'myTasks', parentTo: { name: 'my-tasks' }, parentPath: '/tasks', childPath: '/tasks/1' },
     { titleKey: 'serviceTask', parentTitleKey: 'serviceTasks', parentTo: { name: 'service-tasks' }, parentPath: '/service-tasks', childPath: '/service-tasks/1' },
     { titleKey: 'incident', parentTitleKey: 'incidents', parentTo: { name: 'incidents' }, parentPath: '/incidents', childPath: '/incidents/1' },
+    { titleKey: 'dmnDecision', parentTitleKey: 'dmnDecisions', parentTo: { name: 'dmn-list' }, parentPath: '/dmn', childPath: '/dmn/1' },
   ]
 
   for (const route of DETAIL_ROUTES) {
@@ -181,10 +182,13 @@ describe('WO-FE-18: BreadcrumbNav', () => {
   })
 
   // ─────────────────────────────────────────────────────────────
-  // WO-ACL-10 criterion 19: the injected processName is reactive — the last
-  // crumb shows it and updates when it changes
+  // WO-ACL-11 criteria 3-5: the process name comes from the breadcrumb
+  // STORE, not from inject() — BreadcrumbNav sits above <router-view>, so an
+  // inject from the page below could never reach it (P-54, the ACL-8/ACL-10
+  // mechanism was physically impossible; its tests only passed because they
+  // mounted the component alone and provided the value by hand).
   // ─────────────────────────────────────────────────────────────
-  it('criterion 19: the last crumb shows the provided process name', async () => {
+  it('criterion 3: the last crumb shows the breadcrumb store process name', async () => {
     const router = makeRouter({
       titleKey: 'processDefinition',
       parentTitleKey: 'processDefinitions',
@@ -193,12 +197,11 @@ describe('WO-FE-18: BreadcrumbNav', () => {
     await router.push('/processes/definitions/abc-123')
     await router.isReady()
 
-    const processName = ref<string | null>('My Awesome Process')
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useBreadcrumbStore().setProcessName('My Awesome Process')
     const wrapper = mount(BreadcrumbNav, {
-      global: {
-        plugins: [router, createPinia(), i18n],
-        provide: { processName },
-      },
+      global: { plugins: [router, pinia, i18n] },
     })
 
     const items = wrapper.findAll('li')
@@ -206,7 +209,7 @@ describe('WO-FE-18: BreadcrumbNav', () => {
     expect(items[1].find('span').text()).toBe('My Awesome Process')
   })
 
-  it('criterion 19: the crumb reacts when the process name ref changes', async () => {
+  it('criterion 3: the crumb reacts when the store name changes', async () => {
     const router = makeRouter({
       titleKey: 'processDefinition',
       parentTitleKey: 'processDefinitions',
@@ -215,18 +218,91 @@ describe('WO-FE-18: BreadcrumbNav', () => {
     await router.push('/processes/definitions/abc-123')
     await router.isReady()
 
-    const processName = ref<string | null>('v1 name')
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useBreadcrumbStore()
+    store.setProcessName('v1 name')
     const wrapper = mount(BreadcrumbNav, {
-      global: {
-        plugins: [router, createPinia(), i18n],
-        provide: { processName },
-      },
+      global: { plugins: [router, pinia, i18n] },
     })
     expect(wrapper.findAll('li')[1].find('span').text()).toBe('v1 name')
 
-    // the detail page loads another process version → name changes
-    processName.value = 'v2 name'
+    // the detail page loads another process → the store is refilled
+    store.setProcessName('v2 name')
     await wrapper.vm.$nextTick()
     expect(wrapper.findAll('li')[1].find('span').text()).toBe('v2 name')
+  })
+
+  // ─────────────────────────────────────────────────────────────
+  // WO-ACL-11 criterion 4: crumbs are translated on ALL THREE locales on
+  // every screen that shows them (all 6 detail routes).
+  // ─────────────────────────────────────────────────────────────
+  const ALL_LOCALES = [
+    { name: 'en', messages: { en, ru, kz } as const },
+    { name: 'ru', messages: { en, ru, kz } as const },
+    { name: 'kz', messages: { en, ru, kz } as const },
+  ]
+
+  for (const locale of ALL_LOCALES) {
+    for (const route of DETAIL_ROUTES) {
+      it(`criterion 4: ${route.titleKey} crumbs are translated in ${locale.name} (parent="${route.parentTitleKey}")`, async () => {
+        const router = createRouter({
+          history: createMemoryHistory('/ui/'),
+          routes: [
+            {
+              path: '/',
+              component: { template: '<router-view />' },
+              children: [
+                { path: route.parentPath.slice(1), name: route.parentTo.name as string, component: { template: '<div>List</div>' } },
+                { path: route.childPath.slice(1), name: `${route.titleKey}-detail`, component: { template: '<div />' }, meta: route },
+              ],
+            },
+          ],
+        })
+        await router.push(route.childPath)
+        await router.isReady()
+
+        const localeI18n = createI18n({
+          legacy: false,
+          locale: locale.name,
+          fallbackLocale: 'en',
+          messages: { en, ru, kz },
+        })
+        const wrapper = mount(BreadcrumbNav, {
+          global: { plugins: [router, createPinia(), localeI18n] },
+        })
+
+        const items = wrapper.findAll('li')
+        expect(items).toHaveLength(2)
+        const messages = locale.name === 'ru' ? ru : locale.name === 'kz' ? kz : en
+        expect(items[0].find('a').text()).toBe(messages[route.parentTitleKey as keyof typeof messages] as string)
+        expect(items[1].find('span').text()).toBe(messages[route.titleKey as keyof typeof messages] as string)
+        // no raw English literal leaks into a non-English DOM
+        if (locale.name !== 'en') {
+          expect(wrapper.text()).not.toContain(en[route.parentTitleKey as keyof typeof en])
+        }
+      })
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // WO-ACL-11 criterion 2: on ru the definitions section is named the same
+  // in the menu, the page header and the crumb — "Схемы процессов".
+  // ─────────────────────────────────────────────────────────────
+  it('criterion 2: the ru parent crumb says "Схемы процессов" (same name as the menu and header)', async () => {
+    const router = makeRouter({
+      titleKey: 'processDefinition',
+      parentTitleKey: 'processDefinitions',
+      parentTo: { name: 'process-definitions' },
+    })
+    await router.push('/processes/definitions/abc-123')
+    await router.isReady()
+
+    const ruI18n = createI18n({ legacy: false, locale: 'ru', fallbackLocale: 'en', messages: { en, ru, kz } })
+    const wrapper = mount(BreadcrumbNav, {
+      global: { plugins: [router, createPinia(), ruI18n] },
+    })
+
+    expect(wrapper.findAll('li')[0].find('a').text()).toBe('Схемы процессов')
   })
 })

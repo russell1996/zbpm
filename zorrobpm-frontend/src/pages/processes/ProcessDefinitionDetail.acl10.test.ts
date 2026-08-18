@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ProcessDefinitionDetail from './ProcessDefinitionDetail.vue'
+import { useBreadcrumbStore } from '@/stores/breadcrumb'
 
 const mockListMembers = vi.hoisted(() => vi.fn())
 const mockAddVersion = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'def2', key: 'test-proc', version: 2 }))
@@ -139,13 +140,29 @@ describe('ProcessDefinitionDetail — WO-ACL-10 criteria 7-9', () => {
     }
   })
 
-  // WO-ACL-10 criterion 19: processName is provided SYNCHRONOUSLY in setup().
-  // The old code called provide() inside the async loadDefinition() — Vue warned
-  // "provide() can only be used inside setup()" and the breadcrumb never got it.
-  it('criterion 19: provide(processName) happens in setup, not inside the async loader', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    await mountDetail()
-    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('provide() can only be used inside setup()'))
-    warnSpy.mockRestore()
+  // WO-ACL-11 criterion 3: the breadcrumb name lives in the breadcrumb STORE
+  // (not in provide() — BreadcrumbNav is above <router-view>, inject could never
+  // reach it, P-54). loadDefinition fills the store; unmount clears it.
+  it('criterion 3: loadDefinition fills the breadcrumb store with the process name', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ProcessDefinitionDetail, {
+      global: { stubs: { teleport: true }, plugins: [pinia] },
+    })
+    await flushPromises()
+    expect(useBreadcrumbStore().processName).toBe('Test')
+    wrapper.unmount()
+  })
+
+  it('criterion 3: unmount clears the breadcrumb store', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ProcessDefinitionDetail, {
+      global: { stubs: { teleport: true }, plugins: [pinia] },
+    })
+    await flushPromises()
+    expect(useBreadcrumbStore().processName).toBe('Test')
+    wrapper.unmount()
+    expect(useBreadcrumbStore().processName).toBeNull()
   })
 })
