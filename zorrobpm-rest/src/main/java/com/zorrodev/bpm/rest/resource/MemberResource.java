@@ -195,13 +195,8 @@ public class MemberResource implements MemberContract {
 
     @Override
     public List<MemberDTO> listMembers(@PathVariable String key) {
-        // WO-ACL-9: member list visible to ANY authenticated user (ADR-8 п.4 revised).
-        // This is reading, not managing — any account should see who to contact for access.
-        // The principal must exist (authentication required), but no process membership needed.
-        Principal principal = getPrincipal();
-        if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
-        }
+        // ADR-8 п.4: seeing members ≠ managing them — reading is a member right, not an OWNER/SA one
+        requireOperate(key, AuthorizationService.Action.VIEW_MEMBERS);
         ProcessEntity process = resolveProcess(key);
         return processMemberRepository.findByProcessId(process.getId()).stream()
             .map(this::toDTO)
