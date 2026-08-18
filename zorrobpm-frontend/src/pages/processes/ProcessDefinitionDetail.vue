@@ -573,8 +573,10 @@ async function downloadBpmn() {
               </tr>
             </tbody>
           </table>
+          <!-- WO-ACL-10 criterion 14: since ACL-9 the member list is readable by any
+               authenticated user — a non-member sees the people, not a noAccess state. -->
           <p v-else class="px-4 py-3 text-sm text-muted-foreground">
-            {{ isMember ? t('noMembers') : t('noAccess') }}
+            {{ t('noMembers') }}
           </p>
         </div>
       </div>

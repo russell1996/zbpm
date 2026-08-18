@@ -3,9 +3,10 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
-import { getPendingSubmissions, approveSubmission, rejectSubmission, type ProcessSubmission } from '@/services/submissionService'
+import { getPendingSubmissions, approveSubmission, rejectSubmission, getSubmissionBpmn, type ProcessSubmission } from '@/services/submissionService'
 import { errorMessage } from '@/shared/lib/utils'
-import { RefreshCw } from 'lucide-vue-next'
+import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
+import { RefreshCw, Eye } from 'lucide-vue-next'
 
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
@@ -21,6 +22,13 @@ const busyId = ref<string | null>(null)
 const rejectTarget = ref<ProcessSubmission | null>(null)
 const rejectReason = ref('')
 
+/** WO-ACL-10 criterion 13: model preview from the queue — the reviewer sees
+ *  the actual BPMN before approving (endpoint /process-submissions/{id}/bpmn). */
+const viewTarget = ref<ProcessSubmission | null>(null)
+const viewXml = ref('')
+const viewLoading = ref(false)
+const viewError = ref<string | null>(null)
+
 async function load() {
   loading.value = true
   error.value = null
@@ -31,6 +39,26 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function openView(s: ProcessSubmission) {
+  viewTarget.value = s
+  viewXml.value = ''
+  viewError.value = null
+  viewLoading.value = true
+  try {
+    viewXml.value = await getSubmissionBpmn(s.id)
+  } catch (e) {
+    viewError.value = errorMessage(e, t('failedToLoadSubmissionModel'))
+  } finally {
+    viewLoading.value = false
+  }
+}
+
+function closeView() {
+  viewTarget.value = null
+  viewXml.value = ''
+  viewError.value = null
 }
 
 async function approve(s: ProcessSubmission) {
@@ -107,10 +135,23 @@ onMounted(load)
           <tr v-for="s in submissions" :key="s.id" class="border-t border-border">
             <td class="px-4 py-3 font-medium">{{ s.name || '—' }}</td>
             <td class="px-4 py-3 font-mono text-xs">{{ s.processKey }}</td>
-            <td class="px-4 py-3 text-muted-foreground">{{ s.submittedBy }}</td>
+            <!-- WO-ACL-10 criterion 12: show the submitter's identity, never the raw
+                 UUID — the DTO carries submittedByUsername/FullName/Email since ACL-9. -->
+            <td class="px-4 py-3">
+              <div class="font-medium">{{ s.submittedByFullName || s.submittedByUsername || '—' }}</div>
+              <div v-if="s.submittedByEmail" class="text-xs text-muted-foreground">{{ s.submittedByEmail }}</div>
+            </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(s.submittedAt) }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">
+                <button
+                  class="flex items-center gap-1.5 px-3 py-1 text-xs border border-border rounded-md hover:bg-muted disabled:opacity-50"
+                  :disabled="busyId === s.id"
+                  @click="openView(s)"
+                >
+                  <Eye class="h-3.5 w-3.5" />
+                  {{ t('view') }}
+                </button>
                 <button
                   class="px-3 py-1 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
                   :disabled="busyId === s.id"
@@ -159,6 +200,22 @@ onMounted(load)
             {{ t('reject') }}
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- WO-ACL-10 criterion 13: model preview from the queue (BpmnViewer, same as the definition card) -->
+    <div v-if="viewTarget" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeView">
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-4xl p-6 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="font-bold">{{ viewTarget.name || viewTarget.processKey }}</h3>
+            <p class="text-xs text-muted-foreground font-mono">{{ viewTarget.processKey }}</p>
+          </div>
+          <button class="text-xs text-muted-foreground hover:text-foreground" @click="closeView">{{ t('close') }}</button>
+        </div>
+        <div v-if="viewLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
+        <div v-else-if="viewError" class="text-sm text-red-500">{{ viewError }}</div>
+        <BpmnViewer v-else :xml="viewXml" />
       </div>
     </div>
   </div>

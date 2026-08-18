@@ -350,6 +350,7 @@
   "submissionApproved": "Submission approved — process deployed and submitter became owner",
   "submissionRejected": "Submission rejected",
   "failedToLoadSubmissions": "Failed to load submissions",
+  "failedToLoadSubmissionModel": "Failed to load the submission model",
   "failedToApproveSubmission": "Failed to approve submission",
   "failedToRejectSubmission": "Failed to reject submission",
   "rejectSubmissionTitle": "Reject submission",

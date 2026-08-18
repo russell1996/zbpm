@@ -60,8 +60,8 @@ const MEMBERS = [
   { userId: 'u-viewer', username: 'bob', fullName: 'Bob B.', email: 'bob@test.com', role: 'VIEWER', addedBy: 'u-owner', addedAt: '2026-01-02', processKey: 'test-proc' },
 ]
 
-async function mountDetail() {
-  mockListMembers.mockResolvedValue([...MEMBERS])
+async function mountDetail(members: typeof MEMBERS = MEMBERS) {
+  mockListMembers.mockResolvedValue([...members])
   const wrapper = mount(ProcessDefinitionDetail, {
     global: { stubs: { teleport: true }, plugins: [createPinia()] },
   })
@@ -103,6 +103,27 @@ describe('ProcessDefinitionDetail members (WO-ACL-6 criteria 2/3)', () => {
     expect(wrapper.text()).toContain('bob')
     expect(wrapper.findAll('select').length).toBe(0)
     expect(wrapper.text()).not.toContain('remove')
+  })
+
+  it('criterion 14 (WO-ACL-10): a non-member sees the member list, noAccess is not shown on this tab', async () => {
+    // u-outsider is not among the members — ACL-9 opened the member list to any
+    // authenticated user; the noAccess state stays on instances/tasks/variables.
+    mockAuthUser.id = 'u-outsider'
+    const wrapper = await mountDetail()
+    expect(mockListMembers).toHaveBeenCalledWith('test-proc')
+    expect(wrapper.text()).toContain('alice')
+    expect(wrapper.text()).toContain('bob')
+    expect(wrapper.text()).toContain('alice@test.com')
+    expect(wrapper.text()).toContain('bob@test.com')
+    expect(wrapper.text()).not.toContain('noAccess')
+    expect(wrapper.findAll('select').length).toBe(0)
+  })
+
+  it('criterion 14 (WO-ACL-10): even with an empty member list a non-member sees noMembers, never noAccess', async () => {
+    mockAuthUser.id = 'u-outsider'
+    const wrapper = await mountDetail([])
+    expect(wrapper.text()).toContain('noMembers')
+    expect(wrapper.text()).not.toContain('noAccess')
   })
 
   it('criterion 3: OWNER can change a member role via the API', async () => {

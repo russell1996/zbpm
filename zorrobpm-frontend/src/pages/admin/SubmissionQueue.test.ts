@@ -6,10 +6,12 @@ import SubmissionQueue from './SubmissionQueue.vue'
 const mockGetPending = vi.hoisted(() => vi.fn())
 const mockApprove = vi.hoisted(() => vi.fn().mockResolvedValue({}))
 const mockReject = vi.hoisted(() => vi.fn().mockResolvedValue({}))
+const mockGetBpmn = vi.hoisted(() => vi.fn())
 vi.mock('@/services/submissionService', () => ({
   getPendingSubmissions: mockGetPending,
   approveSubmission: mockApprove,
   rejectSubmission: mockReject,
+  getSubmissionBpmn: mockGetBpmn,
 }))
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
@@ -19,21 +21,29 @@ vi.mock('@/composables/useDateFormat', () => ({
 }))
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => mockToast }))
+vi.mock('@/widgets/bpmn/BpmnViewer.vue', () => ({
+  default: { template: '<div class="bpmn-stub" />' },
+}))
 
+// WO-ACL-10 criteria 12-13: the DTO carries the enriched submitter identity
+// (ACL-9) and the raw model is fetched via /process-submissions/{id}/bpmn.
 const PENDING = [
   {
     id: 'sub-1',
     processKey: 'p1',
     name: 'Process One',
     status: 'PENDING',
-    submittedBy: 'alice',
+    submittedBy: 'e58f1a42-0000-4000-8000-000000000001',
+    submittedByUsername: 'alice',
+    submittedByFullName: 'Alice Admin',
+    submittedByEmail: 'alice@test.com',
     submittedAt: '2026-08-01T10:00:00Z',
     rejectReason: null,
     previousSubmissionId: null,
   },
 ]
 
-describe('SubmissionQueue (WO-ACL-6 criterion 6)', () => {
+describe('SubmissionQueue (WO-ACL-6 criterion 6, WO-ACL-10 criteria 12-13)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetPending.mockResolvedValue([...PENDING])
@@ -45,9 +55,46 @@ describe('SubmissionQueue (WO-ACL-6 criterion 6)', () => {
     expect(mockGetPending).toHaveBeenCalledTimes(1)
     const text = wrapper.text()
     expect(text).toContain('p1')
-    expect(text).toContain('alice')
     expect(text).toContain('approve')
     expect(text).toContain('reject')
+  })
+
+  it('criterion 12: shows submitter name and email, never the raw UUID', async () => {
+    const wrapper = mount(SubmissionQueue)
+    await flushPromises()
+    const text = wrapper.text()
+    expect(text).toContain('Alice Admin')
+    expect(text).toContain('alice@test.com')
+    expect(text).not.toContain('e58f1a42-0000-4000-8000-000000000001')
+  })
+
+  it('criterion 13: the View button opens the submission model via /process-submissions/{id}/bpmn', async () => {
+    mockGetBpmn.mockResolvedValue('<bpmn:definitions />')
+    const wrapper = mount(SubmissionQueue)
+    await flushPromises()
+    const viewBtn = wrapper.findAll('button').find((b) => b.text() === 'view')!
+    expect(viewBtn).toBeTruthy()
+    await viewBtn.trigger('click')
+    await flushPromises()
+    expect(mockGetBpmn).toHaveBeenCalledWith('sub-1')
+    // modal with the model title and the BpmnViewer (rendered once xml arrives)
+    const modal = wrapper.find('.fixed.inset-0')
+    expect(modal.exists()).toBe(true)
+    expect(modal.text()).toContain('Process One')
+    expect(modal.find('.bpmn-stub').exists()).toBe(true)
+  })
+
+  it('criterion 13: the model preview closes and unloads the xml', async () => {
+    mockGetBpmn.mockResolvedValue('<bpmn:definitions />')
+    const wrapper = mount(SubmissionQueue)
+    await flushPromises()
+    const viewBtn = wrapper.findAll('button').find((b) => b.text() === 'view')!
+    await viewBtn.trigger('click')
+    await flushPromises()
+    const closeBtn = wrapper.findAll('button').find((b) => b.text() === 'close')!
+    await closeBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.fixed.inset-0').exists()).toBe(false)
   })
 
   it('approving calls approveSubmission and refreshes the list', async () => {
