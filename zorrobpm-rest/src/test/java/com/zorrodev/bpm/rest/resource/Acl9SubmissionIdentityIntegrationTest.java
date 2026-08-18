@@ -29,8 +29,10 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -205,11 +207,21 @@ class Acl9SubmissionIdentityIntegrationTest {
         ProcessSubmissionDTO first = submit(userToken, bpmnFor(upper));
         ProcessSubmissionDTO second = submit(userToken, bpmnFor(lower));
 
-        // Both submissions accepted as separate keys (case-sensitive in PostgreSQL)
+        // Both submissions accepted as separate keys
         assertNotNull(first.getId());
         assertNotNull(second.getId());
         assertEquals(upper, first.getProcessKey());
         assertEquals(lower, second.getProcessKey());
+
+        // Approve both — two distinct processes must live side by side
+        approveAsAdmin(first.getId(), 200);
+        approveAsAdmin(second.getId(), 200);
+
+        assertTrue(processRepository.findByDefinitionKey(upper).isPresent());
+        assertTrue(processRepository.findByDefinitionKey(lower).isPresent());
+        assertNotEquals(
+            processRepository.findByDefinitionKey(upper).orElseThrow().getId(),
+            processRepository.findByDefinitionKey(lower).orElseThrow().getId());
     }
 
     // === CRITERIA 8-10: members visible to all ===
