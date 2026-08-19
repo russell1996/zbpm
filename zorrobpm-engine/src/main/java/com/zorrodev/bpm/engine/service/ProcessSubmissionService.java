@@ -25,8 +25,14 @@ public interface ProcessSubmissionService {
     /** The user's own submissions, newest first. */
     List<ProcessSubmissionDTO> listMine(UUID userId);
 
-    /** PENDING submissions, oldest first — admin review queue. */
-    List<ProcessSubmissionDTO> listPending();
+    /**
+     * Review queue, oldest first. WO-ACL-12: optional status filter — null/blank keeps the
+     * previous behavior (PENDING only); otherwise one of PENDING/APPROVED/REJECTED/SUPERSEDED
+     * or ALL for every status.
+     *
+     * @param status filter value or null for the default PENDING queue
+     */
+    List<ProcessSubmissionDTO> listPending(String status);
 
     /**
      * WO-ACL-7: the raw BPMN stored with the submission — the reviewer must be able to

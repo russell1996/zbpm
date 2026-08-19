@@ -12,6 +12,13 @@ public interface ProcessSubmissionRepository extends JpaRepository<ProcessSubmis
     /** Admin review queue — oldest PENDING first (idx_process_submission_queue). */
     List<ProcessSubmissionEntity> findByStatusOrderBySubmittedAtAsc(String status);
 
+    /** WO-ACL-12: whole history, oldest first — for the "ALL" queue filter. */
+    List<ProcessSubmissionEntity> findAllByOrderBySubmittedAtAsc();
+
+    /** WO-ACL-12: one PENDING per process key — fast pre-check that renders a clear 409
+     *  before the partial unique index wins the race (which would otherwise be a 500). */
+    boolean existsByProcessKeyAndStatus(String processKey, String status);
+
     /** "My submissions" — newest first (idx_process_submission_mine). */
     List<ProcessSubmissionEntity> findBySubmittedByOrderBySubmittedAtDesc(UUID submittedBy);
 

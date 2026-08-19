@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.ProcessDefinitionContract;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
+import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
@@ -27,6 +28,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -97,10 +99,13 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
 
         String targetKey = target.getKey();
         if (!targetKey.equals(model.getKey())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            // WO-ACL-12: stable code + structured params for the frontend locale; the message
+            // stays as-is for logs and API clients.
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PROCESS_KEY_MISMATCH",
                 "The process key inside the BPMN XML ('" + model.getKey() + "') does not match "
                     + "the key of the target process ('" + targetKey + "'). The key cannot be "
-                    + "changed — update the model, not the key.");
+                    + "changed — update the model, not the key.",
+                Map.of("xmlKey", model.getKey(), "targetKey", targetKey));
         }
 
         ProcessDefinition result = processDefinitionService.addProcessDefinition(dto.getBpmn());

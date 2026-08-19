@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.dto.SubmitProcessSubmissionDTO;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.PostExchange;
 
@@ -26,9 +27,12 @@ public interface ProcessSubmissionContract {
     @GetExchange("/process-submissions/mine")
     List<ProcessSubmissionDTO> listMine();
 
-    /** PENDING review queue, oldest first. SUPER_ADMIN only. */
+    /**
+     * Review queue, oldest first. SUPER_ADMIN only. WO-ACL-12: optional {@code status}
+     * filter — PENDING (default, previous behavior) | APPROVED | REJECTED | SUPERSEDED | ALL.
+     */
     @GetExchange("/process-submissions")
-    List<ProcessSubmissionDTO> listPending();
+    List<ProcessSubmissionDTO> listPending(@RequestParam(value = "status", required = false) String status);
 
     /**
      * WO-ACL-7: the raw BPMN of a submission, so a reviewer can SEE the model before

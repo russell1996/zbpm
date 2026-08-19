@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.rest.configuration;
 
+import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.exception.FormValidationException;
@@ -87,6 +88,19 @@ public class GlobalExceptionHandler {
             "code", "NOT_FOUND",
             "message", "Resource not found"
         ));
+    }
+
+    /**
+     * WO-ACL-12: {code, params, message} — code is a stable key for the frontend locale,
+     * params carry the substitution values, message stays for logs and API clients.
+     */
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<Map<String, Object>> handleApiException(ApiException ex) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", ex.getCode());
+        body.put("params", ex.getParams());
+        body.put("message", ex.getMessage());
+        return ResponseEntity.status(ex.getStatus()).body(body);
     }
 
     @ExceptionHandler(ResponseStatusException.class)
