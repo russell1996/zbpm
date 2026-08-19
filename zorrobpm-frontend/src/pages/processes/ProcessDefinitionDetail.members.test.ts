@@ -11,12 +11,15 @@ vi.mock('@/services/adminService', () => ({
   listMembers: mockListMembers,
   changeMemberRole: mockChangeRole,
   removeMember: mockRemoveMember,
+  searchMemberCandidates: vi.fn().mockResolvedValue([]),
+  addMember: vi.fn().mockResolvedValue({}),
 }))
 
 // mutable current-user identity — flips between OWNER and VIEWER across tests
 const mockAuthUser = vi.hoisted(() => ({ id: 'u-owner' }))
+const mockSuperAdmin = vi.hoisted(() => ({ value: false }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ user: mockAuthUser }),
+  useAuthStore: () => ({ user: mockAuthUser, isSuperAdmin: mockSuperAdmin.value }),
 }))
 
 vi.mock('vue-router', () => ({
@@ -78,6 +81,7 @@ describe('ProcessDefinitionDetail members (WO-ACL-6 criteria 2/3)', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     mockAuthUser.id = 'u-owner'
+    mockSuperAdmin.value = false
   })
 
   it('criterion 2: members and roles are listed for any member (roles OWNER/VIEWER visible)', async () => {
@@ -89,10 +93,11 @@ describe('ProcessDefinitionDetail members (WO-ACL-6 criteria 2/3)', () => {
     expect(wrapper.text()).toContain('VIEWER')
   })
 
-  it('criterion 3: an OWNER sees role management (role select + remove)', async () => {
+  it('criterion 3: an OWNER sees role management (role select + remove) in OTHER rows', async () => {
     const wrapper = await mountDetail()
+    // own row (alice/u-owner) has NO select (WO-ACL-14 criterion 16), bob's row has one
     const selects = wrapper.findAll('select')
-    expect(selects.length).toBe(2) // one per member row
+    expect(selects.length).toBe(1)
     expect(wrapper.text()).toContain('remove')
   })
 
@@ -129,8 +134,8 @@ describe('ProcessDefinitionDetail members (WO-ACL-6 criteria 2/3)', () => {
   it('criterion 3: OWNER can change a member role via the API', async () => {
     const wrapper = await mountDetail()
     const selects = wrapper.findAll('select')
-    // second row = bob (VIEWER) → promote to DESIGNER
-    await selects[1].setValue('DESIGNER')
+    // the only select belongs to bob's row (VIEWER) → promote to DESIGNER
+    await selects[0].setValue('DESIGNER')
     await flushPromises()
     expect(mockChangeRole).toHaveBeenCalledWith('test-proc', 'u-viewer', 'DESIGNER')
   })
@@ -138,9 +143,76 @@ describe('ProcessDefinitionDetail members (WO-ACL-6 criteria 2/3)', () => {
   it('criterion 3: OWNER can remove a member via the API', async () => {
     const wrapper = await mountDetail()
     const removeButtons = wrapper.findAll('button').filter((b) => b.text() === 'remove')
-    // bob is not the current user → his remove button is enabled
-    await removeButtons[1].trigger('click')
+    // bob is not the current user → his remove button is present and enabled
+    expect(removeButtons).toHaveLength(1)
+    await removeButtons[0].trigger('click')
     await flushPromises()
     expect(mockRemoveMember).toHaveBeenCalledWith('test-proc', 'u-viewer')
+  })
+
+  // ---- WO-ACL-14 criteria 14-16: own row has no remove/role controls ----
+
+  it('criterion 14: the OWN row has NO remove button at all (not disabled — absent) and NO role select', async () => {
+    const wrapper = await mountDetail()
+    // the whole row for alice (u-owner): no remove button, no select inside it
+    const rows = wrapper.findAll('tbody tr')
+    const ownRow = rows.find((r) => r.text().includes('alice'))
+    expect(ownRow).toBeDefined()
+    expect(ownRow!.find('button').exists()).toBe(false)
+    expect(ownRow!.find('select').exists()).toBe(false)
+    // the "you" marker stands in place of the controls
+    expect(ownRow!.text()).toContain('you')
+  })
+
+  it('criterion 15: remove exists in OTHER rows and works (owner removes another member)', async () => {
+    const wrapper = await mountDetail()
+    const rows = wrapper.findAll('tbody tr')
+    const otherRow = rows.find((r) => r.text().includes('bob'))
+    expect(otherRow).toBeDefined()
+    const removeInRow = otherRow!.findAll('button').filter((b) => b.text() === 'remove')
+    expect(removeInRow).toHaveLength(1)
+    await removeInRow[0].trigger('click')
+    await flushPromises()
+    expect(mockRemoveMember).toHaveBeenCalledWith('test-proc', 'u-viewer')
+  })
+
+  it('criterion 16: changing your own role in your own row is impossible (no select for self)', async () => {
+    const wrapper = await mountDetail()
+    const rows = wrapper.findAll('tbody tr')
+    const ownRow = rows.find((r) => r.text().includes('alice'))!
+    // no select in the own row → no path to call changeMemberRole for u-owner
+    expect(ownRow.findAll('select')).toHaveLength(0)
+    const otherRow = rows.find((r) => r.text().includes('bob'))!
+    // other rows still carry the select (role changes happen by owner/admin)
+    expect(otherRow.findAll('select')).toHaveLength(1)
+  })
+
+  // ---- WO-ACL-14 criteria 9 & 13: member adding via dialog ----
+
+  it('criterion 9: the members tab has an "Add member" BUTTON (opens the dialog), no inline search', async () => {
+    const wrapper = await mountDetail()
+    const addButton = wrapper.findAll('button').find((b) => b.text() === 'addMember')
+    expect(addButton).toBeDefined()
+    // inline search is gone from the tab: no candidate input, no "search candidates" hint
+    expect(wrapper.findAll('input').some((i) => i.attributes('placeholder') === 'searchCandidatePlaceholder')).toBe(false)
+    expect(wrapper.text()).not.toContain('searchCandidateHint')
+    // clicking opens the dialog — the dialog's search input appears
+    await addButton!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('input').some((i) => i.attributes('placeholder') === 'searchCandidatePlaceholder')).toBe(true)
+  })
+
+  it('criterion 13: a VIEWER (non-owner, non-admin) sees NO "Add member" button', async () => {
+    mockAuthUser.id = 'u-viewer'
+    const wrapper = await mountDetail()
+    expect(wrapper.findAll('button').some((b) => b.text() === 'addMember')).toBe(false)
+  })
+
+  it('criterion 13: a super-admin sees the "Add member" button', async () => {
+    // super-admin: not in the members list, but isSuperAdmin grants management
+    mockAuthUser.id = 'u-superadmin'
+    mockSuperAdmin.value = true
+    const wrapper = await mountDetail()
+    expect(wrapper.findAll('button').some((b) => b.text() === 'addMember')).toBe(true)
   })
 })

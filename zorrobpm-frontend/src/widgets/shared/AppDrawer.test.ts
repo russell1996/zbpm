@@ -64,12 +64,14 @@ describe('AppDrawer (WO-ACL-11 criteria 33-34)', () => {
     expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function))
   })
 
-  it('criterion 32: the panel is a right-side drawer (max-w-2xl) with internal scrolling', async () => {
+  it('criterion 20: the panel is a right-side drawer (max-w-4xl) with internal scrolling', async () => {
     const wrapper = await openDrawer()
     const panel = wrapper.get('[data-testid="drawer-panel"]')
     expect(panel.classes()).toContain('translate-x-0')
-    // wide screens: up to max-w-2xl; narrow screens: full width (w-full)
-    expect(panel.classes()).toContain('sm:max-w-2xl')
+    // wide screens: up to max-w-4xl (WO-ACL-14 criterion 20 — My Submissions
+    // has 5 columns incl. a long reject-reason cell); narrow: full width
+    expect(panel.classes()).toContain('sm:max-w-4xl')
+    expect(panel.classes()).not.toContain('sm:max-w-2xl')
     // the CONTENT body scrolls inside the panel, not the page under it
     expect(panel.find('.overflow-y-auto').exists()).toBe(true)
     expect(document.body.style.overflow).toBe('hidden')

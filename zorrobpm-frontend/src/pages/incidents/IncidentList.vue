@@ -109,7 +109,7 @@ function exportData() {
           >
             <td class="px-4 py-3"><CopyableId :value="inc.id" /></td>
             <td class="px-4 py-3 text-sm max-w-xs truncate" :title="inc.message">{{ inc.message }}</td>
-            <td class="px-4 py-3"><CopyableId :value="inc.activityId" :length="8" /></td>
+            <td class="px-4 py-3"><CopyableId :value="inc.activityId" /></td>
             <td class="px-4 py-3">
               <StatusBadge :status="inc.completedAt ? 'RESOLVED' : 'OPEN'" />
             </td>

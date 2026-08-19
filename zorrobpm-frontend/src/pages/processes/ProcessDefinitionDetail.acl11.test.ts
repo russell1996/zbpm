@@ -163,44 +163,51 @@ describe('WO-ACL-11 criterion 38: properties panel — same height as the canvas
   })
 })
 
-describe('WO-ACL-11 criteria 17–18: add member from the process card', () => {
+describe('WO-ACL-11 criteria 17–18 + WO-ACL-14 criterion 9: add member from the process card', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     authMock.user = { id: 'me', username: 'me' }
     authMock.isSuperAdmin = false
   })
 
-  it('criterion 17: an OWNER searches candidates and adds a member with a role', async () => {
+  it('criterion 17 (WO-ACL-14: via the dialog): an OWNER opens the dialog, searches candidates and adds a member with a role', async () => {
     vi.mocked(adminService.searchMemberCandidates).mockResolvedValue([{ userId: 'u-annette', username: 'annette' }])
     const wrapper = await mountDetail('v2', [{ userId: 'me', role: 'OWNER' }])
     await openMembersTab(wrapper)
 
-    // the add block is visible to the OWNER
+    // WO-ACL-14: the tab shows the "Add member" BUTTON (no inline search input)
     expect(wrapper.text()).toContain('Добавить участника')
+    expect(wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]').exists()).toBe(false)
+
+    // clicking opens the dialog with the search input
+    const openButton = wrapper.findAll('button').find((b) => b.text() === 'Добавить участника')!
+    await openButton.trigger('click')
+    await flushPromises()
+    const input = wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]')
+    expect(input.exists()).toBe(true)
 
     // typing >= 3 chars calls the ACL-7 candidates endpoint (NOT /users)
-    const input = wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]')
     await input.setValue('ann')
     await flushPromises()
     expect(adminService.searchMemberCandidates).toHaveBeenCalledWith('order', 'ann')
-    expect(vi.mocked(adminService.searchMemberCandidates).mock.calls.length).toBeGreaterThan(0)
 
-    // the candidate appears; selecting her shows the role picker and the add button
+    // the candidate appears as a row; selecting her shows the role picker
     expect(wrapper.text()).toContain('annette')
-    await wrapper.findAll('button').find((b) => b.text() === 'annette')!.trigger('click')
+    await wrapper.findAll('button').find((b) => b.text().includes('annette'))!.trigger('click')
     expect(wrapper.text()).toContain('выбрано')
 
-    // default role VIEWER, change to DESIGNER, then add
-    expect(wrapper.text()).toContain('Добавить участника')
-    expect(wrapper.text()).toContain('выбрано')
+    // default role VIEWER, change to DESIGNER, then add — the submit button is
+    // the LAST "Добавить участника" (the first one is the opener on the tab)
     const roleSelect = wrapper.findAll('select').at(-1)!
     await roleSelect.setValue('DESIGNER')
-    const addButton = wrapper.findAll('button').find((b) => b.text() === 'Добавить участника')!
-    await addButton.trigger('click')
+    const addButtons = wrapper.findAll('button').filter((b) => b.text() === 'Добавить участника')
+    await addButtons.at(-1)!.trigger('click')
     await flushPromises()
     expect(adminService.addMember).toHaveBeenCalledWith('order', 'u-annette', 'DESIGNER')
     // member list reloaded after the add
     expect(adminService.listMembers).toHaveBeenCalledWith('order')
+    // the dialog closed itself on success
+    expect(wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]').exists()).toBe(false)
   })
 
   it('criterion 17: a super-admin sees the add block without being a member', async () => {
@@ -211,7 +218,7 @@ describe('WO-ACL-11 criteria 17–18: add member from the process card', () => {
     expect(wrapper.text()).toContain('Добавить участника')
   })
 
-  it('criterion 18: a plain VIEWER does not see the add block at all', async () => {
+  it('criterion 18: a plain VIEWER does not see the add button at all', async () => {
     const wrapper = await mountDetail('v2', [{ userId: 'me', role: 'VIEWER' }])
     await openMembersTab(wrapper)
     expect(wrapper.text()).not.toContain('Добавить участника')
