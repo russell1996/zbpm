@@ -8,6 +8,7 @@ import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const router = useRouter()
 const store = useIncidentStore()
@@ -95,31 +96,28 @@ function exportData() {
             <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('completedAt') }}</th>
-            <th class="px-4 py-3 text-left font-medium"></th>
           </tr>
         </thead>
         <tbody>
           <tr
             v-for="inc in (store.incidents?.data || [])"
             :key="inc.id"
-            class="border-t border-border hover:bg-muted/50"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
+            @click="viewDetail(inc.id)"
+            @keydown.enter="viewDetail(inc.id)"
           >
             <td class="px-4 py-3"><CopyableId :value="inc.id" /></td>
             <td class="px-4 py-3 text-sm max-w-xs truncate" :title="inc.message">{{ inc.message }}</td>
             <td class="px-4 py-3"><CopyableId :value="inc.activityId" :length="8" /></td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', inc.completedAt ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-                {{ inc.completedAt ? t('resolved') : t('open') }}
-              </span>
+              <StatusBadge :status="inc.completedAt ? 'RESOLVED' : 'OPEN'" />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(inc.createdAt) }}</td>
             <td class="px-4 py-3 text-muted-foreground">{{ inc.completedAt ? formatDateTime(inc.completedAt) : '—' }}</td>
-            <td class="px-4 py-3">
-              <button class="text-sm text-primary hover:underline" @click="viewDetail(inc.id)">{{ t('view') }}</button>
-            </td>
           </tr>
           <tr v-if="!store.incidents?.data?.length">
-            <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">{{ t('noIncidents') }}</td>
+            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noIncidents') }}</td>
           </tr>
         </tbody>
       </table>

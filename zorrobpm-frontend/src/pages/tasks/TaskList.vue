@@ -7,9 +7,9 @@ import { useTaskStore } from '@/stores/task'
 import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
-import { taskStatusBadge } from '@/shared/lib/utils'
 import { Download, CheckSquare, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const router = useRouter()
 const store = useTaskStore()
@@ -163,14 +163,16 @@ watch(filterCompleted, () => { resetPage(); load() })
             <th class="px-4 py-3 text-left font-medium">{{ t('name') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
-            <th class="px-4 py-3 text-left font-medium"></th>
           </tr>
         </thead>
         <tbody>
           <tr
             v-for="task in (store.userTasks?.data || [])"
             :key="task.id"
-            class="border-t border-border hover:bg-muted/50"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
+            @click="viewDetail(task.id)"
+            @keydown.enter="viewDetail(task.id)"
           >
             <td class="px-4 py-3">
               <input
@@ -178,23 +180,19 @@ watch(filterCompleted, () => { resetPage(); load() })
                 type="checkbox"
                 class="rounded"
                 :checked="selectedIds.has(task.id)"
+                @click.stop
                 @change="toggleSelect(task.id)"
               />
             </td>
             <td class="px-4 py-3"><CopyableId :value="task.id" /></td>
             <td class="px-4 py-3">{{ task.name || task.code || '—' }}</td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', taskStatusBadge(task.status, task.completedAt).cls]">
-                {{ taskStatusBadge(task.status, task.completedAt).label }}
-              </span>
+              <StatusBadge :status="task.status" :completed-at="task.completedAt" />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(task.createdAt) }}</td>
-            <td class="px-4 py-3">
-              <button class="text-sm text-primary hover:underline" @click="viewDetail(task.id)">{{ t('view') }}</button>
-            </td>
           </tr>
           <tr v-if="!store.userTasks?.data?.length">
-            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noTasks') }}</td>
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noTasks') }}</td>
           </tr>
         </tbody>
       </table>

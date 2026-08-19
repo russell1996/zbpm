@@ -62,6 +62,16 @@ vi.mock('@/composables/useDateFormat', () => ({
   useDateFormat: () => ({ formatDate: (v: string) => v, formatDateTime: (v: string) => v }),
 }))
 
+// WO-ACL-11 criteria 20-22: the card's "new version" opens the SHARED deploy
+// section BOUND to the current definition (full behavior in its own tests).
+vi.mock('@/widgets/processes/ProcessDeploySection.vue', () => ({
+  default: {
+    name: 'ProcessDeploySectionStub',
+    props: ['bound'],
+    template: '<div class="deploy-stub"><button class="deploy-done" @click="$emit(\'done\')">done</button></div>',
+  },
+}))
+
 const MEMBERS = [
   { userId: 'u-owner', username: 'alice', fullName: 'Alice A.', email: 'alice@test.com', role: 'OWNER', addedBy: null, addedAt: '2026-01-01', processKey: 'test-proc' },
   { userId: 'u-viewer', username: 'bob', fullName: 'Bob B.', email: 'bob@test.com', role: 'VIEWER', addedBy: 'u-owner', addedAt: '2026-01-02', processKey: 'test-proc' },
@@ -129,22 +139,17 @@ describe('ProcessDefinitionDetail — WO-ACL-8 stage A visibility', () => {
     expect(versionButton(wrapper)).toBeUndefined()
   })
 
-  it('criterion 5: an OWNER sees the "new version" button and can upload a version', async () => {
+  it('criterion 5: an OWNER sees the "new version" button and opens the bound deploy section', async () => {
     mockAuth.id = 'u-owner'
     const wrapper = await mountDetail()
     const btn = versionButton(wrapper)
     expect(btn).toBeDefined()
-    // open modal
+    // open the dialog — it mounts the SHARED deploy section bound to this process
     await btn!.trigger('click')
     await flushPromises()
-    // set the XML via the component instance (script setup exposes ref values directly)
-    const vm = wrapper.vm as any
-    vm.versionBpmn = '<definitions id="v2" />'
-    await vm.$nextTick()
-    // call submit directly — isolates mock wiring from DOM button binding
-    await vm.submitNewVersion()
-    await flushPromises()
-    expect(mockAddVersion).toHaveBeenCalledWith('def1', '<definitions id="v2" />')
+    const stub = wrapper.findComponent({ name: 'ProcessDeploySectionStub' })
+    expect(stub.exists()).toBe(true)
+    expect(stub.props('bound')).toEqual({ id: 'def1', key: 'test-proc', name: 'Test' })
   })
 
   it('criterion 11: a super-admin who is NOT a member sees member management controls', async () => {

@@ -35,6 +35,7 @@ const i18n = createI18n({
   messages: { en: {
     loading: 'Loading...', form: 'Form', externalForm: 'External Form',
     startProcess: 'Start Process',
+    noStartFormConfigured: 'No start form configured. Process will start with default settings.',
   }},
 })
 
@@ -98,7 +99,8 @@ describe('StartForm', () => {
     await flushPromises()
 
     expect(wrapper.find('.form-js-container').exists()).toBe(false)
-    expect(wrapper.text()).toContain('No start form configured')
+    // WO-ACL-11 criterion 11/12: the hint goes through t() now (test i18n en)
+    expect(wrapper.text()).toContain('No start form configured. Process will start with default settings.')
   })
 
   it('criterion4: external shows URL link', async () => {

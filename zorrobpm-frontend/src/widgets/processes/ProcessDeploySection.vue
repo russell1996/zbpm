@@ -21,6 +21,11 @@ const { t } = useI18n()
 const auth = useAuthStore()
 const emit = defineEmits<{ done: [] }>()
 
+// WO-ACL-11 criteria 20-22: bound mode — opened from a process card. The target
+// process is known in advance: shown in the header, the mode is immediately
+// 'version', and a model with a foreign key is rejected with an explaining text.
+const props = defineProps<{ bound?: { id: string; key: string; name: string | null } | null }>()
+
 const bpmnText = ref('')
 const fileName = ref('')
 const loading = ref(false)
@@ -45,6 +50,9 @@ const existingDef = ref<{ id: string; key: string; name: string | null } | null>
 const owner = ref<Member | null>(null)
 const pendingCheck = ref(false)
 const checkSeq = ref(0)
+// WO-ACL-11 criterion 22: bound mode rejects a model whose process key differs
+// from the target process with an explaining text (not "process already exists").
+const keyMismatch = ref(false)
 
 /** WO-ACL-6 criterion 5: the button names what will happen — SUPER_ADMIN deploys,
  * everyone else creates an approval request. Same input, two outcomes. */
@@ -62,6 +70,22 @@ function parseBpmnMetadata(xml: string) {
   } catch {
     parsedKey.value = null
     parsedName.value = null
+  }
+  keyMismatch.value = false
+  if (props.bound) {
+    // WO-ACL-11 criterion 21: bound mode — the target is known in advance, the
+    // mode is 'version' right away, no directory lookup needed.
+    if (parsedKey.value && parsedKey.value !== props.bound.key) {
+      keyMismatch.value = true
+      mode.value = null
+      existingDef.value = null
+      owner.value = null
+      return
+    }
+    mode.value = 'version'
+    existingDef.value = props.bound
+    owner.value = null
+    return
   }
   if (parsedKey.value) {
     checkExistingKey(parsedKey.value)
@@ -142,6 +166,11 @@ function onDragOver(event: DragEvent) {
 }
 
 async function submit() {
+  // WO-ACL-11 criteria 25-26: the button is blocked FROM THE MOMENT OF THE CLICK,
+  // not after the response — double-clicks in the 300-800ms window must not fire
+  // a second request. The guard lives here, not only in the disabled attribute:
+  // a programmatic/dispatch click would otherwise re-enter submit().
+  if (loading.value) return
   if (!bpmnText.value.trim()) {
     error.value = t('bpmnRequired')
     return
@@ -152,6 +181,13 @@ async function submit() {
   submitted.value = false
   existingProcessKey.value = null
   try {
+    // WO-ACL-11 criterion 20-22: bound mode can ONLY add a version to the bound
+    // process — never deploy a new one, not even for the super-admin (the model
+    // with a foreign key is rejected above by keyMismatch).
+    if (props.bound && (mode.value !== 'version' || !existingDef.value)) {
+      error.value = t('boundKeyMismatch', { actual: parsedKey.value, expected: props.bound.key })
+      return
+    }
     // WO-ACL-10 criterion 4: an existing key with deploy rights adds a new version.
     if (mode.value === 'version' && existingDef.value) {
       const result = await addProcessDefinitionVersion(existingDef.value.id, bpmnText.value)
@@ -171,6 +207,9 @@ async function submit() {
       await submitProcessSubmission(bpmnText.value)
       submitted.value = true
       toast.success(t('submissionSentToast'))
+      // WO-ACL-11 criterion 23: a successful submission CLOSES the dialog — the
+      // parent listens to `done` (same contract as deploy/add-version above).
+      emit('done')
     }
   } catch (e) {
     const msg = errorMessage(e, t('failedToDeploy'))
@@ -209,6 +248,7 @@ function clear() {
   owner.value = null
   pendingCheck.value = false
   checkSeq.value++
+  keyMismatch.value = false
 }
 </script>
 
@@ -217,6 +257,12 @@ function clear() {
     <div class="flex items-center gap-2 font-bold text-lg">
       <Upload class="h-5 w-5 text-primary" />
       {{ t('uploadProcess') }}
+    </div>
+
+    <!-- WO-ACL-11 criterion 21: bound mode shows the target process in the header. -->
+    <div v-if="bound" class="bg-muted/50 rounded-md px-4 py-2 text-sm space-y-0.5">
+      <p><span class="text-muted-foreground">{{ t('targetProcess') }}:</span> <strong>{{ bound.name || bound.key }}</strong></p>
+      <p class="text-xs text-muted-foreground">Key: <code class="font-mono">{{ bound.key }}</code> — {{ t('boundModeHint') }}</p>
     </div>
 
     <!-- WO-ACL-8 criterion 29: segment toggle — File or XML text, one at a time. -->
@@ -276,7 +322,15 @@ function clear() {
       </div>
 
       <!-- WO-ACL-10 criteria 4-6: tell the user exactly what will happen. -->
-      <div v-if="pendingCheck" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
+      <!-- WO-ACL-11 criterion 22: in bound mode a model with a foreign key is
+           rejected with an explaining text instead of "process already exists". -->
+      <div v-if="keyMismatch" class="bg-red-50 border border-red-200 rounded-md px-4 py-2 text-sm">
+        <p class="flex items-center gap-2 text-red-600">
+          <AlertCircle class="h-4 w-4 shrink-0" />
+          {{ t('boundKeyMismatch', { actual: parsedKey, expected: bound?.key }) }}
+        </p>
+      </div>
+      <div v-else-if="pendingCheck" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
       <div v-else-if="mode === 'new'" class="bg-muted/50 rounded-md px-4 py-2 text-sm">
         {{ t('willCreateProcess') }} <code class="font-mono">{{ parsedKey }}</code>
       </div>
@@ -334,7 +388,7 @@ function clear() {
         </button>
         <button
           class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
-          :disabled="loading || !bpmnText.trim() || pendingCheck || mode === 'no-access'"
+          :disabled="loading || !bpmnText.trim() || pendingCheck || mode === 'no-access' || keyMismatch"
           @click="submit"
         >
           {{ loading ? (isAdmin ? t('deploying') : t('submitting')) : (isAdmin ? t('deployBpmn') : t('submitForApproval')) }}

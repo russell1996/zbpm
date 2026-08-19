@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 /**
- * WO-FE-19: Timer list — processInstanceId as clickable link
- *
- * - Timer with processInstanceId → <router-link> to process-instance-detail
- * - Timer without processInstanceId (activityId only) → plain text, no link
- * - Timer with neither → '—'
+ * WO-FE-19 (regression): timers and their process-instance navigation.
+ * WO-ACL-11 criteria 6, 9, 10 — TimerList:
+ *  6  — the row navigates to the process instance on click (no timer detail page);
+ *  9  — focus + Enter does the same;
+ *  10 — the full id is visible/copyable via CopyableId, never truncated to `4394c7b1…`.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -50,70 +50,64 @@ function makeRouter() {
   })
 }
 
+const LONG_ID = '4394c7b1-aaaa-4000-8000-000000000001'
 const TIMERS = [
-  { id: 'timer-1', processInstanceId: 'inst-aaa-bbb-ccc', activityId: 'act-1', dueAt: '2026-01-01', fired: false, boundaryElementId: null, eventSubprocessId: null, createdAt: '2026-01-01' },
+  { id: LONG_ID, processInstanceId: 'inst-aaa-bbb-ccc', activityId: 'act-1', dueAt: '2026-01-01', fired: false, boundaryElementId: null, eventSubprocessId: null, createdAt: '2026-01-01' },
   { id: 'timer-2', processInstanceId: null, activityId: 'act-only', dueAt: '2026-01-02', fired: true, boundaryElementId: null, eventSubprocessId: null, createdAt: '2026-01-02' },
   { id: 'timer-3', processInstanceId: null, activityId: null, dueAt: '2026-01-03', fired: false, boundaryElementId: null, eventSubprocessId: null, createdAt: '2026-01-03' },
 ]
 
-describe('WO-FE-19: TimerList process instance link', () => {
+describe('TimerList: instance navigation and full id (WO-ACL-11 criteria 6/9/10)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     mockGetTimerJobs.mockResolvedValue({ data: TIMERS, totalElements: 3 })
   })
 
-  // ─────────────────────────────────────────────────────────────
-  // Criterion 1: timer with processInstanceId → clickable link
-  // ─────────────────────────────────────────────────────────────
-  it('CRIT-1: timer with processInstanceId renders router-link to process-instance-detail', async () => {
+  it('criterion 6: timer row with processInstanceId navigates to the instance on click', async () => {
     const router = makeRouter()
     await router.push('/timers')
     await router.isReady()
 
-    const wrapper = mount(TimerList, {
-      global: { plugins: [router, createPinia()] },
-    })
+    const wrapper = mount(TimerList, { global: { plugins: [router, createPinia()] } })
     await flushPromises()
 
-    const links = wrapper.findAll('a')
-    const instanceLink = links.find((a) => a.text().includes('inst-aaa'))
-    expect(instanceLink).toBeDefined()
-    expect(instanceLink!.attributes('href')).toContain('/processes/instances/inst-aaa-bbb-ccc')
+    await wrapper.findAll('tbody tr')[0].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/processes/instances/inst-aaa-bbb-ccc')
   })
 
-  // ─────────────────────────────────────────────────────────────
-  // Criterion 2: timer without processInstanceId → plain text, no link
-  // ─────────────────────────────────────────────────────────────
-  it('CRIT-2: timer with activityId only renders plain text (no link)', async () => {
+  it('criterion 9: pressing Enter on the timer row navigates to the instance', async () => {
     const router = makeRouter()
     await router.push('/timers')
     await router.isReady()
 
-    const wrapper = mount(TimerList, {
-      global: { plugins: [router, createPinia()] },
-    })
+    const wrapper = mount(TimerList, { global: { plugins: [router, createPinia()] } })
     await flushPromises()
 
-    // The activityId-only timer should show as plain text
-    const spans = wrapper.findAll('span')
-    const actSpan = spans.find((s) => s.text().includes('act-only'))
-    expect(actSpan).toBeDefined()
-    // Should NOT be wrapped in an <a> tag
-    expect(actSpan!.element.tagName).not.toBe('A')
+    const row = wrapper.findAll('tbody tr')[0]
+    expect(row.attributes('tabindex')).toBe('0')
+    await row.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/processes/instances/inst-aaa-bbb-ccc')
   })
 
-  // ─────────────────────────────────────────────────────────────
-  // Criterion 3: timer with neither → dash
-  // ─────────────────────────────────────────────────────────────
-  it('CRIT-3: timer with no processInstanceId and no activityId shows dash', async () => {
+  it('timer without processInstanceId is not navigable (no detail page)', async () => {
     const router = makeRouter()
     await router.push('/timers')
     await router.isReady()
 
-    const wrapper = mount(TimerList, {
-      global: { plugins: [router, createPinia()] },
-    })
+    const wrapper = mount(TimerList, { global: { plugins: [router, createPinia()] } })
+    await flushPromises()
+
+    const noInstanceRow = wrapper.findAll('tbody tr')[1]
+    await noInstanceRow.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/timers')
+  })
+
+  it('timer with neither processInstanceId nor activityId shows dash', async () => {
+    const wrapper = mount(TimerList, { global: { plugins: [makeRouter(), createPinia()] } })
     await flushPromises()
 
     const spans = wrapper.findAll('span')
@@ -121,21 +115,19 @@ describe('WO-FE-19: TimerList process instance link', () => {
     expect(dashSpan).toBeDefined()
   })
 
-  // ─────────────────────────────────────────────────────────────
-  // Regression: link has correct route params
-  // ─────────────────────────────────────────────────────────────
-  it('REGRESSION: link includes full processInstanceId in route', async () => {
-    const router = makeRouter()
-    await router.push('/timers')
-    await router.isReady()
-
-    const wrapper = mount(TimerList, {
-      global: { plugins: [router, createPinia()] },
-    })
+  it('criterion 10: the long id is truncated in display but the full value appears on click (CopyableId)', async () => {
+    const wrapper = mount(TimerList, { global: { plugins: [makeRouter(), createPinia()] } })
     await flushPromises()
 
-    const link = wrapper.find('a')
-    expect(link.exists()).toBe(true)
-    expect(link.attributes('href')).toContain('inst-aaa-bbb-ccc')
+    const firstRow = wrapper.findAll('tbody tr')[0]
+    const idSpan = firstRow.find('span.group')
+    expect(idSpan.exists()).toBe(true)
+    // display is truncated (length=8)
+    expect(idSpan.text()).not.toContain(LONG_ID)
+    expect(idSpan.text()).toContain('...')
+    // clicking the CopyableId reveals the FULL id without navigating
+    await idSpan.trigger('click')
+    await flushPromises()
+    expect(idSpan.text()).toContain(LONG_ID)
   })
 })

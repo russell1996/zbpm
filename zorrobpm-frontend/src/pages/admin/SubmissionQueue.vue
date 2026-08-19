@@ -6,7 +6,7 @@ import { useToast } from '@/composables/useToast'
 import { getPendingSubmissions, approveSubmission, rejectSubmission, getSubmissionBpmn, type ProcessSubmission } from '@/services/submissionService'
 import { errorMessage } from '@/shared/lib/utils'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
-import { RefreshCw, Eye } from 'lucide-vue-next'
+import { RefreshCw } from 'lucide-vue-next'
 
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
@@ -132,7 +132,14 @@ onMounted(load)
           </tr>
         </thead>
         <tbody>
-          <tr v-for="s in submissions" :key="s.id" class="border-t border-border">
+          <tr
+            v-for="s in submissions"
+            :key="s.id"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
+            @click="openView(s)"
+            @keydown.enter="openView(s)"
+          >
             <td class="px-4 py-3 font-medium">{{ s.name || '—' }}</td>
             <td class="px-4 py-3 font-mono text-xs">{{ s.processKey }}</td>
             <!-- WO-ACL-10 criterion 12: show the submitter's identity, never the raw
@@ -145,24 +152,16 @@ onMounted(load)
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">
                 <button
-                  class="flex items-center gap-1.5 px-3 py-1 text-xs border border-border rounded-md hover:bg-muted disabled:opacity-50"
-                  :disabled="busyId === s.id"
-                  @click="openView(s)"
-                >
-                  <Eye class="h-3.5 w-3.5" />
-                  {{ t('view') }}
-                </button>
-                <button
                   class="px-3 py-1 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
                   :disabled="busyId === s.id"
-                  @click="approve(s)"
+                  @click.stop="approve(s)"
                 >
                   {{ t('approve') }}
                 </button>
                 <button
                   class="px-3 py-1 text-xs border border-red-300 text-red-600 rounded-md hover:bg-red-50 disabled:opacity-50"
                   :disabled="busyId === s.id"
-                  @click="openReject(s)"
+                  @click.stop="openReject(s)"
                 >
                   {{ t('reject') }}
                 </button>
@@ -215,7 +214,11 @@ onMounted(load)
         </div>
         <div v-if="viewLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
         <div v-else-if="viewError" class="text-sm text-red-500">{{ viewError }}</div>
-        <BpmnViewer v-else :xml="viewXml" />
+        <!-- WO-ACL-11 criterion 37: BpmnViewer stretches by layout now (h-full),
+             the modal preview gives it a viewport-based height (vh, not px). -->
+        <div v-else class="h-[70vh]">
+          <BpmnViewer :xml="viewXml" />
+        </div>
       </div>
     </div>
   </div>

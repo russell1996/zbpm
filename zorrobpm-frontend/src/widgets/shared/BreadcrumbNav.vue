@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { computed, inject, type Ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useBreadcrumbStore } from '@/stores/breadcrumb'
 import { ChevronRight } from 'lucide-vue-next'
 
 const route = useRoute()
 const { t } = useI18n()
 
-// WO-ACL-8 criterion 12: the process detail page provides its name so the
-// breadcrumb shows the actual process name instead of the static title.
-// WO-ACL-10 criterion 19: the provided value is a REACTIVE ref — the detail page
-// provides it synchronously in setup() and fills it when data arrives, so the
-// last crumb updates when the process changes.
-const processName = inject<Ref<string | null> | undefined>('processName')
+// WO-ACL-11 criteria 3-5: the process name comes from the breadcrumb store, NOT
+// from inject(). BreadcrumbNav sits ABOVE <router-view> in MainLayout, so an
+// inject() from the page below could never reach it (P-54). The detail page
+// fills the store when the definition arrives; this crumb updates with it.
+const breadcrumb = useBreadcrumbStore()
 
 // WO-ACL-10 criterion 18: route meta carries locale KEYS (titleKey/parentTitleKey)
 // instead of raw English literals; labels are resolved through t().
@@ -24,7 +24,7 @@ const breadcrumbs = computed(() => {
     items.push({ label: t(meta.parentTitleKey), to: meta.parentTo })
   }
   if (meta.titleKey) {
-    items.push({ label: processName?.value || t(meta.titleKey) })
+    items.push({ label: breadcrumb.processName || t(meta.titleKey) })
   }
   return items
 })

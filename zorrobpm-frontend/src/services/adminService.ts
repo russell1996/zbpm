@@ -18,6 +18,20 @@ export async function listMembers(processKey: string): Promise<Member[]> {
   return data
 }
 
+// --- WO-ACL-11 criteria 17-19: add members straight from the process card ---
+// WO-ACL-7 endpoint: GET /processes/{key}/members/candidates?q= — OWNER-scoped
+// (MANAGE_MEMBERS), active users only, members excluded, result capped at 20,
+// requires q >= 3 chars. The /users directory stays closed from this screen.
+export interface MemberCandidate {
+  userId: string
+  username: string
+}
+
+export async function searchMemberCandidates(processKey: string, q: string): Promise<MemberCandidate[]> {
+  const { data } = await api.get<MemberCandidate[]>(`/processes/${processKey}/members/candidates`, { params: { q } })
+  return data
+}
+
 export async function addMember(processKey: string, userId: string, role: string): Promise<Member> {
   const { data } = await api.post<Member>(`/processes/${processKey}/members`, { userId, role })
   return data
