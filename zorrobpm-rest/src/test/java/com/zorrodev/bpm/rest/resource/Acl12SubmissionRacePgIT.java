@@ -157,6 +157,19 @@ public class Acl12SubmissionRacePgIT {
                 .filter(s -> s.getProcessKey().equals(key)).count();
             assertEquals(1, rows,
                 "PG race round #%d: exactly one submission row must survive".formatted(round));
+
+            // hygiene: register the winner for tearDown so repeated local runs do not leak
+            results.stream()
+                .filter(r -> r.getResponse().getStatus() == 200)
+                .map(r -> {
+                    try {
+                        return mapper.readTree(r.getResponse().getContentAsString()).get("id").asText();
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
+                })
+                .map(UUID::fromString)
+                .forEach(createdSubmissionIds::add);
         }
     }
 
