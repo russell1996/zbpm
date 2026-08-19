@@ -92,13 +92,15 @@ onBeforeUnmount(() => {
       :class="open ? 'opacity-100' : 'opacity-0 pointer-events-none'"
       @click="emit('close')"
     />
-    <!-- panel: full height, width up to max-w-2xl, slides from the right -->
+    <!-- panel: full height, width up to max-w-4xl (WO-ACL-14 criterion 20 —
+         My Submissions has 5 columns incl. a long reject-reason cell, 2xl
+         squeezed them into a horizontal overflow that was hard to notice) -->
     <div
       ref="panelRef"
       data-testid="drawer-panel"
       role="dialog"
       aria-modal="true"
-      class="absolute right-0 top-0 h-full w-full sm:w-auto sm:max-w-2xl bg-card shadow-xl flex flex-col transition-transform duration-200 ease-out"
+      class="absolute right-0 top-0 h-full w-full sm:w-auto sm:max-w-4xl bg-card shadow-xl flex flex-col transition-transform duration-200 ease-out"
       :class="open ? 'translate-x-0' : 'translate-x-full'"
     >
       <div class="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">

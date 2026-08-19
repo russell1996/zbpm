@@ -5,6 +5,11 @@
  *  6  — the row navigates to the process instance on click (no timer detail page);
  *  9  — focus + Enter does the same;
  *  10 — the full id is visible/copyable via CopyableId, never truncated to `4394c7b1…`.
+ * WO-ACL-14 criteria 6, 17 — TimerList:
+ *  6  — the status icon is rendered INSIDE StatusBadge (with-icon);
+ *  17 — the id is shown in full in the cell (the length=8 truncation is gone:
+ *       a UUID was already hard to read truncated, and activityId is a BPMN
+ *       identifier like `Activity_1abc` — cutting it to 8 chars destroyed it).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -115,19 +120,29 @@ describe('TimerList: instance navigation and full id (WO-ACL-11 criteria 6/9/10)
     expect(dashSpan).toBeDefined()
   })
 
-  it('criterion 10: the long id is truncated in display but the full value appears on click (CopyableId)', async () => {
+  it('criterion 17: the id is shown in FULL in the cell (no length truncation), full value in title', async () => {
     const wrapper = mount(TimerList, { global: { plugins: [makeRouter(), createPinia()] } })
     await flushPromises()
 
     const firstRow = wrapper.findAll('tbody tr')[0]
     const idSpan = firstRow.find('span.group')
     expect(idSpan.exists()).toBe(true)
-    // display is truncated (length=8)
-    expect(idSpan.text()).not.toContain(LONG_ID)
-    expect(idSpan.text()).toContain('...')
-    // clicking the CopyableId reveals the FULL id without navigating
-    await idSpan.trigger('click')
-    await flushPromises()
+    // WO-ACL-14: display holds the WHOLE id, no "…" ellipsis
     expect(idSpan.text()).toContain(LONG_ID)
+    expect(idSpan.text()).not.toContain('...')
+    // and the title still carries the full value for the copy interaction
+    expect(idSpan.attributes('title')).toBe(LONG_ID)
+  })
+
+  it('criterion 6: the status badge carries its icon inside (with-icon)', async () => {
+    const wrapper = mount(TimerList, { global: { plugins: [makeRouter(), createPinia()] } })
+    await flushPromises()
+
+    // row 0: fired=false → WAITING → clock icon inside the badge pill
+    const waiting = wrapper.findAll('tbody tr')[0].find('span.rounded-full svg.lucide-clock')
+    expect(waiting.exists()).toBe(true)
+    // row 1: fired=true → FIRED → check-circle icon inside the pill
+    const fired = wrapper.findAll('tbody tr')[1].find('span.rounded-full svg.lucide-circle-check-big')
+    expect(fired.exists()).toBe(true)
   })
 })

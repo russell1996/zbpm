@@ -4,6 +4,9 @@
  *  6  — the row navigates to the process instance on click (no subscription detail page);
  *  9  — focus + Enter does the same;
  *  10 — the instance id is visible/copyable via CopyableId, never truncated text.
+ * WO-ACL-14 criteria 6, 17 — MessageList:
+ *  6  — the status icon is rendered INSIDE StatusBadge (with-icon);
+ *  17 — the id is shown in full in the cell (length=8 truncation is gone).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -91,17 +94,26 @@ describe('WO-ACL-11 criteria 6/9/10: MessageList rows', () => {
     expect(router.currentRoute.value.path).toBe('/messages')
   })
 
-  it('criterion 10: the instance id is a CopyableId — truncated display, full value on click', async () => {
+  it('criterion 17: the instance id is a CopyableId shown in FULL (no ellipsis)', async () => {
     const wrapper = mount(MessageList, { global: { plugins: [makeRouter()] } })
     await flushPromises()
 
     const firstRow = wrapper.findAll('tbody tr')[0]
-    const instSpans = firstRow.findAll('span.group')
-    const instSpan = instSpans.find((s) => s.text().includes('inst-439'))
+    const instSpan = firstRow.findAll('span.group').find((s) => s.text().includes('inst-439'))
     expect(instSpan).toBeDefined()
-    expect(instSpan!.text()).toContain('...')
-    await instSpan!.trigger('click')
-    await flushPromises()
     expect(instSpan!.text()).toContain(LONG_INSTANCE)
+    expect(instSpan!.text()).not.toContain('...')
+  })
+
+  it('criterion 6 (WO-ACL-14): the status badge carries its icon inside', async () => {
+    const wrapper = mount(MessageList, { global: { plugins: [makeRouter()] } })
+    await flushPromises()
+
+    // row 0: consumed=false → WAITING → clock icon inside the pill
+    const waiting = wrapper.findAll('tbody tr')[0].find('span.rounded-full svg.lucide-clock')
+    expect(waiting.exists()).toBe(true)
+    // row 1: consumed=true → CONSUMED → check-circle icon inside the pill
+    const consumed = wrapper.findAll('tbody tr')[1].find('span.rounded-full svg.lucide-circle-check-big')
+    expect(consumed.exists()).toBe(true)
   })
 })

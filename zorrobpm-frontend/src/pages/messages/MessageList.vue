@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { getMessageSubscriptions } from '@/services/messageService'
 import type { MessageSubscription } from '@/types/api'
-import { Mail, CheckCircle, RefreshCw } from 'lucide-vue-next'
+import { Mail, RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -99,19 +99,17 @@ function exportData() {
             @click="openInstance(msg)"
             @keydown.enter="openInstance(msg)"
           >
-            <td class="px-4 py-3"><CopyableId :value="msg.id" :length="8" /></td>
+            <td class="px-4 py-3"><CopyableId :value="msg.id" /></td>
             <td class="px-4 py-3">
               <span class="inline-flex items-center gap-1.5">
                 <Mail class="h-3.5 w-3.5 text-muted-foreground" />
                 {{ msg.messageName }}
               </span>
             </td>
-            <td class="px-4 py-3"><CopyableId v-if="msg.processInstanceId" :value="msg.processInstanceId" :length="8" /><span v-else class="text-muted-foreground">—</span></td>
+            <td class="px-4 py-3"><CopyableId v-if="msg.processInstanceId" :value="msg.processInstanceId" /><span v-else class="text-muted-foreground">—</span></td>
             <td class="px-4 py-3">
-              <span class="inline-flex items-center gap-1">
-                <CheckCircle v-if="msg.consumed" class="h-3 w-3" />
-                <StatusBadge :status="msg.consumed ? 'CONSUMED' : 'WAITING'" />
-              </span>
+              <!-- WO-ACL-14 criteria 6-8: the icon lives INSIDE StatusBadge (with-icon) -->
+              <StatusBadge :status="msg.consumed ? 'CONSUMED' : 'WAITING'" with-icon />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(msg.createdAt) }}</td>
           </tr>

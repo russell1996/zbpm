@@ -119,7 +119,8 @@ describe('WO-ACL-11 criteria 6/9: ProcessDefinitionList rows', () => {
     const panel = wrapper.get('[data-testid="drawer-panel"]')
     // drawer: slides from the right, width capped, table lives inside it
     expect(panel.classes()).toContain('translate-x-0')
-    expect(panel.classes()).toContain('sm:max-w-2xl')
+    // WO-ACL-14 criterion 20: wider panel for the 5-column submissions table
+    expect(panel.classes()).toContain('sm:max-w-4xl')
     expect(wrapper.text()).toContain('vacation')
     // closing by Esc returns to the list state (panel leaves the screen)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))

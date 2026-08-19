@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 /**
- * WO-ACL-10 criterion 10: every tab strip in the app behaves the same way —
- * the active tab carries border-primary and the ribbon overlaps the container
- * border exactly once (a single -mb-px on the tab buttons, none on the strip).
+ * WO-ACL-10 criterion 10 → WO-ACL-14 criteria 1-3: the instance page now uses the
+ * SAME TabsBar component as the definition page — the active tab carries
+ * border-primary and the single -mb-px lives on the nav, NEVER on the buttons
+ * (the old local strip put -mb-px on every button, which pushed the active
+ * underline under the container border — P-55).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -62,22 +64,23 @@ describe('ProcessInstanceDetail — WO-ACL-10 criterion 10', () => {
     vi.clearAllMocks()
   })
 
-  it('instance tab strip: active tab has border-primary and a single -mb-px on the buttons', async () => {
+  it('instance tab strip (shared TabsBar): active tab has border-primary, single -mb-px on the nav', async () => {
     const wrapper = mount(ProcessInstanceDetail, {
       global: { stubs, plugins: [createPinia()] },
     })
     await wrapper.vm.$nextTick()
     await flushPromises()
 
-    const strip = wrapper.find('div.border-b.border-border')
-    expect(strip.exists()).toBe(true)
-    // the strip itself must NOT carry -mb-px…
-    expect(strip.classes()).not.toContain('-mb-px')
-    // …while every tab button does (so its border-b-2 overlaps the container border)
-    const tabs = strip.findAll('button')
+    const nav = wrapper.find('nav[role="tablist"]')
+    expect(nav.exists()).toBe(true)
+    // the SINGLE -mb-px lives on the nav (WO-ACL-10 criteria 9-10)…
+    expect(nav.classes()).toContain('-mb-px')
+    // …and NEVER on the tab buttons — a button-level -mb-px pushed the active
+    // underline under the container border on this very page (P-55)
+    const tabs = nav.findAll('button')
     expect(tabs.length).toBeGreaterThanOrEqual(7)
     for (const b of tabs) {
-      expect(b.classes()).toContain('-mb-px')
+      expect(b.classes()).not.toContain('-mb-px')
       expect(b.classes()).toContain('border-b-2')
     }
     // the active (first, bpmn) tab is highlighted
