@@ -124,7 +124,20 @@ class Acl1ReadAccessIntegrationTest {
 
     @Test
     void criterion1_outsiderWithoutMembership_seesAllDefinitions() throws Exception {
+        // WO-TEST-7: the module's definitions corpus outgrew the default page (pageSize=20) —
+        // procA/procB stopped landing on the first page and this assert went red for a reason
+        // that had nothing to do with authorization. The claim is "the outsider sees ALL
+        // definitions", so the request must fetch all of them: pageSize=200 (the API maximum,
+        // server-clamped in ProcessDefinitionServiceImpl/QueryServiceImpl) + latestVersionOnly
+        // (one row per key, so rows ≈ unique keys instead of 20 rows per 17 keys). The 30
+        // noise deployments below keep the test honest — with them the OLD unpaged assert is
+        // red on exactly this corpus (POF by load), and >200 unique keys is ~4x away even with
+        // the noise, ~10x without it.
+        deployNoiseDefinitions(30);
+
         MvcResult result = mockMvc.perform(get("/process-definitions")
+                        .param("pageSize", "200")
+                        .param("latestVersionOnly", "true")
                         .header("Authorization", "Bearer " + outsiderToken))
                 .andExpect(status().isOk())
                 .andReturn();
@@ -334,6 +347,17 @@ class Acl1ReadAccessIntegrationTest {
 
     private UUID deployProcess(String key) throws Exception {
         return deployProcess(key, null);
+    }
+
+    /**
+     * WO-TEST-7 (POF by load): definitions whose names sort BEFORE this test's own
+     * ("aaa-" < "acl1-"), so with the default pageSize=20 they guarantee the old unpaged
+     * assertion misses procA/procB — the exact failure mode that reddened master.
+     */
+    private void deployNoiseDefinitions(int count) throws Exception {
+        for (int i = 0; i < count; i++) {
+            deployProcess("aaa-noise-" + UUID.randomUUID().toString().substring(0, 8) + "-" + i);
+        }
     }
 
     private UUID deployProcess(String key, String formKey) throws Exception {
