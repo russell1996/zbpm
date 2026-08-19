@@ -2,14 +2,22 @@
 /**
  * WO-ACL-11 criterion 13: ONE badge component for every status shown in the UI.
  * Every label goes through t(); the tailwind classes live here, not in pages.
+ *
+ * WO-ACL-14 criteria 6-8: the status icon lives INSIDE the badge, never beside
+ * it. Pages pass `with-icon` and the icon name is decided here by the status —
+ * TimerList/MessageList used to wrap the badge with a CheckCircle/Clock outside,
+ * which rendered as "a checkmark, and next to it a separate green pill".
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { CheckCircle, Clock } from 'lucide-vue-next'
 
 const props = defineProps<{
   /** lifecycle/domain status; legacy payloads may omit it — completedAt covers that */
   status?: string | null
   completedAt?: string | null
+  /** render the status icon inside the badge (name decided here by status) */
+  withIcon?: boolean
 }>()
 
 const { t } = useI18n()
@@ -39,12 +47,23 @@ const CONFIG: Record<string, { key: string; cls: string }> = {
   INACTIVE: { key: 'inactive', cls: 'bg-red-100 text-red-800' },
 }
 
+// WO-ACL-14 criterion 6: which icon a status gets is decided HERE, by the status.
+const ICONS: Record<string, typeof CheckCircle> = {
+  FIRED: CheckCircle,
+  CONSUMED: CheckCircle,
+  WAITING: Clock,
+}
+
 const resolvedStatus = computed(() => props.status || (props.completedAt ? 'COMPLETED' : 'CREATED'))
 const cfg = computed(() => CONFIG[resolvedStatus.value])
 const label = computed(() => (cfg.value ? t(cfg.value.key) : resolvedStatus.value))
 const cls = computed(() => cfg.value?.cls ?? 'bg-gray-100 text-gray-700')
+const iconComp = computed(() => (props.withIcon ? ICONS[resolvedStatus.value] ?? null : null))
 </script>
 
 <template>
-  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" :class="cls">{{ label }}</span>
+  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium" :class="cls">
+    <component :is="iconComp" v-if="iconComp" class="h-3 w-3 shrink-0" />
+    {{ label }}
+  </span>
 </template>

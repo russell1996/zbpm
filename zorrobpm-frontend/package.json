@@ -7,14 +7,18 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.1",
     "@types/node": "^26.2.0",
     "@vitejs/plugin-vue": "^6.0.7",
+    "@vitest/browser": "^4.1.10",
+    "@vitest/browser-playwright": "^4.1.11",
     "@vue/test-utils": "^2.4.11",
     "jsdom": "^29.1.1",
+    "playwright": "^1.62.1",
     "tailwindcss": "^4.3.1",
     "typescript": "~6.0.2",
     "vite": "^8.0.12",

@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { getTimerJobs } from '@/services/timerService'
 import type { TimerJob } from '@/types/api'
-import { Clock, CheckCircle, RefreshCw } from 'lucide-vue-next'
+import { RefreshCw } from 'lucide-vue-next'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -100,19 +100,17 @@ function exportData() {
             @click="openInstance(timer)"
             @keydown.enter="openInstance(timer)"
           >
-            <td class="px-4 py-3"><CopyableId :value="timer.id" :length="8" /></td>
+            <td class="px-4 py-3"><CopyableId :value="timer.id" /></td>
             <td class="px-4 py-3">
-              <CopyableId v-if="timer.processInstanceId" :value="timer.processInstanceId" :length="8" />
-              <span v-else-if="timer.activityId" class="font-mono text-xs"><CopyableId :value="timer.activityId" :length="8" /></span>
+              <CopyableId v-if="timer.processInstanceId" :value="timer.processInstanceId" />
+              <span v-else-if="timer.activityId" class="font-mono text-xs"><CopyableId :value="timer.activityId" /></span>
               <span v-else class="text-muted-foreground">—</span>
             </td>
             <td class="px-4 py-3 text-sm">{{ formatDateTime(timer.dueAt) }}</td>
             <td class="px-4 py-3">
-              <span class="inline-flex items-center gap-1">
-                <CheckCircle v-if="timer.fired" class="h-3 w-3" />
-                <Clock v-else class="h-3 w-3" />
-                <StatusBadge :status="timer.fired ? 'FIRED' : 'WAITING'" />
-              </span>
+              <!-- WO-ACL-14 criteria 6-8: the icon lives INSIDE StatusBadge (with-icon),
+                   decided by the status — no more loose CheckCircle/Clock next to the pill. -->
+              <StatusBadge :status="timer.fired ? 'FIRED' : 'WAITING'" with-icon />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(timer.createdAt) }}</td>
           </tr>
