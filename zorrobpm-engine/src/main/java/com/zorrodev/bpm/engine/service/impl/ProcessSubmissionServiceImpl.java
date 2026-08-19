@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.ProcessRole;
 import com.zorrodev.bpm.contract.dto.ProcessSubmissionDTO;
+import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
@@ -20,6 +21,7 @@ import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.ProcessSubmissionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -72,8 +75,9 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "BPMN XML is required");
         }
         if (bpmn.length() > MAX_BPMN_LENGTH) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "BPMN XML exceeds the 256 KB submission limit");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "BPMN_TOO_LARGE",
+                "BPMN XML exceeds the 256 KB submission limit",
+                Map.of("maxLength", MAX_BPMN_LENGTH, "actualLength", bpmn.length()));
         }
 
         BpmnProcessDefinitionModel model;
@@ -93,14 +97,27 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
         // deployed process", which this flow deliberately does not offer (WO-ACL-4 is the
         // in-process update path). The message must tell the user where to go.
         if (processRepository.findByDefinitionKey(key).isPresent()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
+            throw new ApiException(HttpStatus.CONFLICT, "PROCESS_ALREADY_EXISTS",
                 "Process with key '" + key + "' already exists — update the model from inside "
-                    + "the process, or request access from its owner");
+                    + "the process, or request access from its owner",
+                Map.of("processKey", key));
         }
 
         if (key == null || !KEY_PATTERN.matcher(key).matches()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Invalid process key '" + key + "': " + KEY_CONVENTION_MESSAGE);
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_PROCESS_KEY",
+                "Invalid process key '" + key + "': " + KEY_CONVENTION_MESSAGE,
+                Map.of("key", key));
+        }
+
+        // WO-ACL-12 criterion 1: one PENDING per process key. This check only renders a clear
+        // 409 — the GUARANTEE is the partial unique index uk_process_submission__pending_key
+        // (the check alone loses to parallel submits; the index converts the race into the
+        // same 409 instead of a 500, see the DataIntegrityViolationException catch below).
+        if (submissionRepository.existsByProcessKeyAndStatus(key, ProcessSubmissionStatus.PENDING.name())) {
+            throw new ApiException(HttpStatus.CONFLICT, "PENDING_SUBMISSION_EXISTS",
+                "A submission for process key '" + key + "' is already pending review — "
+                    + "wait for the decision before resubmitting",
+                Map.of("processKey", key));
         }
 
         ProcessSubmissionEntity entity = new ProcessSubmissionEntity();
@@ -117,7 +134,20 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
                 entity.getSubmittedBy(), key)
             .ifPresent(prev -> entity.setPreviousSubmissionId(prev.getId()));
 
-        submissionRepository.save(entity);
+        try {
+            submissionRepository.save(entity);
+        } catch (DataIntegrityViolationException e) {
+            // WO-ACL-12 criterion 2: a concurrent submit created a PENDING for this key
+            // between our existence check and the save — the partial unique index wins the
+            // race. Translate the constraint violation into the same user-facing 409.
+            if (submissionRepository.existsByProcessKeyAndStatus(key, ProcessSubmissionStatus.PENDING.name())) {
+                throw new ApiException(HttpStatus.CONFLICT, "PENDING_SUBMISSION_EXISTS",
+                    "A submission for process key '" + key + "' is already pending review — "
+                        + "wait for the decision before resubmitting",
+                    Map.of("processKey", key));
+            }
+            throw e;
+        }
         auditLogService.record(principal, "SUBMISSION_SUBMIT", key, entity.getId().toString());
         log.info("Process submission {} created (key={}, submitter={})", entity.getId(), key, entity.getSubmittedBy());
         return toDTO(entity);
@@ -131,9 +161,23 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
     }
 
     @Override
-    public List<ProcessSubmissionDTO> listPending() {
-        return submissionRepository.findByStatusOrderBySubmittedAtAsc(
-                ProcessSubmissionStatus.PENDING.name()).stream()
+    public List<ProcessSubmissionDTO> listPending(String status) {
+        String effective = (status == null || status.isBlank())
+            ? ProcessSubmissionStatus.PENDING.name()
+            : status.trim().toUpperCase();
+        if ("ALL".equals(effective)) {
+            return submissionRepository.findAllByOrderBySubmittedAtAsc().stream()
+                .map(this::toDTO)
+                .toList();
+        }
+        try {
+            ProcessSubmissionStatus.valueOf(effective);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Unknown submission status filter: '" + status + "' (expected PENDING, APPROVED, "
+                    + "REJECTED, SUPERSEDED or ALL)");
+        }
+        return submissionRepository.findByStatusOrderBySubmittedAtAsc(effective).stream()
             .map(this::toDTO)
             .toList();
     }
@@ -142,7 +186,8 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
     public String getBpmn(UUID submissionId) {
         return submissionRepository.findById(submissionId)
             .map(ProcessSubmissionEntity::getBpmn)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found"));
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "SUBMISSION_NOT_FOUND",
+                "Submission not found", Map.of("submissionId", submissionId)));
     }
 
     /**
@@ -166,8 +211,9 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
         // Registry check first for a clear error message; the version check after the deploy
         // is the race guard (first approval wins).
         if (processRepository.findByDefinitionKey(key).isPresent()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Process with key '" + key + "' was already created — the first approval wins");
+            throw new ApiException(HttpStatus.CONFLICT, "PROCESS_ALREADY_EXISTS",
+                "Process with key '" + key + "' was already created — the first approval wins",
+                Map.of("processKey", key));
         }
 
         var created = processDefinitionService.addProcessDefinition(submission.getBpmn());
@@ -176,8 +222,9 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
         // check and the deploy. If OUR deploy produced version > 1, someone else won — rolling
         // back our version is the only correct outcome.
         if (created.getVersion() != null && created.getVersion() > 1) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Process with key '" + key + "' was already created — the first approval wins");
+            throw new ApiException(HttpStatus.CONFLICT, "PROCESS_ALREADY_EXISTS",
+                "Process with key '" + key + "' was already created — the first approval wins",
+                Map.of("processKey", key));
         }
 
         ProcessEntity process = new ProcessEntity();
@@ -236,9 +283,12 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
 
     private ProcessSubmissionEntity requirePending(UUID submissionId) {
         ProcessSubmissionEntity submission = submissionRepository.findById(submissionId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found"));
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "SUBMISSION_NOT_FOUND",
+                "Submission not found", Map.of("submissionId", submissionId)));
         if (!ProcessSubmissionStatus.PENDING.name().equals(submission.getStatus())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Submission was already reviewed");
+            throw new ApiException(HttpStatus.CONFLICT, "SUBMISSION_ALREADY_REVIEWED",
+                "Submission was already reviewed", Map.of("submissionId", submissionId,
+                    "status", submission.getStatus()));
         }
         return submission;
     }

@@ -68,9 +68,9 @@ public class ProcessSubmissionResource implements ProcessSubmissionContract {
     }
 
     @Override
-    public List<ProcessSubmissionDTO> listPending() {
+    public List<ProcessSubmissionDTO> listPending(String status) {
         requireSuperAdmin();
-        return submissionService.listPending();
+        return submissionService.listPending(status);
     }
 
     /**

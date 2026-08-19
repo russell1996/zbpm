@@ -372,25 +372,38 @@ class Acl3ProcessSubmissionIntegrationTest {
         assertEquals("Company policy forbids this process", visible.getRejectReason());
     }
 
+    /**
+     * WO-ACL-12 rewrote this scenario: two PENDING submissions for the same key can no
+     * longer exist (invariant + partial unique index), so the "second approval of the same
+     * key" path is unreachable through the API. The test now asserts the NEW contract:
+     * the second submit is a clear 409, approval of the first works, a resubmit after
+     * approval is rejected at submit time (registry, not a 500), and re-approving an
+     * already-approved submission is a 409 (not a 500).
+     */
     @Test
-    void criterion7_secondApprovalOfSameKeyConflictsNot500() throws Exception {
+    void criterion7_secondPendingSubmissionConflictsNot500() throws Exception {
         String key = uniqueKey();
         String bpmnXml = bpmnFor(key);
-        // both submissions exist BEFORE any approval — the race the review queue can create
         ProcessSubmissionDTO first = submitAndExpect(userToken, bpmnXml, 200);
-        ProcessSubmissionDTO second = submitAndExpect(userToken, bpmnXml, 200);
+
+        // WO-ACL-12 criterion 1: second PENDING for the same key is rejected with 409
+        MvcResult second = submitRaw(userToken, bpmnXml);
+        assertEquals(409, second.getResponse().getStatus(),
+            "second PENDING for the same key must conflict: " + second.getResponse().getContentAsString());
 
         approveAsAdmin(first.getId(), 200);
-        MvcResult conflict = mockMvc.perform(post("/process-submissions/" + second.getId() + "/approve")
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isConflict())
-                .andReturn();
-        assertTrue(conflict.getResponse().getContentAsString().contains("first approval wins"),
-            "conflict must explain the rule: " + conflict.getResponse().getContentAsString());
 
         // and a NEW submission for the same key is now rejected at submit time (registry)
         MvcResult resubmit = submitRaw(userToken, bpmnXml);
-        assertEquals(409, resubmit.getResponse().getStatus());
+        assertEquals(409, resubmit.getResponse().getStatus(),
+            "resubmit after approval must conflict on the registry: " + resubmit.getResponse().getContentAsString());
+
+        // re-approving an already-approved submission is a 409, not a 500
+        MvcResult reapprove = mockMvc.perform(post("/process-submissions/" + first.getId() + "/approve")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andReturn();
+        assertEquals(409, reapprove.getResponse().getStatus(),
+            "re-approving an approved submission must conflict: " + reapprove.getResponse().getContentAsString());
     }
 
     @Test
