@@ -1,19 +1,29 @@
 /**
- * WO-TEST-6 — browser-geometry checks.
+ * WO-TEST-6 (+ WO-ACL-14, merged in) — browser-geometry checks.
  *
  * jsdom cannot compute layout (`getBoundingClientRect()` is always 0, P-53), so
- * the six visual criteria that bit us on the live stand are asserted HERE, in a
+ * the visual criteria that bit us on the live stand are asserted HERE, in a
  * real headless Chromium (vitest browser mode + Playwright provider). Every
  * check asserts geometry — rectangles, computed styles, scroll sizes — not
  * screenshots, and none of them duplicates an existing jsdom test (the jsdom
  * suite stays GREEN under every POF mutation below; see the report table).
+ *
+ * The WO-ACL-14 checks were merged into this single file (the second browser
+ * file `wo-acl-14.browser.test.ts` is gone): tab-underline checks use the
+ * STRICT assertions (±0.5px position, exact 2px width) instead of the weaker
+ * ±2px tolerance that could not distinguish the -mb-px mutation.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
+import { page } from 'vitest/browser'
 import ProcessInstanceDetail from '@/pages/processes/ProcessInstanceDetail.vue'
+import ProcessDefinitionDetail from '@/pages/processes/ProcessDefinitionDetail.vue'
 import SidebarNav from '@/widgets/shared/SidebarNav.vue'
+import TimerList from '@/pages/timers/TimerList.vue'
+import AppDrawer from '@/widgets/shared/AppDrawer.vue'
+import MySubmissions from '@/pages/processes/MySubmissions.vue'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
 import kz from '@/locales/kz.json'
@@ -27,17 +37,76 @@ import '@fontsource/golos-text/500.css'
 import '@fontsource/golos-text/600.css'
 import '@fontsource/golos-text/700.css'
 
+const SHOT_DIR = 'shots'
+
 // ---- file-level mocks. vue-i18n is deliberately NOT mocked: check 4 needs the
 // real Kazakh strings (a t()-stub can never wrap, so any layout would pass). ----
 
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'pi-1' }, path: '/' }),
+  useRoute: () => ({ params: { id: 'def1' }, path: '/' }),
   useRouter: () => ({ push: vi.fn() }),
 }))
 
 const mockAuth = vi.hoisted(() => ({ isSuperAdmin: true }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ isSuperAdmin: mockAuth.isSuperAdmin }),
+  useAuthStore: () => ({ user: { id: 'u-owner', username: 'alice' }, isSuperAdmin: mockAuth.isSuperAdmin }),
+}))
+
+vi.mock('@/stores/process', () => ({
+  useProcessStore: () => ({
+    currentDefinition: { id: 'def1', key: 'order', version: 1, name: 'Order', sha256: 'abc', createdAt: '2026-01-01', startFormKey: null },
+    currentStructure: { id: 'def1', key: 'order', version: 1, name: 'Order', documentation: null, nodes: [], flows: [] },
+    currentVersions: [],
+    currentInstance: { id: 'pi-1', parentActivityId: null, processDefinitionId: 'def1', startedAt: '2026-01-01', completedAt: null, processName: 'Order', processKey: 'order', processVersion: 1 },
+    currentActivities: [],
+    currentSubprocesses: [],
+    currentVariables: [],
+    instances: [],
+    loading: false,
+    error: null,
+    fetchDefinition: vi.fn(),
+    fetchStructure: vi.fn(),
+    fetchVersions: vi.fn(),
+    fetchInstance: vi.fn(),
+    fetchActivities: vi.fn(),
+    fetchInstances: vi.fn(),
+    fetchDefinitions: vi.fn(),
+    fetchSubprocesses: vi.fn(),
+    fetchVariables: vi.fn(),
+    startInstance: vi.fn(),
+    clearCurrent: vi.fn(),
+    handleEvent: vi.fn(),
+  }),
+}))
+vi.mock('@/stores/breadcrumb', () => ({
+  useBreadcrumbStore: () => ({ setProcessName: vi.fn() }),
+}))
+
+const mockListMembers = vi.hoisted(() => vi.fn())
+vi.mock('@/services/adminService', () => ({
+  listMembers: mockListMembers,
+  changeMemberRole: vi.fn().mockResolvedValue({}),
+  removeMember: vi.fn().mockResolvedValue({}),
+  searchMemberCandidates: vi.fn().mockResolvedValue([
+    { userId: 'u-annette', username: 'annette' },
+    { userId: 'u-bob', username: 'bob' },
+  ]),
+  addMember: vi.fn().mockResolvedValue({}),
+}))
+
+const mockGetTimers = vi.hoisted(() => vi.fn())
+vi.mock('@/services/timerService', () => ({
+  getTimerJobs: mockGetTimers,
+}))
+
+const mockGetMySubmissions = vi.hoisted(() => vi.fn())
+vi.mock('@/services/submissionService', () => ({
+  getMySubmissions: mockGetMySubmissions,
+  submitProcessSubmission: vi.fn().mockResolvedValue({}),
+  getPendingSubmissions: vi.fn().mockResolvedValue([]),
+  approveSubmission: vi.fn().mockResolvedValue({}),
+  rejectSubmission: vi.fn().mockResolvedValue({}),
+  getSubmissionBpmn: vi.fn().mockResolvedValue(''),
 }))
 
 // A real, valid BPMN diagram — the viewer (real bpmn-js) renders it in Chromium,
@@ -67,7 +136,11 @@ const xmlHolder = vi.hoisted(() => ({
 vi.mock('@/services/processService', () => ({
   getProcessDefinitionXml: vi.fn().mockResolvedValue(xmlHolder.xml),
   getProcessDefinitionStructure: vi.fn().mockResolvedValue({ id: 'pd-1', key: 'test', version: 1, name: 'Test', documentation: null, nodes: [], flows: [] }),
-  getProcessDefinition: vi.fn().mockResolvedValue(null),
+  getProcessDefinition: vi.fn().mockResolvedValue({ id: 'def1', key: 'order', version: 1, name: 'Order', sha256: 'abc', createdAt: '2026-01-01', startFormKey: null }),
+  getProcessDefinitionVersions: vi.fn().mockResolvedValue([]),
+  getProcessDefinitions: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
+  deployProcessDefinition: vi.fn().mockResolvedValue({}),
+  addProcessDefinitionVersion: vi.fn().mockResolvedValue({}),
 }))
 vi.mock('@/services/taskService', () => ({
   completeUserTask: vi.fn().mockResolvedValue(undefined),
@@ -91,16 +164,23 @@ vi.mock('@/services/variableService', () => ({
   getVariables: vi.fn().mockResolvedValue({ data: [] }),
 }))
 vi.mock('@/services/formService', () => ({
+  getSchemaMap: vi.fn().mockResolvedValue({ processDefinitionKey: 'order', version: 1, elements: [] }),
+  saveElementSchema: vi.fn().mockResolvedValue(undefined),
+  getForm: vi.fn().mockResolvedValue(null),
+  listForms: vi.fn().mockResolvedValue([]),
+  createElementBinding: vi.fn().mockResolvedValue({}),
+  deployForm: vi.fn().mockResolvedValue(undefined),
   getTaskForm: vi.fn().mockResolvedValue(null),
   getStartForm: vi.fn().mockResolvedValue(null),
-  listForms: vi.fn().mockResolvedValue([]),
+  generateSchema: vi.fn().mockResolvedValue('{}'),
 }))
-vi.mock('@/services/timerService', () => ({
-  getTimerJobs: vi.fn().mockResolvedValue({ data: [] }),
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ success: vi.fn(), error: vi.fn() }),
 }))
 vi.mock('@/composables/useDateFormat', () => ({
   useDateFormat: () => ({ formatDate: (v: string) => v, formatDateTime: (v: string) => v }),
 }))
+vi.mock('@/shared/lib/export', () => ({ exportToCsv: vi.fn() }))
 
 // ---- helpers ----
 
@@ -116,12 +196,12 @@ function makeI18n(locale: string) {
 /** Absolutely-positioned host with a definite size, so min-h-full/flex chains compute.
  *  display:flex makes the intermediate mount container (@vue/test-utils) stretch
  *  to the host's height instead of collapsing to its content. */
-function mountHost(w: number, h: number): HTMLElement {
+function mountHost(w: number, h: number, flex = true): HTMLElement {
   const host = document.createElement('div')
   host.style.position = 'absolute'
   host.style.top = '0'
   host.style.left = '0'
-  host.style.display = 'flex'
+  if (flex) host.style.display = 'flex'
   host.style.width = w + 'px'
   host.style.height = h + 'px'
   document.body.appendChild(host)
@@ -145,6 +225,22 @@ let hosts: HTMLElement[] = []
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  document.body.innerHTML = ''
+  mockListMembers.mockResolvedValue([
+    { userId: 'u-owner', username: 'alice', fullName: 'Alice A.', email: 'alice@test.com', role: 'OWNER', addedBy: null, addedAt: '2026-01-01', processKey: 'order' },
+    { userId: 'u-bob', username: 'bob', fullName: 'Bob B.', email: 'bob@test.com', role: 'VIEWER', addedBy: 'u-owner', addedAt: '2026-01-02', processKey: 'order' },
+  ])
+  mockGetTimers.mockResolvedValue({
+    data: [
+      { id: '4394c7b1-aaaa-4000-8000-000000000001', processInstanceId: 'inst-11111111-aaaa-4000-8000-000000000001', activityId: 'Activity_1abc', dueAt: '2026-01-01', fired: true, boundaryElementId: null, eventSubprocessId: null, createdAt: '2026-01-01' },
+      { id: 'timer-2', processInstanceId: null, activityId: 'act-only', dueAt: '2026-01-02', fired: false, boundaryElementId: null, eventSubprocessId: null, createdAt: '2026-01-02' },
+    ],
+    totalElements: 2,
+  })
+  mockGetMySubmissions.mockResolvedValue([
+    { id: 'sub-1', processKey: 'vacation', name: 'Vacation', status: 'APPROVED', submittedBy: 'alice', submittedAt: '2026-08-01T10:00:00Z', rejectReason: null, previousSubmissionId: null },
+    { id: 'sub-2', processKey: 'purchase', name: 'Purchase', status: 'REJECTED', submittedBy: 'alice', submittedAt: '2026-08-02T10:00:00Z', rejectReason: 'документы не приложены: счёт-фактура № 12345678901234567890 от 2026-08-01 отсутствует в системе и не может быть восстановлен автоматически, пожалуйста приложите оригинал', previousSubmissionId: null },
+  ])
 })
 
 afterEach(() => {
@@ -155,12 +251,23 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mountPid() {
-  const host = mountHost(1200, 700)
+function mountPid(w = 1200, h = 700, flex = true) {
+  const host = mountHost(w, h, flex)
   hosts.push(host)
   const wrapper = mount(ProcessInstanceDetail, {
     attachTo: host,
     global: { stubs: { teleport: true }, plugins: [createPinia(), makeI18n('en')] },
+  })
+  mounted.push(wrapper)
+  return wrapper
+}
+
+function mountPdd() {
+  const host = mountHost(1200, 700)
+  hosts.push(host)
+  const wrapper = mount(ProcessDefinitionDetail, {
+    attachTo: host,
+    global: { stubs: { teleport: true }, plugins: [createPinia(), makeI18n('ru')] },
   })
   mounted.push(wrapper)
   return wrapper
@@ -178,28 +285,85 @@ function mountNav(collapsed: boolean, locale: string, w: number, h: number) {
   return wrapper
 }
 
-// ---- WO-TEST-6 check 1: the active tab underline is really visible ----
+// ---- WO-TEST-6 check 1 (+ WO-ACL-14 criterion 2): the active tab underline is
+// really visible on BOTH tab strips. TabsBar markup (role="tab", aria-selected),
+// STRICT assertions: exact 2px width, real color, position within ±0.5px of the
+// strip's bottom line (the ±2px tolerance could not see the -mb-px mutation). ----
 
-describe('WO-TEST-6 check 1 — active tab underline (ProcessInstanceDetail)', () => {
+describe('WO-TEST-6 check 1 — active tab underline (ProcessInstanceDetail, TabsBar)', () => {
   it('the active tab renders a 2px underline that reaches the strip border line', async () => {
     const wrapper = mountPid()
     await flushPromises()
     await until(() => !!wrapper.element.querySelector('.bpmn-viewer-wrapper'))
 
-    const tabBtns = wrapper.findAll('button').filter((b) => b.classes().includes('-mb-px'))
+    const nav = (wrapper.element as Element).querySelector('nav[role="tablist"]')!
+    const tabBtns = Array.from(nav.querySelectorAll<HTMLButtonElement>('button[role="tab"]'))
     expect(tabBtns.length).toBeGreaterThanOrEqual(7)
-    const strip = tabBtns[0].element.parentElement!
-    const active = tabBtns.find((b) => b.classes().includes('border-primary'))!
-    const cs = getComputedStyle(active.element)
+    const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
+    expect(active).toBeTruthy()
+    const cs = getComputedStyle(active)
     // the underline is a real 2px border, not a class with width 0
-    expect(parseFloat(cs.borderBottomWidth)).toBeGreaterThanOrEqual(2)
+    expect(cs.borderBottomWidth).toBe('2px')
     expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
-    // and it reaches the strip's bottom border line (the -mb-px overlap),
-    // instead of hovering 1px above it or sliding under the container border
-    const btnRect = active.element.getBoundingClientRect()
-    const stripRect = strip.getBoundingClientRect()
-    expect(btnRect.bottom).toBeGreaterThanOrEqual(stripRect.bottom - 0.5)
-    expect(btnRect.bottom).toBeLessThanOrEqual(stripRect.bottom + 0.5)
+    expect(cs.borderBottomColor).not.toBe('transparent')
+    // and it reaches the strip's bottom border line (the -mb-px overlap on the
+    // <nav>, ACL-14/TabsBar), instead of hovering above it or sliding under the
+    // container border (P-55) — strict ±0.5px, not the weak ±2px
+    const btnRect = active.getBoundingClientRect()
+    const navRect = nav.getBoundingClientRect()
+    expect(btnRect.bottom).toBeGreaterThanOrEqual(navRect.bottom - 0.5)
+    expect(btnRect.bottom).toBeLessThanOrEqual(navRect.bottom + 0.5)
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-instance-tabs.png` })
+  })
+})
+
+describe('WO-TEST-6 check 1b — active tab underline (ProcessDefinitionDetail, TabsBar)', () => {
+  it('the active tab renders a 2px underline that reaches the strip border line', async () => {
+    const wrapper = mountPdd()
+    await flushPromises()
+
+    const nav = (wrapper.element as Element).querySelector('nav[role="tablist"]')!
+    const tabBtns = Array.from(nav.querySelectorAll<HTMLButtonElement>('button[role="tab"]'))
+    expect(tabBtns.length).toBeGreaterThanOrEqual(3)
+    const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
+    expect(active).toBeTruthy()
+    const cs = getComputedStyle(active)
+    expect(cs.borderBottomWidth).toBe('2px')
+    expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
+    expect(cs.borderBottomColor).not.toBe('transparent')
+    const btnRect = active.getBoundingClientRect()
+    const navRect = nav.getBoundingClientRect()
+    expect(btnRect.bottom).toBeGreaterThanOrEqual(navRect.bottom - 0.5)
+    expect(btnRect.bottom).toBeLessThanOrEqual(navRect.bottom + 0.5)
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-definition-tabs.png` })
+  })
+})
+
+// ---- WO-ACL-14 criterion 5: narrow screen — ribbon scrolls, active tab in view ----
+
+describe('WO-ACL-14 criterion 5 — narrow screen (ProcessInstanceDetail)', () => {
+  it('at 500px the instance ribbon overflows horizontally and the active tab is visible', async () => {
+    await page.viewport(500, 720)
+    // no flex host here: a flex item's min-width:auto would stretch the strip to
+    // its content and hide the overflow this check exists to see
+    const wrapper = mountPid(500, 720, false)
+    await flushPromises()
+    await until(() => !!wrapper.element.querySelector('nav[role="tablist"]'))
+
+    const nav = (wrapper.element as Element).querySelector('nav[role="tablist"]')!
+    // 7 tabs at ~100px each do not fit into 500px → the ribbon scrolls
+    expect(nav.scrollWidth).toBeGreaterThan(nav.clientWidth)
+    // the active (first) tab is inside the ribbon's visible area
+    const active = nav.querySelector<HTMLElement>('button[aria-selected="true"]')!
+    const nr = nav.getBoundingClientRect()
+    const ar = active.getBoundingClientRect()
+    expect(ar.left).toBeGreaterThanOrEqual(nr.left - 1)
+    expect(ar.right).toBeLessThanOrEqual(nr.right + 1)
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-instance-tabs-narrow.png` })
+    await page.viewport(1280, 720)
   })
 })
 
@@ -303,5 +467,126 @@ describe('WO-TEST-6 checks 5 & 6 — BPMN canvas and properties panel geometry',
     expect(Math.abs(prect.height - rowRect.height)).toBeLessThanOrEqual(2)
     // scrolls INSIDE itself, not with the page
     expect(getComputedStyle(panel.element).overflowY).toBe('auto')
+  })
+})
+
+// ---- WO-ACL-14 criterion 8: timer status is ONE element (icon inside the pill) ----
+
+describe('WO-ACL-14 criterion 8 — timer status is one element (TimerList)', () => {
+  it('the icon sits INSIDE the badge pill, no loose icon next to it', async () => {
+    const wrapper = mount(TimerList, {
+      attachTo: mountHost(1280, 720),
+      global: { plugins: [createPinia(), makeI18n('ru')] },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    const firstRow = wrapper.findAll('tbody tr')[0]
+    const pill = firstRow.find('span.rounded-full').element
+    const svg = firstRow.find('span.rounded-full svg').element
+    const pr = pill.getBoundingClientRect()
+    const sr = svg.getBoundingClientRect()
+    // the icon rectangle is fully INSIDE the pill rectangle
+    expect(sr.left).toBeGreaterThanOrEqual(pr.left)
+    expect(sr.right).toBeLessThanOrEqual(pr.right)
+    expect(sr.top).toBeGreaterThanOrEqual(pr.top)
+    expect(sr.bottom).toBeLessThanOrEqual(pr.bottom)
+    // and the status cell contains exactly ONE svg (the pill's own icon)
+    const cell = firstRow.findAll('td')[3]
+    expect(cell.findAll('svg')).toHaveLength(1)
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-timer-status.png` })
+  })
+})
+
+// ---- WO-ACL-14 criteria 9-12: member dialog (candidates, already-added mark) ----
+
+describe('WO-ACL-14 criteria 9-12 — member dialog (ProcessDefinitionDetail)', () => {
+  it('dialog opens from the members tab, lists candidates, marks the already-added one', async () => {
+    const wrapper = mountPdd()
+    await flushPromises()
+
+    // open the Members tab
+    const membersTab = wrapper.findAll('nav[role="tablist"] button').find((b) => b.text() === 'Участники')!
+    await membersTab.trigger('click')
+    await flushPromises()
+
+    // open the dialog via the "Add member" button
+    const addButton = wrapper.findAll('button').find((b) => b.text() === 'Добавить участника')!
+    await addButton.trigger('click')
+    await flushPromises()
+
+    const input = wrapper.find('input[placeholder*="мин. 3 символа"]')
+    expect(input.exists()).toBe(true)
+    await input.setValue('ann')
+    await flushPromises()
+
+    // both candidates render; bob is already a member → marked, disabled
+    await until(() => wrapper.findAll('button').some((b) => b.text().includes('annette')))
+    const bobRow = wrapper.findAll('button').find((b) => b.text().includes('bob'))!
+    // real ru string (alreadyMember): «Пользователь уже является участником этой формы»
+    expect(bobRow.text()).toContain('уже является участником')
+    expect((bobRow.element as HTMLButtonElement).disabled).toBe(true)
+    const annetteRow = wrapper.findAll('button').find((b) => b.text().includes('annette'))!
+    expect((annetteRow.element as HTMLButtonElement).disabled).toBe(false)
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-member-dialog.png` })
+  })
+})
+
+// ---- WO-ACL-14 criterion 17: full ids in tables (no truncation) ----
+
+describe('WO-ACL-14 criterion 17 — full ids in tables (TimerList)', () => {
+  it('the id cell shows the WHOLE uuid, not clipped', async () => {
+    const wrapper = mount(TimerList, {
+      attachTo: mountHost(1280, 720),
+      global: { plugins: [createPinia(), makeI18n('ru')] },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    const LONG_ID = '4394c7b1-aaaa-4000-8000-000000000001'
+    const firstRow = wrapper.findAll('tbody tr')[0]
+    const idSpan = firstRow.find('span.group').element
+    expect(idSpan.textContent).toContain(LONG_ID)
+    // the cell does not clip the text: no horizontal overflow of the span itself
+    expect(idSpan.scrollWidth).toBeLessThanOrEqual(idSpan.clientWidth + 1)
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-full-ids.png` })
+  })
+})
+
+// ---- WO-ACL-14 criteria 20-22: My Submissions drawer (max width, long reason) ----
+
+describe('WO-ACL-14 criteria 20-22 — My Submissions drawer', () => {
+  it('panel is capped at max-w-4xl; the long reject reason is readable in full (wrapped, not clipped)', async () => {
+    const host = mountHost(1280, 720)
+    hosts.push(host)
+    const wrapper = mount(AppDrawer, {
+      attachTo: host,
+      props: { open: true, title: 'Мои заявки' },
+      slots: { default: MySubmissions },
+      global: { plugins: [createPinia(), makeI18n('ru')] },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    await until(() => !!wrapper.element.querySelector('.text-red-600 span'))
+
+    const panel = wrapper.get('[data-testid="drawer-panel"]').element
+    const pr = panel.getBoundingClientRect()
+    // max-w-4xl = 56rem = 896px; on a 1280px viewport the panel is capped
+    expect(pr.width).toBeLessThanOrEqual(896 + 2)
+
+    const reason = wrapper.element.querySelector('.text-red-600 span') as HTMLElement | null
+    expect(reason).not.toBeNull()
+    expect(reason!.textContent).toContain('документы не приложены')
+    // wrapped inside the cell: the span does not overflow its box horizontally
+    expect(reason!.scrollWidth).toBeLessThanOrEqual(reason!.clientWidth + 1)
+    // the table container scrolls horizontally inside the panel when needed
+    const scroller = wrapper.element.querySelector('div.overflow-x-auto') as HTMLElement | null
+    expect(scroller).not.toBeNull()
+    expect(getComputedStyle(scroller!).overflowX).toBe('auto')
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-my-submissions.png` })
   })
 })
