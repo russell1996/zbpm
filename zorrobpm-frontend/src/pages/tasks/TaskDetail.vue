@@ -10,6 +10,7 @@ import type { ProcessVariable } from '@/types/api'
 import { dataToVariables } from '@/shared/lib/formMapping'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import FormRenderer from '@/widgets/forms/FormRenderer.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -93,12 +94,7 @@ onMounted(async () => {
       </div>
 
       <div class="flex items-center gap-4 text-sm">
-        <span
-          :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-            store.currentTask.completedAt ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800']"
-        >
-          {{ store.currentTask.completedAt ? t('completed') : t('active') }}
-        </span>
+        <StatusBadge :status="store.currentTask.completedAt ? 'COMPLETED' : 'CREATED'" />
       </div>
 
       <div class="grid grid-cols-2 gap-4 text-sm">

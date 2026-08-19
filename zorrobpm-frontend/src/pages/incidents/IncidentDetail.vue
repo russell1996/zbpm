@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -91,9 +92,7 @@ onMounted(() => {
       <div class="grid grid-cols-2 gap-4 text-sm">
         <div>
           <span class="text-muted-foreground">{{ t('status') }}:</span>
-          <span :class="['ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', store.currentIncident.completedAt ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-            {{ store.currentIncident.completedAt ? t('resolved') : t('open') }}
-          </span>
+<StatusBadge :status="store.currentIncident.completedAt ? 'RESOLVED' : 'OPEN'" />
         </div>
         <div><span class="text-muted-foreground">{{ t('activity') }}:</span> <span class="font-mono">{{ store.currentIncident.activityId }}</span></div>
         <div class="col-span-2"><span class="text-muted-foreground">{{ t('created') }}:</span> {{ formatDateTime(store.currentIncident.createdAt) }}</div>

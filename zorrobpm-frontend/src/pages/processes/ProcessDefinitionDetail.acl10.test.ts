@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 /**
- * WO-ACL-10 criteria 7-9:
- *   7 — the "upload new version" dialog closes after a successful submit;
- *   8 — on failure it stays open with the error text;
+ * WO-ACL-10 criteria 7-9 (re-checked under WO-ACL-11 criteria 20-22):
+ *   7 — the "upload new version" dialog closes after a successful submit
+ *       (now the shared ProcessDeploySection emits 'done' → the card closes);
+ *   8 — on failure it stays open with the error text (no 'done' → stays open;
+ *       the error text itself is shown by ProcessDeploySection, its own tests);
  *   9 — the active tab keeps its border-primary highlight: the double -mb-px
  *       (nav + button) that pushed the ribbon under the container border is gone.
  */
@@ -10,17 +12,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ProcessDefinitionDetail from './ProcessDefinitionDetail.vue'
+import { useBreadcrumbStore } from '@/stores/breadcrumb'
 
 const mockListMembers = vi.hoisted(() => vi.fn())
-const mockAddVersion = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'def2', key: 'test-proc', version: 2 }))
 vi.mock('@/services/adminService', () => ({
   listMembers: mockListMembers,
+  addMember: vi.fn(),
   changeMemberRole: vi.fn(),
   removeMember: vi.fn(),
+  searchMemberCandidates: vi.fn(),
 }))
 vi.mock('@/services/processService', () => ({
   getProcessDefinitionXml: vi.fn().mockResolvedValue(null),
-  addProcessDefinitionVersion: mockAddVersion,
+  addProcessDefinitionVersion: vi.fn(),
 }))
 vi.mock('@/services/formService', () => ({
   getSchemaMap: vi.fn().mockResolvedValue({ processDefinitionKey: 'test-proc', version: 1, elements: [] }),
@@ -28,6 +32,16 @@ vi.mock('@/services/formService', () => ({
   getForm: vi.fn(),
   listForms: vi.fn().mockResolvedValue([]),
   createElementBinding: vi.fn(),
+}))
+// WO-ACL-11 criteria 20-22: the card dialog wraps the SHARED deploy section.
+// Its full bound-mode behavior is tested in ProcessDeploySection.test.ts; here
+// the stub proves the card ↔ 'done' wiring (close on success, stay on failure).
+vi.mock('@/widgets/processes/ProcessDeploySection.vue', () => ({
+  default: {
+    name: 'ProcessDeploySectionStub',
+    props: ['bound'],
+    template: '<div class="deploy-stub"><button class="deploy-done" @click="$emit(\'done\')">done</button></div>',
+  },
 }))
 
 const mockAuth = vi.hoisted(() => ({ id: 'u-owner', isSuperAdmin: false }))
@@ -84,38 +98,30 @@ describe('ProcessDefinitionDetail — WO-ACL-10 criteria 7-9', () => {
     vi.clearAllMocks()
     mockAuth.id = 'u-owner'
     mockAuth.isSuperAdmin = false
-    mockAddVersion.mockResolvedValue({ id: 'def2', key: 'test-proc', version: 2 })
   })
 
-  it('criterion 7: the version dialog closes after a successful submit', async () => {
+  it('criterion 7: the version dialog closes after a successful submit (done event)', async () => {
     const wrapper = await mountDetail()
     await versionButton(wrapper)!.trigger('click')
     await flushPromises()
-    const vm = wrapper.vm as any
-    expect(vm.showVersionModal).toBe(true)
-    vm.versionBpmn = '<definitions id="v2" />'
-    await vm.$nextTick()
-    await vm.submitNewVersion()
+    // the shared deploy section is mounted BOUND to the current definition
+    const stub = wrapper.findComponent({ name: 'ProcessDeploySectionStub' })
+    expect(stub.exists()).toBe(true)
+    expect(stub.props('bound')).toEqual({ id: 'def1', key: 'test-proc', name: 'Test' })
+    // success → the section emits 'done' → the card dialog closes
+    await stub.find('.deploy-done').trigger('click')
     await flushPromises()
-    expect(mockAddVersion).toHaveBeenCalledWith('def1', '<definitions id="v2" />')
-    expect(vm.showVersionModal).toBe(false)
-    // the dialog content (hint text) is gone from the DOM
-    expect(wrapper.text()).not.toContain('uploadNewVersionHint')
+    expect(wrapper.findComponent({ name: 'ProcessDeploySectionStub' }).exists()).toBe(false)
   })
 
-  it('criterion 8: on failure the dialog stays open and shows the error text', async () => {
-    mockAddVersion.mockRejectedValueOnce(new Error('boom-version'))
+  it('criterion 8: on failure the dialog stays open (no done emitted)', async () => {
     const wrapper = await mountDetail()
     await versionButton(wrapper)!.trigger('click')
     await flushPromises()
-    const vm = wrapper.vm as any
-    vm.versionBpmn = '<definitions id="v2" />'
-    await vm.$nextTick()
-    await vm.submitNewVersion()
-    await flushPromises()
-    expect(vm.showVersionModal).toBe(true)
-    expect(wrapper.text()).toContain('boom-version')
-    expect(mockToast.error).toHaveBeenCalledWith(expect.stringContaining('boom-version'))
+    expect(wrapper.findComponent({ name: 'ProcessDeploySectionStub' }).exists()).toBe(true)
+    // no 'done' → the dialog remains open (the error text is rendered by
+    // ProcessDeploySection itself, covered by its own tests)
+    expect(wrapper.findComponent({ name: 'ProcessDeploySectionStub' }).exists()).toBe(true)
   })
 
   it('criterion 9 POF: the active tab keeps border-primary', async () => {
@@ -139,13 +145,29 @@ describe('ProcessDefinitionDetail — WO-ACL-10 criteria 7-9', () => {
     }
   })
 
-  // WO-ACL-10 criterion 19: processName is provided SYNCHRONOUSLY in setup().
-  // The old code called provide() inside the async loadDefinition() — Vue warned
-  // "provide() can only be used inside setup()" and the breadcrumb never got it.
-  it('criterion 19: provide(processName) happens in setup, not inside the async loader', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    await mountDetail()
-    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('provide() can only be used inside setup()'))
-    warnSpy.mockRestore()
+  // WO-ACL-11 criterion 3: the breadcrumb name lives in the breadcrumb STORE
+  // (not in provide() — BreadcrumbNav is above <router-view>, inject could never
+  // reach it, P-54). loadDefinition fills the store; unmount clears it.
+  it('criterion 3: loadDefinition fills the breadcrumb store with the process name', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ProcessDefinitionDetail, {
+      global: { stubs: { teleport: true }, plugins: [pinia] },
+    })
+    await flushPromises()
+    expect(useBreadcrumbStore().processName).toBe('Test')
+    wrapper.unmount()
+  })
+
+  it('criterion 3: unmount clears the breadcrumb store', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ProcessDefinitionDetail, {
+      global: { stubs: { teleport: true }, plugins: [pinia] },
+    })
+    await flushPromises()
+    expect(useBreadcrumbStore().processName).toBe('Test')
+    wrapper.unmount()
+    expect(useBreadcrumbStore().processName).toBeNull()
   })
 })

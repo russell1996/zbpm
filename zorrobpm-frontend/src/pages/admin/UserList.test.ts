@@ -30,17 +30,37 @@ describe('UserList render', () => {
     expect(wrapper.text()).toContain('usersCount')
   })
 
-  it('renders user details when expanded', async () => {
+  it('WO-ACL-11 criterion 6: clicking the ROW expands the user detail panel (the Details button is gone)', async () => {
     const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
     await vi.waitFor(() => { expect(wrapper.text()).toContain('alice') }, { timeout: 2000 })
 
-    // Click Details button for first user (i18n mock returns key)
-    const detailsBtns = wrapper.findAll('button').filter(b => b.text().includes('details'))
-    expect(detailsBtns.length).toBeGreaterThan(0)
-    await detailsBtns[0].trigger('click')
+    // the old "details" button must be gone
+    expect(wrapper.text()).not.toContain('details')
+    await wrapper.findAll('tbody tr')[0].trigger('click')
     await wrapper.vm.$nextTick()
 
     // UserDetailPanel should be visible (i18n mock returns key)
+    expect(wrapper.text()).toContain('apiKey')
+  })
+
+  it('WO-ACL-11 criterion 8: clicking Edit does NOT expand the panel', async () => {
+    const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
+    await vi.waitFor(() => { expect(wrapper.text()).toContain('alice') }, { timeout: 2000 })
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === 'edit')!
+    await editBtn.trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).not.toContain('apiKey')
+  })
+
+  it('WO-ACL-11 criterion 9: Enter on the focused row expands the user detail panel', async () => {
+    const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
+    await vi.waitFor(() => { expect(wrapper.text()).toContain('alice') }, { timeout: 2000 })
+
+    const row = wrapper.findAll('tbody tr')[0]
+    expect(row.attributes('tabindex')).toBe('0')
+    await row.trigger('keydown', { key: 'Enter' })
+    await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('apiKey')
   })
 })

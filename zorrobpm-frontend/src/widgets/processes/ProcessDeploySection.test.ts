@@ -181,3 +181,133 @@ describe('ProcessDeploySection (WO-ACL-6 / WO-ACL-10 criteria 3-6)', () => {
     expect(wrapper.text()).toContain('willAddVersion')
   })
 })
+
+// --- WO-ACL-11 criteria 23-26: submit dialog lifecycle ---
+describe('ProcessDeploySection submit dialog (WO-ACL-11 criteria 23-26)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockAuth.isSuperAdmin = false
+    mockAuth.username = 'alice'
+    mockGetDefinitions.mockResolvedValue({ data: [], totalElements: 0 })
+    mockListMembers.mockResolvedValue([])
+  })
+
+  it('criterion 23: a successful submission emits done — the parent closes the dialog', async () => {
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    await btn.trigger('click')
+    await flushPromises()
+    expect(mockSubmit).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('done')).toHaveLength(1)
+  })
+
+  it('criterion 24: an error keeps the dialog open and shows the reason', async () => {
+    mockSubmit.mockRejectedValueOnce({ response: { data: { message: 'already in review' } } })
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    await btn.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('done')).toBeUndefined()
+    expect(wrapper.text()).toContain('already in review')
+  })
+
+  it('criterion 25: the button is disabled from the moment of the click until the response', async () => {
+    let resolveSubmit!: (v: unknown) => void
+    mockSubmit.mockImplementationOnce(() => new Promise((res) => { resolveSubmit = res }))
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    await btn.trigger('click')
+    await wrapper.vm.$nextTick()
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+    resolveSubmit({ id: 'sub-1' })
+    await flushPromises()
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('criterion 26 POF: five clicks while the request is in flight produce exactly ONE service call', async () => {
+    let resolveSubmit!: (v: unknown) => void
+    mockSubmit.mockImplementationOnce(() => new Promise((res) => { resolveSubmit = res }))
+    const wrapper = await mountWithBpmn(false)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    for (let i = 0; i < 5; i++) {
+      await btn.trigger('click')
+    }
+    expect(mockSubmit).toHaveBeenCalledTimes(1)
+    resolveSubmit({ id: 'sub-1' })
+    await flushPromises()
+    expect(mockSubmit).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('done')).toHaveLength(1)
+  })
+})
+
+// --- WO-ACL-11 criteria 21-22: bound mode (opened from a process card) ---
+describe('ProcessDeploySection bound mode (WO-ACL-11 criteria 21-22)', () => {
+  const BOUND = { id: 'def-1', key: 'p1', name: 'P1' }
+  const BOUND_BPMN = '<bpmn><process id="p1" name="P1" isExecutable="true"/></bpmn>'
+  const FOREIGN_BPMN = '<bpmn><process id="other" name="Other" isExecutable="true"/></bpmn>'
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockAuth.isSuperAdmin = false
+    mockAuth.username = 'alice'
+    mockGetDefinitions.mockResolvedValue({ data: [], totalElements: 0 })
+    mockListMembers.mockResolvedValue([])
+  })
+
+  async function mountBound(isAdmin: boolean, xml: string, bound = BOUND) {
+    mockAuth.isSuperAdmin = isAdmin
+    const wrapper = mount(ProcessDeploySection, { props: { bound } })
+    const vm = wrapper.vm as any
+    vm.bpmnText = xml
+    await wrapper.vm.$nextTick()
+    // feed through the real input path so parseBpmnMetadata runs (same as mountWithBpmn)
+    await wrapper.find('textarea').setValue(xml)
+    await flushPromises()
+    return wrapper
+  }
+
+  it('criterion 21: the target process is shown in the header with its key', async () => {
+    const wrapper = await mountBound(false, BOUND_BPMN)
+    expect(wrapper.text()).toContain('targetProcess')
+    expect(wrapper.text()).toContain('P1')
+    expect(wrapper.text()).toContain('p1')
+  })
+
+  it('criterion 21: a model with the right key resolves immediately to "new version"', async () => {
+    const wrapper = await mountBound(false, BOUND_BPMN)
+    expect(wrapper.text()).toContain('willAddVersion')
+    // bound mode does NOT hit the directory lookup
+    expect(mockGetDefinitions).not.toHaveBeenCalled()
+  })
+
+  it('criterion 21: bound submit adds a version of the bound process — even for the super-admin', async () => {
+    const wrapper = await mountBound(true, BOUND_BPMN)
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('deployBpmn'))!
+    await btn.trigger('click')
+    await flushPromises()
+    // the super-admin MUST NOT deploy a brand-new process here — bound wins
+    expect(mockAddVersion).toHaveBeenCalledWith('def-1', BOUND_BPMN)
+    expect(mockDeploy).not.toHaveBeenCalled()
+    expect(mockSubmit).not.toHaveBeenCalled()
+  })
+
+  it('criterion 22 POF: a model with a foreign key is rejected with an explaining text', async () => {
+    const wrapper = await mountBound(false, FOREIGN_BPMN)
+    expect(wrapper.text()).toContain('boundKeyMismatch')
+    expect(wrapper.text()).toContain('other')
+    expect(wrapper.text()).toContain('p1')
+    // no "new version will be added" — the foreign model must not be accepted
+    expect(wrapper.text()).not.toContain('willAddVersion')
+  })
+
+  it('criterion 22: submit is blocked while the key mismatch is shown', async () => {
+    const wrapper = await mountBound(false, FOREIGN_BPMN)
+    const submitBtn = wrapper.findAll('button').find((b) => b.text().includes('submitForApproval'))!
+    expect((submitBtn.element as HTMLButtonElement).disabled).toBe(true)
+    await submitBtn.trigger('click')
+    await flushPromises()
+    expect(mockAddVersion).not.toHaveBeenCalled()
+    expect(mockDeploy).not.toHaveBeenCalled()
+    expect(mockSubmit).not.toHaveBeenCalled()
+  })
+})

@@ -9,6 +9,7 @@ import { getMyMemberships } from '@/services/adminService'
 import { exportToCsv } from '@/shared/lib/export'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import MySubmissions from '@/pages/processes/MySubmissions.vue'
+import AppDrawer from '@/widgets/shared/AppDrawer.vue'
 import { Download, RefreshCw, FileText, Upload } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -166,7 +167,6 @@ watch([search, latestOnly], () => { resetPage(); load() })
             <th class="px-4 py-3 text-left font-medium">{{ t('key') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('version') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
-            <th class="px-4 py-3 text-left font-medium"></th>
           </tr>
         </thead>
         <tbody>
@@ -174,7 +174,9 @@ watch([search, latestOnly], () => { resetPage(); load() })
             v-for="def in visibleDefinitions"
             :key="def.id"
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
             @click="viewDetail(def.id)"
+            @keydown.enter="viewDetail(def.id)"
           >
             <td class="px-4 py-3 font-medium">{{ def.name || '—' }}</td>
             <td class="px-4 py-3 font-mono text-xs">{{ def.key }}</td>
@@ -184,14 +186,9 @@ watch([search, latestOnly], () => { resetPage(); load() })
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDate(def.createdAt) }}</td>
-            <td class="px-4 py-3">
-              <button class="text-sm text-primary hover:underline" @click.stop="viewDetail(def.id)">
-                {{ t('view') }}
-              </button>
-            </td>
           </tr>
           <tr v-if="!visibleDefinitions.length">
-            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">
+            <td colspan="4" class="px-4 py-8 text-center text-muted-foreground">
               {{ myOnly ? t('noMyProcesses') : t('noDefinitions') }}
             </td>
           </tr>
@@ -237,22 +234,11 @@ watch([search, latestOnly], () => { resetPage(); load() })
       </div>
     </div>
 
-    <!-- WO-ACL-8 criterion 10: My Submissions as a dialog from the definitions page.
-         The sidebar entry is gone (criterion 14); this is the only entry point now. -->
-    <div
-      v-if="showSubmissions"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      @click.self="showSubmissions = false"
-    >
-      <div class="bg-card rounded-lg shadow-lg w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg font-bold">{{ t('mySubmissions') }}</h2>
-          <button class="text-sm text-muted-foreground hover:text-foreground" @click="showSubmissions = false">
-            {{ t('close') }}
-          </button>
-        </div>
-        <MySubmissions />
-      </div>
-    </div>
+    <!-- WO-ACL-8 criterion 10: My Submissions from the definitions page.
+         WO-ACL-11 criteria 32-34: opened as a right-side DRAWER panel now —
+         the table needs width, the drawer keeps the process list visible. -->
+    <AppDrawer :open="showSubmissions" :title="t('mySubmissions')" @close="showSubmissions = false">
+      <MySubmissions />
+    </AppDrawer>
   </div>
 </template>

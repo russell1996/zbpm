@@ -138,12 +138,22 @@ watch(() => props.incidentElementIds, () => { applyHighlights() }, { deep: true 
 watch(() => props.completedElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.elementCounts, () => { applyCountOverlays() }, { deep: true })
 
-onMounted(() => { render() })
-onUnmounted(() => { viewer?.destroy() })
+// WO-ACL-11 criterion 39: on window resize the diagram is recalculated — bpmn-js
+// has its own call for that (canvas.zoom('fit-viewport')), we just re-invoke it.
+onMounted(() => {
+  render()
+  window.addEventListener('resize', fitViewport)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', fitViewport)
+  viewer?.destroy()
+})
 </script>
 
 <template>
-  <div class="bpmn-viewer-wrapper border border-border rounded-lg overflow-hidden">
+  <!-- WO-ACL-11 criterion 37: the diagram stretches with its parent (layout),
+       not with a fixed pixel height — the parent card provides the height. -->
+  <div class="bpmn-viewer-wrapper border border-border rounded-lg overflow-hidden h-full flex flex-col">
     <div class="flex items-center gap-1 px-3 py-2 border-b border-border bg-muted/50">
       <button class="p-1.5 hover:bg-muted rounded transition-colors" :title="t('zoomIn')" @click="zoomIn">
         <ZoomIn class="h-4 w-4" />
@@ -155,7 +165,7 @@ onUnmounted(() => { viewer?.destroy() })
         <Maximize class="h-4 w-4" />
       </button>
     </div>
-    <div ref="container" class="bpmn-container" style="height: 400px; width: 100%;" />
+    <div ref="container" class="bpmn-container h-full w-full flex-1 min-h-0" />
   </div>
 </template>
 

@@ -51,7 +51,6 @@ onMounted(load)
             <th class="px-4 py-3 text-left font-medium">{{ t('name') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('version') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('hitPolicy') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -59,7 +58,9 @@ onMounted(load)
             v-for="d in decisions"
             :key="d.id"
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
             @click="router.push(`/dmn/${d.id}`)"
+            @keydown.enter="router.push(`/dmn/${d.id}`)"
           >
             <td class="px-4 py-3 font-mono">{{ d.id }}</td>
             <td class="px-4 py-3 font-medium">{{ d.name }}</td>
@@ -67,12 +68,9 @@ onMounted(load)
             <td class="px-4 py-3">
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ d.hitPolicy }}</span>
             </td>
-            <td class="px-4 py-3">
-              <button class="text-sm text-primary hover:underline" @click.stop="router.push(`/dmn/${d.id}`)">{{ t('view') }}</button>
-            </td>
           </tr>
           <tr v-if="!decisions.length">
-            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">{{ t('noDecisions') }}</td>
+            <td colspan="4" class="px-4 py-8 text-center text-muted-foreground">{{ t('noDecisions') }}</td>
           </tr>
         </tbody>
       </table>

@@ -8,6 +8,7 @@ import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const router = useRouter()
 const store = useProcessStore()
@@ -32,16 +33,6 @@ function goPrevPage() { prevPage(); load() }
 
 function viewDetail(id: string) {
   router.push(`/processes/instances/${id}`)
-}
-
-function status(pi: { completedAt: string | null }) {
-  return pi.completedAt ? t('completed') : t('running')
-}
-
-function statusClass(pi: { completedAt: string | null }) {
-  return pi.completedAt
-    ? 'bg-green-100 text-green-800'
-    : 'bg-blue-100 text-blue-800'
 }
 
 function exportData() {
@@ -110,7 +101,9 @@ watch(filterKey, () => { resetPage(); load() })
             v-for="pi in (store.instances?.data || [])"
             :key="pi.id"
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            tabindex="0"
             @click="viewDetail(pi.id)"
+            @keydown.enter="viewDetail(pi.id)"
           >
             <td class="px-4 py-3"><CopyableId :value="pi.id" /></td>
             <td class="px-4 py-3">
@@ -118,9 +111,7 @@ watch(filterKey, () => { resetPage(); load() })
               <span v-if="pi.processVersion" class="ml-1 text-xs text-muted-foreground">v{{ pi.processVersion }}</span>
             </td>
             <td class="px-4 py-3">
-              <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', statusClass(pi)]">
-                {{ status(pi) }}
-              </span>
+              <StatusBadge :status="pi.completedAt ? 'COMPLETED' : 'RUNNING'" />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(pi.startedAt) }}</td>
             <td class="px-4 py-3 text-muted-foreground">{{ pi.completedAt ? formatDateTime(pi.completedAt) : '—' }}</td>

@@ -100,7 +100,7 @@ onMounted(async () => {
 
       <!-- No form — just a start button -->
       <div v-else class="border border-border rounded-lg p-4 bg-card">
-        <p class="text-sm text-muted-foreground mb-4">No start form configured. Process will start with default settings.</p>
+        <p class="text-sm text-muted-foreground mb-4">{{ t('noStartFormConfigured') }}</p>
       </div>
 
       <div class="flex justify-end">
