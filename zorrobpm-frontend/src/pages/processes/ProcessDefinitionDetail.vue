@@ -9,11 +9,13 @@ import { useBreadcrumbStore } from '@/stores/breadcrumb'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 import * as processService from '@/services/processService'
-import { listMembers, changeMemberRole, removeMember, addMember, searchMemberCandidates, type Member, type MemberCandidate } from '@/services/adminService'
+import { listMembers, changeMemberRole, removeMember, type Member } from '@/services/adminService'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/shared/lib/utils'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import TabsBar from '@/widgets/shared/TabsBar.vue'
+import MemberAddDialog from '@/widgets/processes/MemberAddDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,56 +98,25 @@ async function removeMemberOf(member: Member) {
   }
 }
 
-// --- WO-ACL-11 criteria 17-19: add a member straight from the process card ---
+// --- WO-ACL-14 criteria 9-13: adding a member happens in MemberAddDialog ---
 // Candidates come from the WO-ACL-7 endpoint (GET /processes/{key}/members/candidates?q=),
-// NOT from /users — the user directory stays closed from this screen. The whole
-// block is gated by canManageMembers (super-admin or OWNER, see above).
-const candidateQuery = ref('')
-const candidates = ref<MemberCandidate[]>([])
-const candidatesLoading = ref(false)
-const candidatesError = ref<string | null>(null)
-const newMemberUserId = ref('')
-const newMemberRole = ref('VIEWER')
-const addingMember = ref(false)
+// NOT from /users — the user directory stays closed from this screen. The dialog
+// is gated by canManageMembers (super-admin or OWNER).
+const showMemberAddDialog = ref(false)
 
-async function searchCandidates() {
-  const def = store.currentDefinition
-  const q = candidateQuery.value.trim()
-  if (!def?.key || q.length < 3) {
-    candidates.value = []
-    candidatesError.value = null
-    return
-  }
-  candidatesLoading.value = true
-  candidatesError.value = null
-  try {
-    candidates.value = await searchMemberCandidates(def.key, q)
-  } catch (e) {
-    candidates.value = []
-    candidatesError.value = errorMessage(e, t('failedToLoadCandidates'))
-  } finally {
-    candidatesLoading.value = false
-  }
+async function onMemberAdded() {
+  await loadMembers()
 }
 
-async function addMemberToProcess() {
-  const def = store.currentDefinition
-  if (!def?.key || !newMemberUserId.value) return
-  addingMember.value = true
-  try {
-    await addMember(def.key, newMemberUserId.value, newMemberRole.value)
-    toast.success(t('memberAdded'))
-    candidateQuery.value = ''
-    candidates.value = []
-    newMemberUserId.value = ''
-    newMemberRole.value = 'VIEWER'
-    await loadMembers()
-  } catch (e) {
-    toast.error(errorMessage(e, t('failedToAddMember')))
-  } finally {
-    addingMember.value = false
-  }
-}
+// WO-ACL-14 criteria 1-3: ONE tab component (TabsBar) — the local tab strip is gone.
+const definitionTabs = computed(() => [
+  { id: 'model', label: t('bpmnProcess') },
+  { id: 'structure', label: t('bpmnStructure') },
+  { id: 'docs', label: t('requirements') },
+  { id: 'schemas', label: t('elementSchemas') },
+  { id: 'members', label: t('members') },
+  { id: 'versions', label: t('versions') },
+])
 
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
@@ -366,31 +337,11 @@ async function downloadBpmn() {
         </div>
       </div>
 
-      <!-- Tabs: only the <nav> carries -mb-px; the buttons must NOT repeat it,
-           otherwise the active border-b-2 is pushed under the container border
-           and the highlight disappears (WO-ACL-10 criteria 9-10). -->
+      <!-- Tabs: WO-ACL-14 — the shared TabsBar owns the underline (border-b-2 on the
+           active button, a single -mb-px on the nav, never on buttons), the keyboard
+           rotation and the horizontal scroll on narrow screens. -->
       <div class="border-b border-border">
-        <nav class="flex gap-0 -mb-px" role="tablist">
-          <button
-            v-for="tab in [
-              { id: 'model', label: t('bpmnProcess') },
-              { id: 'structure', label: t('bpmnStructure') },
-              { id: 'docs', label: t('requirements') },
-              { id: 'schemas', label: t('elementSchemas') },
-              { id: 'members', label: t('members') },
-              { id: 'versions', label: t('versions') },
-            ]"
-            :key="tab.id"
-            role="tab"
-            class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
-            :class="activeTab === tab.id
-              ? 'border-primary text-foreground'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'"
-            @click="activeTab = tab.id"
-          >
-            {{ tab.label }}
-          </button>
-        </nav>
+        <TabsBar :tabs="definitionTabs" :active-id="activeTab" @update:active-id="activeTab = $event" />
       </div>
 
       <!-- Tab: Model — stretches to the bottom edge (criterion 37). -->
@@ -570,7 +521,14 @@ async function downloadBpmn() {
                   </span>
                 </td>
                 <td v-if="canManageMembers" class="px-4 py-2">
-                  <div class="flex items-center gap-2">
+                  <!-- WO-ACL-14 criteria 14-16: own row has NO remove button and NO
+                       role select — leaving yourself is impossible by design (the
+                       last-owner protection lives on the server, ACL-2). A disabled
+                       red link looked like a working button; a role select in your
+                       own row would silently self-demote. The marker mirrors the
+                       "(you)" note next to the username. -->
+                  <span v-if="m.userId === auth.user?.id" class="text-xs text-muted-foreground">{{ t('you') }}</span>
+                  <div v-else class="flex items-center gap-2">
                     <select
                       class="px-2 py-1 border border-input rounded text-xs"
                       :value="m.role"
@@ -582,7 +540,6 @@ async function downloadBpmn() {
                     </select>
                     <button
                       class="text-xs text-red-500 hover:underline"
-                      :disabled="m.userId === auth.user?.id"
                       @click="removeMemberOf(m)"
                     >
                       {{ t('remove') }}
@@ -597,47 +554,16 @@ async function downloadBpmn() {
           <p v-else class="px-4 py-3 text-sm text-muted-foreground">
             {{ t('noMembers') }}
           </p>
-          <!-- WO-ACL-11 criteria 17-18: add a member from the card. Visible only to
-               super-admin/OWNER (canManageMembers); candidates come from the ACL-7
-               endpoint, the /users directory is not touched. -->
-          <div v-if="canManageMembers" class="border-t border-border px-4 py-3 space-y-3">
-            <h3 class="text-sm font-semibold">{{ t('addMember') }}</h3>
-            <input
-              v-model="candidateQuery"
-              class="w-full px-2 py-1.5 border border-input rounded text-sm"
-              :placeholder="t('searchCandidatePlaceholder')"
-              @input="searchCandidates"
-            />
-            <div v-if="candidatesLoading" class="text-xs text-muted-foreground">{{ t('loading') }}</div>
-            <div v-else-if="candidatesError" class="text-xs text-red-500">{{ candidatesError }}</div>
-            <div v-else-if="candidates.length" class="space-y-1">
-              <button
-                v-for="c in candidates"
-                :key="c.userId"
-                class="w-full flex items-center justify-between px-2 py-1.5 rounded text-sm hover:bg-muted transition-colors"
-                :class="newMemberUserId === c.userId ? 'bg-sidebar-accent font-medium' : ''"
-                @click="newMemberUserId = c.userId"
-              >
-                <span>{{ c.username }}</span>
-                <span v-if="newMemberUserId === c.userId" class="text-xs text-muted-foreground">{{ t('selected') }}</span>
-              </button>
-            </div>
-            <p v-else-if="candidateQuery.trim().length >= 3" class="text-xs text-muted-foreground">{{ t('noCandidates') }}</p>
-            <p v-else class="text-xs text-muted-foreground">{{ t('searchCandidateHint') }}</p>
-            <div v-if="newMemberUserId" class="flex items-center gap-2 pt-1">
-              <select v-model="newMemberRole" class="px-2 py-1 border border-input rounded text-xs">
-                <option value="OWNER">{{ t('ownerRole') }}</option>
-                <option value="DESIGNER">{{ t('designerRole') }}</option>
-                <option value="VIEWER">{{ t('viewerRole') }}</option>
-              </select>
-              <button
-                class="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
-                :disabled="addingMember"
-                @click="addMemberToProcess"
-              >
-                {{ addingMember ? t('adding') : t('addMember') }}
-              </button>
-            </div>
+          <!-- WO-ACL-14 criterion 9: adding a member opens MemberAddDialog —
+               the inline search is gone from the tab. Visible only to
+               super-admin/OWNER (canManageMembers). -->
+          <div v-if="canManageMembers" class="border-t border-border px-4 py-3">
+            <button
+              class="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity"
+              @click="showMemberAddDialog = true"
+            >
+              {{ t('addMember') }}
+            </button>
           </div>
         </div>
       </div>
@@ -745,5 +671,14 @@ async function downloadBpmn() {
         />
       </div>
     </div>
+
+    <!-- WO-ACL-14 criteria 9-13: member adding dialog (gated by canManageMembers) -->
+    <MemberAddDialog
+      :open="showMemberAddDialog"
+      :process-key="store.currentDefinition?.key ?? ''"
+      :members="members"
+      @close="showMemberAddDialog = false"
+      @added="onMemberAdded"
+    />
   </div>
 </template>

@@ -14,6 +14,7 @@ import { isTaskActive } from '@/shared/lib/utils'
 import { RefreshCw, ArrowRight, Download } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import TabsBar from '@/widgets/shared/TabsBar.vue'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
 
 const route = useRoute()
@@ -26,6 +27,17 @@ const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
 const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses'>('bpmn')
+
+// WO-ACL-14 criteria 1-3: ONE tab component (TabsBar) — the local tab strip is gone.
+const instanceTabs = computed(() => [
+  { id: 'bpmn', label: t('bpmnFlow') },
+  { id: 'variables', label: t('variables') },
+  { id: 'tasks', label: t('tasks') },
+  { id: 'serviceTasks', label: t('serviceTasks') },
+  { id: 'incidents', label: t('incidentsTab') },
+  { id: 'history', label: t('history') },
+  { id: 'subprocesses', label: t('subprocesses') },
+] as const)
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
 
@@ -371,16 +383,12 @@ watch(activeTab, onTabChange)
         </span>
       </div>
 
-      <div class="flex gap-1 border-b border-border overflow-x-auto">
-        <button
-          v-for="tab in (['bpmn', 'variables', 'tasks', 'serviceTasks', 'incidents', 'history', 'subprocesses'] as const)"
-          :key="tab"
-          class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap -mb-px"
-          :class="activeTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
-          @click="activeTab = tab"
-        >
-          {{ tab === 'bpmn' ? t('bpmnFlow') : tab === 'serviceTasks' ? t('serviceTasks') : tab === 'tasks' ? t('tasks') : tab === 'variables' ? t('variables') : tab === 'incidents' ? t('incidentsTab') : tab === 'history' ? t('history') : t('subprocesses') }}
-        </button>
+      <!-- Tabs: WO-ACL-14 — the shared TabsBar (single -mb-px on the nav, keyboard
+           rotation, horizontal scroll on narrow screens). The old local strip
+           carried -mb-px on every button, which pushed the active underline
+           under the container border (P-55). -->
+      <div class="flex border-b border-border">
+        <TabsBar :tabs="instanceTabs" :active-id="activeTab" @update:active-id="activeTab = $event" class="flex-1" />
       </div>
 
       <div v-if="tabLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
