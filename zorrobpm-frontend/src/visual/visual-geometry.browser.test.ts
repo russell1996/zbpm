@@ -467,6 +467,44 @@ describe('WO-TEST-6 check 4 — kazakh labels fit one line without ellipsis', ()
   })
 })
 
+// ---- WO-ACL-15 criterion 15: the BPMN canvas stays LIGHT in the dark theme ----
+
+function luminance(rgb: string): number {
+  const m = rgb.match(/rgba?\((\d+), (\d+), (\d+)/)
+  if (!m) return 0
+  const [r, g, b] = [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255]
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+describe('WO-ACL-15 criterion 15 — BPMN canvas contrast in the DARK theme', () => {
+  it('the canvas background is explicitly light and the shape stroke is distinguishable from it', async () => {
+    document.documentElement.classList.add('dark')
+    try {
+      const wrapper = mountPid()
+      await flushPromises()
+      // real bpmn-js renders shapes in Chromium
+      await until(() => !!wrapper.element.querySelector('.bpmn-container .djs-shape'))
+
+      const canvas = wrapper.find('.bpmn-container').element
+      const bg = getComputedStyle(canvas).backgroundColor
+      const bgLum = luminance(bg)
+      // EXPLICIT light background — not inherited from the dark card (#1e293b ~ 0.06)
+      expect(bgLum, `canvas background ${bg} must be light`).toBeGreaterThan(0.8)
+
+      // the shape stroke (bpmn-js paints black by default) must contrast with it
+      const shapeVisual = (wrapper.element as Element).querySelector('.djs-shape .djs-visual > :is(rect, path, circle, polygon)')
+      expect(shapeVisual).toBeTruthy()
+      const stroke = getComputedStyle(shapeVisual as Element).stroke
+      const strokeLum = luminance(stroke)
+      expect(Math.abs(bgLum - strokeLum), `background ${bg} vs stroke ${stroke}`).toBeGreaterThan(0.5)
+
+      await page.screenshot({ path: `${SHOT_DIR}/wo-acl-15-bpmn-dark.png` })
+    } finally {
+      document.documentElement.classList.remove('dark')
+    }
+  })
+})
+
 // ---- WO-TEST-6 checks 5 & 6: BPMN canvas to the bottom; properties panel height ----
 
 describe('WO-TEST-6 checks 5 & 6 — BPMN canvas and properties panel geometry', () => {
