@@ -302,8 +302,9 @@ describe('WO-TEST-6 check 1 — active tab underline (ProcessInstanceDetail, Tab
     const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
     expect(active).toBeTruthy()
     const cs = getComputedStyle(active)
-    // the underline is a real 2px border, not a class with width 0
-    expect(cs.borderBottomWidth).toBe('2px')
+    // the underline is a real 3px border, not a class with width 0 (WO-ACL-15
+    // criterion 13: noticeably thicker than the 1px container line)
+    expect(cs.borderBottomWidth).toBe('3px')
     expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
     expect(cs.borderBottomColor).not.toBe('transparent')
     // and it reaches the strip's bottom border line (the -mb-px overlap on the
@@ -313,6 +314,26 @@ describe('WO-TEST-6 check 1 — active tab underline (ProcessInstanceDetail, Tab
     const navRect = nav.getBoundingClientRect()
     expect(btnRect.bottom).toBeGreaterThanOrEqual(navRect.bottom - 0.5)
     expect(btnRect.bottom).toBeLessThanOrEqual(navRect.bottom + 0.5)
+
+    // WO-ACL-15 criterion 13: the ACTUAL PAINTED color at a point on the line
+    // under the active tab differs from the same point under an inactive tab,
+    // and under the active one it is the ACCENT color, not the container border.
+    const inactive = tabBtns.find((b) => b.getAttribute('aria-selected') === 'false')!
+    const inactiveRect = inactive.getBoundingClientRect()
+    const activePoint = document.elementFromPoint(btnRect.left + btnRect.width / 2, btnRect.bottom - 1)
+    const inactivePoint = document.elementFromPoint(inactiveRect.left + inactiveRect.width / 2, inactiveRect.bottom - 1)
+    expect(activePoint).toBeTruthy()
+    expect(inactivePoint).toBeTruthy()
+    const activeColor = getComputedStyle(activePoint as Element).borderBottomColor
+    const inactiveColor = getComputedStyle(inactivePoint as Element).borderBottomColor
+    const containerBorder = getComputedStyle(nav.parentElement!).borderTopColor
+    expect(activeColor).not.toBe(inactiveColor)
+    expect(activeColor).not.toBe(containerBorder)
+    // active caption: accent color and heavier weight than the inactive ones
+    expect(getComputedStyle(active).color).not.toBe(getComputedStyle(inactive).color)
+    expect(Number.parseFloat(getComputedStyle(active).fontWeight)).toBeGreaterThan(
+      Number.parseFloat(getComputedStyle(inactive).fontWeight),
+    )
 
     await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-instance-tabs.png` })
   })
@@ -329,13 +350,30 @@ describe('WO-TEST-6 check 1b — active tab underline (ProcessDefinitionDetail, 
     const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
     expect(active).toBeTruthy()
     const cs = getComputedStyle(active)
-    expect(cs.borderBottomWidth).toBe('2px')
+    expect(cs.borderBottomWidth).toBe('3px')
     expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
     expect(cs.borderBottomColor).not.toBe('transparent')
     const btnRect = active.getBoundingClientRect()
     const navRect = nav.getBoundingClientRect()
     expect(btnRect.bottom).toBeGreaterThanOrEqual(navRect.bottom - 0.5)
     expect(btnRect.bottom).toBeLessThanOrEqual(navRect.bottom + 0.5)
+
+    // WO-ACL-15 criterion 13 (same point-color assertions as the instance strip)
+    const inactive = tabBtns.find((b) => b.getAttribute('aria-selected') === 'false')!
+    const inactiveRect = inactive.getBoundingClientRect()
+    const activePoint = document.elementFromPoint(btnRect.left + btnRect.width / 2, btnRect.bottom - 1)
+    const inactivePoint = document.elementFromPoint(inactiveRect.left + inactiveRect.width / 2, inactiveRect.bottom - 1)
+    expect(activePoint).toBeTruthy()
+    expect(inactivePoint).toBeTruthy()
+    const activeColor = getComputedStyle(activePoint as Element).borderBottomColor
+    const inactiveColor = getComputedStyle(inactivePoint as Element).borderBottomColor
+    const containerBorder = getComputedStyle(nav.parentElement!).borderTopColor
+    expect(activeColor).not.toBe(inactiveColor)
+    expect(activeColor).not.toBe(containerBorder)
+    expect(getComputedStyle(active).color).not.toBe(getComputedStyle(inactive).color)
+    expect(Number.parseFloat(getComputedStyle(active).fontWeight)).toBeGreaterThan(
+      Number.parseFloat(getComputedStyle(inactive).fontWeight),
+    )
 
     await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-definition-tabs.png` })
   })

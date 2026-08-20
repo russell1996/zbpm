@@ -141,7 +141,7 @@ describe('ProcessDefinitionDetail — WO-ACL-10 criteria 7-9', () => {
     expect(tabs.length).toBeGreaterThanOrEqual(6)
     for (const b of tabs) {
       expect(b.classes()).not.toContain('-mb-px')
-      expect(b.classes()).toContain('border-b-2')
+      expect(b.classes()).toContain('border-b-[3px]')
     }
   })
 

@@ -81,7 +81,7 @@ describe('ProcessInstanceDetail — WO-ACL-10 criterion 10', () => {
     expect(tabs.length).toBeGreaterThanOrEqual(7)
     for (const b of tabs) {
       expect(b.classes()).not.toContain('-mb-px')
-      expect(b.classes()).toContain('border-b-2')
+      expect(b.classes()).toContain('border-b-[3px]')
     }
     // the active (first, bpmn) tab is highlighted
     const active = tabs.filter((b) => b.classes().includes('border-primary'))

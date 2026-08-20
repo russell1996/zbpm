@@ -4,7 +4,7 @@
  *   1  — the component is the single tab implementation (the two old local
  *        strips in ProcessDefinitionDetail / ProcessInstanceDetail are gone;
  *        grep-level proof lives in the report, structure-level here);
- *   2  — the active tab carries the visible underline classes (border-b-2 +
+ *   2  — the active tab carries the visible underline classes (border-b-[3px] +
  *        border-primary on the button, the single -mb-px on the nav — the
  *        visual visibility itself is a browser check, see the browser suite);
  *   4  — keyboard: ArrowLeft/Right rotate, Home/End jump to the edges,
@@ -46,7 +46,10 @@ describe('TabsBar (WO-ACL-14 criteria 1/2/4/5)', () => {
     const active = wrapper.findAll('button[role="tab"]').filter((b) => b.classes().includes('border-primary'))
     expect(active).toHaveLength(1)
     expect(active[0].text()).toBe('Beta')
-    expect(active[0].classes()).toContain('border-b-2')
+    expect(active[0].classes()).toContain('border-b-[3px]')
+    // WO-ACL-15 criterion 13: the active caption is accent + heavier
+    expect(active[0].classes()).toContain('text-primary')
+    expect(active[0].classes()).toContain('font-semibold')
     // aria-selected mirrors the active id
     expect(active[0].attributes('aria-selected')).toBe('true')
   })
@@ -57,7 +60,7 @@ describe('TabsBar (WO-ACL-14 criteria 1/2/4/5)', () => {
     expect(nav.classes()).toContain('-mb-px')
     for (const b of nav.findAll('button')) {
       expect(b.classes()).not.toContain('-mb-px')
-      expect(b.classes()).toContain('border-b-2')
+      expect(b.classes()).toContain('border-b-[3px]')
     }
   })
 
