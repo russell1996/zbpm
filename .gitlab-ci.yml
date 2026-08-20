@@ -120,6 +120,10 @@ test:frontend:
   script:
     # WO-OPS-4a (C-01): builder stage now runs `npm ci && npm run build && npm test -- --run`
     # (tsc typecheck + Vite build + vitest); a failing frontend test fails the build.
+    # WO-TEST-6: the stage also installs Chromium (playwright install --with-deps)
+    # and runs the browser-geometry suite (`npm run test:browser`) — six visual
+    # checks that jsdom cannot compute (tab underline, flyout clipping, h-scroll,
+    # kazakh labels, BPMN canvas height, properties panel height).
     - docker build --target builder -f zorrobpm-frontend/Dockerfile -t zorrobpm-frontend-build:$IMAGE_TAG zorrobpm-frontend
     - docker image rm zorrobpm-frontend-build:$IMAGE_TAG || true
 
