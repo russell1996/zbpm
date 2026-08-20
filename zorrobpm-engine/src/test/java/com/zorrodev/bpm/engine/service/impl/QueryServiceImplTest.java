@@ -45,6 +45,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -179,6 +180,7 @@ class QueryServiceImplTest {
         UUID id = UUID.randomUUID();
         Incident inc = new Incident();
         when(dbService.getIncident(id)).thenReturn(inc);
+        when(incidentMapper.enrich(anyList())).thenReturn(List.of(inc));
 
         assertThat(queryService.getIncident(id)).isSameAs(inc);
     }
@@ -192,6 +194,7 @@ class QueryServiceImplTest {
         when(incidentRepository.findAll(any(Specification.class), any(PageRequest.class)))
             .thenReturn(new PageImpl<>(List.of(entity)));
         when(incidentMapper.toDTO(entity)).thenReturn(dto);
+        when(incidentMapper.enrich(anyList())).thenReturn(List.of(dto));
 
         PagedDataDTO<Incident> result = queryService.findIncidents(query, null);
 
