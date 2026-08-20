@@ -209,7 +209,7 @@ describe('ProcessInstanceDetail — element dialog (WO-FE-BPMN-1)', () => {
     const { useIncidentStore } = await import('@/stores/incident')
     const incidentStore = useIncidentStore()
     incidentStore.incidents = {
-      data: [{ id: 'inc-1', activityId: 'act-1', message: 'Something went wrong', createdAt: '2026-01-01T00:00:00Z', completedAt: null }],
+      data: [{ id: 'inc-1', activityId: 'act-1', message: 'Something went wrong', createdAt: '2026-01-01T00:00:00Z', completedAt: null, processName: null, processInstanceId: null, bpmnElementId: null, elementName: null }],
       totalElements: 1, pageIndex: 0, pageSize: 100,
     }
     await wrapper.vm.$nextTick()
