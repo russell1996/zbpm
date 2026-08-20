@@ -42,12 +42,10 @@ import java.util.stream.Collectors;
 public class MemberResource implements MemberContract {
 
     /**
-     * WO-ACL-7: minimum username fragment for the candidates search. Below this the
-     * query would match almost everything and the endpoint would act as a directory.
+     * WO-ACL-7: hard cap on the candidate result set — never the whole user table.
+     * WO-ACL-15 (part B): the cap is what keeps the endpoint from becoming a user
+     * directory when {@code q} is empty — the query length guard was removed.
      */
-    static final int MIN_CANDIDATE_QUERY_LENGTH = 3;
-
-    /** Hard cap on the candidate result set — never the whole user table. */
     static final int MAX_CANDIDATES = 20;
 
     private final ProcessRepository processRepository;
@@ -155,9 +153,12 @@ public class MemberResource implements MemberContract {
 
     /**
      * WO-ACL-7 (ADR-8 п.7): who can be ADDED to this process. OWNER-scoped candidate
-     * search: MANAGE_MEMBERS on the process, a mandatory non-empty {@code q} (min 3 chars —
-     * an empty query would return the user table), active users only, members excluded,
-     * result capped. Output is deliberately minimal: userId + username.
+     * search: MANAGE_MEMBERS on the process, active users only, members excluded,
+     * result capped at MAX_CANDIDATES. WO-ACL-15 part B: an empty {@code q} is now
+     * allowed — it returns the FIRST page (the cap + MANAGE_MEMBERS are what keep
+     * this from being a user directory) — sorted by name, then login, so the list
+     * is stable between openings. Output carries fullName + email (both already
+     * public via MemberDTO), as empty strings when the account has none.
      */
     @Override
     public List<MemberCandidateDTO> candidateMembers(@PathVariable String key, String q) {
@@ -165,10 +166,6 @@ public class MemberResource implements MemberContract {
         ProcessEntity process = resolveProcess(key);
 
         String query = q == null ? "" : q.trim();
-        if (query.length() < MIN_CANDIDATE_QUERY_LENGTH) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Search query 'q' must be at least " + MIN_CANDIDATE_QUERY_LENGTH + " characters");
-        }
 
         Set<UUID> memberIds = processMemberRepository.findByProcessId(process.getId()).stream()
             .map(ProcessMemberEntity::getUserId)
@@ -181,13 +178,21 @@ public class MemberResource implements MemberContract {
             specs.add((root, cbq, cb) -> cb.not(root.get("id").in(memberIds)));
         }
 
+        // WO-ACL-15 part B: stable order — by name first, then login. Empty/absent
+        // names (null in the DB) sort last on both H2 (PostgreSQL mode) and PG.
+        Sort sort = Sort.by("fullName").ascending().and(Sort.by("username").ascending());
+
         return uiUserRepository.findAll(Specification.allOf(specs),
-                PageRequest.of(0, MAX_CANDIDATES, Sort.by("username").ascending()))
+                PageRequest.of(0, MAX_CANDIDATES, sort))
             .getContent().stream()
             .map(u -> {
                 MemberCandidateDTO dto = new MemberCandidateDTO();
                 dto.setUserId(u.getId());
                 dto.setUsername(u.getUsername());
+                // WO-ACL-15 criterion 1: empty string, never null — the dialog renders
+                // "no name/email" as absence, not as the literal "null".
+                dto.setFullName(u.getFullName() == null ? "" : u.getFullName());
+                dto.setEmail(u.getEmail() == null ? "" : u.getEmail());
                 return dto;
             })
             .collect(Collectors.toList());

@@ -73,9 +73,9 @@ watch(
       :key="tab.id"
       role="tab"
       :aria-selected="activeId === tab.id ? 'true' : 'false'"
-      class="shrink-0 px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+      class="shrink-0 px-4 py-2 text-sm font-medium border-b-[3px] transition-colors whitespace-nowrap"
       :class="activeId === tab.id
-        ? 'border-primary text-foreground'
+        ? 'border-primary text-primary font-semibold'
         : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'"
       @click="emit('update:activeId', tab.id)"
     >

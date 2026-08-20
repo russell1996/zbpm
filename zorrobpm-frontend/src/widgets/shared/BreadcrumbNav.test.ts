@@ -188,7 +188,7 @@ describe('WO-FE-18: BreadcrumbNav', () => {
   // mechanism was physically impossible; its tests only passed because they
   // mounted the component alone and provided the value by hand).
   // ─────────────────────────────────────────────────────────────
-  it('criterion 3: the last crumb shows the breadcrumb store process name', async () => {
+  it('criterion 3: the last crumb shows the breadcrumb store label', async () => {
     const router = makeRouter({
       titleKey: 'processDefinition',
       parentTitleKey: 'processDefinitions',
@@ -199,7 +199,7 @@ describe('WO-FE-18: BreadcrumbNav', () => {
 
     const pinia = createPinia()
     setActivePinia(pinia)
-    useBreadcrumbStore().setProcessName('My Awesome Process')
+    useBreadcrumbStore().setCrumbLabel('My Awesome Process')
     const wrapper = mount(BreadcrumbNav, {
       global: { plugins: [router, pinia, i18n] },
     })
@@ -209,7 +209,7 @@ describe('WO-FE-18: BreadcrumbNav', () => {
     expect(items[1].find('span').text()).toBe('My Awesome Process')
   })
 
-  it('criterion 3: the crumb reacts when the store name changes', async () => {
+  it('criterion 3: the crumb reacts when the store label changes', async () => {
     const router = makeRouter({
       titleKey: 'processDefinition',
       parentTitleKey: 'processDefinitions',
@@ -221,14 +221,14 @@ describe('WO-FE-18: BreadcrumbNav', () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const store = useBreadcrumbStore()
-    store.setProcessName('v1 name')
+    store.setCrumbLabel('v1 name')
     const wrapper = mount(BreadcrumbNav, {
       global: { plugins: [router, pinia, i18n] },
     })
     expect(wrapper.findAll('li')[1].find('span').text()).toBe('v1 name')
 
     // the detail page loads another process → the store is refilled
-    store.setProcessName('v2 name')
+    store.setCrumbLabel('v2 name')
     await wrapper.vm.$nextTick()
     expect(wrapper.findAll('li')[1].find('span').text()).toBe('v2 name')
   })

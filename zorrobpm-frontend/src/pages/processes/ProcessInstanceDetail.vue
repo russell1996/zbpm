@@ -6,6 +6,7 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { useTaskStore } from '@/stores/task'
 import { useIncidentStore } from '@/stores/incident'
+import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
@@ -25,6 +26,17 @@ const incidentStore = useIncidentStore()
 const toast = useToast()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
+
+// WO-ACL-15 criterion 17: the instance crumb reads as the process name plus a
+// short id — the name alone would repeat the parent crumb for every instance
+// of the same definition. Filled via the shared useBreadcrumbLabel() when the
+// instance arrives, cleared on unmount (criterion 18).
+useBreadcrumbLabel(() => {
+  const pi = processStore.currentInstance
+  if (!pi) return null
+  const name = pi.processName || pi.processKey || ''
+  return name ? `${name} · ${pi.id.slice(0, 8)}` : pi.id.slice(0, 8)
+})
 
 const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses'>('bpmn')
 

@@ -38,7 +38,7 @@ describe('SidebarNav WO-ACL-10 criterion 22', () => {
     expect(spans.length).toBeGreaterThanOrEqual(10)
     for (const s of spans) {
       // real kz string, not the t() stub key
-      const key = Object.keys(kz).find(k => (kz as Record<string, string>)[k] === s.text())
+      const key = Object.keys(kz).find(k => (kz as unknown as Record<string, string>)[k] === s.text())
       expect(key).toBeTruthy()
       expect(s.classes()).toContain('truncate')
       expect(s.classes()).toContain('min-w-0')
@@ -51,7 +51,7 @@ describe('SidebarNav WO-ACL-10 criterion 22', () => {
     const spans = wrapper.findAll('nav button span')
     expect(spans.length).toBeGreaterThanOrEqual(10)
     for (const s of spans) {
-      const key = Object.keys(ru).find(k => (ru as Record<string, string>)[k] === s.text())
+      const key = Object.keys(ru).find(k => (ru as unknown as Record<string, string>)[k] === s.text())
       expect(key).toBeTruthy()
       expect(s.classes()).toContain('truncate')
       expect(s.classes()).toContain('min-w-0')

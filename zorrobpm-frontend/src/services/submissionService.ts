@@ -37,9 +37,16 @@ export async function getMySubmissions(): Promise<ProcessSubmission[]> {
   return data
 }
 
-/** PENDING review queue, oldest first. SUPER_ADMIN only. */
-export async function getPendingSubmissions(): Promise<ProcessSubmission[]> {
-  const { data } = await api.get<ProcessSubmission[]>('/process-submissions')
+/**
+ * Review queue, oldest first. SUPER_ADMIN only.
+ * WO-ACL-15 criterion 9: optional status filter (PENDING default | APPROVED |
+ * REJECTED | SUPERSEDED | ALL) — the queue page shows history, not only the
+ * pending pile (server support since WO-ACL-12).
+ */
+export async function getPendingSubmissions(status?: string): Promise<ProcessSubmission[]> {
+  const { data } = await api.get<ProcessSubmission[]>('/process-submissions', {
+    params: status ? { status } : {},
+  })
   return data
 }
 

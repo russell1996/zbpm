@@ -165,11 +165,21 @@ onUnmounted(() => {
         <Maximize class="h-4 w-4" />
       </button>
     </div>
+    <!-- WO-ACL-15 criterion 15: EXPLICIT light background for the canvas — the
+         wrapper follows the theme, the diagram surface never inherits the dark
+         card background (bpmn-js strokes are black by design). -->
     <div ref="container" class="bpmn-container h-full w-full flex-1 min-h-0" />
   </div>
 </template>
 
 <style scoped>
+/* WO-ACL-15 criterion 15: the canvas surface is explicitly light — the token
+   is the same #ffffff in both palettes, so the dark theme cannot eat the
+   diagram (bpmn-js draws shapes/flows black by default). */
+.bpmn-container {
+  background: var(--color-bpmn-canvas);
+}
+
 /* shapes (tasks/events/gateways): stroke + light fill */
 .bpmn-container :deep(.djs-shape.highlight-active .djs-visual > :is(rect, path, circle, polygon)) {
   stroke: #3b82f6 !important;

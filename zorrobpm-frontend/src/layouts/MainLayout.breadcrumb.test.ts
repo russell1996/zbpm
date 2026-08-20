@@ -46,22 +46,37 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ user: { id: mockAuth.id }, isSuperAdmin: mockAuth.isSuperAdmin }),
 }))
 
-// The process store is a mutable state object so the test can switch the
-// definition (and its name) while the page is mounted.
-const mockProcessState = vi.hoisted(() => ({
-  currentDefinition: { id: 'def1', key: 'test-proc', version: 1, name: 'Test', sha256: 'abc', createdAt: '2026-01-01', startFormKey: null },
-  currentStructure: { id: 'def1', key: 'test-proc', version: 1, name: 'Test', documentation: null, nodes: [], flows: [] },
-  currentVersions: [] as { id: string; version: number; createdAt: string }[],
-  loading: false,
-  error: null,
-  fetchDefinition: vi.fn(),
-  fetchStructure: vi.fn(),
-  fetchVersions: vi.fn(),
-  startInstance: vi.fn().mockResolvedValue({ id: 'inst-1' }),
-}))
-vi.mock('@/stores/process', () => ({
-  useProcessStore: () => mockProcessState,
-}))
+// The process store is a mutable REACTIVE state object so the test can switch
+// the definition (and its name) while the page is mounted — useBreadcrumbLabel
+// watches the definition through the store, so a plain non-reactive object
+// would never trigger the watcher (the old explicit setProcessName call in
+// loadDefinition masked exactly that).
+const mockProcessState = vi.hoisted(() => ({ state: null as unknown as {
+  currentDefinition: { id: string; key: string; version: number; name: string; sha256: string; createdAt: string; startFormKey: string | null }
+  currentStructure: unknown
+  currentVersions: unknown[]
+  loading: boolean
+  error: unknown
+  fetchDefinition: ReturnType<typeof vi.fn>
+  fetchStructure: ReturnType<typeof vi.fn>
+  fetchVersions: ReturnType<typeof vi.fn>
+  startInstance: ReturnType<typeof vi.fn>
+} }))
+vi.mock('@/stores/process', async () => {
+  const { reactive } = await import('vue')
+  mockProcessState.state = reactive({
+    currentDefinition: { id: 'def1', key: 'test-proc', version: 1, name: 'Test', sha256: 'abc', createdAt: '2026-01-01', startFormKey: null },
+    currentStructure: { id: 'def1', key: 'test-proc', version: 1, name: 'Test', documentation: null, nodes: [], flows: [] },
+    currentVersions: [] as { id: string; version: number; createdAt: string }[],
+    loading: false,
+    error: null,
+    fetchDefinition: vi.fn(),
+    fetchStructure: vi.fn(),
+    fetchVersions: vi.fn(),
+    startInstance: vi.fn().mockResolvedValue({ id: 'inst-1' }),
+  })
+  return { useProcessStore: () => mockProcessState.state }
+})
 
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => mockToast }))
@@ -135,7 +150,7 @@ describe('WO-ACL-11 criterion 3: breadcrumb on the real MainLayout + router-view
     vi.clearAllMocks()
     mockAuth.id = 'u-owner'
     mockAuth.isSuperAdmin = false
-    mockProcessState.currentDefinition = { id: 'def1', key: 'test-proc', version: 1, name: 'Test', sha256: 'abc', createdAt: '2026-01-01', startFormKey: null }
+    mockProcessState.state.currentDefinition = { id: 'def1', key: 'test-proc', version: 1, name: 'Test', sha256: 'abc', createdAt: '2026-01-01', startFormKey: null }
   })
 
   it('criterion 3: the card page shows the process name as the last crumb, under the real layout', async () => {
@@ -156,7 +171,7 @@ describe('WO-ACL-11 criterion 3: breadcrumb on the real MainLayout + router-view
     expect(wrapper.findAll('li')[1].find('span').text()).toBe('Test')
 
     // the next definition arrives with a different name (same route, new :id)
-    mockProcessState.currentDefinition = { id: 'def2', key: 'test-proc', version: 2, name: 'Test 2', sha256: 'def', createdAt: '2026-01-02', startFormKey: null }
+    mockProcessState.state.currentDefinition = { id: 'def2', key: 'test-proc', version: 2, name: 'Test 2', sha256: 'def', createdAt: '2026-01-02', startFormKey: null }
     await router.push('/processes/definitions/def2')
     await flushPromises()
 
@@ -166,13 +181,13 @@ describe('WO-ACL-11 criterion 3: breadcrumb on the real MainLayout + router-view
   it('criterion 3: leaving the card clears the store — the next page never shows a stale name', async () => {
     const router = makeRouter()
     const { wrapper, pinia } = await mountApp('/processes/definitions/def1', router)
-    expect(useBreadcrumbStore().processName).toBe('Test')
+    expect(useBreadcrumbStore().crumbLabel).toBe('Test')
 
     await router.push('/processes/definitions')
     await flushPromises()
 
-    // store cleared by onUnmounted — a stale name can not leak into another page
-    expect(useBreadcrumbStore().processName).toBeNull()
+    // store cleared by useBreadcrumbLabel's onUnmounted — a stale label can not leak into another page
+    expect(useBreadcrumbStore().crumbLabel).toBeNull()
     // list page has a single crumb → the panel is hidden
     expect(wrapper.find('nav').exists()).toBe(false)
     void pinia

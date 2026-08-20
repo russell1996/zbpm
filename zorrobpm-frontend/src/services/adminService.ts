@@ -22,9 +22,13 @@ export async function listMembers(processKey: string): Promise<Member[]> {
 // WO-ACL-7 endpoint: GET /processes/{key}/members/candidates?q= — OWNER-scoped
 // (MANAGE_MEMBERS), active users only, members excluded, result capped at 20,
 // requires q >= 3 chars. The /users directory stays closed from this screen.
+// WO-ACL-15: fullName/email come as EMPTY STRINGS (never null) when the account
+// has none — the dialog renders absence, not the literal "null".
 export interface MemberCandidate {
   userId: string
   username: string
+  fullName: string
+  email: string
 }
 
 export async function searchMemberCandidates(processKey: string, q: string): Promise<MemberCandidate[]> {

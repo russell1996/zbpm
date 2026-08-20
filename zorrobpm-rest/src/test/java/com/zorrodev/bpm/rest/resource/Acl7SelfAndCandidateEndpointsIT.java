@@ -258,30 +258,71 @@ class Acl7SelfAndCandidateEndpointsIT {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Criterion 6: empty / too-short q → refusal, not a dump
+    // Criterion 6 (WO-ACL-15 part B): empty/short q → the FIRST PAGE, not 400
     // ─────────────────────────────────────────────────────────────
 
     @Test
-    void candidates_emptyQuery_is400() throws Exception {
-        mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
+    void candidates_emptyQuery_returnsFirstPage() throws Exception {
+        // WO-ACL-15 criterion 6: an empty q is allowed and returns a page (≤ cap),
+        // not a 400 — the dialog can show the list without typing first.
+        MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
                 .header("Authorization", "Bearer " + userAToken)
                 .param("q", ""))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(result.getResponse().getContentAsString());
+        assertTrue(arr.isArray(), "expected an array: " + arr);
+        assertTrue(arr.size() <= 20, "the page must be capped at 20: " + arr.size());
+        // the page contains candidates (the seeded users), not an error
+        assertTrue(arr.size() >= 1, "empty q must return at least the seeded users: " + arr);
     }
 
     @Test
-    void candidates_shortQuery_is400() throws Exception {
+    void candidates_shortQuery_is200() throws Exception {
+        // WO-ACL-15 part B: the 3-char threshold is gone — a short fragment is just
+        // a wide search, still capped and still MANAGE_MEMBERS-gated.
         mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
                 .header("Authorization", "Bearer " + userAToken)
                 .param("q", "ab"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isOk());
     }
 
     @Test
-    void candidates_missingQuery_is400() throws Exception {
-        mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
-                .header("Authorization", "Bearer " + userAToken))
-            .andExpect(status().isBadRequest());
+    void candidates_emptyQuery_cappedAtTwenty() throws Exception {
+        // WO-ACL-15 criterion 7: the cap is what keeps the endpoint from being a
+        // user directory — with 25 non-member users, an empty q returns exactly 20.
+        for (int i = 0; i < 25; i++) {
+            createUser("acl7-many-" + i, "USER");
+        }
+        MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
+                .header("Authorization", "Bearer " + userAToken)
+                .param("q", ""))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(result.getResponse().getContentAsString());
+        assertEquals(20, arr.size(), "empty q must return exactly the first page (20), not the whole table: " + arr.size());
+    }
+
+    @Test
+    void candidates_emptyQuery_sortedByNameThenLogin() throws Exception {
+        // WO-ACL-15 part B: the page must be stably sorted by name, then login —
+        // a list whose order changes between openings is worse than an empty one.
+        // A shared unique prefix isolates the pair from the rest of the page.
+        String r = UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+        String ann = "acl7-srt-" + r + "-ann";
+        String zoe = "acl7-srt-" + r + "-zoe";
+        createUser(ann, "USER", "Ann A.", "ann@example.com");
+        createUser(zoe, "USER", "Zoe Z.", "zoe@example.com");
+        MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
+                .header("Authorization", "Bearer " + userAToken)
+                .param("q", "acl7-srt-" + r))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(result.getResponse().getContentAsString());
+        assertEquals(2, arr.size(), "the isolated pair must be the whole page: " + arr);
+        assertEquals(ann, arr.get(0).get("username").asText(),
+            "Ann (name 'Ann A.') must sort before Zoe (name 'Zoe Z.'): " + arr);
+        assertEquals(zoe, arr.get(1).get("username").asText());
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -309,7 +350,7 @@ class Acl7SelfAndCandidateEndpointsIT {
     }
 
     @Test
-    void candidates_onlyUserIdAndUsername() throws Exception {
+    void candidates_carriesFullNameAndEmail() throws Exception {
         MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
                 .header("Authorization", "Bearer " + userAToken)
                 .param("q", "acl7-outsider"))
@@ -319,8 +360,53 @@ class Acl7SelfAndCandidateEndpointsIT {
         assertEquals(1, arr.size(), "exactly one match expected: " + arr);
         Set<String> fields = new HashSet<>();
         arr.get(0).fieldNames().forEachRemaining(fields::add);
-        assertEquals(Set.of("userId", "username"), fields,
-            "the candidate DTO must expose ONLY userId and username: " + arr);
+        assertEquals(Set.of("userId", "username", "fullName", "email"), fields,
+            "the candidate DTO must expose userId, username, fullName and email: " + arr);
+        assertEquals("acl7-outsider", arr.get(0).get("username").asText());
+        assertEquals("ACL7 acl7-outsider", arr.get(0).get("fullName").asText(),
+            "fullName must be populated from the account (WO-ACL-15 criterion 1): " + arr);
+        assertEquals("acl7-outsider@example.com", arr.get(0).get("email").asText(),
+            "email must be populated from the account (WO-ACL-15 criterion 1): " + arr);
+    }
+
+    @Test
+    void candidates_accountWithoutIdentity_hasEmptyStrings() throws Exception {
+        // WO-ACL-15 criterion 1: fullName/email are EMPTY STRINGS (never null) when the
+        // account has none — the dialog renders absence, not the literal "null".
+        String noIdUsername = "acl7-noid-" + UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+        createUser(noIdUsername, "USER", null, null);
+        MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
+                .header("Authorization", "Bearer " + userAToken)
+                .param("q", noIdUsername))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(result.getResponse().getContentAsString());
+        assertEquals(1, arr.size(), "exactly one match expected: " + arr);
+        JsonNode node = arr.get(0);
+        assertEquals("", node.get("fullName").asText(), "fullName must be '' when absent, not null: " + node);
+        assertEquals("", node.get("email").asText(), "email must be '' when absent, not null: " + node);
+        assertFalse(node.get("fullName").isNull(), "fullName must never serialize as JSON null: " + node);
+        assertFalse(node.get("email").isNull(), "email must never serialize as JSON null: " + node);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Criterion 3 (WO-ACL-15): /users stays SUPER_ADMIN-only — the
+    // candidates endpoint must not become a user directory through a side door
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    void users_directory_nonAdmin_is403() throws Exception {
+        // A MANAGE_MEMBERS holder (OWNER of keyA) still cannot read the user directory
+        mockMvc.perform(get("/users")
+                .header("Authorization", "Bearer " + userAToken))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void users_directory_superAdmin_isOk() throws Exception {
+        mockMvc.perform(get("/users")
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk());
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -328,12 +414,16 @@ class Acl7SelfAndCandidateEndpointsIT {
     // ─────────────────────────────────────────────────────────────
 
     private UUID createUser(String username, String globalRole) {
+        return createUser(username, globalRole, "ACL7 " + username, username + "@example.com");
+    }
+
+    private UUID createUser(String username, String globalRole, String fullName, String email) {
         UiUserEntity user = new UiUserEntity();
         user.setId(UUID.randomUUID());
         user.setUsername(username);
         user.setPasswordHash(passwordHasher.hash("pass"));
-        user.setFullName("ACL7 " + username);
-        user.setEmail(username + "@example.com");
+        user.setFullName(fullName);
+        user.setEmail(email);
         user.setRole(globalRole);
         user.setActive(true);
         user.setCreatedAt(Instant.now());
