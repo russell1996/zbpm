@@ -1,0 +1,15 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260820-075-add-user-type-to-ui-users
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: ui_users
+            columns:
+              - column:
+                  name: user_type
+                  type: varchar(16)
+                  constraints:
+                    nullable: false
+                  defaultValue: HUMAN
+                  remarks: 'WO-INT-4: HUMAN (person) or SYSTEM (integration account, no password)'

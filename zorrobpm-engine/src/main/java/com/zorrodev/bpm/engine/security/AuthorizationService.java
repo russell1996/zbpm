@@ -38,6 +38,9 @@ public class AuthorizationService {
         DEPLOY, MANAGE_MEMBERS, MANAGE_KEYS, DELETE_PROCESS,
         // Runtime actions — SA with grant + correct process
         START, FETCH_LOCK, COMPLETE_SERVICE_TASK, CORRELATE_MESSAGE,
+        // WO-INT-4: user-task operations (complete/claim/reassign on behalf of a verified
+        // user) — granted to the OWNER role so a system key with a full grant can drive them
+        COMPLETE_USER_TASK,
         // Read action: process member list (ADR-8 п.4 — members are visible to members of the process)
         VIEW_MEMBERS
     }
@@ -52,7 +55,10 @@ public class AuthorizationService {
      */
     private static final Map<ProcessRole, Set<Action>> ROLE_RIGHTS = Map.of(
         ProcessRole.OWNER, EnumSet.of(Action.DEPLOY, Action.MANAGE_MEMBERS, Action.VIEW_MEMBERS,
-            Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE),
+            Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE,
+            // WO-INT-4 criterion 11: a system key owned by an OWNER completes/claims user tasks
+            // on behalf of a verified user — "runtime" rights of the owner role.
+            Action.COMPLETE_USER_TASK),
         ProcessRole.DESIGNER, EnumSet.of(Action.DEPLOY, Action.VIEW_MEMBERS,
             Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE),
         ProcessRole.VIEWER, EnumSet.of(Action.VIEW_MEMBERS)

@@ -103,12 +103,24 @@ public class MemberResource implements MemberContract {
     private void requireOwnerRemains(ProcessEntity process, ProcessMemberEntity member, ProcessRole targetRole) {
         if (ProcessRole.fromName(member.getRole()) != ProcessRole.OWNER) return;
         if (targetRole == ProcessRole.OWNER) return; // OWNER → OWNER keeps the invariant
-        long ownerCount = processMemberRepository.findByProcessId(process.getId()).stream()
+        // WO-INT-4 criterion 4: SYSTEM accounts are NOT counted as owners — a process whose
+        // only owner is a robot is organizationally ownerless. Only HUMAN owners keep the
+        // "at least one owner" invariant.
+        List<ProcessMemberEntity> owners = processMemberRepository.findByProcessId(process.getId()).stream()
             .filter(m -> ProcessRole.fromName(m.getRole()) == ProcessRole.OWNER)
+            .toList();
+        long humanOwnerCount = owners.stream()
+            .filter(m -> !isSystemAccount(m.getUserId()))
             .count();
-        if (ownerCount <= 1) {
+        if (humanOwnerCount <= 1) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot remove or demote the last OWNER");
         }
+    }
+
+    private boolean isSystemAccount(UUID userId) {
+        return uiUserRepository.findById(userId)
+            .map(u -> "SYSTEM".equals(u.getUserType()))
+            .orElse(false);
     }
 
     /** Unknown/absent role → 400 with the list of valid roles (WO-ACL-2 п.1), not a rightless member. */
@@ -174,6 +186,11 @@ public class MemberResource implements MemberContract {
         List<Specification<UiUserEntity>> specs = new ArrayList<>();
         specs.add(UiUserRepository.byUsernameContains(query));
         specs.add(UiUserRepository.byActive(true));
+        // WO-INT-4 criterion 5: system accounts are never offered as candidates — a human
+        // task assigned to a system would never be executed and would appear in nobody's inbox.
+        specs.add((root, cbq, cb) -> cb.or(
+            cb.isNull(root.get("userType")),
+            cb.notEqual(root.get("userType"), "SYSTEM")));
         if (!memberIds.isEmpty()) {
             specs.add((root, cbq, cb) -> cb.not(root.get("id").in(memberIds)));
         }
@@ -311,6 +328,9 @@ public class MemberResource implements MemberContract {
             dto.setUsername(u.getUsername());
             dto.setFullName(u.getFullName());
             dto.setEmail(u.getEmail());
+            // WO-INT-4 criterion 6: flag system accounts so the member list shows
+            // who is a person and who is an integration at a glance.
+            dto.setIsSystem("SYSTEM".equals(u.getUserType()));
         });
 
         return dto;

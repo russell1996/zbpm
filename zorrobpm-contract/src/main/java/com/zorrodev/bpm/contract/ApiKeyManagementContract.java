@@ -32,6 +32,22 @@ public interface ApiKeyManagementContract {
     @PostExchange("/admin/users/{userId}/api-key/revoke")
     void revokeApiKey(@PathVariable UUID userId);
 
+    // ==================== WO-INT-4: system accounts — multiple keys ====================
+    // A SYSTEM account may hold several active keys at once (zero-downtime rotation):
+    // the old key is revoked explicitly only after the new one is in production use.
+    // Human accounts keep the one-key-per-user semantics above.
+
+    @GetExchange("/admin/users/{userId}/api-keys")
+    List<ApiKeyDTO> listApiKeys(@PathVariable UUID userId);
+
+    /** Creates one more key for the owner. Human accounts: 409 while an active key exists. */
+    @PostExchange("/admin/users/{userId}/api-keys")
+    ApiKeyWithSecretDTO createAdditionalApiKey(@PathVariable UUID userId);
+
+    /** Revokes exactly one key by id — the other keys of the same owner keep working. */
+    @PostExchange("/admin/users/{userId}/api-keys/{apiKeyId}/revoke")
+    void revokeApiKeyById(@PathVariable UUID userId, @PathVariable UUID apiKeyId);
+
     // ==================== User self-service endpoints ====================
 
     @GetExchange("/me/api-key")
