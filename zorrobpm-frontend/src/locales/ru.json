@@ -347,6 +347,14 @@
   "noReason": "Причина не указана",
   "noSubmissions": "Вы ещё не отправляли заявок на процесс.",
   "noPendingSubmissions": "Нет заявок на рассмотрении.",
+  "noSubmissionsInStatus": "В этом статусе заявок нет.",
+  "decision": "Решение",
+  "approvedLabel": "Одобрено",
+  "rejectedLabel": "Отклонено",
+  "submissionStatusPending": "На рассмотрении",
+  "submissionStatusApproved": "Одобренные",
+  "submissionStatusRejected": "Отклонённые",
+  "submissionStatusAll": "Все",
   "approve": "Одобрить",
   "reject": "Отклонить",
   "submissionApproved": "Заявка одобрена — процесс развёрнут, отправитель стал владельцем",
@@ -427,5 +435,14 @@
   "statusInProgress": "Выполняется",
   "statusCompleted": "Завершена",
   "statusCancelled": "Отменена",
-  "statusIncident": "Инцидент"
+  "statusIncident": "Инцидент",
+  "errors": {
+    "PROCESS_KEY_MISMATCH": "Ключ в BPMN ({xmlKey}) не совпадает с ключом процесса ({targetKey})",
+    "INVALID_PROCESS_KEY": "Некорректный ключ процесса: {key}",
+    "BPMN_TOO_LARGE": "Модель слишком большая: {actualLength} из {maxLength} байт",
+    "SUBMISSION_NOT_FOUND": "Заявка не найдена",
+    "SUBMISSION_ALREADY_REVIEWED": "Заявка уже рассмотрена (статус: {status})",
+    "PENDING_SUBMISSION_EXISTS": "По ключу {processKey} уже есть заявка на рассмотрении",
+    "PROCESS_ALREADY_EXISTS": "Процесс с ключом {processKey} уже существует"
+  }
 }

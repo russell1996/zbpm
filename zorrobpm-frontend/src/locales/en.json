@@ -347,6 +347,14 @@
   "noReason": "No reason given",
   "noSubmissions": "You have not submitted any processes yet.",
   "noPendingSubmissions": "No pending submissions.",
+  "noSubmissionsInStatus": "No submissions in this status.",
+  "decision": "Decision",
+  "approvedLabel": "Approved",
+  "rejectedLabel": "Rejected",
+  "submissionStatusPending": "Pending",
+  "submissionStatusApproved": "Approved",
+  "submissionStatusRejected": "Rejected",
+  "submissionStatusAll": "All",
   "approve": "Approve",
   "reject": "Reject",
   "submissionApproved": "Submission approved — process deployed and submitter became owner",
@@ -427,5 +435,14 @@
   "statusInProgress": "In progress",
   "statusCompleted": "Completed",
   "statusCancelled": "Cancelled",
-  "statusIncident": "Incident"
+  "statusIncident": "Incident",
+  "errors": {
+    "PROCESS_KEY_MISMATCH": "The BPMN key ({xmlKey}) does not match the target process key ({targetKey})",
+    "INVALID_PROCESS_KEY": "Invalid process key: {key}",
+    "BPMN_TOO_LARGE": "The model is too large: {actualLength} of {maxLength} bytes",
+    "SUBMISSION_NOT_FOUND": "Submission not found",
+    "SUBMISSION_ALREADY_REVIEWED": "The submission was already reviewed (status: {status})",
+    "PENDING_SUBMISSION_EXISTS": "A pending submission for key {processKey} already exists",
+    "PROCESS_ALREADY_EXISTS": "A process with key {processKey} already exists"
+  }
 }

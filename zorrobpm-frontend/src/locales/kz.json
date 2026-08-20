@@ -347,6 +347,14 @@
   "noReason": "Себебі көрсетілмеген",
   "noSubmissions": "Сіз әлі процес бойынша өтінім жібермедіңіз.",
   "noPendingSubmissions": "Қараудағы өтінімдер жоқ.",
+  "noSubmissionsInStatus": "Бұл күйде өтінімдер жоқ.",
+  "decision": "Шешім",
+  "approvedLabel": "Мақұлданды",
+  "rejectedLabel": "Қабылданбады",
+  "submissionStatusPending": "Қаралуда",
+  "submissionStatusApproved": "Мақұлданған",
+  "submissionStatusRejected": "Қабылданбаған",
+  "submissionStatusAll": "Барлығы",
   "approve": "Мақұлдау",
   "reject": "Қабылдамау",
   "submissionApproved": "Өтінім мақұлданды — процес орналастырылды, жіберуші иесі болды",
@@ -427,5 +435,14 @@
   "statusInProgress": "Орындалуда",
   "statusCompleted": "Аяқталды",
   "statusCancelled": "Болдырылмады",
-  "statusIncident": "Оқиға"
+  "statusIncident": "Оқиға",
+  "errors": {
+    "PROCESS_KEY_MISMATCH": "BPMN кілті ({xmlKey}) процестің кілтімен ({targetKey}) сәйкес келмейді",
+    "INVALID_PROCESS_KEY": "Процесстің қате кілті: {key}",
+    "BPMN_TOO_LARGE": "Модель тым үлкен: {maxLength} байттан {actualLength}",
+    "SUBMISSION_NOT_FOUND": "Өтінім табылмады",
+    "SUBMISSION_ALREADY_REVIEWED": "Өтінім қаралып қойған (күйі: {status})",
+    "PENDING_SUBMISSION_EXISTS": "{processKey} кілті бойынша қараудағы өтінім бар",
+    "PROCESS_ALREADY_EXISTS": "{processKey} кілті бар процесс қазірдің өзінде бар"
+  }
 }
