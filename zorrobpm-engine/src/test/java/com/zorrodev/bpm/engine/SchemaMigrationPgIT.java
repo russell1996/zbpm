@@ -50,7 +50,7 @@ class SchemaMigrationPgIT extends PostgresIT {
         assertThat(uiUserRepository.findById(sys.getId()).orElseThrow().getUserType()).isEqualTo("SYSTEM");
     }
 
-    // --- 076 (criterion 13): service_account tables dropped ---
+    // --- 076 (criterion 11): service_account tables dropped ---
 
     @Test
     void migration076_dropsServiceAccountTables() {

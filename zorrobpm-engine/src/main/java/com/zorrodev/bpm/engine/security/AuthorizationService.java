@@ -56,7 +56,7 @@ public class AuthorizationService {
     private static final Map<ProcessRole, Set<Action>> ROLE_RIGHTS = Map.of(
         ProcessRole.OWNER, EnumSet.of(Action.DEPLOY, Action.MANAGE_MEMBERS, Action.VIEW_MEMBERS,
             Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE,
-            // WO-INT-4 criterion 11: a system key owned by an OWNER completes/claims user tasks
+            // WO-INT-4 criterion 4: a system key owned by an OWNER completes/claims user tasks
             // on behalf of a verified user — "runtime" rights of the owner role.
             Action.COMPLETE_USER_TASK),
         ProcessRole.DESIGNER, EnumSet.of(Action.DEPLOY, Action.VIEW_MEMBERS,
@@ -67,9 +67,11 @@ public class AuthorizationService {
     public boolean canOperate(Principal principal, String processDefinitionKey, Action action) {
         if (principal.isSuperAdmin()) return true;
 
-        // ADR-2: SA — management always denied; runtime requires grant
+        // WO-INT-4: one authorization model — a service key is just a key, its rights come from
+        // the same grant/role intersection as any other key (effectiveGrants). No type-based
+        // special cases here: "Системе не дают роль владельца — и она не управляет участниками"
+        // is policy, not a guard.
         if (principal instanceof Principal.ServicePrincipal sa) {
-            if (isManagementAction(action)) return false;
             ProcessEntity process = processRepository.findByDefinitionKey(processDefinitionKey).orElse(null);
             if (process == null) return false;
             Principal.Grant grant = sa.grants().get(process.getId());
@@ -89,11 +91,6 @@ public class AuthorizationService {
             return ROLE_RIGHTS.get(role).contains(action);
         }
         return false;
-    }
-
-    private boolean isManagementAction(Action action) {
-        return action == Action.DEPLOY || action == Action.MANAGE_MEMBERS
-            || action == Action.MANAGE_KEYS || action == Action.DELETE_PROCESS;
     }
 
     /**

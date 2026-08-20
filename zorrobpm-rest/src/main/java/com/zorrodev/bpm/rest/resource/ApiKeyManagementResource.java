@@ -82,7 +82,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         requireSuperAdmin();
 
         if (isSystemAccount(userId)) {
-            // WO-INT-4 criterion 7: a system account's grants are account-level — every
+            // WO-INT-4 criterion 5: a system account's grants are account-level — every
             // active key of the account carries the same grants (rotation must not
             // produce a key with a different permission set).
             List<ApiKeyEntity> keys = apiKeyRepository.findAllByOwnerUserId(userId).stream()
@@ -232,7 +232,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public ApiKeyWithSecretDTO createAdditionalApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        // WO-INT-4 criterion 7: multiple concurrent keys are a SYSTEM-account feature
+        // WO-INT-4 criterion 5: multiple concurrent keys are a SYSTEM-account feature
         // (zero-downtime rotation). Human accounts keep one-key-per-user: an attempt to
         // open a second key through this endpoint → 409.
         if (!isSystemAccount(userId)) {

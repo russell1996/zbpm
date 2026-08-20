@@ -60,7 +60,7 @@ public class RateLimitFilterConfig {
         filter.setAccountCapacity(accountCapacity);
         filter.setRefreshCapacity(refreshCapacity);
         filter.setRefreshWindowSeconds(refreshWindowSeconds);
-        // WO-INT-4 criterion 10: per-key data quota needs key identity.
+        // WO-INT-4 criterion 8: per-key data quota needs key identity.
         filter.setApiKeyRepository(apiKeyRepository);
 
         Set<String> proxies = parseTrustedProxies(trustedProxiesRaw);
