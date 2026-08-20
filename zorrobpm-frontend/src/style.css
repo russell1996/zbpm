@@ -67,6 +67,13 @@ body {
   background: var(--color-background);
 }
 
-* {
-  border-color: var(--color-border);
+@layer base {
+  /* Default border color for elements that do not set one via a utility.
+     MUST live in a layer: unlayered rules beat ALL Tailwind utilities in the
+     cascade, and this rule was silently overriding border-{color} classes —
+     e.g. TabsBar's border-primary never painted the accent underline
+     (WO-ACL-15 criterion 13). */
+  * {
+    border-color: var(--color-border);
+  }
 }
