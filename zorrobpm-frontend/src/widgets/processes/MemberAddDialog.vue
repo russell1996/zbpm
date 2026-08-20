@@ -3,9 +3,9 @@
  * WO-ACL-14 criteria 9-13: adding a member happens in a DIALOG, not inline in
  * the members tab.
  *  9  — the "Add member" button opens this dialog; the inline search is gone;
- * 10  — results are a LIST of candidates (username; fullName/email render when
- *       the ACL-7 contract provides them — see the ESCALATION in the report),
- *       selected by clicking a row, not by typing an id;
+ * 10  — results are a LIST of candidates (WO-ACL-15: fullName/email come from
+ *       the contract — see the ACL-14 ESCALATION, resolved here), selected by
+ *       clicking a row, not by typing an id;
  * 11  — candidates already in the members list are marked and cannot be
  *       selected again (alreadyMember);
  * 12  — the dialog closes on success, STAYS open on error with the reason;
@@ -68,6 +68,19 @@ function selectCandidate(c: MemberCandidate) {
   selectedUserId.value = c.userId
 }
 
+/**
+ * WO-ACL-15 criteria 4-5: the row shows the person's NAME first (falling back to
+ * the username), and the username stays as a detail when the name is shown; the
+ * email is appended when present. Accounts without name/email render the bare
+ * username — no "null", no empty lines.
+ */
+function candidateDetail(c: MemberCandidate): string {
+  const parts: string[] = []
+  if (c.fullName) parts.push(c.username)
+  if (c.email) parts.push(c.email)
+  return parts.join(' · ')
+}
+
 async function submit() {
   // criterion 12: guard in the handler, not only :disabled (P-46)
   if (addingMember.value || !selectedUserId.value) return
@@ -119,8 +132,8 @@ function reset() {
           @click="selectCandidate(c)"
         >
           <span class="min-w-0">
-            <span class="block truncate">{{ c.username }}</span>
-            <span class="block text-xs text-muted-foreground truncate font-mono">{{ c.userId }}</span>
+            <span class="block truncate">{{ c.fullName || c.username }}</span>
+            <span v-if="candidateDetail(c)" class="block text-xs text-muted-foreground truncate">{{ candidateDetail(c) }}</span>
           </span>
           <span v-if="memberIds.has(c.userId)" class="text-xs text-muted-foreground shrink-0">{{ t('alreadyMember') }}</span>
           <span v-else-if="selectedUserId === c.userId" class="text-xs text-muted-foreground shrink-0">{{ t('selected') }}</span>

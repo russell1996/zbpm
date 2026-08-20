@@ -171,7 +171,7 @@ describe('WO-ACL-11 criteria 17–18 + WO-ACL-14 criterion 9: add member from th
   })
 
   it('criterion 17 (WO-ACL-14: via the dialog): an OWNER opens the dialog, searches candidates and adds a member with a role', async () => {
-    vi.mocked(adminService.searchMemberCandidates).mockResolvedValue([{ userId: 'u-annette', username: 'annette' }])
+    vi.mocked(adminService.searchMemberCandidates).mockResolvedValue([{ userId: 'u-annette', username: 'annette', fullName: '', email: '' }])
     const wrapper = await mountDetail('v2', [{ userId: 'me', role: 'OWNER' }])
     await openMembersTab(wrapper)
 
