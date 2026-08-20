@@ -30,9 +30,9 @@ public interface MemberContract {
 
     /**
      * WO-ACL-7: user candidates to add to a process — MANAGE_MEMBERS on the process.
-     * A non-empty {@code q} (username fragment, min 3 chars) is mandatory: an empty query
-     * would make this a user directory, which is exactly what /users staying
-     * SUPER_ADMIN-only is meant to prevent.
+     * WO-ACL-15 part B: {@code q} is OPTIONAL — an empty query returns the first page
+     * (capped, sorted by name then login); the cap and MANAGE_MEMBERS are what keep
+     * this from being a user directory (/users stays SUPER_ADMIN-only).
      * WO-ACL-15: the DTO also carries fullName and email (empty strings when absent) —
      * the same two fields MemberDTO already exposes to every authenticated user.
      */

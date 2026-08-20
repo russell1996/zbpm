@@ -258,30 +258,71 @@ class Acl7SelfAndCandidateEndpointsIT {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Criterion 6: empty / too-short q → refusal, not a dump
+    // Criterion 6 (WO-ACL-15 part B): empty/short q → the FIRST PAGE, not 400
     // ─────────────────────────────────────────────────────────────
 
     @Test
-    void candidates_emptyQuery_is400() throws Exception {
-        mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
+    void candidates_emptyQuery_returnsFirstPage() throws Exception {
+        // WO-ACL-15 criterion 6: an empty q is allowed and returns a page (≤ cap),
+        // not a 400 — the dialog can show the list without typing first.
+        MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
                 .header("Authorization", "Bearer " + userAToken)
                 .param("q", ""))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(result.getResponse().getContentAsString());
+        assertTrue(arr.isArray(), "expected an array: " + arr);
+        assertTrue(arr.size() <= 20, "the page must be capped at 20: " + arr.size());
+        // the page contains candidates (the seeded users), not an error
+        assertTrue(arr.size() >= 1, "empty q must return at least the seeded users: " + arr);
     }
 
     @Test
-    void candidates_shortQuery_is400() throws Exception {
+    void candidates_shortQuery_is200() throws Exception {
+        // WO-ACL-15 part B: the 3-char threshold is gone — a short fragment is just
+        // a wide search, still capped and still MANAGE_MEMBERS-gated.
         mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
                 .header("Authorization", "Bearer " + userAToken)
                 .param("q", "ab"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isOk());
     }
 
     @Test
-    void candidates_missingQuery_is400() throws Exception {
-        mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
-                .header("Authorization", "Bearer " + userAToken))
-            .andExpect(status().isBadRequest());
+    void candidates_emptyQuery_cappedAtTwenty() throws Exception {
+        // WO-ACL-15 criterion 7: the cap is what keeps the endpoint from being a
+        // user directory — with 25 non-member users, an empty q returns exactly 20.
+        for (int i = 0; i < 25; i++) {
+            createUser("acl7-many-" + i, "USER");
+        }
+        MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
+                .header("Authorization", "Bearer " + userAToken)
+                .param("q", ""))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(result.getResponse().getContentAsString());
+        assertEquals(20, arr.size(), "empty q must return exactly the first page (20), not the whole table: " + arr.size());
+    }
+
+    @Test
+    void candidates_emptyQuery_sortedByNameThenLogin() throws Exception {
+        // WO-ACL-15 part B: the page must be stably sorted by name, then login —
+        // a list whose order changes between openings is worse than an empty one.
+        // A shared unique prefix isolates the pair from the rest of the page.
+        String r = UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+        String ann = "acl7-srt-" + r + "-ann";
+        String zoe = "acl7-srt-" + r + "-zoe";
+        createUser(ann, "USER", "Ann A.", "ann@example.com");
+        createUser(zoe, "USER", "Zoe Z.", "zoe@example.com");
+        MvcResult result = mockMvc.perform(get("/processes/" + keyA + "/members/candidates")
+                .header("Authorization", "Bearer " + userAToken)
+                .param("q", "acl7-srt-" + r))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode arr = mapper.readTree(result.getResponse().getContentAsString());
+        assertEquals(2, arr.size(), "the isolated pair must be the whole page: " + arr);
+        assertEquals(ann, arr.get(0).get("username").asText(),
+            "Ann (name 'Ann A.') must sort before Zoe (name 'Zoe Z.'): " + arr);
+        assertEquals(zoe, arr.get(1).get("username").asText());
     }
 
     // ─────────────────────────────────────────────────────────────
