@@ -103,11 +103,32 @@ describe('MemberAddDialog (WO-ACL-14 criteria 10-12)', () => {
     expect(wrapper.text()).not.toContain('null')
   })
 
-  it('criterion 10: search shorter than 3 characters does not hit the API', async () => {
+  it('criterion 8: the list is shown IMMEDIATELY on open — empty query, no typing required', async () => {
+    // WO-ACL-15 part B: the dialog requests the first page with an EMPTY q on open
     const wrapper = renderDialog()
+    await flushPromises()
+    expect(mockSearch).toHaveBeenCalledWith('p', '')
+    const rows = wrapper.findAll('button').filter((b) => b.text().includes('carol'))
+    expect(rows.length).toBeGreaterThan(0)
+  })
+
+  it('criterion 8: typing narrows the list (a short query hits the API too)', async () => {
+    const wrapper = renderDialog()
+    await flushPromises()
+    mockSearch.mockClear()
     await typeQuery(wrapper, 'ca')
-    expect(mockSearch).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('searchCandidateHint')
+    expect(mockSearch).toHaveBeenCalledWith('p', 'ca')
+    expect(mockSearch).toHaveBeenCalledTimes(1)
+  })
+
+  it('criterion 8: a full page (20) is labelled as truncated, not silently cut', async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => ({
+      userId: 'u-' + i, username: 'user' + i, fullName: '', email: '',
+    }))
+    mockSearch.mockResolvedValue(twenty)
+    const wrapper = renderDialog()
+    await flushPromises()
+    expect(wrapper.text()).toContain('candidatesTruncated')
   })
 
   it('criterion 10: empty result shows the "no candidates" text', async () => {

@@ -88,8 +88,8 @@ vi.mock('@/services/adminService', () => ({
   changeMemberRole: vi.fn().mockResolvedValue({}),
   removeMember: vi.fn().mockResolvedValue({}),
   searchMemberCandidates: vi.fn().mockResolvedValue([
-    { userId: 'u-annette', username: 'annette' },
-    { userId: 'u-bob', username: 'bob' },
+    { userId: 'u-annette', username: 'annette', fullName: 'Анна Аннет', email: 'annette@t.com' },
+    { userId: 'u-bob', username: 'bob', fullName: '', email: '' },
   ]),
   addMember: vi.fn().mockResolvedValue({}),
 }))
@@ -516,7 +516,7 @@ describe('WO-ACL-14 criteria 9-12 — member dialog (ProcessDefinitionDetail)', 
     await addButton.trigger('click')
     await flushPromises()
 
-    const input = wrapper.find('input[placeholder*="мин. 3 символа"]')
+    const input = wrapper.find('input[placeholder*="Поиск по имени"]')
     expect(input.exists()).toBe(true)
     await input.setValue('ann')
     await flushPromises()

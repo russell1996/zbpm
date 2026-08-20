@@ -13,8 +13,11 @@
  *       `if (addingMember) return` in the handler AND :disabled — P-46);
  * 13  — the button that opens this dialog is gated by canManageMembers on the
  *       page (super-admin/OWNER only).
+ *  8  — WO-ACL-15 part B: the list is visible WITHOUT typing — an empty query
+ *       returns the first page on open; typing narrows it; a full page is
+ *       labelled ("first 20 shown") instead of being silently truncated.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { searchMemberCandidates, addMember, type Member, type MemberCandidate } from '@/services/adminService'
@@ -37,25 +40,38 @@ const query = ref('')
 const candidates = ref<MemberCandidate[]>([])
 const candidatesLoading = ref(false)
 const candidatesError = ref<string | null>(null)
+const candidatesTruncated = ref(false)
 const selectedUserId = ref('')
 const role = ref('VIEWER')
 const addingMember = ref(false)
 
 const memberIds = computed(() => new Set(props.members.map((m) => m.userId)))
 
+/**
+ * WO-ACL-15 criterion 8: the dialog shows the list IMMEDIATELY on open — an empty
+ * query is a valid request since part B (the server returns the first page).
+ * Typing narrows it; the truncation line explains when the page was cut.
+ */
+watch(
+  () => props.open,
+  (open) => {
+    if (open) void search()
+  },
+  { immediate: true },
+)
+
 async function search() {
   const q = query.value.trim()
-  if (q.length < 3) {
-    candidates.value = []
-    candidatesError.value = null
-    return
-  }
   candidatesLoading.value = true
   candidatesError.value = null
   try {
     candidates.value = await searchMemberCandidates(props.processKey, q)
+    // WO-ACL-15 criterion 8: the server caps the page at 20 — if we got exactly
+    // the cap, there may be more; say so instead of silently truncating.
+    candidatesTruncated.value = candidates.value.length === 20
   } catch (e) {
     candidates.value = []
+    candidatesTruncated.value = false
     candidatesError.value = errorMessage(e, t('failedToLoadCandidates'))
   } finally {
     candidatesLoading.value = false
@@ -102,6 +118,7 @@ function reset() {
   query.value = ''
   candidates.value = []
   candidatesError.value = null
+  candidatesTruncated.value = false
   selectedUserId.value = ''
   role.value = 'VIEWER'
   addingMember.value = false
@@ -138,8 +155,10 @@ function reset() {
           <span v-if="memberIds.has(c.userId)" class="text-xs text-muted-foreground shrink-0">{{ t('alreadyMember') }}</span>
           <span v-else-if="selectedUserId === c.userId" class="text-xs text-muted-foreground shrink-0">{{ t('selected') }}</span>
         </button>
+        <!-- WO-ACL-15 criterion 8: a full page may have more — say so, don't truncate silently -->
+        <p v-if="candidatesTruncated" class="px-3 py-2 text-xs text-muted-foreground">{{ t('candidatesTruncated') }}</p>
       </div>
-      <p v-else-if="query.trim().length >= 3" class="text-sm text-muted-foreground">{{ t('noCandidates') }}</p>
+      <p v-else-if="query.trim().length > 0" class="text-sm text-muted-foreground">{{ t('noCandidates') }}</p>
       <p v-else class="text-sm text-muted-foreground">{{ t('searchCandidateHint') }}</p>
 
       <div v-if="selectedUserId" class="flex items-center gap-2">

@@ -82,7 +82,7 @@ const i18n = createI18n({
       you: 'вы', ownerRole: 'ВЛАДЕЛЕЦ', designerRole: 'ДИЗАЙНЕР', viewerRole: 'НАБЛЮДАТЕЛЬ',
       remove: 'Удалить', membersHint: 'Кто имеет доступ', failedToLoadMembers: 'Ошибка',
       username: 'Имя пользователя', fullName: 'Имя', email: 'Почта', role: 'Роль', actions: 'Действия',
-      addMember: 'Добавить участника', searchCandidatePlaceholder: 'Поиск по имени пользователя (мин. 3 символа)',
+      addMember: 'Добавить участника', searchCandidatePlaceholder: 'Поиск по имени пользователя',
       searchCandidateHint: 'Начните вводить имя пользователя', noCandidates: 'Никого не найдено',
       selected: 'выбрано', adding: 'Добавление…', memberAdded: 'Участник добавлен',
       failedToAddMember: 'Не удалось добавить', failedToLoadCandidates: 'Не удалось загрузить кандидатов',
@@ -177,13 +177,13 @@ describe('WO-ACL-11 criteria 17–18 + WO-ACL-14 criterion 9: add member from th
 
     // WO-ACL-14: the tab shows the "Add member" BUTTON (no inline search input)
     expect(wrapper.text()).toContain('Добавить участника')
-    expect(wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]').exists()).toBe(false)
+    expect(wrapper.find('input[placeholder="Поиск по имени пользователя"]').exists()).toBe(false)
 
     // clicking opens the dialog with the search input
     const openButton = wrapper.findAll('button').find((b) => b.text() === 'Добавить участника')!
     await openButton.trigger('click')
     await flushPromises()
-    const input = wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]')
+    const input = wrapper.find('input[placeholder="Поиск по имени пользователя"]')
     expect(input.exists()).toBe(true)
 
     // typing >= 3 chars calls the ACL-7 candidates endpoint (NOT /users)
@@ -207,7 +207,7 @@ describe('WO-ACL-11 criteria 17–18 + WO-ACL-14 criterion 9: add member from th
     // member list reloaded after the add
     expect(adminService.listMembers).toHaveBeenCalledWith('order')
     // the dialog closed itself on success
-    expect(wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]').exists()).toBe(false)
+    expect(wrapper.find('input[placeholder="Поиск по имени пользователя"]').exists()).toBe(false)
   })
 
   it('criterion 17: a super-admin sees the add block without being a member', async () => {
@@ -222,6 +222,6 @@ describe('WO-ACL-11 criteria 17–18 + WO-ACL-14 criterion 9: add member from th
     const wrapper = await mountDetail('v2', [{ userId: 'me', role: 'VIEWER' }])
     await openMembersTab(wrapper)
     expect(wrapper.text()).not.toContain('Добавить участника')
-    expect(wrapper.find('input[placeholder="Поиск по имени пользователя (мин. 3 символа)"]').exists()).toBe(false)
+    expect(wrapper.find('input[placeholder="Поиск по имени пользователя"]').exists()).toBe(false)
   })
 })
