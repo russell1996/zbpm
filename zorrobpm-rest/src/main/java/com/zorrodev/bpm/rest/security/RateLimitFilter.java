@@ -193,7 +193,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
         // Data endpoints: generous limit
         if (isDataEndpoint(method, path)) {
-            // WO-INT-4 criterion 10: quota is counted per API KEY, not per IP — an
+            // WO-INT-4 criterion 8: quota is counted per API KEY, not per IP — an
             // integration BFF calling from one address must not be throttled by another
             // BFF on the same address (and must not exhaust the shared per-IP quota).
             String key = resolveDataBucketKey(request, clientIp);

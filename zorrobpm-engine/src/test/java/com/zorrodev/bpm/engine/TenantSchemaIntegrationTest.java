@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * WO-MT-1 + WO-INT-4: Schema validation tests.
  *  #1: Migration ran — core tables exist (entities queryable)
- *  #1b: WO-INT-4 criterion 13 — service_account tables were dropped by migration 076
+ *  #1b: WO-INT-4 criterion 11 — service_account tables were dropped by migration 076
  *  #3: UNIQUE(process_id, user_id) enforced
  *  #4: api_key.key_hash unique enforced
  *  #5: ApiKeyRepository CRUD work
@@ -46,7 +46,7 @@ class TenantSchemaIntegrationTest {
         assertThat(uiUserRepository.findAll()).isNotNull();
     }
 
-    // --- #1b (WO-INT-4 criterion 13): service_account tables are gone ---
+    // --- #1b (WO-INT-4 criterion 11): service_account tables are gone ---
 
     @Test
     void serviceAccountTablesDropped() {

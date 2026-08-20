@@ -35,7 +35,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-INT-4 criterion 10: the data-endpoint rate-limit quota is counted PER API KEY,
+ * WO-INT-4 criterion 8: the data-endpoint rate-limit quota is counted PER API KEY,
  * not per client address. Two integration BFFs (two keys of one system account)
  * calling from the same address must not throttle each other — and must not exhaust
  * the shared per-IP quota of anonymous traffic.

@@ -176,8 +176,8 @@ class Acl2PermissionModelIntegrationTest {
     // ==================== Criterion 1: OWNER adds and removes a member of HIS process ====================
 
     /**
-     * POF #2 (WO-ACL-2): on current code canOperate(MANAGE_MEMBERS) returns false for any UserPrincipal
-     * (isManagementAction check before role lookup) → OWNER gets 403. After the fix → 200.
+     * POF #2 (WO-ACL-2): on pre-fix code canOperate(MANAGE_MEMBERS) returned false for any UserPrincipal
+     * (management actions were denied before the role lookup) → OWNER got 403. After the fix → 200.
      */
     @Test
     void criterion1_ownerAddsAndRemovesMember_returns200() throws Exception {

@@ -94,9 +94,9 @@ public class RuntimeResource implements RuntimeContract {
     }
 
     /**
-     * WO-INT-4 criteria 11-12: X-On-Behalf-Of is accepted ONLY from system accounts
-     * (service keys). A human key acting "on behalf of another" is impersonation, not
-     * integration — 403. Returns the raw claimed username, or null when the header is absent.
+     * WO-INT-4 criteria 9-10: X-On-Behalf-Of is accepted from ANY key. The rule is about the
+     * authentication method, not the account type — a key is a key, whoever it was issued to
+     * (WO-INT-4 §3). Returns the raw claimed username, or null when the header is absent.
      */
     private String checkedOnBehalfOf() {
         String raw = rawOnBehalfOf();
@@ -105,23 +105,15 @@ public class RuntimeResource implements RuntimeContract {
         if (principal == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
-        if (!(principal instanceof Principal.ServicePrincipal sp)) {
+        if (!(principal instanceof Principal.ServicePrincipal)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "X-On-Behalf-Of is only accepted from system accounts");
-        }
-        // WO-INT-4 criterion 12: the KEY ITSELF must belong to a system account.
-        // A human-owned key claiming "on behalf of" is impersonation, not integration —
-        // the principal type alone cannot tell them apart (both are ServicePrincipal).
-        UiUserEntity owner = uiUserRepository.findById(sp.ownerUserId()).orElse(null);
-        if (owner == null || !"SYSTEM".equals(owner.getUserType())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "X-On-Behalf-Of is only accepted from system accounts");
+                "X-On-Behalf-Of is only accepted from API keys");
         }
         return raw;
     }
 
     /**
-     * WO-INT-4 criterion 11: when a service key claims an attribution, the claim must be
+     * WO-INT-4 criteria 9-10: when a service key claims an attribution, the claim must be
      * verifiable — the named user has to be the task assignee or a candidate for it.
      * Otherwise 403. (The trust boundary is unchanged: we trust the system, not its claim.)
      */
@@ -161,17 +153,6 @@ public class RuntimeResource implements RuntimeContract {
             }
         }
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
-    }
-
-    /** WO-INT-4 criterion 5: a human task must never be assigned to a system account. */
-    private void requireHumanAssignee(String assignee) {
-        if (assignee == null || assignee.isBlank()) return;
-        uiUserRepository.findByUsername(assignee)
-            .filter(u -> "SYSTEM".equals(u.getUserType()))
-            .ifPresent(u -> {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Cannot assign a user task to a system account");
-            });
     }
 
     private void requireOperate(String definitionKey, AuthorizationService.Action action) {
@@ -331,7 +312,7 @@ public class RuntimeResource implements RuntimeContract {
         }
 
         String onBehalfOf = checkedOnBehalfOf();
-        // WO-INT-4 criterion 11: a service key's attribution claim must be verifiable —
+        // WO-INT-4 criterion 9: a service key's attribution claim must be verifiable —
         // the named user has to be the assignee or a candidate for this task.
         if (onBehalfOf != null) {
             requireOnBehalfMatchesTask(task, onBehalfOf);
@@ -371,7 +352,7 @@ public class RuntimeResource implements RuntimeContract {
         if (assignee == null || assignee.isBlank()) {
             assignee = resolvePrincipalId(principal);
         } else {
-            // WO-INT-4 criterion 11: the claimed user must be a candidate for this task.
+            // WO-INT-4 criterion 9: the claimed user must be a candidate for this task.
             // (An unassigned task cannot match by assignee, so candidate/process-member
             // rules apply — the same rules as canClaimUserTask for a real user.)
             requireOnBehalfMatchesTask(task, assignee);
@@ -445,9 +426,8 @@ public class RuntimeResource implements RuntimeContract {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
 
-        // WO-INT-4 criterion 5: a human task assigned to a system account would never be
-        // executed and would appear in nobody's inbox — reject the assignment.
-        requireHumanAssignee(dto.getAssignee());
+        // WO-INT-4: candidates are filtered in the member search — assignment itself is not
+        // type-guarded (a system account is an ordinary account; the type is a marker).
 
         dbService.assignUserTask(id, dto.getAssignee());
         auditLogService.record(getPrincipal(), "ASSIGN_USER_TASK", resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), dto.getAssignee());

@@ -41,9 +41,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -52,17 +50,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * WO-INT-4: system user + its key.
  *
- * Criteria:
- *  #1  system account is created; password login for it is impossible (401)
- *  #2  forcePasswordChange does not apply to a system account
- *  #3  system principal gets 403 on addMember/changeRole/removeMember even with OWNER role
- *  #4  a system account is not counted as the last OWNER (removing the human owner -> 409)
- *  #5  a system account never appears in candidates and cannot be assigned a user task
- *  #7  two keys of one system work simultaneously; revoking one does not break the second
- *  #8  expired and revoked keys give 401
- *  #9  lastUsedAt is updated on use
- *  #11 X-On-Behalf-Of with a foreign user -> 403; with the real assignee/candidate -> 200
- *  #12 a human key with X-On-Behalf-Of is rejected (403)
+ * Criteria (rewritten WO — the type is a marker, not a special right):
+ *  #1  every account has a type; default is HUMAN, existing accounts unchanged
+ *  #3  a system account never appears in candidates (member search filter, not an engine guard)
+ *  #4  authorization does NOT depend on the account type: same grants → same answers
+ *  #5  two keys of one account work simultaneously; revoking one does not break the second
+ *  #6  expired and revoked keys give 401
+ *  #7  lastUsedAt is updated on use
+ *  #9  X-On-Behalf-Of with a foreign user -> 403; with the real assignee/candidate -> 200
+ *  #10 the on-behalf rule holds for ANY key, regardless of the account type
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -219,69 +215,12 @@ class SystemUserIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    // --- #3: system principal -> 403 on member management, even with OWNER role ---
+    // --- #3: system account is never offered as a candidate ---
+    // The member-search filter hides SYSTEM accounts (WO-INT-4 criterion 3). Assignment
+    // itself is NOT type-guarded — the type is a marker, not a special right.
 
     @Test
-    void criterion3_systemOwner_manageMembers_returns403() throws Exception {
-        // System becomes an OWNER member of the process (grants require membership)
-        addMember(processKey, systemUserId, "OWNER");
-        String systemKey = createApiKeyForUser(systemUserId);
-        setGrantsFull(systemUserId, processKey);
-
-        // Add member
-        mockMvc.perform(post("/processes/" + processKey + "/members")
-                        .header("Authorization", "Bearer " + systemKey)
-                        .content("{\"userId\":\"" + managerId + "\",\"role\":\"VIEWER\"}")
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isForbidden());
-
-        // Change role
-        mockMvc.perform(patch("/processes/" + processKey + "/members/" + humanOwnerId)
-                        .header("Authorization", "Bearer " + systemKey)
-                        .content("{\"role\":\"VIEWER\"}")
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isForbidden());
-
-        // Remove member
-        mockMvc.perform(delete("/processes/" + processKey + "/members/" + managerId)
-                        .header("Authorization", "Bearer " + systemKey))
-                .andExpect(status().isForbidden());
-    }
-
-    // --- #4: a system account is not counted as the last OWNER ---
-
-    @Test
-    void criterion4_systemNotCountedAsLastOwner_removingHumanOwner_returns409() throws Exception {
-        // Process with TWO owners: one human, one system. Removing the human must be
-        // impossible — the process would be left with a robot as its only owner.
-        addMember(processKey, systemUserId, "OWNER");
-        // Isolate the precondition: other test classes share this process key and seed
-        // their own human OWNERs — the invariant under test is "the last human owner
-        // cannot be removed", so the process must start with exactly [system, human].
-        UUID procId = processRepository.findByDefinitionKey(processKey).orElseThrow().getId();
-        for (ProcessMemberEntity m : processMemberRepository.findByProcessId(procId)) {
-            if (!m.getUserId().equals(systemUserId)) {
-                processMemberRepository.delete(m);
-            }
-        }
-        addMember(processKey, humanOwnerId, "OWNER");
-
-        mockMvc.perform(delete("/processes/" + processKey + "/members/" + humanOwnerId)
-                        .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isConflict());
-
-        // Demoting the human owner to VIEWER is equally forbidden.
-        mockMvc.perform(patch("/processes/" + processKey + "/members/" + humanOwnerId)
-                        .header("Authorization", "Bearer " + adminToken)
-                        .content("{\"role\":\"VIEWER\"}")
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isConflict());
-    }
-
-    // --- #5: system account is never a candidate and cannot be assigned a task ---
-
-    @Test
-    void criterion5_systemNotInCandidates_andCannotBeAssigned() throws Exception {
+    void criterion3_systemNotInCandidates() throws Exception {
         // Not offered as a member candidate in the add-member dialog
         MvcResult candidates = mockMvc.perform(get("/processes/" + processKey + "/members/candidates")
                         .header("Authorization", "Bearer " + adminToken)
@@ -291,7 +230,8 @@ class SystemUserIntegrationTest {
         String body = candidates.getResponse().getContentAsString();
         assertThat(body).doesNotContain("int4sys");
 
-        // Start a task and try to assign it to the system account -> 400
+        // Assignment is NOT type-guarded (criterion 3 is a candidates filter, not an
+        // engine ban): assigning the system account to a user task succeeds.
         UUID taskId = startTaskAndGetId();
         AssignUserTaskDTO assignDto = new AssignUserTaskDTO();
         assignDto.setAssignee("int4sys");
@@ -299,13 +239,13 @@ class SystemUserIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(assignDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk());
     }
 
-    // --- #7: two keys of one system work; revoking one does not break the other ---
+    // --- #5: two keys of one account work; revoking one does not break the other ---
 
     @Test
-    void criterion7_twoKeysOfOneSystem_workTogether_revokeOneKeepsOther() throws Exception {
+    void criterion5_twoKeysOfOneAccount_workTogether_revokeOneKeepsOther() throws Exception {
         addMember(processKey, systemUserId, "OWNER");
 
         String key1 = createApiKeyForUser(systemUserId);          // POST /api-key
@@ -345,10 +285,10 @@ class SystemUserIntegrationTest {
                 .andExpect(status().isConflict());
     }
 
-    // --- #8: expired and revoked keys give 401 ---
+    // --- #6: expired and revoked keys give 401 ---
 
     @Test
-    void criterion8_expiredAndRevokedKeys_returns401() throws Exception {
+    void criterion6_expiredAndRevokedKeys_returns401() throws Exception {
         addMember(processKey, systemUserId, "OWNER");
         setGrantsFull(systemUserId, processKey);
 
@@ -382,10 +322,10 @@ class SystemUserIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // --- #9: lastUsedAt is updated on use ---
+    // --- #7: lastUsedAt is updated on use ---
 
     @Test
-    void criterion9_lastUsedAt_updatedOnUse() throws Exception {
+    void criterion7_lastUsedAt_updatedOnUse() throws Exception {
         addMember(processKey, systemUserId, "OWNER");
         String key = createApiKeyForUser(systemUserId);
         setGrantsFull(systemUserId, processKey);
@@ -412,10 +352,10 @@ class SystemUserIntegrationTest {
         assertThat(found).isTrue();
     }
 
-    // --- #11: X-On-Behalf-Of must match the task (assignee/candidate/member) ---
+    // --- #9: X-On-Behalf-Of must match the task (assignee/candidate/member) ---
 
     @Test
-    void criterion11_completeWithOnBehalfOf_realAssignee200_foreign403() throws Exception {
+    void criterion9_completeWithOnBehalfOf_realAssignee200_foreign403() throws Exception {
         addMember(processKey, systemUserId, "OWNER");
         String systemKey = createApiKeyForUser(systemUserId);
         setGrantsFull(systemUserId, processKey);
@@ -444,10 +384,10 @@ class SystemUserIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    // --- #11b: claim via X-On-Behalf-Of — candidate only ---
+    // --- #9b: claim via X-On-Behalf-Of — candidate only ---
 
     @Test
-    void criterion11b_claimWithOnBehalfOf_candidate200_foreign403() throws Exception {
+    void criterion9b_claimWithOnBehalfOf_candidate200_foreign403() throws Exception {
         addMember(candidateProcessKey, systemUserId, "OWNER");
         String systemKey = createApiKeyForUser(systemUserId);
         setGrantsFull(systemUserId, candidateProcessKey);
@@ -469,10 +409,12 @@ class SystemUserIntegrationTest {
         assertThat(userTaskRepository.findById(taskId2).orElseThrow().getAssignee()).isNull();
     }
 
-    // --- #12: a human key cannot name somebody else (checkedOnBehalfOf rejects UserPrincipal) ---
+    // --- #10: the on-behalf rule holds for ANY key, regardless of the account type ---
+    // A human-owned key is still a key: X-On-Behalf-Of is checked against the assignee /
+    // candidate, not rejected by account type (WO-INT-4 criterion 10).
 
     @Test
-    void criterion12_humanKey_withOnBehalfOf_returns403() throws Exception {
+    void criterion10_humanKey_withOnBehalfOf_checkedLikeAnyKey() throws Exception {
         // A dedicated human owner: criterion 4 already issues a key for humanOwnerId
         // and a human account has exactly one key — reusing the same id would 409.
         UUID humanKeyOwnerId = createUser("int4human2", "HUMAN", "MyStr0ng!P@ssw0rd");
@@ -480,6 +422,7 @@ class SystemUserIntegrationTest {
         String humanKey = createApiKeyForUser(humanKeyOwnerId);
         setGrantsFull(humanKeyOwnerId, processKey);
 
+        // The real assignee -> 200 (same rule as a system key)
         UUID taskId = startTaskAndGetId(); // assignee=user1
         CompleteTaskDTO dto = new CompleteTaskDTO();
         dto.setVariables(List.of());
@@ -488,16 +431,14 @@ class SystemUserIntegrationTest {
                         .header("X-On-Behalf-Of", "user1")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
 
-        // Starting with a human key + header is equally forbidden
-        StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
-        startDto.setProcessDefinitionId(processDefinitionId);
-        startDto.setVariables(List.of());
-        mockMvc.perform(post("/process-instances")
+        // A foreign name is NOT the assignee -> 403
+        UUID taskId2 = startTaskAndGetId();
+        mockMvc.perform(post("/user-tasks/" + taskId2 + "/complete")
                         .header("Authorization", "Bearer " + humanKey)
-                        .header("X-On-Behalf-Of", "user1")
-                        .content(mapper.writeValueAsString(startDto))
+                        .header("X-On-Behalf-Of", "stranger")
+                        .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isForbidden());
     }
