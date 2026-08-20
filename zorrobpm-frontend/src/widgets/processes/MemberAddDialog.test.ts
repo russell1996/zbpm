@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 /**
  * WO-ACL-14 criteria 10-12 — MemberAddDialog:
- *  10 — the dialog lists search results (username; fullName/email render when
- *       the ACL-7 contract provides them — see the report escalation) and the
+ *  10 — the dialog lists search results (WO-ACL-15: fullName/email come from
+ *       the contract — see the ACL-14 report escalation, resolved here) and the
  *       selection is row-based, not id-typing;
  *  11 — candidates already in the members list are marked (alreadyMember) and
  *       cannot be selected again;
  *  12 — on success the dialog closes (close emitted); on error it STAYS open
  *       with the reason; the submit button is locked from press to response —
  *       five rapid clicks fire ONE request (handler guard, not only disabled).
+ * WO-ACL-15 criteria 4-5:
+ *  4 — the row shows the name and the email, the login stays as a detail;
+ *  5 — a candidate without name/email renders no "null" and no empty lines.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -27,9 +30,9 @@ const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => mockToast }))
 
 const CANDIDATES = [
-  { userId: 'u-carol', username: 'carol' },
-  { userId: 'u-dave', username: 'dave' },
-  { userId: 'u-bob', username: 'bob' },
+  { userId: 'u-carol', username: 'carol', fullName: 'Carol C.', email: 'carol@t.com' },
+  { userId: 'u-dave', username: 'dave', fullName: '', email: '' },
+  { userId: 'u-bob', username: 'bob', fullName: 'Bob B.', email: 'bob@t.com' },
 ]
 const MEMBERS = [
   { userId: 'u-owner', username: 'alice', fullName: 'Alice A.', email: 'a@t.com', role: 'OWNER', addedBy: null, addedAt: '2026-01-01', processKey: 'p' },
@@ -54,7 +57,7 @@ describe('MemberAddDialog (WO-ACL-14 criteria 10-12)', () => {
     mockAdd.mockResolvedValue({ userId: 'u-carol', username: 'carol', role: 'VIEWER', fullName: null, email: null, addedBy: 'u-owner', addedAt: '2026-01-03', processKey: 'p' })
   })
 
-  it('criterion 10: candidates are listed as rows (username + id) and picked by clicking the row', async () => {
+  it('criterion 10: candidates are listed as rows and picked by clicking the row', async () => {
     const wrapper = renderDialog()
     await typeQuery(wrapper, 'car')
     expect(mockSearch).toHaveBeenCalledWith('p', 'car')
@@ -65,6 +68,39 @@ describe('MemberAddDialog (WO-ACL-14 criteria 10-12)', () => {
     await rows[0].trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('selected')
+  })
+
+  it('criterion 4: the row shows the name and the email, the login stays as a detail', async () => {
+    const wrapper = renderDialog()
+    await typeQuery(wrapper, 'car')
+    const carolRow = wrapper.findAll('button').find((b) => b.text().includes('carol'))!
+    // name first, then the detail line "login · email"
+    expect(carolRow.text()).toContain('Carol C.')
+    expect(carolRow.text()).toContain('carol · carol@t.com')
+    // the raw userId must NOT be rendered as the detail (ACL-15 replaced it
+    // with the login/email pair)
+    expect(carolRow.text()).not.toContain('u-carol')
+  })
+
+  it('criterion 5: candidate without name/email renders no "null" and no empty lines', async () => {
+    const wrapper = renderDialog()
+    await typeQuery(wrapper, 'dave')
+    const daveRow = wrapper.findAll('button').find((b) => b.text().includes('dave'))!
+    // bare username, name/email absent — no "null" anywhere in the dialog
+    expect(daveRow.text()).toContain('dave')
+    expect(wrapper.text()).not.toContain('null')
+    // no empty detail line: the detail span (name/email line) is NOT rendered
+    expect(daveRow.find('span.text-xs').exists()).toBe(false)
+  })
+
+  it('criterion 5: candidate with email but no name shows username + email, still no "null"', async () => {
+    mockSearch.mockResolvedValue([{ userId: 'u-erin', username: 'erin', fullName: '', email: 'erin@t.com' }])
+    const wrapper = renderDialog()
+    await typeQuery(wrapper, 'erin')
+    const erinRow = wrapper.findAll('button').find((b) => b.text().includes('erin'))!
+    expect(erinRow.text()).toContain('erin')
+    expect(erinRow.text()).toContain('erin@t.com')
+    expect(wrapper.text()).not.toContain('null')
   })
 
   it('criterion 10: search shorter than 3 characters does not hit the API', async () => {

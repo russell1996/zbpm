@@ -33,6 +33,8 @@ public interface MemberContract {
      * A non-empty {@code q} (username fragment, min 3 chars) is mandatory: an empty query
      * would make this a user directory, which is exactly what /users staying
      * SUPER_ADMIN-only is meant to prevent.
+     * WO-ACL-15: the DTO also carries fullName and email (empty strings when absent) —
+     * the same two fields MemberDTO already exposes to every authenticated user.
      */
     @GetExchange("/processes/{key}/members/candidates")
     List<MemberCandidateDTO> candidateMembers(@PathVariable String key, @RequestParam String q);

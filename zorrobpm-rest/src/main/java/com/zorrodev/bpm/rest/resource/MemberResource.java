@@ -157,7 +157,8 @@ public class MemberResource implements MemberContract {
      * WO-ACL-7 (ADR-8 п.7): who can be ADDED to this process. OWNER-scoped candidate
      * search: MANAGE_MEMBERS on the process, a mandatory non-empty {@code q} (min 3 chars —
      * an empty query would return the user table), active users only, members excluded,
-     * result capped. Output is deliberately minimal: userId + username.
+     * result capped. WO-ACL-15: output carries fullName + email as well (both already
+     * public via MemberDTO), as empty strings when the account has none.
      */
     @Override
     public List<MemberCandidateDTO> candidateMembers(@PathVariable String key, String q) {
@@ -188,6 +189,10 @@ public class MemberResource implements MemberContract {
                 MemberCandidateDTO dto = new MemberCandidateDTO();
                 dto.setUserId(u.getId());
                 dto.setUsername(u.getUsername());
+                // WO-ACL-15 criterion 1: empty string, never null — the dialog renders
+                // "no name/email" as absence, not as the literal "null".
+                dto.setFullName(u.getFullName() == null ? "" : u.getFullName());
+                dto.setEmail(u.getEmail() == null ? "" : u.getEmail());
                 return dto;
             })
             .collect(Collectors.toList());
