@@ -508,6 +508,14 @@ async function downloadBpmn() {
               <tr v-for="m in members" :key="m.userId" class="border-t border-border">
                 <td class="px-4 py-2">
                   {{ m.username || m.userId }}
+                  <!-- WO-INT-4 criterion 6: a system account is an integration, not a
+                       person — marked so "who has access" is readable at a glance -->
+                  <span
+                    v-if="m.isSystem"
+                    class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-violet-100 text-violet-700"
+                  >
+                    {{ t('systemAccount') }}
+                  </span>
                   <span v-if="m.userId === auth.user?.id" class="ml-2 text-xs text-muted-foreground">({{ t('you') }})</span>
                 </td>
                 <td class="px-4 py-2">{{ m.fullName || '—' }}</td>
