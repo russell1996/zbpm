@@ -27,3 +27,30 @@ export function errorMessage(e: unknown, fallback: string): string {
   }
   return e instanceof Error && e.message ? e.message : fallback
 }
+
+/**
+ * WO-ACL-15 criterion 12: backend errors since ACL-12 carry a stable `code` and
+ * `params` (e.g. PROCESS_KEY_MISMATCH with {xmlKey, targetKey}). Translate the
+ * KNOWN codes through the locale keys `errors.<CODE>` with the params injected;
+ * an unknown code falls back to the server `message` (English), then to the
+ * generic fallback. `t` is the vue-i18n translate fn — a missing key makes
+ * vue-i18n return the key itself, which is how we detect "unknown".
+ */
+export function translatedError(
+  e: unknown,
+  t: (key: string, params?: Record<string, unknown>) => string,
+  fallback: string,
+): string {
+  if (e && typeof e === 'object' && 'response' in e) {
+    const data = (e as {
+      response?: { data?: { code?: unknown; params?: Record<string, unknown>; message?: unknown } }
+    }).response?.data
+    if (data && typeof data.code === 'string' && data.code.trim()) {
+      const key = `errors.${data.code}`
+      const translated = t(key, data.params ?? {})
+      if (translated !== key) return translated
+      if (typeof data.message === 'string' && data.message.trim()) return data.message
+    }
+  }
+  return e instanceof Error && e.message ? e.message : fallback
+}

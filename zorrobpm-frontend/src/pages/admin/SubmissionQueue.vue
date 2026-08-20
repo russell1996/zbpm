@@ -1,16 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
 import { getPendingSubmissions, approveSubmission, rejectSubmission, getSubmissionBpmn, type ProcessSubmission } from '@/services/submissionService'
-import { errorMessage } from '@/shared/lib/utils'
+import { translatedError } from '@/shared/lib/utils'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import { RefreshCw } from 'lucide-vue-next'
 
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 const toast = useToast()
+
+/**
+ * WO-ACL-15 criterion 9: the queue is a HISTORY view — the tab switches the
+ * status filter; PENDING stays the default (the admin's working mode).
+ */
+const statusOptions = [
+  { value: 'PENDING', label: 'submissionStatusPending' },
+  { value: 'APPROVED', label: 'submissionStatusApproved' },
+  { value: 'REJECTED', label: 'submissionStatusRejected' },
+  { value: 'ALL', label: 'submissionStatusAll' },
+] as const
+const statusFilter = ref<string>('PENDING')
 
 const submissions = ref<ProcessSubmission[]>([])
 const loading = ref(false)
@@ -23,7 +35,8 @@ const rejectTarget = ref<ProcessSubmission | null>(null)
 const rejectReason = ref('')
 
 /** WO-ACL-10 criterion 13: model preview from the queue — the reviewer sees
- *  the actual BPMN before approving (endpoint /process-submissions/{id}/bpmn). */
+ *  the actual BPMN before approving (endpoint /process-submissions/{id}/bpmn).
+ *  WO-ACL-15 criterion 11: works from ANY status, not only PENDING. */
 const viewTarget = ref<ProcessSubmission | null>(null)
 const viewXml = ref('')
 const viewLoading = ref(false)
@@ -33,13 +46,23 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    submissions.value = await getPendingSubmissions()
+  submissions.value = await getPendingSubmissions(statusFilter.value)
   } catch (e) {
-    error.value = errorMessage(e, t('failedToLoadSubmissions'))
+    error.value = translatedError(e, t, t('failedToLoadSubmissions'))
   } finally {
     loading.value = false
   }
 }
+
+function switchStatus(value: string) {
+  if (statusFilter.value === value) return
+  statusFilter.value = value
+  void load()
+}
+
+const emptyStateLabel = computed(() =>
+  statusFilter.value === 'PENDING' ? t('noPendingSubmissions') : t('noSubmissionsInStatus'),
+)
 
 async function openView(s: ProcessSubmission) {
   viewTarget.value = s
@@ -49,7 +72,7 @@ async function openView(s: ProcessSubmission) {
   try {
     viewXml.value = await getSubmissionBpmn(s.id)
   } catch (e) {
-    viewError.value = errorMessage(e, t('failedToLoadSubmissionModel'))
+    viewError.value = translatedError(e, t, t('failedToLoadSubmissionModel'))
   } finally {
     viewLoading.value = false
   }
@@ -69,7 +92,7 @@ async function approve(s: ProcessSubmission) {
     toast.success(t('submissionApproved'))
     await load()
   } catch (e) {
-    error.value = errorMessage(e, t('failedToApproveSubmission'))
+    error.value = translatedError(e, t, t('failedToApproveSubmission'))
   } finally {
     busyId.value = null
   }
@@ -91,7 +114,7 @@ async function confirmReject() {
     rejectTarget.value = null
     await load()
   } catch (e) {
-    error.value = errorMessage(e, t('failedToRejectSubmission'))
+    error.value = translatedError(e, t, t('failedToRejectSubmission'))
   } finally {
     busyId.value = null
   }
@@ -117,6 +140,21 @@ onMounted(load)
       </button>
     </div>
 
+    <!-- WO-ACL-15 criterion 9: status tabs — PENDING by default, history on demand -->
+    <div role="tablist" class="inline-flex border border-border rounded-md overflow-hidden">
+      <button
+        v-for="opt in statusOptions"
+        :key="opt.value"
+        role="tab"
+        :aria-selected="statusFilter === opt.value"
+        class="px-3 py-1.5 text-sm transition-colors"
+        :class="statusFilter === opt.value ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'"
+        @click="switchStatus(opt.value)"
+      >
+        {{ t(opt.label) }}
+      </button>
+    </div>
+
     <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="error" class="text-sm text-red-500">{{ error }}</div>
 
@@ -128,6 +166,8 @@ onMounted(load)
             <th class="px-4 py-3 text-left font-medium">{{ t('key') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('submittedBy') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('submittedAt') }}</th>
+            <!-- WO-ACL-15 criterion 10: who decided, when, and (for rejections) why -->
+            <th class="px-4 py-3 text-left font-medium">{{ t('decision') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
           </tr>
         </thead>
@@ -150,7 +190,17 @@ onMounted(load)
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(s.submittedAt) }}</td>
             <td class="px-4 py-3">
-              <div class="flex items-center gap-2">
+              <div v-if="s.status === 'APPROVED'" class="text-green-600">
+                {{ t('approvedLabel') }} · {{ s.reviewedByUsername || '—' }} · {{ formatDateTime(s.reviewedAt) }}
+              </div>
+              <div v-else-if="s.status === 'REJECTED'" class="text-red-600">
+                <div>{{ t('rejectedLabel') }} · {{ s.reviewedByUsername || '—' }} · {{ formatDateTime(s.reviewedAt) }}</div>
+                <div class="text-xs break-words">{{ s.rejectReason || t('noReason') }}</div>
+              </div>
+              <span v-else class="text-muted-foreground">—</span>
+            </td>
+            <td class="px-4 py-3">
+              <div v-if="s.status === 'PENDING'" class="flex items-center gap-2">
                 <button
                   class="px-3 py-1 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
                   :disabled="busyId === s.id"
@@ -173,7 +223,7 @@ onMounted(load)
     </div>
 
     <div v-else class="border border-border rounded-lg p-8 text-center text-sm text-muted-foreground">
-      {{ t('noPendingSubmissions') }}
+      {{ emptyStateLabel }}
     </div>
 
     <!-- Reject dialog — reason is mandatory -->

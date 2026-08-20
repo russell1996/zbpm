@@ -417,7 +417,7 @@ describe('WO-TEST-6 check 4 — kazakh labels fit one line without ellipsis', ()
     expect(spans.length).toBeGreaterThanOrEqual(10)
     for (const s of spans) {
       // real kz string, not the t() key stub
-      const key = Object.keys(kz).find((k) => (kz as Record<string, string>)[k] === s.text())
+      const key = Object.keys(kz).find((k) => (kz as unknown as Record<string, string>)[k] === s.text())
       expect(key).toBeTruthy()
       const el = s.element
       const rect = el.getBoundingClientRect()
