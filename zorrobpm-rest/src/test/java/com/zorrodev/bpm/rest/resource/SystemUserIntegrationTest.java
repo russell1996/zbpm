@@ -473,9 +473,12 @@ class SystemUserIntegrationTest {
 
     @Test
     void criterion12_humanKey_withOnBehalfOf_returns403() throws Exception {
-        addMember(processKey, humanOwnerId, "OWNER");
-        String humanKey = createApiKeyForUser(humanOwnerId);
-        setGrantsFull(humanOwnerId, processKey);
+        // A dedicated human owner: criterion 4 already issues a key for humanOwnerId
+        // and a human account has exactly one key — reusing the same id would 409.
+        UUID humanKeyOwnerId = createUser("int4human2", "HUMAN", "MyStr0ng!P@ssw0rd");
+        addMember(processKey, humanKeyOwnerId, "OWNER");
+        String humanKey = createApiKeyForUser(humanKeyOwnerId);
+        setGrantsFull(humanKeyOwnerId, processKey);
 
         UUID taskId = startTaskAndGetId(); // assignee=user1
         CompleteTaskDTO dto = new CompleteTaskDTO();
