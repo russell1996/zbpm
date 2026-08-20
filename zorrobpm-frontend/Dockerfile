@@ -1,13 +1,21 @@
 # syntax=docker/dockerfile:1
 
 # --- Build stage: compile the Vue SPA ---
-FROM node:22-alpine AS builder
+# Debian (bookworm-slim), not alpine: `playwright install --with-deps` has no
+# alpine support (it would install ubuntu deps via apt). Only the builder grows;
+# the runtime stage below stays nginx:alpine.
+FROM node:22-bookworm-slim AS builder
 
 WORKDIR /build
 
 # Install dependencies from the lockfile (reproducible) before copying sources for better layer caching
 COPY package.json package-lock.json ./
 RUN npm ci
+
+# WO-TEST-6: the browser-geometry suite (vitest browser mode) needs a real
+# Chromium. --with-deps pulls the alpine packages the browser requires; the
+# builder runs as root, so the launch args add --no-sandbox (vitest.browser.config.ts).
+RUN npx playwright install --with-deps chromium
 
 COPY . .
 
@@ -18,6 +26,10 @@ RUN npm run build
 # in the pipeline, but make a failing test fail the builder stage (and therefore CI).
 # `--run` is mandatory: plain `vitest` would enter watch mode and hang until timeout.
 RUN npm test -- --run
+
+# WO-TEST-6: the browser-geometry checks run in the same builder stage, so a
+# regression in the six visual criteria fails CI exactly like any other test.
+RUN npm run test:browser
 
 
 # --- Runtime stage: serve static assets + reverse-proxy /api to the backend ---
