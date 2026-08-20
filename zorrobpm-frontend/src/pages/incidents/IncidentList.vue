@@ -92,7 +92,8 @@ function exportData() {
           <tr>
             <th class="px-4 py-3 text-left font-medium">ID</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('message') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('activity') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('process') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ t('element') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('completedAt') }}</th>
@@ -109,7 +110,8 @@ function exportData() {
           >
             <td class="px-4 py-3"><CopyableId :value="inc.id" /></td>
             <td class="px-4 py-3 text-sm max-w-xs truncate" :title="inc.message">{{ inc.message }}</td>
-            <td class="px-4 py-3"><CopyableId :value="inc.activityId" /></td>
+            <td class="px-4 py-3">{{ inc.processName || '—' }}</td>
+            <td class="px-4 py-3">{{ inc.elementName || inc.bpmnElementId || '—' }}</td>
             <td class="px-4 py-3">
               <StatusBadge :status="inc.completedAt ? 'RESOLVED' : 'OPEN'" />
             </td>
