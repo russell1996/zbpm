@@ -8,6 +8,8 @@ export interface User {
   role: UserRole
   active: boolean
   forcePasswordChange: boolean
+  /** WO-INT-4: 'HUMAN' (default) or 'SYSTEM'. A system account is an integration, not a person. */
+  userType?: 'HUMAN' | 'SYSTEM'
   createdAt: string
   updatedAt: string
 }

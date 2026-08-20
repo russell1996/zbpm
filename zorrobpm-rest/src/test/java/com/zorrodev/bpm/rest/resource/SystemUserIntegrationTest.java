@@ -165,6 +165,60 @@ class SystemUserIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // --- #1b: the default account type is HUMAN when not specified (criterion 1) ---
+
+    @Test
+    void criterion1b_accountTypeDefaultsToHuman_whenNotSpecified() throws Exception {
+        String body = "{\"username\":\"int4default\",\"fullName\":\"Default Human\","
+            + "\"email\":\"int4default@zorrodev.test\",\"role\":\"USER\",\"active\":true,"
+            + "\"password\":\"MyStr0ng!P@ssw0rd\"}";
+        MvcResult created = mockMvc.perform(post("/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(body)
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID id = UUID.fromString(mapper.readTree(created.getResponse().getContentAsString()).get("id").asText());
+        assertThat(userRepository.findById(id).orElseThrow().getUserType()).isEqualTo("HUMAN");
+    }
+
+    // --- #4 (WO criterion): authorization does NOT depend on the account type ---
+    // The same grants must give the same answers to a human and to a system. If someone
+    // later adds `if (isSystem)` to a guard, this pair must go red (WO proof-of-failure #1).
+
+    @Test
+    void criterion4_authzIndependentOfType_humanAndSystemSameGrantsSameAnswers() throws Exception {
+        addMember(processKey, humanOwnerId, "OWNER");
+        String humanKey = createApiKeyForUser(humanOwnerId);
+        setGrantsFull(humanOwnerId, processKey);
+
+        addMember(processKey, systemUserId, "OWNER");
+        String systemKey = createApiKeyForUser(systemUserId);
+        setGrantsFull(systemUserId, processKey);
+
+        // Same data read
+        mockMvc.perform(get("/user-tasks").header("Authorization", "Bearer " + humanKey))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/user-tasks").header("Authorization", "Bearer " + systemKey))
+                .andExpect(status().isOk());
+
+        // Same runtime write: complete the assignee task (no X-On-Behalf-Of)
+        UUID taskId = startTaskAndGetId();
+        CompleteTaskDTO dto = new CompleteTaskDTO();
+        dto.setVariables(List.of());
+        mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
+                        .header("Authorization", "Bearer " + humanKey)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+        UUID taskId2 = startTaskAndGetId();
+        mockMvc.perform(post("/user-tasks/" + taskId2 + "/complete")
+                        .header("Authorization", "Bearer " + systemKey)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
     // --- #3: system principal -> 403 on member management, even with OWNER role ---
 
     @Test
