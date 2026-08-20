@@ -16,6 +16,7 @@ public class UiUserMapper {
         dto.setRole(entity.getRole());
         dto.setActive(entity.isActive());
         dto.setForcePasswordChange(entity.isForcePasswordChange());
+        dto.setUserType(entity.getUserType());
         dto.setCreatedAt(entity.getCreatedAt());
         dto.setUpdatedAt(entity.getUpdatedAt());
         return dto;

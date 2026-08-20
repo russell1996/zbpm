@@ -17,6 +17,8 @@ public class UiUser {
     private String role;
     private boolean active;
     private boolean forcePasswordChange;
+    /** WO-INT-4: "HUMAN" or "SYSTEM" — a system account cannot log in by password. */
+    private String userType;
     private Instant createdAt;
     private Instant updatedAt;
 }

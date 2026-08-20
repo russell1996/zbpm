@@ -13,4 +13,8 @@ public class CreateUiUserDTO {
     /** "ADMIN" or "USER"; defaults to USER when omitted. */
     private String role;
     private Boolean active;
+    /** WO-INT-4: "HUMAN" or "SYSTEM"; defaults to HUMAN when omitted.
+     *  A SYSTEM account has no password (login is impossible) and is exempt
+     *  from forcePasswordChange. */
+    private String userType;
 }

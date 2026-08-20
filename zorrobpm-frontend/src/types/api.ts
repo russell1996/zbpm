@@ -221,27 +221,6 @@ export interface StartProcessInstanceDTO {
   variables: ProcessVariable[]
 }
 
-// --- WO-MT-4: Service Accounts ---
-export interface ServiceAccount {
-  id: string
-  name: string
-  prefix: string
-  permissions: string[]
-  createdAt: string
-  lastUsedAt: string | null
-  expiresAt: string | null
-  revokedAt: string | null
-}
-
-export interface ServiceAccountWithKey extends ServiceAccount {
-  key: string // shown ONCE at creation — never stored
-}
-
-export interface CreateServiceAccountDTO {
-  name: string
-  permissions: string[]
-}
-
 export interface CompleteTaskDTO {
   variables: ProcessVariable[]
 }

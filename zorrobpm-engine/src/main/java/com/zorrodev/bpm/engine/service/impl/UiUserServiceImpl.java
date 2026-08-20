@@ -93,19 +93,33 @@ public class UiUserServiceImpl implements UiUserService {
     @Transactional
     public UUID create(CreateUiUserDTO dto) {
         if (dto.getUsername() == null || dto.getUsername().isBlank()) throw new EngineException("Username is required");
-        if (dto.getPassword() == null || dto.getPassword().isBlank()) throw new EngineException("Password is required");
-        // WO-SEC-46: enforce password complexity on create
-        if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
         if (repository.existsByUsername(dto.getUsername())) throw new EngineException("Username already exists");
+
+        boolean system = "SYSTEM".equalsIgnoreCase(dto.getUserType());
+        // WO-INT-4: a SYSTEM account has NO password — login is impossible. The password
+        // supplied in the DTO (if any) is deliberately ignored: storing it would create a
+        // second way in (one day forcePasswordChange would lock the integration, and someone
+        // would "fix" it by using the password). We still store a hash — of an unknowable
+        // random secret — so the constant-time login path (WO-SEC-17 M7) compares against
+        // a real hash instead of short-circuiting on null.
+        if (!system) {
+            if (dto.getPassword() == null || dto.getPassword().isBlank()) throw new EngineException("Password is required");
+            // WO-SEC-46: enforce password complexity on create
+            if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
+        }
 
         UiUserEntity entity = new UiUserEntity();
         entity.setId(UUID.randomUUID());
         entity.setUsername(dto.getUsername());
-        entity.setPasswordHash(passwordHasher.hash(dto.getPassword()));
+        entity.setPasswordHash(system
+            ? passwordHasher.hash(UUID.randomUUID().toString())
+            : passwordHasher.hash(dto.getPassword()));
         entity.setFullName(dto.getFullName());
         entity.setEmail(dto.getEmail());
         entity.setRole(normalizeRole(dto.getRole()));
         entity.setActive(dto.getActive() == null || dto.getActive());
+        entity.setUserType(system ? "SYSTEM" : "HUMAN");
+        entity.setForcePasswordChange(false);
         entity.setCreatedAt(Instant.now());
         entity.setUpdatedAt(Instant.now());
         repository.save(entity);
@@ -116,11 +130,15 @@ public class UiUserServiceImpl implements UiUserService {
     @Transactional
     public UUID update(UUID id, UpdateUiUserDTO dto) {
         UiUserEntity entity = repository.findById(id).orElseThrow();
+        boolean system = "SYSTEM".equals(entity.getUserType());
         if (dto.getFullName() != null) entity.setFullName(dto.getFullName());
         if (dto.getEmail() != null) entity.setEmail(dto.getEmail());
         if (dto.getRole() != null) entity.setRole(normalizeRole(dto.getRole()));
         if (dto.getActive() != null) entity.setActive(dto.getActive());
-        if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
+        // WO-INT-4: a system account never gets a password and forcePasswordChange is
+        // not applicable to it — both are ignored so the integration cannot be locked
+        // by a password-flow decision.
+        if (!system && dto.getPassword() != null && !dto.getPassword().isBlank()) {
             // WO-SEC-46: enforce password complexity on update
             if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
             entity.setPasswordHash(passwordHasher.hash(dto.getPassword()));

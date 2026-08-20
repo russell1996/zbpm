@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.*;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
+import com.zorrodev.bpm.engine.entity.ProcessMemberId;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserGroupEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
@@ -189,15 +190,29 @@ class ClaimUserTaskIntegrationTest {
         assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isNull();
     }
 
-    // --- X-On-Behalf-Of sets that assignee ---
+    // --- X-On-Behalf-Of sets that assignee (WO-INT-4 #11: only system keys; the claimed
+    // name must exist and be a candidate; assignee is stored as a clean username) ---
     @Test
     void claim_withOnBehalfOf_setsThatAssignee() throws Exception {
         UUID taskId = startTask("managers");
+        // The claimed name must exist and be a candidate for the task
+        UUID petrovId = createUserViaHttp("petrov", "HUMAN");
+        UserGroupEntity petrovGroup = new UserGroupEntity();
+        petrovGroup.setUserId(petrovId);
+        petrovGroup.setGroupName("managers");
+        userGroupRepository.save(petrovGroup);
+
+        // System key — the only principal allowed to send X-On-Behalf-Of
+        UUID systemId = createUserViaHttp("claimsys1", "SYSTEM");
+        String systemKey = createApiKeyForUser(systemId);
+        addMemberToProcess(systemId, "OWNER");
+        setGrantsFull(systemId, "assignee-process");
+
         mockMvc.perform(post("/user-tasks/" + taskId + "/claim")
-                        .header("Authorization", "Bearer " + candidateToken)
+                        .header("Authorization", "Bearer " + systemKey)
                         .header("X-On-Behalf-Of", "petrov"))
                 .andExpect(status().isOk());
-        assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("[claimed] petrov");
+        assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("petrov");
     }
 
     // --- super-admin claims → 200 ---
@@ -268,5 +283,60 @@ class ClaimUserTaskIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         return mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class).getToken();
+    }
+
+    private UUID createUserViaHttp(String username, String userType) throws Exception {
+        String body = "{\"username\":\"" + username
+            + "\",\"fullName\":\"" + username
+            + "\",\"email\":\"" + username + "@zorrodev.test"
+            + "\",\"role\":\"SUPER_ADMIN\""
+            + ",\"active\":true"
+            + ",\"password\":\"MyStr0ng!P@ssw0rd\""
+            + ",\"userType\":\"" + userType + "\"}";
+        MvcResult result = mockMvc.perform(post("/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(body)
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andReturn();
+        int status = result.getResponse().getStatus();
+        if (status == 409) {
+            return userRepository.findByUsername(username).orElseThrow().getId();
+        }
+        if (status != 200) {
+            throw new IllegalStateException("createUserViaHttp(" + username + ") failed: " + status
+                + " " + result.getResponse().getContentAsString());
+        }
+        return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
+    }
+
+    private String createApiKeyForUser(UUID userId) throws Exception {
+        MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
+    }
+
+    private void addMemberToProcess(UUID userId, String role) {
+        ProcessEntity process = processRepository.findByDefinitionKey("assignee-process").orElseThrow();
+        ProcessMemberId id = new ProcessMemberId(process.getId(), userId);
+        if (processMemberRepository.existsById(id)) {
+            return;
+        }
+        ProcessMemberEntity pm = new ProcessMemberEntity();
+        pm.setProcessId(process.getId());
+        pm.setUserId(userId);
+        pm.setRole(role);
+        pm.setAddedBy(userId);
+        pm.setAddedAt(Instant.now());
+        processMemberRepository.save(pm);
+    }
+
+    private void setGrantsFull(UUID userId, String processKey) throws Exception {
+        mockMvc.perform(put("/admin/users/" + userId + "/api-key/grants")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content("{\"grants\":[{\"processKey\":\"" + processKey + "\",\"full\":true}]}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
     }
 }

@@ -2,6 +2,9 @@ package com.zorrodev.bpm.rest.security;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
+import com.zorrodev.bpm.engine.security.KeyHasher;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ReadListener;
@@ -21,6 +24,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -87,6 +91,9 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     /** WO-SEC-44: trusted proxy IPs/CIDRs. Empty = ignore XFF (current behavior). */
     private Set<String> trustedProxies = Set.of();
 
+    /** WO-INT-4: resolves API-key identity for per-key data quotas. */
+    private ApiKeyRepository apiKeyRepository;
+
     void setRateLimitEnabled(boolean enabled) { this.enabled = enabled; }
     void setCapacity(int capacity) { this.capacity = capacity; }
     void setWindowSeconds(int windowSeconds) { this.windowSeconds = windowSeconds; }
@@ -96,6 +103,8 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     void setRefreshCapacity(int refreshCapacity) { this.refreshCapacity = refreshCapacity; }
     void setRefreshWindowSeconds(int refreshWindowSeconds) { this.refreshWindowSeconds = refreshWindowSeconds; }
     void setTrustedProxies(Set<String> trustedProxies) { this.trustedProxies = trustedProxies; }
+
+    void setApiKeyRepository(ApiKeyRepository apiKeyRepository) { this.apiKeyRepository = apiKeyRepository; }
 
     @Override
     public int getOrder() {
@@ -184,7 +193,10 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
         // Data endpoints: generous limit
         if (isDataEndpoint(method, path)) {
-            String key = "data:" + clientIp;
+            // WO-INT-4 criterion 10: quota is counted per API KEY, not per IP — an
+            // integration BFF calling from one address must not be throttled by another
+            // BFF on the same address (and must not exhaust the shared per-IP quota).
+            String key = resolveDataBucketKey(request, clientIp);
             RateBucket bucket = dataEndpointBuckets.get(key, k -> new RateBucket(dataCapacity, dataWindowSeconds));
             long retryAfter = bucket.tryConsume();
             if (retryAfter > 0) {
@@ -194,6 +206,25 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         }
 
         chain.doFilter(request, response);
+    }
+
+    /**
+     * WO-INT-4: data-endpoint rate-limit key. Requests carrying a VALID service key are
+     * keyed by the key's id (one quota per key); everything else falls back to the IP.
+     * An invalid/unknown key still falls back to the IP bucket — the auth filter rejects
+     * it afterwards with 401, so no quota bypass is possible.
+     */
+    private String resolveDataBucketKey(HttpServletRequest request, String clientIp) {
+        if (apiKeyRepository == null) return "data:" + clientIp;
+        String header = request.getHeader("Authorization");
+        if (header == null || !header.startsWith("Bearer zbpm_sk_")) {
+            return "data:" + clientIp;
+        }
+        String token = header.substring(7);
+        ApiKeyEntity key = apiKeyRepository.findByKeyHash(KeyHasher.sha256(token)).orElse(null);
+        if (key == null || key.getRevokedAt() != null) return "data:" + clientIp;
+        if (key.getExpiresAt() != null && key.getExpiresAt().isBefore(Instant.now())) return "data:" + clientIp;
+        return "data:key:" + key.getId();
     }
 
     private boolean isDataEndpoint(String method, String path) {

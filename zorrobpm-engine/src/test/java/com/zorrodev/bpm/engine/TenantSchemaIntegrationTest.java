@@ -15,11 +15,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * WO-MT-1: Schema validation tests.
- *  #1: Migration ran — all 3 tables exist (entities queryable)
+ * WO-MT-1 + WO-INT-4: Schema validation tests.
+ *  #1: Migration ran — core tables exist (entities queryable)
+ *  #1b: WO-INT-4 criterion 13 — service_account tables were dropped by migration 076
  *  #3: UNIQUE(process_id, user_id) enforced
- *  #4: key_hash unique enforced
- *  #5: Repositories CRUD work
+ *  #4: api_key.key_hash unique enforced
+ *  #5: ApiKeyRepository CRUD work
  *
  * NOTE: Backfill verification (process rows, admin SUPER_ADMIN, OWNER memberships)
  * requires production data. This is verified by the migration SQL output in mimo-to-cto.md.
@@ -30,20 +31,33 @@ class TenantSchemaIntegrationTest {
 
     @Autowired private ProcessRepository processRepository;
     @Autowired private ProcessMemberRepository processMemberRepository;
-    @Autowired private ServiceAccountRepository serviceAccountRepository;
-    @Autowired private ServiceAccountPermissionRepository saPermissionRepository;
+    @Autowired private ApiKeyRepository apiKeyRepository;
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
-    // --- #1: Migration ran — tables exist (entities queryable without error) ---
+    // --- #1: Migration ran — core tables exist (entities queryable without error) ---
 
     @Test
     void migrationCreatedAllTables() {
         // If the tables didn't exist, these would throw ExceptionInInitializerError or similar
         assertThat(processRepository.findAll()).isNotNull();
         assertThat(processMemberRepository.findAll()).isNotNull();
-        assertThat(serviceAccountRepository.findAll()).isNotNull();
-        assertThat(saPermissionRepository.findAll()).isNotNull();
+        assertThat(apiKeyRepository.findAll()).isNotNull();
+        assertThat(uiUserRepository.findAll()).isNotNull();
+    }
+
+    // --- #1b (WO-INT-4 criterion 13): service_account tables are gone ---
+
+    @Test
+    void serviceAccountTablesDropped() {
+        Integer serviceAccounts = jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'service_account'",
+            Integer.class);
+        Integer serviceAccountPermissions = jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'service_account_permission'",
+            Integer.class);
+        assertThat(serviceAccounts).isZero();
+        assertThat(serviceAccountPermissions).isZero();
     }
 
     // --- #3: UNIQUE(process_id, user_id) enforced ---
@@ -76,79 +90,49 @@ class TenantSchemaIntegrationTest {
         processRepository.delete(process);
     }
 
-    // --- #4: key_hash unique enforced ---
+    // --- #4: api_key.key_hash unique enforced ---
 
     @Test
     void duplicateKeyHash_throwsConstraintViolation() {
-        UUID processId = UUID.randomUUID();
+        ApiKeyEntity key1 = new ApiKeyEntity();
+        key1.setId(UUID.randomUUID());
+        key1.setOwnerUserId(uiUserRepository.findByUsername("admin").orElseThrow().getId());
+        key1.setKeyHash("unique-hash-value");
+        key1.setPrefix("zbpm_sk_test1");
+        key1.setCreatedAt(Instant.now());
+        apiKeyRepository.save(key1);
 
-        ProcessEntity process = new ProcessEntity();
-        process.setId(processId);
-        process.setDefinitionKey("test-dup-hash-key");
-        process.setName("Test Dup Hash");
-        process.setCreatedAt(Instant.now());
-        processRepository.save(process);
+        ApiKeyEntity key2 = new ApiKeyEntity();
+        key2.setId(UUID.randomUUID());
+        key2.setOwnerUserId(uiUserRepository.findByUsername("admin").orElseThrow().getId());
+        key2.setKeyHash("unique-hash-value"); // duplicate
+        key2.setPrefix("zbpm_sk_test2");
+        key2.setCreatedAt(Instant.now());
 
-        ServiceAccountEntity sa1 = new ServiceAccountEntity();
-        sa1.setId(UUID.randomUUID());
-        sa1.setProcessId(processId);
-        sa1.setName("sa-one");
-        sa1.setKeyHash("unique-hash-value");
-        sa1.setPrefix("zbpm_sk_test1");
-        sa1.setCreatedAt(Instant.now());
-        serviceAccountRepository.save(sa1);
-
-        ServiceAccountEntity sa2 = new ServiceAccountEntity();
-        sa2.setId(UUID.randomUUID());
-        sa2.setProcessId(processId);
-        sa2.setName("sa-two");
-        sa2.setKeyHash("unique-hash-value"); // duplicate
-        sa2.setPrefix("zbpm_sk_test2");
-        sa2.setCreatedAt(Instant.now());
-
-        assertThatThrownBy(() -> serviceAccountRepository.saveAndFlush(sa2))
+        assertThatThrownBy(() -> apiKeyRepository.saveAndFlush(key2))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         // Cleanup
-        serviceAccountRepository.delete(sa1);
-        processRepository.delete(process);
+        apiKeyRepository.delete(key1);
     }
 
-    // --- #5: Repositories CRUD work ---
+    // --- #5: ApiKeyRepository CRUD work ---
 
     @Test
     void repositoriesCrudWork() {
-        UUID processId = UUID.randomUUID();
-
-        ProcessEntity process = new ProcessEntity();
-        process.setId(processId);
-        process.setDefinitionKey("test-crud-key");
-        process.setName("Test CRUD");
-        process.setCreatedAt(Instant.now());
-        processRepository.save(process);
-
-        ServiceAccountEntity sa = new ServiceAccountEntity();
-        sa.setId(UUID.randomUUID());
-        sa.setProcessId(processId);
-        sa.setName("crud-test-sa");
-        sa.setKeyHash(UUID.randomUUID().toString());
-        sa.setPrefix("zbpm_sk_crud");
-        sa.setCreatedAt(Instant.now());
-        serviceAccountRepository.save(sa);
-
-        ServiceAccountPermissionEntity perm = new ServiceAccountPermissionEntity();
-        perm.setServiceAccountId(sa.getId());
-        perm.setPermission("START");
-        saPermissionRepository.save(perm);
+        ApiKeyEntity key = new ApiKeyEntity();
+        key.setId(UUID.randomUUID());
+        key.setOwnerUserId(uiUserRepository.findByUsername("admin").orElseThrow().getId());
+        key.setKeyHash(UUID.randomUUID().toString());
+        key.setPrefix("zbpm_sk_crud");
+        key.setCreatedAt(Instant.now());
+        apiKeyRepository.save(key);
 
         // Read
-        assertThat(serviceAccountRepository.findById(sa.getId())).isPresent();
-        assertThat(saPermissionRepository.findByServiceAccountId(sa.getId())).hasSize(1);
+        assertThat(apiKeyRepository.findById(key.getId())).isPresent();
 
         // Delete
-        saPermissionRepository.deleteById(new ServiceAccountPermissionId(sa.getId(), "START"));
-        serviceAccountRepository.deleteById(sa.getId());
-        assertThat(serviceAccountRepository.findById(sa.getId())).isEmpty();
-        processRepository.delete(process);
+        apiKeyRepository.deleteById(key.getId());
+        assertThat(apiKeyRepository.findById(key.getId())).isEmpty();
     }
 }
