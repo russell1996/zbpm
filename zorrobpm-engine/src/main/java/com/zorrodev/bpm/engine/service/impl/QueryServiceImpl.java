@@ -238,7 +238,8 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public Incident getIncident(UUID id) {
-        return dbService.getIncident(id);
+        Incident incident = dbService.getIncident(id);
+        return incidentMapper.enrich(List.of(incident)).get(0);
     }
 
     @Override
@@ -295,7 +296,8 @@ public class QueryServiceImpl implements QueryService {
         }
         Specification<IncidentEntity> all = Specification.allOf(specifications);
         PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
-        return toDTO(incidentRepository.findAll(all, page), incidentMapper::toDTO);
+        return toDTOBulk(incidentRepository.findAll(all, page),
+            entities -> incidentMapper.enrich(entities.stream().map(incidentMapper::toDTO).toList()));
     }
 
     @Override
