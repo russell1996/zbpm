@@ -62,6 +62,10 @@ export interface Incident {
   message: string
   createdAt: string
   completedAt: string | null
+  processName: string | null
+  processInstanceId: string | null
+  bpmnElementId: string | null
+  elementName: string | null
 }
 
 export interface ActivityInstance {

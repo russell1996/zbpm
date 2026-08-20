@@ -85,6 +85,10 @@ function makeIncident(overrides: Partial<Incident> = {}): Incident {
     message: 'Something went wrong',
     createdAt: '2026-01-01T06:00:00Z',
     completedAt: null,
+    processName: null,
+    processInstanceId: null,
+    bpmnElementId: null,
+    elementName: null,
     ...overrides,
   }
 }

@@ -5,6 +5,7 @@ import { useIncidentStore } from '@/stores/incident'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
+import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -15,6 +16,19 @@ const store = useIncidentStore()
 const toast = useToast()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
+
+// WO-ACL-16 criterion 6: breadcrumb leaf — process name and element (the ACL-15 debt).
+useBreadcrumbLabel(() => {
+  const i = store.currentIncident
+  if (!i) return null
+  const parts = [i.processName, i.elementName || i.bpmnElementId].filter(Boolean)
+  return parts.length ? parts.join(' · ') : null
+})
+
+function goToInstance() {
+  const id = store.currentIncident?.processInstanceId
+  if (id) router.push(`/processes/instances/${id}`)
+}
 
 const showResolveModal = ref(false)
 const resolveVars = ref<{ name: string; type: string; value: string }[]>([])
@@ -89,12 +103,30 @@ onMounted(() => {
         </button>
       </div>
 
-      <div class="grid grid-cols-2 gap-4 text-sm">
+<div class="grid grid-cols-2 gap-4 text-sm">
         <div>
           <span class="text-muted-foreground">{{ t('status') }}:</span>
 <StatusBadge :status="store.currentIncident.completedAt ? 'RESOLVED' : 'OPEN'" />
         </div>
-        <div><span class="text-muted-foreground">{{ t('activity') }}:</span> <span class="font-mono">{{ store.currentIncident.activityId }}</span></div>
+        <div>
+          <span class="text-muted-foreground">{{ t('process') }}:</span>
+          <span>{{ store.currentIncident.processName || '—' }}</span>
+        </div>
+        <div>
+          <span class="text-muted-foreground">{{ t('element') }}:</span>
+          <span class="font-mono">{{ store.currentIncident.elementName || store.currentIncident.bpmnElementId || '—' }}</span>
+        </div>
+        <div>
+          <span class="text-muted-foreground">{{ t('processInstance') }}:</span>
+          <button
+            v-if="store.currentIncident.processInstanceId"
+            class="text-primary hover:underline font-mono"
+            @click="goToInstance"
+          >
+            {{ store.currentIncident.processInstanceId.slice(0, 8) }}
+          </button>
+          <span v-else>—</span>
+        </div>
         <div class="col-span-2"><span class="text-muted-foreground">{{ t('created') }}:</span> {{ formatDateTime(store.currentIncident.createdAt) }}</div>
         <div v-if="store.currentIncident.completedAt" class="col-span-2">
           <span class="text-muted-foreground">{{ t('resolved') }}:</span> {{ formatDateTime(store.currentIncident.completedAt) }}
