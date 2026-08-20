@@ -35,7 +35,7 @@ vi.mock('@/stores/process', () => ({
   }),
 }))
 vi.mock('@/stores/breadcrumb', () => ({
-  useBreadcrumbStore: () => ({ setProcessName: vi.fn() }),
+  useBreadcrumbStore: () => ({ crumbLabel: null, setCrumbLabel: vi.fn() }),
 }))
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => authMock,

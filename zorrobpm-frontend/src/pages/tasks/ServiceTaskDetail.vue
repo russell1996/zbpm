@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { useToast } from '@/composables/useToast'
+import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -15,6 +16,17 @@ const store = useTaskStore()
 const toast = useToast()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
+
+// WO-ACL-15 criterion 17: the service-task crumb shows the task title; a task
+// without a name/type falls back to a short id so the crumb never shows an
+// empty string. Filled via the shared useBreadcrumbLabel(), cleared on unmount
+// (criterion 18).
+useBreadcrumbLabel(() => {
+  const task = store.currentServiceTask
+  if (!task) return null
+  const title = task.name || task.code
+  return title || `${t('serviceTask')} ${task.id.slice(0, 8)}`
+})
 
 const editableVars = ref<{ name: string; type: string; value: string }[]>([])
 

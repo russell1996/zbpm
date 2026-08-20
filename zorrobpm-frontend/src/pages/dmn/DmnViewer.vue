@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { getDecision, evaluateDecision, inferVariable, type DmnDecision } from '@/services/dmnService'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import { Play } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -14,6 +15,11 @@ const loading = ref(false)
 const showTestModal = ref(false)
 const evaluating = ref(false)
 const testError = ref<string | null>(null)
+
+// WO-ACL-15 criterion 17: the DMN crumb shows the decision name. Filled via the
+// shared useBreadcrumbLabel() once getDecision resolves, cleared on unmount
+// (criterion 18).
+useBreadcrumbLabel(() => decision.value?.name ?? null)
 
 // Test inputs keyed by the input's FEEL expression (the variable name)
 const testInputs = ref<Record<string, string>>({})

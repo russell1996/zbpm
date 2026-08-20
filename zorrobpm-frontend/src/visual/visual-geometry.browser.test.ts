@@ -79,7 +79,7 @@ vi.mock('@/stores/process', () => ({
   }),
 }))
 vi.mock('@/stores/breadcrumb', () => ({
-  useBreadcrumbStore: () => ({ setProcessName: vi.fn() }),
+  useBreadcrumbStore: () => ({ setCrumbLabel: vi.fn() }),
 }))
 
 const mockListMembers = vi.hoisted(() => vi.fn())

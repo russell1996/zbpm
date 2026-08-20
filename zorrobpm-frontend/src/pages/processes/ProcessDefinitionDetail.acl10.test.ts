@@ -145,9 +145,10 @@ describe('ProcessDefinitionDetail — WO-ACL-10 criteria 7-9', () => {
     }
   })
 
-  // WO-ACL-11 criterion 3: the breadcrumb name lives in the breadcrumb STORE
-  // (not in provide() — BreadcrumbNav is above <router-view>, inject could never
-  // reach it, P-54). loadDefinition fills the store; unmount clears it.
+  // WO-ACL-11 criterion 3 + WO-ACL-15 criterion 19: the breadcrumb label lives
+  // in the breadcrumb STORE (not in provide() — BreadcrumbNav is above
+  // <router-view>, inject could never reach it, P-54). useBreadcrumbLabel fills
+  // the store when the definition arrives; unmount clears it.
   it('criterion 3: loadDefinition fills the breadcrumb store with the process name', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -155,7 +156,7 @@ describe('ProcessDefinitionDetail — WO-ACL-10 criteria 7-9', () => {
       global: { stubs: { teleport: true }, plugins: [pinia] },
     })
     await flushPromises()
-    expect(useBreadcrumbStore().processName).toBe('Test')
+    expect(useBreadcrumbStore().crumbLabel).toBe('Test')
     wrapper.unmount()
   })
 
@@ -166,8 +167,8 @@ describe('ProcessDefinitionDetail — WO-ACL-10 criteria 7-9', () => {
       global: { stubs: { teleport: true }, plugins: [pinia] },
     })
     await flushPromises()
-    expect(useBreadcrumbStore().processName).toBe('Test')
+    expect(useBreadcrumbStore().crumbLabel).toBe('Test')
     wrapper.unmount()
-    expect(useBreadcrumbStore().processName).toBeNull()
+    expect(useBreadcrumbStore().crumbLabel).toBeNull()
   })
 })
