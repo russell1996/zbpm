@@ -8,10 +8,12 @@ import { ChevronRight } from 'lucide-vue-next'
 const route = useRoute()
 const { t } = useI18n()
 
-// WO-ACL-11 criteria 3-5: the process name comes from the breadcrumb store, NOT
+// WO-ACL-11 criteria 3-5: the leaf label comes from the breadcrumb store, NOT
 // from inject(). BreadcrumbNav sits ABOVE <router-view> in MainLayout, so an
-// inject() from the page below could never reach it (P-54). The detail page
-// fills the store when the definition arrives; this crumb updates with it.
+// inject() from the page below could never reach it (P-54). The detail pages
+// fill the store through useBreadcrumbLabel() (WO-ACL-15 criteria 17-19) when
+// their data arrives; this crumb updates with it. A null label falls back to
+// the route's static titleKey — the pre-data state never shows an empty string.
 const breadcrumb = useBreadcrumbStore()
 
 // WO-ACL-10 criterion 18: route meta carries locale KEYS (titleKey/parentTitleKey)
@@ -24,7 +26,7 @@ const breadcrumbs = computed(() => {
     items.push({ label: t(meta.parentTitleKey), to: meta.parentTo })
   }
   if (meta.titleKey) {
-    items.push({ label: breadcrumb.processName || t(meta.titleKey) })
+    items.push({ label: breadcrumb.crumbLabel || t(meta.titleKey) })
   }
   return items
 })
