@@ -375,6 +375,7 @@
   "failedToLoadCandidates": "Не удалось загрузить кандидатов",
   "viewerRole": "НАБЛЮДАТЕЛЬ",
   "you": "вы",
+  "systemAccount": "система",
   "bpmnProcess": "Процесс BPMN",
   "bpmnStructure": "Структура BPMN",
   "configuration": "Конфигурация",

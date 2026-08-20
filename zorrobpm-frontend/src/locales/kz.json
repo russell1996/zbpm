@@ -375,6 +375,7 @@
   "failedToLoadCandidates": "Кандидаттарды жүктеу мүмкін болмады",
   "viewerRole": "БАҚЫЛАУШЫ",
   "you": "сіз",
+  "systemAccount": "жүйе",
   "bpmnProcess": "BPMN процесі",
   "bpmnStructure": "BPMN құрылымы",
   "configuration": "Баптау",

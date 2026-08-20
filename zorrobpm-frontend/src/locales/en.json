@@ -375,6 +375,7 @@
   "failedToLoadCandidates": "Failed to load candidates",
   "viewerRole": "VIEWER",
   "you": "you",
+  "systemAccount": "system",
   "bpmnProcess": "BPMN Process",
   "bpmnStructure": "BPMN Structure",
   "configuration": "Configuration",
