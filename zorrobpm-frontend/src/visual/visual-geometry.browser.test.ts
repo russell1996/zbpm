@@ -79,7 +79,7 @@ vi.mock('@/stores/process', () => ({
   }),
 }))
 vi.mock('@/stores/breadcrumb', () => ({
-  useBreadcrumbStore: () => ({ setProcessName: vi.fn() }),
+  useBreadcrumbStore: () => ({ setCrumbLabel: vi.fn() }),
 }))
 
 const mockListMembers = vi.hoisted(() => vi.fn())
@@ -88,8 +88,8 @@ vi.mock('@/services/adminService', () => ({
   changeMemberRole: vi.fn().mockResolvedValue({}),
   removeMember: vi.fn().mockResolvedValue({}),
   searchMemberCandidates: vi.fn().mockResolvedValue([
-    { userId: 'u-annette', username: 'annette' },
-    { userId: 'u-bob', username: 'bob' },
+    { userId: 'u-annette', username: 'annette', fullName: 'Анна Аннет', email: 'annette@t.com' },
+    { userId: 'u-bob', username: 'bob', fullName: '', email: '' },
   ]),
   addMember: vi.fn().mockResolvedValue({}),
 }))
@@ -302,8 +302,9 @@ describe('WO-TEST-6 check 1 — active tab underline (ProcessInstanceDetail, Tab
     const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
     expect(active).toBeTruthy()
     const cs = getComputedStyle(active)
-    // the underline is a real 2px border, not a class with width 0
-    expect(cs.borderBottomWidth).toBe('2px')
+    // the underline is a real 3px border, not a class with width 0 (WO-ACL-15
+    // criterion 13: noticeably thicker than the 1px container line)
+    expect(cs.borderBottomWidth).toBe('3px')
     expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
     expect(cs.borderBottomColor).not.toBe('transparent')
     // and it reaches the strip's bottom border line (the -mb-px overlap on the
@@ -313,6 +314,26 @@ describe('WO-TEST-6 check 1 — active tab underline (ProcessInstanceDetail, Tab
     const navRect = nav.getBoundingClientRect()
     expect(btnRect.bottom).toBeGreaterThanOrEqual(navRect.bottom - 0.5)
     expect(btnRect.bottom).toBeLessThanOrEqual(navRect.bottom + 0.5)
+
+    // WO-ACL-15 criterion 13: the ACTUAL PAINTED color at a point on the line
+    // under the active tab differs from the same point under an inactive tab,
+    // and under the active one it is the ACCENT color, not the container border.
+    const inactive = tabBtns.find((b) => b.getAttribute('aria-selected') === 'false')!
+    const inactiveRect = inactive.getBoundingClientRect()
+    const activePoint = document.elementFromPoint(btnRect.left + btnRect.width / 2, btnRect.bottom - 1)
+    const inactivePoint = document.elementFromPoint(inactiveRect.left + inactiveRect.width / 2, inactiveRect.bottom - 1)
+    expect(activePoint).toBeTruthy()
+    expect(inactivePoint).toBeTruthy()
+    const activeColor = getComputedStyle(activePoint as Element).borderBottomColor
+    const inactiveColor = getComputedStyle(inactivePoint as Element).borderBottomColor
+    const containerBorder = getComputedStyle(nav.parentElement!).borderTopColor
+    expect(activeColor).not.toBe(inactiveColor)
+    expect(activeColor).not.toBe(containerBorder)
+    // active caption: accent color and heavier weight than the inactive ones
+    expect(getComputedStyle(active).color).not.toBe(getComputedStyle(inactive).color)
+    expect(Number.parseFloat(getComputedStyle(active).fontWeight)).toBeGreaterThan(
+      Number.parseFloat(getComputedStyle(inactive).fontWeight),
+    )
 
     await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-instance-tabs.png` })
   })
@@ -329,13 +350,30 @@ describe('WO-TEST-6 check 1b — active tab underline (ProcessDefinitionDetail, 
     const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
     expect(active).toBeTruthy()
     const cs = getComputedStyle(active)
-    expect(cs.borderBottomWidth).toBe('2px')
+    expect(cs.borderBottomWidth).toBe('3px')
     expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
     expect(cs.borderBottomColor).not.toBe('transparent')
     const btnRect = active.getBoundingClientRect()
     const navRect = nav.getBoundingClientRect()
     expect(btnRect.bottom).toBeGreaterThanOrEqual(navRect.bottom - 0.5)
     expect(btnRect.bottom).toBeLessThanOrEqual(navRect.bottom + 0.5)
+
+    // WO-ACL-15 criterion 13 (same point-color assertions as the instance strip)
+    const inactive = tabBtns.find((b) => b.getAttribute('aria-selected') === 'false')!
+    const inactiveRect = inactive.getBoundingClientRect()
+    const activePoint = document.elementFromPoint(btnRect.left + btnRect.width / 2, btnRect.bottom - 1)
+    const inactivePoint = document.elementFromPoint(inactiveRect.left + inactiveRect.width / 2, inactiveRect.bottom - 1)
+    expect(activePoint).toBeTruthy()
+    expect(inactivePoint).toBeTruthy()
+    const activeColor = getComputedStyle(activePoint as Element).borderBottomColor
+    const inactiveColor = getComputedStyle(inactivePoint as Element).borderBottomColor
+    const containerBorder = getComputedStyle(nav.parentElement!).borderTopColor
+    expect(activeColor).not.toBe(inactiveColor)
+    expect(activeColor).not.toBe(containerBorder)
+    expect(getComputedStyle(active).color).not.toBe(getComputedStyle(inactive).color)
+    expect(Number.parseFloat(getComputedStyle(active).fontWeight)).toBeGreaterThan(
+      Number.parseFloat(getComputedStyle(inactive).fontWeight),
+    )
 
     await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-definition-tabs.png` })
   })
@@ -417,7 +455,7 @@ describe('WO-TEST-6 check 4 — kazakh labels fit one line without ellipsis', ()
     expect(spans.length).toBeGreaterThanOrEqual(10)
     for (const s of spans) {
       // real kz string, not the t() key stub
-      const key = Object.keys(kz).find((k) => (kz as Record<string, string>)[k] === s.text())
+      const key = Object.keys(kz).find((k) => (kz as unknown as Record<string, string>)[k] === s.text())
       expect(key).toBeTruthy()
       const el = s.element
       const rect = el.getBoundingClientRect()
@@ -425,6 +463,44 @@ describe('WO-TEST-6 check 4 — kazakh labels fit one line without ellipsis', ()
       expect(rect.height).toBeLessThanOrEqual(22)
       // no ellipsis: full text fits inside the label box
       expect(el.scrollWidth).toBeLessThanOrEqual(el.clientWidth + 1)
+    }
+  })
+})
+
+// ---- WO-ACL-15 criterion 15: the BPMN canvas stays LIGHT in the dark theme ----
+
+function luminance(rgb: string): number {
+  const m = rgb.match(/rgba?\((\d+), (\d+), (\d+)/)
+  if (!m) return 0
+  const [r, g, b] = [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255]
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+describe('WO-ACL-15 criterion 15 — BPMN canvas contrast in the DARK theme', () => {
+  it('the canvas background is explicitly light and the shape stroke is distinguishable from it', async () => {
+    document.documentElement.classList.add('dark')
+    try {
+      const wrapper = mountPid()
+      await flushPromises()
+      // real bpmn-js renders shapes in Chromium
+      await until(() => !!wrapper.element.querySelector('.bpmn-container .djs-shape'))
+
+      const canvas = wrapper.find('.bpmn-container').element
+      const bg = getComputedStyle(canvas).backgroundColor
+      const bgLum = luminance(bg)
+      // EXPLICIT light background — not inherited from the dark card (#1e293b ~ 0.06)
+      expect(bgLum, `canvas background ${bg} must be light`).toBeGreaterThan(0.8)
+
+      // the shape stroke (bpmn-js paints black by default) must contrast with it
+      const shapeVisual = (wrapper.element as Element).querySelector('.djs-shape .djs-visual > :is(rect, path, circle, polygon)')
+      expect(shapeVisual).toBeTruthy()
+      const stroke = getComputedStyle(shapeVisual as Element).stroke
+      const strokeLum = luminance(stroke)
+      expect(Math.abs(bgLum - strokeLum), `background ${bg} vs stroke ${stroke}`).toBeGreaterThan(0.5)
+
+      await page.screenshot({ path: `${SHOT_DIR}/wo-acl-15-bpmn-dark.png` })
+    } finally {
+      document.documentElement.classList.remove('dark')
     }
   })
 })
@@ -516,7 +592,7 @@ describe('WO-ACL-14 criteria 9-12 — member dialog (ProcessDefinitionDetail)', 
     await addButton.trigger('click')
     await flushPromises()
 
-    const input = wrapper.find('input[placeholder*="мин. 3 символа"]')
+    const input = wrapper.find('input[placeholder*="Поиск по имени"]')
     expect(input.exists()).toBe(true)
     await input.setValue('ann')
     await flushPromises()

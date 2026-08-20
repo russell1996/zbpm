@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { getMySubmissions, type ProcessSubmission } from '@/services/submissionService'
-import { errorMessage } from '@/shared/lib/utils'
+import { translatedError } from '@/shared/lib/utils'
 import { AlertCircle, RefreshCw } from 'lucide-vue-next'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
@@ -20,7 +20,7 @@ async function load() {
   try {
     submissions.value = await getMySubmissions()
   } catch (e) {
-    error.value = errorMessage(e, t('failedToLoadSubmissions'))
+    error.value = translatedError(e, t, t('failedToLoadSubmissions'))
   } finally {
     loading.value = false
   }

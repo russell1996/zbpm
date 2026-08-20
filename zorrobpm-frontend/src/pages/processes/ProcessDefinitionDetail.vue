@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
 import { useProcessStore } from '@/stores/process'
-import { useBreadcrumbStore } from '@/stores/breadcrumb'
+import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 import * as processService from '@/services/processService'
@@ -25,11 +25,13 @@ const toast = useToast()
 const store = useProcessStore()
 const auth = useAuthStore()
 
-// WO-ACL-11 criterion 3: the breadcrumb process name lives in the breadcrumb
-// store (filled when the definition arrives, cleared on unmount) — NOT in a
-// provide(): BreadcrumbNav is mounted ABOVE <router-view>, so inject() from this
-// page could never reach it (P-54, the ACL-8/ACL-10 mechanism was impossible).
-const breadcrumb = useBreadcrumbStore()
+// WO-ACL-11 criterion 3 + WO-ACL-15 criterion 19: the breadcrumb leaf label
+// lives in the breadcrumb store through the shared useBreadcrumbLabel() — NOT
+// in a provide(): BreadcrumbNav is mounted ABOVE <router-view>, so inject()
+// from this page could never reach it (P-54, the ACL-8/ACL-10 mechanism was
+// impossible). The composable fills the store when the definition arrives,
+// reactively follows re-loads on the same route, and clears it on unmount.
+useBreadcrumbLabel(() => store.currentDefinition?.name || store.currentDefinition?.key || null)
 
 // --- WO-ACL-6: members and roles (ADR-8 п.4: seeing members is a member right;
 // managing them belongs to the OWNER only) ---
@@ -226,9 +228,6 @@ async function loadDefinition(id: string) {
   ])
   if (store.currentDefinition) {
     await store.fetchVersions(store.currentDefinition.key)
-    // WO-ACL-11 criterion 3: fill the breadcrumb store — the crumb shows the real
-    // process name (was provide/inject, physically impossible above router-view).
-    breadcrumb.setProcessName(store.currentDefinition.name || store.currentDefinition.key)
     loadMembers()
   }
   try {
@@ -240,10 +239,8 @@ async function loadDefinition(id: string) {
 
 onMounted(() => loadDefinition(route.params.id as string))
 
-// WO-ACL-11 criterion 3: leaving the page must NOT leave a stale process name in
-// the store — the next detail page (e.g. an instance) would show it instead of
-// its own title.
-onUnmounted(() => breadcrumb.setProcessName(null))
+// Leaving the page clears the store inside useBreadcrumbLabel's onUnmounted —
+// a stale process name can not leak into the next detail page.
 
 // Vue Router reuses the component instance when only :id changes (same route).
 // Without this watch, switching versions leaves stale data on screen.
