@@ -6,5 +6,7 @@ package com.zorrodev.bpm.engine.entity;
  */
 public enum OutboxKind {
     SERVICE_TASK,
-    DOMAIN_EVENT
+    DOMAIN_EVENT,
+    /** WO-INT-5: mail delivery via outbox — same at-least-once pattern as MQ. */
+    EMAIL
 }
