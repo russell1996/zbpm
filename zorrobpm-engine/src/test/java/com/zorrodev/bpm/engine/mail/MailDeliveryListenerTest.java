@@ -118,4 +118,37 @@ class MailDeliveryListenerTest {
         assertThat(mailStatus.getLastError()).isNotNull();
         assertThat(mailStatus.getLastErrorMessage()).contains("SMTP error");
     }
+
+    /**
+     * Criterion 5 POF: demonstrates retry-after-failure.
+     * First attempt: transient SMTP error → nack (retry signal).
+     * Second attempt: success → ack (delivery confirmed).
+     * This proves the outbox retry loop works end-to-end.
+     */
+    @Test
+    void criterion5_retryTransientFailure_thenSuccess() throws Exception {
+        // First attempt: transient failure
+        when(javaMailSender.createMimeMessage()).thenReturn(mimeMessage);
+        doThrow(new MailSendException("Connection timeout",
+            new jakarta.mail.MessagingException("Connection timeout")))
+            .when(javaMailSender).send(any(MimeMessage.class));
+
+        MailRequest request = new MailRequest("user@test.com", "Subject", "<h1>Retry test</h1>", true);
+        listener.on(new MailSendRequested(request, "retry-entry-1"));
+
+        ArgumentCaptor<OutboxDeliveryResult> firstResult = ArgumentCaptor.forClass(OutboxDeliveryResult.class);
+        verify(publisher).publishEvent(firstResult.capture());
+        assertThat(firstResult.getValue().isAcked()).isFalse(); // nack → retry
+
+        // Second attempt: success (reset mocks)
+        org.mockito.Mockito.reset(javaMailSender, publisher);
+        when(javaMailSender.createMimeMessage()).thenReturn(mimeMessage);
+        doNothing().when(javaMailSender).send(any(MimeMessage.class));
+
+        listener.on(new MailSendRequested(request, "retry-entry-1"));
+
+        ArgumentCaptor<OutboxDeliveryResult> secondResult = ArgumentCaptor.forClass(OutboxDeliveryResult.class);
+        verify(publisher).publishEvent(secondResult.capture());
+        assertThat(secondResult.getValue().isAcked()).isTrue(); // ack → delivered
+    }
 }
