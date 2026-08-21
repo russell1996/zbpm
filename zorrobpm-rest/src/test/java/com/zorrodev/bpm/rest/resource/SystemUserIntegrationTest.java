@@ -92,7 +92,7 @@ class SystemUserIntegrationTest {
         // Human users needed by the process definitions / candidates
         humanOwnerId = createUser("int4owner", "HUMAN", "MyStr0ng!P@ssw0rd");
         managerId = createUser("int4manager", "HUMAN", "MyStr0ng!P@ssw0rd");
-        createUser("user1", "HUMAN", "MyStr0ng!P@ssw0rd"); // assignee-task.bpmn assigns user1
+        createUser("sysuser1", "HUMAN", "MyStr0ng!P@ssw0rd"); // assignee-task-sys.bpmn assigns sysuser1
 
         UserGroupEntity group = new UserGroupEntity();
         group.setUserId(managerId);
@@ -103,11 +103,11 @@ class SystemUserIntegrationTest {
         systemUserId = createUser("int4sys", "SYSTEM", "ignore-me");
 
         // user1 is referenced by assignee-task.bpmn (assignee=user1) — must exist
-        createUser("user1", "HUMAN", "passr");
+        // REMOVED: duplicate createUser("sysuser1", "HUMAN", "passr") — was causing fixture collision
 
-        // Deploy assignee-task.bpmn (assignee=user1) — plain user task
-        processDefinitionId = deploy("assignee-task.bpmn");
-        processKey = "assignee-process";
+        // Deploy assignee-task-sys.bpmn (assignee=sysuser1) — plain user task
+        processDefinitionId = deploy("assignee-task-sys.bpmn");
+        processKey = "assignee-process-sys";
 
         // Deploy candidate-group-task.bpmn (candidateGroups=managers)
         candidateProcessDefinitionId = deploy("candidate-group-task.bpmn");
@@ -361,7 +361,7 @@ class SystemUserIntegrationTest {
         setGrantsFull(systemUserId, processKey);
 
         UUID taskId = startTaskAndGetId(); // assignee=user1 (seeded by BPMN)
-        assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("user1");
+        assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("sysuser1");
 
         // A foreign name is NOT the assignee -> 403 (POF: old code accepted any X-On-Behalf-Of)
         CompleteTaskDTO foreign = new CompleteTaskDTO();
@@ -378,7 +378,7 @@ class SystemUserIntegrationTest {
         dto.setVariables(List.of());
         mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
                         .header("Authorization", "Bearer " + systemKey)
-                        .header("X-On-Behalf-Of", "user1")
+                        .header("X-On-Behalf-Of", "sysuser1")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
@@ -428,7 +428,7 @@ class SystemUserIntegrationTest {
         dto.setVariables(List.of());
         mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
                         .header("Authorization", "Bearer " + humanKey)
-                        .header("X-On-Behalf-Of", "user1")
+                        .header("X-On-Behalf-Of", "sysuser1")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
