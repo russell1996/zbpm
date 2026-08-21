@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
+import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.mail.MailStatus;
+import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.security.PasswordHasher;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -15,6 +18,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+
+import java.time.Instant;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -32,14 +38,31 @@ class MailResourceTest {
 
     @Autowired MockMvc mockMvc;
     @Autowired MailStatus mailStatus;
+    @Autowired UiUserRepository userRepository;
+    @Autowired PasswordHasher passwordHasher;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
     private String superAdminToken;
+    private String regularUserToken;
 
     @BeforeAll
     void setup() throws Exception {
         superAdminToken = loginAndGetToken("admin", "admin");
+
+        // Create a regular (non-admin) user for 403 tests
+        UiUserEntity regularUser = new UiUserEntity();
+        regularUser.setId(UUID.randomUUID());
+        regularUser.setUsername("mail-regular-user");
+        regularUser.setPasswordHash(passwordHasher.hash("pass123"));
+        regularUser.setFullName("Regular User");
+        regularUser.setRole("USER");
+        regularUser.setActive(true);
+        regularUser.setCreatedAt(Instant.now());
+        regularUser.setUpdatedAt(Instant.now());
+        userRepository.save(regularUser);
+
+        regularUserToken = loginAndGetToken("mail-regular-user", "pass123");
     }
 
     // ==================== Criterion 7: Health indicator reflects config status ====================
@@ -55,8 +78,6 @@ class MailResourceTest {
 
         JsonNode json = mapper.readTree(result.getResponse().getContentAsString());
         assertTrue(json.has("configured"), "Response must have 'configured' field");
-        // In test profile, MailProperties may or may not be configured depending on env
-        // The key assertion is that the endpoint works and returns valid JSON
     }
 
     @Test
@@ -72,6 +93,14 @@ class MailResourceTest {
         mockMvc.perform(get("/admin/mail/health")
                 .header("Authorization", "Bearer invalid-token"))
             .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void criterion7_healthEndpoint_nonSuperAdmin_gets403() throws Exception {
+        // criterion 7: regular user gets 403
+        mockMvc.perform(get("/admin/mail/health")
+                .header("Authorization", "Bearer " + regularUserToken))
+            .andExpect(status().isForbidden());
     }
 
     // ==================== Criterion 8: Test email send ====================
@@ -93,6 +122,16 @@ class MailResourceTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("\"admin@example.com\""))
             .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void criterion8_testEmail_nonSuperAdmin_gets403() throws Exception {
+        // criterion 8: regular user gets 403
+        mockMvc.perform(post("/admin/mail/test")
+                .header("Authorization", "Bearer " + regularUserToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("\"admin@example.com\""))
+            .andExpect(status().isForbidden());
     }
 
     // ==================== Criterion 9: Status tracking ====================
