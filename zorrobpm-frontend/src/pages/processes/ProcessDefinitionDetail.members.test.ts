@@ -140,6 +140,22 @@ describe('ProcessDefinitionDetail members (WO-ACL-6 criteria 2/3)', () => {
     expect(mockChangeRole).toHaveBeenCalledWith('test-proc', 'u-viewer', 'DESIGNER')
   })
 
+  // ---- WO-INT-4 criterion 6: system accounts are marked in the member list ----
+
+  it('criterion 6: a SYSTEM member is visually marked, a human member is not', async () => {
+    const sys = { userId: 'u-sys', username: 'integration-bot', fullName: 'Integration Bot', email: 'bot@test.com', role: 'OWNER', addedBy: 'u-owner', addedAt: '2026-01-03', processKey: 'test-proc', isSystem: true }
+    const wrapper = await mountDetail([...MEMBERS, sys])
+    // the badge key resolves to visible text in the system row
+    const rows = wrapper.findAll('tbody tr')
+    const sysRow = rows.find((r) => r.text().includes('integration-bot'))
+    expect(sysRow).toBeDefined()
+    expect(sysRow!.text()).toContain('systemAccount')
+    // human member row carries no badge
+    const humanRow = rows.find((r) => r.text().includes('alice'))
+    expect(humanRow).toBeDefined()
+    expect(humanRow!.text()).not.toContain('systemAccount')
+  })
+
   it('criterion 3: OWNER can remove a member via the API', async () => {
     const wrapper = await mountDetail()
     const removeButtons = wrapper.findAll('button').filter((b) => b.text() === 'remove')

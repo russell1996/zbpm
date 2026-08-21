@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
@@ -18,6 +18,12 @@ const showForm = ref(false)
 const saving = ref(false)
 const editingUser = ref<User | null>(null)
 const expandedUserId = ref<string | null>(null)
+// WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
+const typeFilter = ref<'ALL' | 'HUMAN' | 'SYSTEM'>('ALL')
+
+const visibleUsers = computed(() =>
+  typeFilter.value === 'ALL' ? users.value : users.value.filter((u) => u.userType === typeFilter.value),
+)
 
 const formUsername = ref('')
 const formPassword = ref('')
@@ -124,6 +130,16 @@ onMounted(loadUsers)
         class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
         @input="loadUsers"
       />
+      <!-- WO-INT-4 criterion 2: one list with a type filter — systems are not a separate screen -->
+      <select
+        v-model="typeFilter"
+        class="px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        data-testid="user-type-filter"
+      >
+        <option value="ALL">{{ t('filterAllUsers') }}</option>
+        <option value="HUMAN">{{ t('filterHumanUsers') }}</option>
+        <option value="SYSTEM">{{ t('filterSystemUsers') }}</option>
+      </select>
       <span class="text-sm text-muted-foreground">{{ totalCount }} {{ t('usersCount') }}</span>
     </div>
 
@@ -142,14 +158,23 @@ onMounted(loadUsers)
           </tr>
         </thead>
         <tbody>
-          <template v-for="user in users" :key="user.id">
+          <template v-for="user in visibleUsers" :key="user.id">
           <tr
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
             tabindex="0"
             @click="expandedUserId = expandedUserId === user.id ? null : user.id"
             @keydown.enter="expandedUserId = expandedUserId === user.id ? null : user.id"
           >
-            <td class="px-4 py-3 font-mono">{{ user.username }}</td>
+            <td class="px-4 py-3 font-mono">
+              {{ user.username }}
+              <!-- WO-INT-4 criterion 2: a system account is an integration, not a person -->
+              <span
+                v-if="user.userType === 'SYSTEM'"
+                class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-violet-100 text-violet-700"
+              >
+                {{ t('systemAccount') }}
+              </span>
+            </td>
             <td class="px-4 py-3">{{ user.fullName || '—' }}</td>
             <td class="px-4 py-3">{{ user.email || '—' }}</td>
             <td class="px-4 py-3">

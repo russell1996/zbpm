@@ -63,6 +63,15 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public ApiKeyDTO getApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
+        if (isSystemAccount(userId)) {
+            // WO-INT-4: a system account holds several keys — "the key of the user"
+            // answers with the first active one (listApiKeys is the full view).
+            return apiKeyRepository.findAllByOwnerUserId(userId).stream()
+                .filter(k -> k.getRevokedAt() == null)
+                .findFirst()
+                .map(this::toDTO)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No API key for this user"));
+        }
         ApiKeyEntity apiKey = findByUserIdOr404(userId);
         return toDTO(apiKey);
     }
@@ -71,6 +80,23 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public List<ApiKeyGrantDTO> setGrants(@PathVariable UUID userId, @RequestBody SetGrantsDTO dto) {
         requireSuperAdmin();
+
+        if (isSystemAccount(userId)) {
+            // WO-INT-4 criterion 5: a system account's grants are account-level — every
+            // active key of the account carries the same grants (rotation must not
+            // produce a key with a different permission set).
+            List<ApiKeyEntity> keys = apiKeyRepository.findAllByOwnerUserId(userId).stream()
+                .filter(k -> k.getRevokedAt() == null)
+                .toList();
+            if (keys.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No API key for this user");
+            }
+            replaceGrants(keys.get(0), dto); // validates once (process exists, membership, full/permissions)
+            for (int i = 1; i < keys.size(); i++) {
+                replaceGrants(keys.get(i), dto);
+            }
+            return getGrants(keys.get(0).getId());
+        }
 
         ApiKeyEntity apiKey = findByUserIdOr404(userId);
         return replaceGrants(apiKey, dto);
@@ -96,6 +122,24 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public void revokeApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
+        // WO-INT-4: a system account may hold several active keys. Revoking "the key of the
+        // user" then means revoking them all — key-level revocation lives in revokeApiKeyById.
+        if (isSystemAccount(userId)) {
+            List<ApiKeyEntity> keys = apiKeyRepository.findAllByOwnerUserId(userId);
+            boolean any = false;
+            for (ApiKeyEntity key : keys) {
+                if (key.getRevokedAt() == null) {
+                    key.setRevokedAt(Instant.now());
+                    apiKeyRepository.save(key);
+                    any = true;
+                }
+            }
+            if (any) {
+                auditLogService.record(getPrincipal(), "KEY_REVOKE", null, userId.toString());
+            }
+            log.info("All API keys revoked for system user={}", userId);
+            return;
+        }
         ApiKeyEntity apiKey = findByUserIdOr404(userId);
 
         apiKey.setRevokedAt(Instant.now());
@@ -174,6 +218,47 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         apiKeyRepository.save(apiKey);
     }
 
+    // ==================== WO-INT-4: system accounts — multiple keys ====================
+
+    @Override
+    public List<ApiKeyDTO> listApiKeys(@PathVariable UUID userId) {
+        requireSuperAdmin();
+        return apiKeyRepository.findAllByOwnerUserId(userId).stream()
+            .map(this::toDTO)
+            .collect(Collectors.toList());
+    }
+
+    @Transactional
+    @Override
+    public ApiKeyWithSecretDTO createAdditionalApiKey(@PathVariable UUID userId) {
+        requireSuperAdmin();
+        // WO-INT-4 criterion 5: multiple concurrent keys are a SYSTEM-account feature
+        // (zero-downtime rotation). Human accounts keep one-key-per-user: an attempt to
+        // open a second key through this endpoint → 409.
+        if (!isSystemAccount(userId)) {
+            ApiKeyEntity existing = apiKeyRepository.findByOwnerUserId(userId).orElse(null);
+            if (existing != null && existing.getRevokedAt() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
+            }
+        }
+        return issueKeyForUser(userId);
+    }
+
+    @Transactional
+    @Override
+    public void revokeApiKeyById(@PathVariable UUID userId, @PathVariable UUID apiKeyId) {
+        requireSuperAdmin();
+        ApiKeyEntity key = apiKeyRepository.findById(apiKeyId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "API key not found"));
+        if (!key.getOwnerUserId().equals(userId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "API key not found");
+        }
+        key.setRevokedAt(Instant.now());
+        apiKeyRepository.save(key);
+        auditLogService.record(getPrincipal(), "KEY_REVOKE", null, userId.toString());
+        log.info("API key {} revoked for user={}", apiKeyId, userId);
+    }
+
     // ==================== Helpers ====================
 
     /** WO-ACL-5: current caller as a UserPrincipal, or 401. Shared by all self-service endpoints. */
@@ -188,23 +273,28 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     /**
      * One key per user, shared by the super-admin and self-service create paths:
      * active key → 409, revoked key → replaced (old key + its grants deleted, new key issued).
+     * WO-INT-4: for a SYSTEM account the "one key" rule does not apply — a new key is
+     * added alongside the existing ones (zero-downtime rotation); nothing is deleted.
      */
     private ApiKeyWithSecretDTO issueKeyForUser(UUID userId) {
-        var existingKey = apiKeyRepository.findByOwnerUserId(userId);
-        if (existingKey.isPresent()) {
-            ApiKeyEntity existing = existingKey.get();
-            if (existing.getRevokedAt() == null) {
-                // Active key → 409
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
-            }
-            // Revoked key → replace it (delete old + its grants, create new)
-            apiKeyGrantRepository.deleteByApiKeyId(existing.getId());
-            apiKeyRepository.delete(existing);
-            apiKeyRepository.flush();
-        }
-
         UiUserEntity user = uiUserRepository.findById(userId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        boolean system = "SYSTEM".equals(user.getUserType());
+
+        if (!system) {
+            var existingKey = apiKeyRepository.findByOwnerUserId(userId);
+            if (existingKey.isPresent()) {
+                ApiKeyEntity existing = existingKey.get();
+                if (existing.getRevokedAt() == null) {
+                    // Active key → 409
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
+                }
+                // Revoked key → replace it (delete old + its grants, create new)
+                apiKeyGrantRepository.deleteByApiKeyId(existing.getId());
+                apiKeyRepository.delete(existing);
+                apiKeyRepository.flush();
+            }
+        }
 
         String rawKey = generateKey();
         String keyHash = KeyHasher.sha256(rawKey);
@@ -282,6 +372,12 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     private ApiKeyEntity findByUserIdOr404(UUID userId) {
         return apiKeyRepository.findByOwnerUserId(userId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No API key for this user"));
+    }
+
+    private boolean isSystemAccount(UUID userId) {
+        return uiUserRepository.findById(userId)
+            .map(u -> "SYSTEM".equals(u.getUserType()))
+            .orElse(false);
     }
 
     private String generateKey() {

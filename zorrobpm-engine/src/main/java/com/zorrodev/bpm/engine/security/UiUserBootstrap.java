@@ -39,6 +39,7 @@ public class UiUserBootstrap implements ApplicationRunner {
         admin.setRole("SUPER_ADMIN");
         admin.setActive(true);
         admin.setForcePasswordChange(true);
+        admin.setUserType("HUMAN");
         admin.setCreatedAt(Instant.now());
         admin.setUpdatedAt(Instant.now());
         repository.save(admin);
