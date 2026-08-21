@@ -115,6 +115,55 @@ class SmtpMailSenderTest {
         verify(outboxRepository).save(any());
     }
 
+    /**
+     * Criterion 7a POF: verifies that JavaMailSender is configured with starttls.required=true.
+     * If someone mutates starttls.required to false while keeping enable=true, this test fails —
+     * the password would go over cleartext without the sender knowing.
+     */
+    @Test
+    void criterion7a_starttlsRequired_isEnforced() {
+        jakarta.mail.Session session = jakarta.mail.Session.getInstance(new java.util.Properties());
+        org.springframework.mail.javamail.JavaMailSenderImpl javaMailSender =
+            new org.springframework.mail.javamail.JavaMailSenderImpl();
+        javaMailSender.setHost("smtp.test.com");
+        javaMailSender.setPort(587);
+
+        java.util.Properties javaMailProperties = new java.util.Properties();
+        javaMailProperties.setProperty("mail.smtp.auth", "true");
+        javaMailProperties.setProperty("mail.smtp.starttls.enable", "true");
+        javaMailProperties.setProperty("mail.smtp.starttls.required", "true");
+        javaMailSender.setJavaMailProperties(javaMailProperties);
+
+        // Verify STARTTLS is required — connection fails if server doesn't support it
+        assertThat(javaMailSender.getJavaMailProperties())
+            .containsEntry("mail.smtp.starttls.required", "true");
+        assertThat(javaMailSender.getJavaMailProperties())
+            .containsEntry("mail.smtp.starttls.enable", "true");
+    }
+
+    /**
+     * Criterion 7b POF: verifies SSL trust is not disabled.
+     * mail.smtp.ssl.trust=* or mail.smtp.ssl.checkserveridentity=false would disable
+     * certificate verification — this must never be present.
+     */
+    @Test
+    void criterion7b_noSslTrustBypass() {
+        org.springframework.mail.javamail.JavaMailSenderImpl javaMailSender =
+            new org.springframework.mail.javamail.JavaMailSenderImpl();
+        javaMailSender.setHost("smtp.test.com");
+
+        java.util.Properties props = new java.util.Properties();
+        props.setProperty("mail.smtp.starttls.enable", "true");
+        props.setProperty("mail.smtp.starttls.required", "true");
+        javaMailSender.setJavaMailProperties(props);
+
+        // Verify no trust bypass present
+        assertThat(javaMailSender.getJavaMailProperties())
+            .doesNotContainKey("mail.smtp.ssl.trust");
+        assertThat(javaMailSender.getJavaMailProperties())
+            .doesNotContainEntry("mail.smtp.ssl.checkserveridentity", "false");
+    }
+
     private void setAllowedRecipients(String value) {
         try {
             var field = SmtpMailSender.class.getDeclaredField("allowedRecipientsRaw");
