@@ -10,4 +10,6 @@ import java.util.UUID;
 public interface ApiKeyRepository extends JpaRepository<ApiKeyEntity, UUID> {
     Optional<ApiKeyEntity> findByOwnerUserId(UUID ownerUserId);
     Optional<ApiKeyEntity> findByKeyHash(String keyHash);
+    /** WO-INT-4: system accounts may hold several active keys at once. */
+    List<ApiKeyEntity> findAllByOwnerUserId(UUID ownerUserId);
 }

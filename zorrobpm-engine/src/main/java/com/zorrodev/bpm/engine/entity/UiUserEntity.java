@@ -25,6 +25,8 @@ public class UiUserEntity {
     private String role;
     private boolean active;
     private boolean forcePasswordChange;
+    /** WO-INT-4: "HUMAN" or "SYSTEM". A SYSTEM account has no usable password. */
+    private String userType = "HUMAN";
     private Instant createdAt;
     private Instant updatedAt;
 }

@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.rest.security;
 
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -49,7 +50,7 @@ public class RateLimitFilterConfig {
     private String trustedProxiesRaw;
 
     @Bean
-    public RateLimitFilter rateLimitFilter() {
+    public RateLimitFilter rateLimitFilter(ApiKeyRepository apiKeyRepository) {
         RateLimitFilter filter = new RateLimitFilter();
         filter.setRateLimitEnabled(enabled);
         filter.setCapacity(capacity);
@@ -59,6 +60,8 @@ public class RateLimitFilterConfig {
         filter.setAccountCapacity(accountCapacity);
         filter.setRefreshCapacity(refreshCapacity);
         filter.setRefreshWindowSeconds(refreshWindowSeconds);
+        // WO-INT-4 criterion 8: per-key data quota needs key identity.
+        filter.setApiKeyRepository(apiKeyRepository);
 
         Set<String> proxies = parseTrustedProxies(trustedProxiesRaw);
         filter.setTrustedProxies(proxies);

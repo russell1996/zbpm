@@ -177,7 +177,7 @@ class Acl7SelfAndCandidateEndpointsIT {
         assertTrue(arr.isArray() && arr.size() >= 1, "expected own memberships: " + arr);
         Set<String> fields = new HashSet<>();
         arr.get(0).fieldNames().forEachRemaining(fields::add);
-        assertEquals(Set.of("userId", "username", "fullName", "email", "role", "addedBy", "addedAt", "processKey"),
+        assertEquals(Set.of("userId", "username", "fullName", "email", "role", "addedBy", "addedAt", "processKey", "isSystem"),
             fields, "MemberDTO must expose exactly the agreed fields: " + arr);
     }
 

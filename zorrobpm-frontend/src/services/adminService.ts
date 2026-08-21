@@ -11,6 +11,8 @@ export interface Member {
   addedBy: string | null
   addedAt: string
   processKey?: string
+  // WO-INT-4 criterion 6: SYSTEM accounts are marked in the members list
+  isSystem?: boolean
 }
 
 export async function listMembers(processKey: string): Promise<Member[]> {

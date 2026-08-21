@@ -19,4 +19,6 @@ public class MemberDTO {
     private UUID addedBy;
     private Instant addedAt;
     private String processKey;
+    /** WO-INT-4: true when the member is a system account (integration, not a person). */
+    private Boolean isSystem;
 }

@@ -35,15 +35,21 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * WO-INT-2: X-On-Behalf-Of + initiator + audit attribution.
+ * WO-INT-2 + WO-INT-4: X-On-Behalf-Of + initiator + audit attribution.
+ *
+ * WO-INT-4 criteria 11-12 changed the trust model: X-On-Behalf-Of is now accepted ONLY
+ * from system accounts (service keys), and the claimed name must be the task assignee
+ * or a candidate for it. These tests therefore use a SYSTEM key everywhere a header is
+ * sent — a human key would be rejected with 403 (see SystemUserIntegrationTest #12).
  *
  * #1: Start with X-On-Behalf-Of → initiator on process instance
  * #2: Start with key + header → audit has both principal and on_behalf_of
- * #3: Complete with header → audit has on_behalf_of
+ * #3: Complete with header → audit has on_behalf_of (claimed user is the assignee)
  * #4: No header → backward compatible (null)
  * #5: PG-IT for migrations (via RetroPgIT)
  * #6: proof-of-failure was RED, now GREEN
@@ -62,19 +68,31 @@ class OnBehalfOfIntegrationTest {
     @Autowired private AuditLogRepository auditLogRepository;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
-    private String saToken;
-    private String userToken;
+    private String adminToken;
+    private String systemKey;
+    private UUID systemUserId;
     private UUID processDefinitionId;
+    private String processKey;
 
     @BeforeAll
     void setup() throws Exception {
         adminToken = login("admin", "admin");
+
+        // System account + its key (WO-INT-4): keys are the only principals allowed
+        // to send X-On-Behalf-Of.
+        if (!userRepository.existsByUsername("int2sys")) {
+            systemUserId = createUserViaHttp("int2sys", "SYSTEM");
+        } else {
+            systemUserId = userRepository.findByUsername("int2sys").orElseThrow().getId();
+        }
+        systemKey = createApiKeyForUser(systemUserId);
+
+        // int2User (human) stays for plain non-header usage
         if (!userRepository.existsByUsername("int2User")) {
             createUser("int2User", "USER");
         }
-        userToken = login("int2User", "passr");
 
-        // Deploy candidate-group-task.bpmn (simple user task)
+        // Deploy assignee-task.bpmn (assignee=user1, process key=assignee-process)
         String bpmn = Files.readString(
             Paths.get("src/test/files/assignee-task.bpmn"), StandardCharsets.UTF_8);
         AddProcessDefinitionDTO addDto = new AddProcessDefinitionDTO();
@@ -87,9 +105,12 @@ class OnBehalfOfIntegrationTest {
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
-    }
+        processKey = mapper.readTree(deployResult.getResponse().getContentAsString()).get("key").asText();
 
-    private String adminToken;
+        // System is an OWNER of the process -> effective grants for its key
+        addMember(processKey, systemUserId, "OWNER");
+        setGrantsFull(systemUserId, processKey);
+    }
 
     private void createUser(String username, String role) {
         UiUserEntity user = new UiUserEntity();
@@ -116,6 +137,67 @@ class OnBehalfOfIntegrationTest {
         return mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class).getToken();
     }
 
+    private UUID createUserViaHttp(String username, String userType) throws Exception {
+        String body = "{\"username\":\"" + username
+            + "\",\"fullName\":\"" + username
+            + "\",\"email\":\"" + username + "@zorrodev.test"
+            + "\",\"role\":\"SUPER_ADMIN\""
+            + ",\"active\":true"
+            + ",\"password\":\"MyStr0ng!P@ssw0rd\""
+            + ",\"userType\":\"" + userType + "\"}";
+        MvcResult result = mockMvc.perform(post("/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(body)
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andReturn();
+        int status = result.getResponse().getStatus();
+        if (status == 409) {
+            return userRepository.findByUsername(username).orElseThrow().getId();
+        }
+        if (status != 200) {
+            throw new IllegalStateException("createUserViaHttp(" + username + ") failed: " + status
+                + " " + result.getResponse().getContentAsString());
+        }
+        return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
+    }
+
+    private String createApiKeyForUser(UUID userId) throws Exception {
+        MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
+    }
+
+    private void addMember(String processKey, UUID userId, String role) throws Exception {
+        mockMvc.perform(post("/processes/" + processKey + "/members")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content("{\"userId\":\"" + userId + "\",\"role\":\"" + role + "\"}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
+    private void setGrantsFull(UUID userId, String processKey) throws Exception {
+        mockMvc.perform(put("/admin/users/" + userId + "/api-key/grants")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content("{\"grants\":[{\"processKey\":\"" + processKey + "\",\"full\":true}]}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+    }
+
+    private UUID startProcess() throws Exception {
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(processDefinitionId);
+        dto.setVariables(List.of());
+        MvcResult result = mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(dto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+        return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
+    }
+
     // --- Criterion #1: Start with X-On-Behalf-Of → initiator on instance ---
 
     @Test
@@ -123,7 +205,7 @@ class OnBehalfOfIntegrationTest {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(processDefinitionId);
         MvcResult result = mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + systemKey)
                         .header("X-On-Behalf-Of", "emp42")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
@@ -141,13 +223,12 @@ class OnBehalfOfIntegrationTest {
 
     @Test
     void criterion2_startWithHeader_auditHasKeyAndOnBehalfOf() throws Exception {
-        // Use findByFilters which orders by at desc
         int beforeCount = auditLogRepository.findByFilters(null, null, null, null).size();
 
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(processDefinitionId);
         mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + systemKey)
                         .header("X-On-Behalf-Of", "emp99")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
@@ -163,31 +244,31 @@ class OnBehalfOfIntegrationTest {
     }
 
     // --- Criterion #3: Complete with header → audit has on_behalf_of ---
+    // WO-INT-4 #11: the claimed name must be the task assignee — so admin assigns the
+    // task to emp77 first, then the system key completes it on behalf of emp77.
 
     @Test
     void criterion3_completeWithHeader_auditHasOnBehalfOf() throws Exception {
-        // Start a process (admin as assignee)
-        StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
-        startDto.setProcessDefinitionId(processDefinitionId);
-        MvcResult startResult = mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + adminToken)
-                        .content(mapper.writeValueAsString(startDto))
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
-                .andReturn();
-        UUID instanceId = UUID.fromString(
-            mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
+        createUserViaHttp("emp77", "HUMAN");
 
+        UUID instanceId = startProcess();
         UserTaskEntity task = userTaskRepository.findAll().stream()
             .filter(t -> t.getProcessInstanceId().equals(instanceId) && t.getCompletedAt() == null)
             .findFirst().orElseThrow();
+
+        // Make emp77 the assignee (human assignee -> assign endpoint accepts it)
+        mockMvc.perform(post("/user-tasks/" + task.getId() + "/assign")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content("{\"assignee\":\"emp77\"}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
 
         int beforeCount = auditLogRepository.findByFilters(null, null, null, null).size();
 
         CompleteTaskDTO completeDto = new CompleteTaskDTO();
         completeDto.setVariables(List.of());
         mockMvc.perform(post("/user-tasks/" + task.getId() + "/complete")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + systemKey)
                         .header("X-On-Behalf-Of", "emp77")
                         .content(mapper.writeValueAsString(completeDto))
                         .contentType(MediaType.APPLICATION_JSON))
@@ -209,7 +290,7 @@ class OnBehalfOfIntegrationTest {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(processDefinitionId);
         MvcResult result = mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + systemKey)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -231,7 +312,7 @@ class OnBehalfOfIntegrationTest {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(processDefinitionId);
         mockMvc.perform(post("/process-instances")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + systemKey)
                         .header("X-On-Behalf-Of", "ceo@company.com")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
