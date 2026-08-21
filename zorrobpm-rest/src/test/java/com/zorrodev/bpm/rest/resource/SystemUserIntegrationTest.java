@@ -360,7 +360,7 @@ class SystemUserIntegrationTest {
         String systemKey = createApiKeyForUser(systemUserId);
         setGrantsFull(systemUserId, processKey);
 
-        UUID taskId = startTaskAndGetId(); // assignee=user1 (seeded by BPMN)
+        UUID taskId = startTaskAndGetId(); // assignee=sysuser1 (seeded by BPMN)
         assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("sysuser1");
 
         // A foreign name is NOT the assignee -> 403 (POF: old code accepted any X-On-Behalf-Of)
@@ -423,7 +423,7 @@ class SystemUserIntegrationTest {
         setGrantsFull(humanKeyOwnerId, processKey);
 
         // The real assignee -> 200 (same rule as a system key)
-        UUID taskId = startTaskAndGetId(); // assignee=user1
+        UUID taskId = startTaskAndGetId(); // assignee=sysuser1
         CompleteTaskDTO dto = new CompleteTaskDTO();
         dto.setVariables(List.of());
         mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
@@ -527,7 +527,7 @@ class SystemUserIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    /** Starts assignee-process and returns its task (assignee=user1 seeded by BPMN). */
+    /** Starts assignee-process-sys and returns its task (assignee=sysuser1 seeded by BPMN). */
     private UUID startTaskAndGetId() throws Exception {
         return startProcessAndGetTaskId(processDefinitionId);
     }
