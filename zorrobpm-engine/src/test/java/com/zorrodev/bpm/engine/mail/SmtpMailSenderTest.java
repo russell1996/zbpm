@@ -116,52 +116,53 @@ class SmtpMailSenderTest {
     }
 
     /**
-     * Criterion 7a POF: verifies that JavaMailSender is configured with starttls.required=true.
-     * If someone mutates starttls.required to false while keeping enable=true, this test fails —
+     * Criterion 7a POF: reads actual CE application.properties and verifies STARTTLS is required.
+     * If someone mutates starttls.required to false in the config, this test fails —
      * the password would go over cleartext without the sender knowing.
+     * Mail properties live in zorrobpm-ce module (not engine), so we read from the project root.
      */
     @Test
-    void criterion7a_starttlsRequired_isEnforced() {
-        jakarta.mail.Session session = jakarta.mail.Session.getInstance(new java.util.Properties());
-        org.springframework.mail.javamail.JavaMailSenderImpl javaMailSender =
-            new org.springframework.mail.javamail.JavaMailSenderImpl();
-        javaMailSender.setHost("smtp.test.com");
-        javaMailSender.setPort(587);
+    void criterion7a_starttlsRequired_isEnforced() throws Exception {
+        java.util.Properties props = new java.util.Properties();
+        // Read from zorrobpm-ce/src/main/resources/application.properties (one level up from engine)
+        java.nio.file.Path ceProps = java.nio.file.Path.of(
+            System.getProperty("user.dir")).resolve("../zorrobpm-ce/src/main/resources/application.properties");
+        assertThat(ceProps)
+            .as("CE application.properties must exist at %s", ceProps.toAbsolutePath())
+            .exists();
+        try (var is = java.nio.file.Files.newInputStream(ceProps)) {
+            props.load(is);
+        }
 
-        java.util.Properties javaMailProperties = new java.util.Properties();
-        javaMailProperties.setProperty("mail.smtp.auth", "true");
-        javaMailProperties.setProperty("mail.smtp.starttls.enable", "true");
-        javaMailProperties.setProperty("mail.smtp.starttls.required", "true");
-        javaMailSender.setJavaMailProperties(javaMailProperties);
-
-        // Verify STARTTLS is required — connection fails if server doesn't support it
-        assertThat(javaMailSender.getJavaMailProperties())
-            .containsEntry("mail.smtp.starttls.required", "true");
-        assertThat(javaMailSender.getJavaMailProperties())
-            .containsEntry("mail.smtp.starttls.enable", "true");
+        assertThat(props.getProperty("spring.mail.properties.mail.smtp.starttls.enable"))
+            .as("starttls.enable must be true").isEqualTo("true");
+        assertThat(props.getProperty("spring.mail.properties.mail.smtp.starttls.required"))
+            .as("starttls.required must be true").isEqualTo("true");
     }
 
     /**
-     * Criterion 7b POF: verifies SSL trust is not disabled.
+     * Criterion 7b POF: reads actual CE application.properties and verifies no SSL trust bypass.
      * mail.smtp.ssl.trust=* or mail.smtp.ssl.checkserveridentity=false would disable
      * certificate verification — this must never be present.
      */
     @Test
-    void criterion7b_noSslTrustBypass() {
-        org.springframework.mail.javamail.JavaMailSenderImpl javaMailSender =
-            new org.springframework.mail.javamail.JavaMailSenderImpl();
-        javaMailSender.setHost("smtp.test.com");
-
+    void criterion7b_noSslTrustBypass() throws Exception {
         java.util.Properties props = new java.util.Properties();
-        props.setProperty("mail.smtp.starttls.enable", "true");
-        props.setProperty("mail.smtp.starttls.required", "true");
-        javaMailSender.setJavaMailProperties(props);
+        java.nio.file.Path ceProps = java.nio.file.Path.of(
+            System.getProperty("user.dir")).resolve("../zorrobpm-ce/src/main/resources/application.properties");
+        assertThat(ceProps).exists();
+        try (var is = java.nio.file.Files.newInputStream(ceProps)) {
+            props.load(is);
+        }
 
-        // Verify no trust bypass present
-        assertThat(javaMailSender.getJavaMailProperties())
-            .doesNotContainKey("mail.smtp.ssl.trust");
-        assertThat(javaMailSender.getJavaMailProperties())
-            .doesNotContainEntry("mail.smtp.ssl.checkserveridentity", "false");
+        // No trust bypass: ssl.trust must not be set to *
+        assertThat(props.getProperty("spring.mail.properties.mail.smtp.ssl.trust"))
+            .as("ssl.trust must not be set to * (disables certificate check)")
+            .isNotEqualTo("*");
+        // No identity check bypass
+        assertThat(props.getProperty("spring.mail.properties.mail.smtp.ssl.checkserveridentity"))
+            .as("ssl.checkserveridentity must not be false")
+            .isNotEqualTo("false");
     }
 
     private void setAllowedRecipients(String value) {
