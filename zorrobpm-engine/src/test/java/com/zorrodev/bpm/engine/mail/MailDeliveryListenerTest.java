@@ -10,6 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -18,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -46,7 +48,30 @@ class MailDeliveryListenerTest {
     void setUp() {
         mailProperties = new MailProperties("smtp.test.com", 587, "user", "pass", "from@test.com", "");
         mailStatus = new MailStatus();
-        listener = new MailDeliveryListener(javaMailSender, publisher, mailProperties, mailStatus);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<JavaMailSender> provider = org.mockito.Mockito.mock(ObjectProvider.class);
+        lenient().when(provider.getIfAvailable()).thenReturn(javaMailSender);
+        listener = new MailDeliveryListener(provider, publisher, mailProperties, mailStatus);
+    }
+
+    @Test
+    void criterion4_noTransportConfigured_publishesNack_andDoesNotThrow() {
+        // criterion 4: with ZORROBPM_MAIL_* unset there is NO JavaMailSender bean.
+        // The application must still start and the entry must flow into retry/quarantine,
+        // not crash the context or the listener.
+        @SuppressWarnings("unchecked")
+        ObjectProvider<JavaMailSender> emptyProvider = org.mockito.Mockito.mock(ObjectProvider.class);
+        org.mockito.Mockito.when(emptyProvider.getIfAvailable()).thenReturn(null);
+        MailDeliveryListener noTransport = new MailDeliveryListener(emptyProvider, publisher, mailProperties, mailStatus);
+
+        MailRequest request = new MailRequest("user@test.com", "Test", "body", false);
+        noTransport.on(new MailSendRequested(request, "outbox-id-no-transport"));
+
+        ArgumentCaptor<OutboxDeliveryResult> captor = ArgumentCaptor.forClass(OutboxDeliveryResult.class);
+        verify(publisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().isAcked()).isFalse();
+        assertThat(captor.getValue().getCause()).contains("not configured");
+        assertThat(mailStatus.getLastErrorMessage()).contains("not configured");
     }
 
     @Test

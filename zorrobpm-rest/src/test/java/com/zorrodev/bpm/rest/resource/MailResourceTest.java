@@ -134,6 +134,34 @@ class MailResourceTest {
             .andExpect(status().isForbidden());
     }
 
+    // ==================== Criterion 2/4 wiring: test profile isolation (POF 1 target) ====================
+
+    @org.springframework.beans.factory.annotation.Autowired
+    org.springframework.context.ApplicationContext ctx;
+
+    @org.junit.jupiter.api.Test
+    void profileWiring_testProfile_noRealMailTransportAnywhere() {
+        // In the REST test context (test profile, no ZORROBPM_MAIL_*) there must be NO real
+        // SMTP machinery: no JavaMailSender bean, no delivery listener. The MailSender role
+        // itself is bound by the engine's test-profile stub when zorrobpm-test is on the
+        // module's classpath; here we assert the transport side is fully absent.
+        // Mutations that must turn this red:
+        //  - removing @Profile("!test") from MailDeliveryListener → context fails to start
+        //    (it would require a JavaMailSender bean this profile does not provide) — every
+        //    test in this class goes red;
+        //  - removing @Profile("!test") from SmtpMailSender → a MailSender bean appears in
+        //    the context → the assertion below catches it.
+        org.assertj.core.api.Assertions.assertThat(
+                ctx.getBeansOfType(org.springframework.mail.javamail.JavaMailSender.class))
+            .isEmpty();
+        org.assertj.core.api.Assertions.assertThat(
+                ctx.getBeansOfType(com.zorrodev.bpm.engine.mail.MailDeliveryListener.class))
+            .isEmpty();
+        org.assertj.core.api.Assertions.assertThat(
+                ctx.getBeansOfType(com.zorrodev.bpm.engine.mail.SmtpMailSender.class))
+            .isEmpty();
+    }
+
     // ==================== Criterion 9: Status tracking ====================
 
     @Test
@@ -165,6 +193,7 @@ class MailResourceTest {
 
         JsonNode json = mapper.readTree(result.getResponse().getContentAsString());
         assertTrue(json.has("configured"), "Response must have 'configured'");
+        assertTrue(json.has("reachable"), "Response must have 'reachable' (live SMTP probe)");
         assertTrue(json.has("lastSuccess"), "Response must have 'lastSuccess'");
         assertTrue(json.has("lastError"), "Response must have 'lastError'");
         assertTrue(json.has("lastErrorMessage"), "Response must have 'lastErrorMessage'");

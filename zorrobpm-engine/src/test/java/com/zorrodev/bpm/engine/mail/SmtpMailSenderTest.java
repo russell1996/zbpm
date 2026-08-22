@@ -10,6 +10,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.mail.autoconfigure.MailSenderAutoConfiguration;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -116,15 +120,54 @@ class SmtpMailSenderTest {
     }
 
     /**
-     * Criterion 7a POF: reads actual CE application.properties and verifies STARTTLS is required.
-     * If someone mutates starttls.required to false in the config, this test fails —
+     * Criterion 7a POF: builds a REAL Spring context with the production mail auto-configuration,
+     * fed with the spring.mail.* values from the actual CE application.properties, and asserts on
+     * the ASSEMBLED JavaMailSender — not on the config file text. If starttls.required is mutated
+     * to false in the config, the assembled sender loses the requirement and this test fails:
      * the password would go over cleartext without the sender knowing.
-     * Mail properties live in zorrobpm-ce module (not engine), so we read from the project root.
      */
     @Test
-    void criterion7a_starttlsRequired_isEnforced() throws Exception {
+    void criterion7a_starttlsRequired_isEnforced() {
+        javaMailSenderFromProductionConfig().run(ctx -> {
+            assertThat(ctx).hasSingleBean(JavaMailSenderImpl.class);
+            java.util.Properties runtime =
+                ctx.getBean(JavaMailSenderImpl.class).getJavaMailProperties();
+            assertThat(runtime.getProperty("mail.smtp.starttls.enable"))
+                .as("assembled sender: starttls.enable must be true").isEqualTo("true");
+            assertThat(runtime.getProperty("mail.smtp.starttls.required"))
+                .as("assembled sender: starttls.required must be true").isEqualTo("true");
+        });
+    }
+
+    /**
+     * Criterion 7b POF: same assembled-sender assertion — no SSL trust bypass may reach the
+     * runtime JavaMailSender. mail.smtp.ssl.trust=* or checkserveridentity=false in the config
+     * would disable certificate verification; either mutation turns this test red.
+     */
+    @Test
+    void criterion7b_noSslTrustBypass() {
+        javaMailSenderFromProductionConfig().run(ctx -> {
+            assertThat(ctx).hasSingleBean(JavaMailSenderImpl.class);
+            java.util.Properties runtime =
+                ctx.getBean(JavaMailSenderImpl.class).getJavaMailProperties();
+            assertThat(runtime.getProperty("mail.smtp.ssl.trust"))
+                .as("ssl.trust must not be * (disables certificate check)")
+                .isNotEqualTo("*");
+            assertThat(runtime.getProperty("mail.smtp.ssl.checkserveridentity"))
+                .as("ssl.checkserveridentity must not be false")
+                .isNotEqualTo("false");
+        });
+    }
+
+    /**
+     * Builds an ApplicationContextRunner containing the real {@link MailSenderAutoConfiguration}
+     * and every non-blank spring.mail.* property from the CE application.properties (the file
+     * the production app actually starts with). Dummy host/credentials make the auto-configuration
+     * create its bean (it is @ConditionalOnProperty(spring.mail.host)); no connection is attempted.
+     */
+    private ApplicationContextRunner javaMailSenderFromProductionConfig() {
         java.util.Properties props = new java.util.Properties();
-        // Read from zorrobpm-ce/src/main/resources/application.properties (one level up from engine)
+        // CE application.properties lives one level up from the engine module
         java.nio.file.Path ceProps = java.nio.file.Path.of(
             System.getProperty("user.dir")).resolve("../zorrobpm-ce/src/main/resources/application.properties");
         assertThat(ceProps)
@@ -132,37 +175,25 @@ class SmtpMailSenderTest {
             .exists();
         try (var is = java.nio.file.Files.newInputStream(ceProps)) {
             props.load(is);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Failed to read " + ceProps, e);
         }
-
-        assertThat(props.getProperty("spring.mail.properties.mail.smtp.starttls.enable"))
-            .as("starttls.enable must be true").isEqualTo("true");
-        assertThat(props.getProperty("spring.mail.properties.mail.smtp.starttls.required"))
-            .as("starttls.required must be true").isEqualTo("true");
-    }
-
-    /**
-     * Criterion 7b POF: reads actual CE application.properties and verifies no SSL trust bypass.
-     * mail.smtp.ssl.trust=* or mail.smtp.ssl.checkserveridentity=false would disable
-     * certificate verification — this must never be present.
-     */
-    @Test
-    void criterion7b_noSslTrustBypass() throws Exception {
-        java.util.Properties props = new java.util.Properties();
-        java.nio.file.Path ceProps = java.nio.file.Path.of(
-            System.getProperty("user.dir")).resolve("../zorrobpm-ce/src/main/resources/application.properties");
-        assertThat(ceProps).exists();
-        try (var is = java.nio.file.Files.newInputStream(ceProps)) {
-            props.load(is);
+        ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(MailSenderAutoConfiguration.class))
+            .withPropertyValues(
+                "spring.mail.host=smtp-under-test.invalid",
+                "spring.mail.port=2525",
+                "spring.mail.username=under-test",
+                "spring.mail.password=under-test");
+        for (String name : props.stringPropertyNames()) {
+            if (name.startsWith("spring.mail.properties.")) {
+                String value = props.getProperty(name);
+                if (value != null && !value.isBlank()) {
+                    runner = runner.withPropertyValues(name + "=" + value);
+                }
+            }
         }
-
-        // No trust bypass: ssl.trust must not be set to *
-        assertThat(props.getProperty("spring.mail.properties.mail.smtp.ssl.trust"))
-            .as("ssl.trust must not be set to * (disables certificate check)")
-            .isNotEqualTo("*");
-        // No identity check bypass
-        assertThat(props.getProperty("spring.mail.properties.mail.smtp.ssl.checkserveridentity"))
-            .as("ssl.checkserveridentity must not be false")
-            .isNotEqualTo("false");
+        return runner;
     }
 
     private void setAllowedRecipients(String value) {
