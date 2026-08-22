@@ -14,6 +14,13 @@ import java.time.Instant;
 public class MailHealthDTO {
     /** Whether all required mail properties are configured. */
     private boolean configured;
+    /**
+     * WO-INT-5 criteria 7/9 (CTO HOLD round 3): live SMTP reachability probe result.
+     * true = server accepted a connection (bad credentials still count as reachable),
+     * false = connection attempt failed, null = no probe possible (transport not configured).
+     * Additive field per CTO HOLD instruction; backward compatible.
+     */
+    private Boolean reachable;
     /** Timestamp of the last successful send, or null if none. */
     private Instant lastSuccess;
     /** Timestamp of the last failed send, or null if none. */

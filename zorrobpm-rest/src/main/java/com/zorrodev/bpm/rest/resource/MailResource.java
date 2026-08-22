@@ -3,21 +3,34 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.MailContract;
 import com.zorrodev.bpm.contract.dto.MailHealthDTO;
 import com.zorrodev.bpm.engine.mail.MailHealthService;
-import com.zorrodev.bpm.engine.mail.SmtpMailSender;
+import com.zorrodev.bpm.engine.mail.MailProperties;
+import com.zorrodev.bpm.engine.mail.MailStatus;
 import com.zorrodev.bpm.engine.security.Principal;
+import jakarta.mail.internet.MimeMessage;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+
 /**
  * WO-INT-5 criteria 7, 8, 9: mail health and test send endpoints.
  * All endpoints require SUPER_ADMIN.
+ * <p>
+ * Criterion 8 (CTO HOLD round 3): the test-send endpoint performs a SYNCHRONOUS
+ * SMTP delivery and only reports success after {@code JavaMailSender.send} has
+ * returned — never after merely enqueuing. The body comes from the template
+ * {@code mail/test-email.txt} with placeholders, not from string concatenation.
  */
 @Slf4j
 @RestController
@@ -25,10 +38,14 @@ import org.springframework.web.server.ResponseStatusException;
 public class MailResource implements MailContract {
 
     private final MailHealthService mailHealthService;
+    private final MailProperties mailProperties;
+    private final MailStatus mailStatus;
+    private final HttpServletRequest request;
+
+    /** Present in production profiles; absent under the test profile (no spring.mail.host). */
     @Lazy
     @Autowired(required = false)
-    private SmtpMailSender smtpMailSender;
-    private final HttpServletRequest request;
+    JavaMailSender javaMailSender;
 
     @Override
     public MailHealthDTO getMailHealth() {
@@ -43,7 +60,7 @@ public class MailResource implements MailContract {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Recipient address is required");
         }
 
-        if (smtpMailSender == null) {
+        if (javaMailSender == null) {
             throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
                 "Mail transport is not available in this profile"
@@ -51,19 +68,37 @@ public class MailResource implements MailContract {
         }
 
         try {
-            smtpMailSender.send(
-                recipientAddress,
-                "ZorroBPM — Test Email",
-                "This is a test email from ZorroBPM. If you received this, mail transport is working correctly."
-            );
+            MimeMessage message = javaMailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false);
+            helper.setFrom(mailProperties.from());
+            helper.setTo(recipientAddress);
+            helper.setSubject("ZorroBPM — Test Email");
+            helper.setText(renderTestEmailBody(recipientAddress), false);
+
+            // Real SMTP round-trip: success means the server accepted the message.
+            javaMailSender.send(message);
+            mailStatus.recordSuccess();
             log.info("Test email sent to {}", recipientAddress);
             return "Test email sent successfully to " + recipientAddress;
         } catch (Exception e) {
-            log.error("Failed to send test email to {}: {}", recipientAddress, e.getMessage());
+            String cause = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            mailStatus.recordError(cause);
+            log.error("Failed to send test email to {}: {}", recipientAddress, cause);
             throw new ResponseStatusException(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                "Failed to send test email: " + e.getMessage()
+                HttpStatus.BAD_GATEWAY,
+                "SMTP error: " + cause
             );
+        }
+    }
+
+    /** Loads mail/test-email.txt and substitutes ${recipient}/${timestamp}; no concatenation of prose. */
+    private String renderTestEmailBody(String recipient) {
+        try (var is = new ClassPathResource("mail/test-email.txt").getInputStream()) {
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8)
+                .replace("${recipient}", recipient)
+                .replace("${timestamp}", Instant.now().toString());
+        } catch (Exception e) {
+            throw new IllegalStateException("Mail template mail/test-email.txt is missing", e);
         }
     }
 

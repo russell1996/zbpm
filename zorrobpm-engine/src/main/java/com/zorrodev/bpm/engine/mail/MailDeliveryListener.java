@@ -5,6 +5,7 @@ import com.zorrodev.bpm.exchange.OutboxDeliveryResult;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -19,6 +20,11 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * the outbox entry is safely persisted. On success publishes OutboxDeliveryResult(acked=true),
  * on failure publishes OutboxDeliveryResult(acked=false) - the existing retry/quarantine logic
  * in OutboxDeliveryResultListener handles retries and max-attempts.
+ * <p>
+ * Criterion 4 (fail-fast OFF): when no {@link JavaMailSender} exists (ZORROBPM_MAIL_* unset),
+ * the application must still START. The listener resolves the transport lazily via
+ * {@link ObjectProvider}; without it the entry is nacked with a clear cause and flows into
+ * the normal retry/quarantine path instead of killing context startup.
  */
 @Slf4j
 @Profile("!test")
@@ -26,7 +32,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class MailDeliveryListener {
 
-    private final JavaMailSender javaMailSender;
+    private final ObjectProvider<JavaMailSender> javaMailSenderProvider;
     private final ApplicationEventPublisher publisher;
     private final MailProperties mailProperties;
     private final MailStatus mailStatus;
@@ -35,6 +41,16 @@ public class MailDeliveryListener {
     public void on(MailSendRequested event) {
         String outboxId = event.getOutboxId();
         var request = event.getRequest();
+
+        JavaMailSender javaMailSender = javaMailSenderProvider.getIfAvailable();
+        if (javaMailSender == null) {
+            String cause = "Mail transport is not configured (ZORROBPM_MAIL_HOST missing)";
+            mailStatus.recordError(cause);
+            log.error("Mail delivery impossible: outboxId={} to='{}' subject='{}' cause='{}'",
+                outboxId, request.getTo(), request.getSubject(), cause);
+            publisher.publishEvent(new OutboxDeliveryResult(outboxId, false, cause));
+            return;
+        }
 
         try {
             MimeMessage message = javaMailSender.createMimeMessage();
@@ -64,3 +80,4 @@ public class MailDeliveryListener {
         }
     }
 }
+
