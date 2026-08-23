@@ -32,7 +32,9 @@ import java.util.stream.Collectors;
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
-    private static final String API_KEY_PREFIX = "zbpm_sk_";
+    // package-visible: RateLimitFilter reuses the prefix to skip API keys when
+    // resolving the /me/password bucket owner (WO-SEC-58 HOLD-fix).
+    static final String API_KEY_PREFIX = "zbpm_sk_";
     /** WO-SEC-34: debounce interval — don't update lastUsedAt more than once per 5 minutes */
     private static final long DEBOUNCE_MS = 5 * 60 * 1000L;
 

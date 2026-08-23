@@ -89,10 +89,25 @@ describe('WO-ACL-16 criterion 7: header user menu reaches the personal API key s
     await wrapper.find('a[href="/ui/me/profile"]').trigger('click')
     await flushPromises()
 
-    expect(['my-profile','my-api-key']).toContain(String(router.currentRoute.value.name))
+    // WO-SEC-58 HOLD-fix: strict — clicking the profile entry lands on my-profile.
+    // (The previous assertion accepted either route name and passed under any
+    // outcome.) The old-bookmark redirect is covered by the dedicated test below.
+    expect(String(router.currentRoute.value.name)).toBe('my-profile')
     // the real page mounted below the header and called the real service
     const { getMyApiKey } = await import('@/services/apiKeyService')
     expect(getMyApiKey).toHaveBeenCalled()
     expect(wrapper.text()).toContain('noApiKeyYet')
+  })
+
+  // WO-SEC-58 HOLD-fix: the old bookmark URL /me/api-key must REDIRECT to
+  // /me/profile (the key lives there now) — not 404, not a dead page.
+  it('old bookmark /me/api-key redirects to the profile route', async () => {
+    const router = makeRouter()
+    await router.push('/me/api-key')
+    await router.isReady()
+    await flushPromises()
+
+    expect(String(router.currentRoute.value.name)).toBe('my-profile')
+    expect(router.currentRoute.value.redirectedFrom?.path).toBe('/me/api-key')
   })
 })

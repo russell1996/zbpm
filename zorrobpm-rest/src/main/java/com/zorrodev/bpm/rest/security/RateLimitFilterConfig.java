@@ -50,7 +50,8 @@ public class RateLimitFilterConfig {
     private String trustedProxiesRaw;
 
     @Bean
-    public RateLimitFilter rateLimitFilter(ApiKeyRepository apiKeyRepository) {
+    public RateLimitFilter rateLimitFilter(ApiKeyRepository apiKeyRepository,
+                                           com.zorrodev.bpm.engine.security.TokenService tokenService) {
         RateLimitFilter filter = new RateLimitFilter();
         filter.setRateLimitEnabled(enabled);
         filter.setCapacity(capacity);
@@ -62,6 +63,8 @@ public class RateLimitFilterConfig {
         filter.setRefreshWindowSeconds(refreshWindowSeconds);
         // WO-INT-4 criterion 8: per-key data quota needs key identity.
         filter.setApiKeyRepository(apiKeyRepository);
+        // WO-SEC-58 HOLD-fix: /me/password bucket keyed on the JWT user, not client IP.
+        filter.setTokenService(tokenService);
 
         Set<String> proxies = parseTrustedProxies(trustedProxiesRaw);
         filter.setTrustedProxies(proxies);
