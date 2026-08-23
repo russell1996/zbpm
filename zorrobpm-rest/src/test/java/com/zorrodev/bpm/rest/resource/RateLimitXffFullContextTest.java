@@ -71,7 +71,7 @@ class RateLimitXffFullContextTest {
         FilterRegistrationBean registration = registrations.get(0);
         assertThat(registration.getOrder()).isEqualTo(Ordered.HIGHEST_PRECEDENCE);
         assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder(
-            "/auth/login", "/auth/refresh",
+            "/auth/login", "/auth/refresh", "/me/password",
             "/events/*", "/variables/*",
             "/process-instances/*", "/user-tasks/*",
             "/service-tasks/*", "/incidents/*");

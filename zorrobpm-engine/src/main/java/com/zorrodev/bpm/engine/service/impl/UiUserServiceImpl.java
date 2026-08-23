@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
 @Service
@@ -128,6 +129,37 @@ public class UiUserServiceImpl implements UiUserService {
 
     @Override
     @Transactional
+    public UUID changeOwnPassword(UUID userId, String currentPassword, String newPassword) {
+        // WO-SEC-58: self-service change — only the CALLER's own row is touched,
+        // and only the password (no role/active/fullName surface here).
+        UiUserEntity entity = repository.findById(userId)
+            .orElseThrow(() -> new NoSuchElementException("User not found"));
+
+        boolean system = "SYSTEM".equals(entity.getUserType());
+        if (system) {
+            // WO-INT-4: a SYSTEM account has no usable password by design
+            throw new EngineException("System accounts cannot change a password");
+        }
+        if (currentPassword == null || currentPassword.isBlank()) {
+            throw new EngineException("Current password is required");
+        }
+        // Constant-time compare against the stored hash; wrong current password → refuse.
+        if (!passwordHasher.matches(currentPassword, entity.getPasswordHash())) {
+            throw new EngineException("Current password is incorrect");
+        }
+        if (newPassword == null || newPassword.isBlank()) throw new EngineException("Password is required");
+        // Same complexity rules as admin-set passwords — no second rule set (WO-SEC-46).
+        if (AdminPasswordValidator.isWeak(newPassword)) throw new EngineException("Password does not meet complexity requirements");
+
+        entity.setPasswordHash(passwordHasher.hash(newPassword));
+        entity.setForcePasswordChange(false);
+        
+        entity.setUpdatedAt(java.time.Instant.now());
+        repository.save(entity);
+        return entity.getId();
+    }
+    @Override
+    @Transactional
     public UUID update(UUID id, UpdateUiUserDTO dto) {
         UiUserEntity entity = repository.findById(id).orElseThrow();
         boolean system = "SYSTEM".equals(entity.getUserType());
@@ -143,6 +175,7 @@ public class UiUserServiceImpl implements UiUserService {
             if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
             entity.setPasswordHash(passwordHasher.hash(dto.getPassword()));
             entity.setForcePasswordChange(false);
+        
         }
         entity.setUpdatedAt(Instant.now());
         repository.save(entity);
