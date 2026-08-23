@@ -158,10 +158,15 @@ const router = createRouter({
           meta: { titleKey: 'processSchemas', requiresSuperAdmin: true },
         },
         {
+          path: 'me/profile',
+          name: 'my-profile',
+          component: () => import('@/pages/me/MyProfile.vue'),
+          meta: { titleKey: 'myProfile' },
+        },
+        {
+          // WO-SEC-58: /me/api-key moved into /me/profile; old route stays as a redirect
           path: 'me/api-key',
-          name: 'my-api-key',
-          component: () => import('@/pages/me/MyApiKey.vue'),
-          meta: { titleKey: 'myApiKey' },
+          redirect: { name: 'my-profile' },
         },
         {
           path: 'analytics',
