@@ -64,6 +64,37 @@ echo "=== postgres is ready ==="
 #
 # set +e so a test failure doesn't abort before we capture the exit code; the EXIT
 # trap still tears postgres down.
+run_pg_suite() {
+  local module="$1"
+  set +e
+  docker run --rm \
+    --network host \
+    -v "$(pwd)":/build -w /build \
+    -e PG_HOST=127.0.0.1 \
+    -e PG_PORT="$PG_PORT" \
+    -e PG_DB="$PG_DB" \
+    -e PG_USER="$PG_USER" \
+    -e PG_PASSWORD="$PG_PASSWORD" \
+    -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
+    maven:3.9.9-eclipse-temurin-21 \
+    mvn -B -ntp clean verify \
+      -pl "$module" \
+      -am \
+      -Dsurefire.skip=true \
+      -Dgroups=pg \
+      -Dzbpm.excludedGroups= \
+      -Dsurefire.failIfNoSpecifiedTests=false \
+      -DPG_HOST=127.0.0.1 \
+      -DPG_PORT="$PG_PORT" \
+      -DPG_DB="$PG_DB" \
+      -DPG_USER="$PG_USER" \
+      -DPG_PASSWORD="$PG_PASSWORD"
+  local rc=$?
+  set -e
+  echo "=== $module PG suite exited with code $rc ==="
+  return $rc
+}
+
 # Install rest's DEPENDENCIES and then verify rest INSIDE THE SAME container:
 # the container has no persistent ~/.m2, so a separate install step would throw
 # the sibling SNAPSHOTs away before the rest suite could resolve them. Rest must
