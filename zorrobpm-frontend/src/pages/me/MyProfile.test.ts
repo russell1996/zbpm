@@ -25,17 +25,10 @@ vi.mock('@/services/apiKeyService', () => ({
 }))
 vi.mock('@/composables/useDateFormat', () => ({ useDateFormat: () => ({ formatDate: (v: string) => v }) }))
 
-function fill(wrapper: Record<string, unknown>) {
-  const w = wrapper as { get: (s: string) => { setValue: (v: string) => Promise<void> } }
-  return {
-    current: async (v: string) => { await w.get('#currentPassword').setValue(v) },
-    next: async (v: string) => { await w.get('#newPassword').setValue(v) },
-    confirm: async (v: string) => { await w.get('#confirmNew').setValue(v) },
-    submit: async (w2: { find: (s: string) => { trigger: (e: string) => Promise<void> } }) => {
-      await (w2 as unknown as { find: (s: string) => { trigger: (e: string) => Promise<void> } }).find('form').trigger('submit')
-    },
-  }
-}
+import type { VueWrapper } from '@vue/test-utils'
+type Wrapper = VueWrapper<InstanceType<typeof MyProfile>>
+async function setValue(w: Wrapper, sel: string, v: string) { await w.get(sel).setValue(v) }
+async function submitForm(w: Wrapper) { await w.find('form').trigger('submit') }
 
 describe('WO-SEC-58 criteria 7-8: My Profile', () => {
   beforeEach(() => { vi.clearAllMocks() })
@@ -52,11 +45,11 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
   it('criterion 8: server error is shown INSIDE the form', async () => {
     mockChange.mockRejectedValue({ response: { data: { message: 'Current password is incorrect' } } })
     const wrapper = mount(MyProfile)
-    const f = fill(wrapper)
+    const f = { current: (v:string)=>setValue(wrapper,"#currentPassword",v), next:(v:string)=>setValue(wrapper,"#newPassword",v), confirm:(v:string)=>setValue(wrapper,"#confirmNew",v), submit:()=>submitForm(wrapper) }
     await f.current('wrong')
     await f.next('Whatever!2345678')
     await f.confirm('Whatever!2345678')
-    await f.submit(wrapper)
+    await submitForm(wrapper)
     await flushPromises()
     const err = wrapper.get('[data-testid="password-error"]')
     expect(err.text()).toContain('Current password is incorrect')
@@ -65,11 +58,11 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
   it('criterion 8: success shows confirmation and clears the form', async () => {
     mockChange.mockResolvedValue({ id: 'u1' })
     const wrapper = mount(MyProfile)
-    const f = fill(wrapper)
+    const f = { current: (v:string)=>setValue(wrapper,"#currentPassword",v), next:(v:string)=>setValue(wrapper,"#newPassword",v), confirm:(v:string)=>setValue(wrapper,"#confirmNew",v), submit:()=>submitForm(wrapper) }
     await f.current('OldPassw0rd!')
     await f.next('NewPassw0rd!2345')
     await f.confirm('NewPassw0rd!2345')
-    await f.submit(wrapper)
+    await submitForm(wrapper)
     await flushPromises()
     expect(mockChange).toHaveBeenCalledWith('OldPassw0rd!', 'NewPassw0rd!2345')
     expect(wrapper.get('[data-testid="password-success"]').text()).toContain('passwordChangedOk')
