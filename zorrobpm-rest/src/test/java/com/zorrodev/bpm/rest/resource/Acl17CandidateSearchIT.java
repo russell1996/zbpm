@@ -84,20 +84,11 @@ class Acl17CandidateSearchIT {
         decoyUsdId = createUser("acl17-decoy2-" + suffix, "USER", "Underxscore name " + suffix, "decoy2" + suffix + "@example.com");
     }
 
-    @org.junit.jupiter.api.Test
-    void zdiag_percent() throws Exception {
-        JsonNode data = candidates(ownerToken, "100% d");
-        System.out.println("[DIAG-P] size=" + data.size());
-        for (JsonNode u : data) System.out.println("[DIAG-P] " + u.get("username").asText() + " | " + u.get("fullName").asText());
-    }
     // ==================== Criterion 1: all three fields ====================
 
     @Test
     void criterion1_findsByFullNameFragment() throws Exception {
-        String probe = "Пешков-" + suffix;
-        System.out.println("[DIAG-C1] repo probe found=" + userRepository.findAll(com.zorrodev.bpm.engine.repository.UiUserRepository.byCandidateSearchContains(probe)).size());
-        JsonNode data = candidates(ownerToken, probe);
-        System.out.println("[DIAG-C1] http size=" + data.size());
+        JsonNode data = candidates(ownerToken, "Пешков-" + suffix);
         assertThat(ids(data)).contains(byNameId);
     }
 
