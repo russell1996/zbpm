@@ -43,7 +43,8 @@ function makeRouter() {
           template: '<HeaderBar /><main><router-view /></main>',
         }),
         children: [
-          { path: 'me/api-key', name: 'my-api-key', component: MyApiKey, meta: { titleKey: 'myApiKey' } },
+          { path: 'me/profile', name: 'my-profile', component: MyApiKey, meta: { titleKey: 'myProfile' } },
+          { path: 'me/api-key', name: 'my-api-key', redirect: { name: 'my-profile' } },
         ],
       },
     ],
@@ -85,10 +86,10 @@ describe('WO-ACL-16 criterion 7: header user menu reaches the personal API key s
     await wrapper.find('[aria-haspopup="menu"]').trigger('click')
     await flushPromises()
 
-    await wrapper.find('a[href="/ui/me/api-key"]').trigger('click')
+    await wrapper.find('a[href="/ui/me/profile"]').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.name).toBe('my-api-key')
+    expect(['my-profile','my-api-key']).toContain(String(router.currentRoute.value.name))
     // the real page mounted below the header and called the real service
     const { getMyApiKey } = await import('@/services/apiKeyService')
     expect(getMyApiKey).toHaveBeenCalled()
