@@ -6,10 +6,8 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.security.Principal;
-import jakarta.persistence.criteria.Predicate;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.ResponseEntity;
@@ -101,9 +99,14 @@ public class EventResource {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("type"), type));
         }
 
+        // WO-INT-7 HOLD: findBy(spec, FluentQuery) issues ONLY the windowed select — unlike
+        // findAll(spec, PageRequest), which returns a Page and lets Spring Data fire a second
+        // COUNT(*) over the same (unbounded) table whenever the window fills up. The counted
+        // total was discarded anyway. limit(maxResults + 1) is enough for the hasMore flag.
         List<DomainEventEntity> events = domainEventRepository
-            .findAll(spec, PageRequest.of(0, maxResults + 100, Sort.by(Sort.Direction.ASC, "sequence")))
-            .getContent();
+            .findBy(spec, q -> q.sortBy(Sort.by(Sort.Direction.ASC, "sequence"))
+                .limit(maxResults + 1)
+                .all());
 
         boolean hasMore = events.size() > maxResults;
         if (hasMore) {
@@ -112,7 +115,7 @@ public class EventResource {
 
         List<Map<String, Object>> envelopes = events.stream()
             .map(this::toEnvelope)
-            .collect(java.util.stream.Collectors.toList());
+            .toList();
 
         PagedDataDTO<Map<String, Object>> result = new PagedDataDTO<>();
         result.setData(envelopes);
