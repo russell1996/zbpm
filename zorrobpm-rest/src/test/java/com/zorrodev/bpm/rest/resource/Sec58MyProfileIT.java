@@ -91,10 +91,12 @@ class Sec58MyProfileIT {
 
     private MvcResult putMePassword(String ip, String token, String current, String next) throws Exception {
         String body = "{\"currentPassword\":\"" + current + "\",\"newPassword\":\"" + next + "\"}";
-        return mockMvc.perform(put("/me/password").with(r -> { r.setRemoteAddr(ip); return r; })
-                .header("Authorization", "Bearer " + token)
-                .contentType(MediaType.APPLICATION_JSON).content(body))
-            .andReturn();
+        var b = put("/me/password").with(r -> { r.setRemoteAddr(ip); return r; })
+                .contentType(MediaType.APPLICATION_JSON).content(body);
+        if (token != null) {
+            b = b.header("Authorization", "Bearer " + token);
+        }
+        return mockMvc.perform(b).andReturn();
     }
 
     private String nextIp() { return "10.77." + (ipSeq.incrementAndGet() % 250) + "." + ipSeq.get(); }
@@ -212,18 +214,46 @@ class Sec58MyProfileIT {
     // ==================== Criterion 6 ====================
 
     @Test
-    void criterion6_bruteForce_onCurrentPassword_hitsRateLimit() throws Exception {
-        User u = newUser(false);
-        // stolen session: attacker HAS a valid JWT but guesses the current password
-        String token = loginToken(nextIp(), u.username(), u.password());
-        String ip = nextIp();
-        // capacity=5 (overridden): five wrong-current attempts → 400…
+    void criterion6_bruteForce_hitsPerUserBucket_sameIpBystanderUnaffected() throws Exception {
+        // PROD TOPOLOGY (P-63 class): attacker and bystander share ONE address —
+        // the external proxy's. Under the old clientIp-keyed bucket the bystander
+        // was locked out by the attacker's flood; under the user-keyed bucket each
+        // has an independent budget.
+        User attacker = newUser(false);
+        User bystander = newUser(false);
+        String at = loginToken(nextIp(), attacker.username(), attacker.password());
+        String bt = loginToken(nextIp(), bystander.username(), bystander.password());
+        String sharedIp = nextIp();
+
+        // capacity=5 (overridden): five wrong-current attempts by the ATTACKER → 400…
         for (int i = 0; i < 5; i++) {
-            MvcResult r = putMePassword(ip, token, "guess-" + i, "Xy9!aaaaBBBB");
+            MvcResult r = putMePassword(sharedIp, at, "guess-" + i, "Xy9!aaaaBBBB");
             assertThat(r.getResponse().getStatus()).isEqualTo(400);
         }
-        // …the sixth request from the same IP is rate-limited BEFORE auth
-        MvcResult sixth = putMePassword(ip, token, "guess-5", "Xy9!aaaaBBBB");
+        // …the sixth request of the SAME USER is rate-limited BEFORE auth.
+        MvcResult sixth = putMePassword(sharedIp, at, "guess-5", "Xy9!aaaaBBBB");
         assertThat(sixth.getResponse().getStatus()).isEqualTo(429);
+
+        // THE HOLD-FIX PROOF: same shared IP, different authenticated user → own
+        // bucket → NOT locked. This assertion REDs while the bucket is keyed on
+        // clientIp and GREENs with the per-user key.
+        MvcResult ok = putMePassword(sharedIp, bt, bystander.password(), "Xy9!aaaaBBBB");
+        assertThat(ok.getResponse().getStatus())
+            .as("another user behind the same proxy must keep own rate budget")
+            .isEqualTo(200);
+    }
+
+    @Test
+    void criterion6b_noValidToken_requests_stillCappedPerIp() throws Exception {
+        // Anonymous garbage (no token) falls back to the per-IP key: first five pass
+        // the limiter and die at authentication (401), the sixth is stopped at 429
+        // BEFORE reaching the filter chain — the unauthenticated layer stays throttled.
+        String ip = nextIp();
+        for (int i = 0; i < 5; i++) {
+            assertThat(putMePassword(ip, null, "x", "Xy9!aaaaBBBB").getResponse().getStatus()).isEqualTo(401);
+        }
+        assertThat(putMePassword(ip, null, "x", "Xy9!aaaaBBBB").getResponse().getStatus())
+            .as("anonymous flood on /me/password is still capped per-IP")
+            .isEqualTo(429);
     }
 }

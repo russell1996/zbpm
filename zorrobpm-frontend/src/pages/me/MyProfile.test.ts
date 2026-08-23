@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MyProfile from './MyProfile.vue'
+import MyApiKey from './MyApiKey.vue'
 
 const mockChange = vi.hoisted(() => vi.fn())
 vi.mock('@/services/userService', () => ({
@@ -40,6 +41,16 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
     expect(text).toContain('Ivan I.')
     expect(text).toContain('i@t.com')
     expect(text).toContain('USER')
+  })
+
+  // WO-SEC-58 HOLD-fix (criterion 9): the API-key section must be REAL — mounted
+  // component, not a leftover import. Removing <MyApiKey /> from MyProfile.vue
+  // makes this test RED, so the section cannot silently disappear.
+  it('criterion 9: the API-key section is mounted inside the profile', () => {
+    const wrapper = mount(MyProfile)
+    const apiKeySection = wrapper.findComponent(MyApiKey)
+    expect(apiKeySection.exists())
+      .toBe(true)
   })
 
   it('criterion 8: server error is shown INSIDE the form', async () => {
