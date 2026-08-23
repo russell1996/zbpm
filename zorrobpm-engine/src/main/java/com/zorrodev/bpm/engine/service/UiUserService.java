@@ -25,5 +25,13 @@ public interface UiUserService {
     /** Creates a user; throws {@link com.zorrodev.bpm.contract.exception.EngineException} if the username is taken. */
     UUID create(CreateUiUserDTO dto);
 
+    /**
+     * WO-SEC-58: self-service password change. Verifies the CURRENT password,
+     * enforces the same complexity rules as admin-set passwords, clears
+     * forcePasswordChange on success. Throws EngineException on a wrong current
+     * password or a weak new one.
+     */
+    UUID changeOwnPassword(UUID userId, String currentPassword, String newPassword);
+
     UUID update(UUID id, UpdateUiUserDTO dto);
 }

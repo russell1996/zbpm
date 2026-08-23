@@ -87,7 +87,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             || "/auth/refresh".equals(path)
             || "/auth/logout".equals(path)
             || "/auth/me".equals(path)
-            || isUsersPath(path);
+            || isUsersPath(path)
+            || "/me/password".equals(path);
     }
 
     /**
@@ -121,7 +122,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // WO-SEC-26: deny-by-default — only explicitly public paths are unprotected
         if (isPublicPath(path)) return false;
         // /auth/me and /users/* always require auth, even when requireApiAuth=false
-        if (path.equals("/auth/me") || isUsersPath(path)) return true;
+        if (path.equals("/auth/me") || path.startsWith("/me/") || isUsersPath(path)) return true;
         if (!requireApiAuth) return false;
         return true;
     }

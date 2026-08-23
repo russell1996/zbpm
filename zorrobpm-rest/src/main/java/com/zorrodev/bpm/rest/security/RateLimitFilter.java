@@ -175,6 +175,21 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             return;
         }
 
+        // WO-SEC-58: self-service password change — brute-force on the CURRENT
+        // password must hit a login-strength limit. Same buckets/capacity as login,
+        // keyed per IP, checked BEFORE authentication.
+        if ("PUT".equalsIgnoreCase(method) && "/me/password".equals(path)) {
+            String key = "me-password:" + clientIp;
+            RateBucket bucket = ipBuckets.get(key, k -> new RateBucket(capacity, windowSeconds));
+            long retryAfter = bucket.tryConsume();
+            if (retryAfter > 0) {
+                send429(response, retryAfter);
+                return;
+            }
+            chain.doFilter(request, response);
+            return;
+        }
+
         // Refresh endpoint: per-user throttling
         if ("POST".equalsIgnoreCase(method) && "/auth/refresh".equals(path)) {
             String userId = extractUserIdFromRefreshCookie(request);

@@ -82,6 +82,7 @@ public class RateLimitFilterConfig {
         registration.addUrlPatterns(
             "/auth/login",
             "/auth/refresh",
+            "/me/password",
             "/events/*",
             "/variables/*",
             "/process-instances/*",
