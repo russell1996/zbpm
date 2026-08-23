@@ -69,7 +69,7 @@ run_pg_suite() {
   set +e
   docker run --rm \
     --network host \
-    -v "$(pwd)":/build -w /build \
+    -v "${BUILD_DIR:-$(pwd)}":/build -w /build \
     -e PG_HOST=127.0.0.1 \
     -e PG_PORT="$PG_PORT" \
     -e PG_DB="$PG_DB" \
@@ -105,7 +105,7 @@ run_rest_suite() {
   set +e
   docker run --rm \
     --network host \
-    -v "$(pwd)":/build -w /build \
+    -v "${BUILD_DIR:-$(pwd)}":/build -w /build \
     -e PG_HOST=127.0.0.1 \
     -e PG_PORT="$PG_PORT" \
     -e PG_DB="$PG_DB" \
