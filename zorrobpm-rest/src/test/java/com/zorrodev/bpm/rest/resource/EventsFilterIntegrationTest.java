@@ -62,6 +62,8 @@ class EventsFilterIntegrationTest {
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
+    private final java.util.List<Long> createdEventIds = new java.util.ArrayList<>();
+
     private String adminToken;
     private String memberToken;
     private UUID targetDefId;
@@ -92,6 +94,13 @@ class EventsFilterIntegrationTest {
         emitEvent(targetDefId, "int7.target.completed");
     }
 
+    @org.junit.jupiter.api.AfterAll
+    void cleanupEvents() {
+        // P-59: 553 synthetic events must not leak into the shared H2 for classes running after us
+        if (!createdEventIds.isEmpty()) {
+            domainEventRepository.deleteAllById(createdEventIds);
+        }
+    }
     // ==================== Criterion 1 ====================
 
     @Test
@@ -204,6 +213,7 @@ class EventsFilterIntegrationTest {
         event.setOwnerScope(pdId.toString());
         event.setData(Map.of());
         domainEventRepository.save(event);
+        if (event.getSequence() != null) createdEventIds.add(event.getSequence());
     }
 
     private String findUsername(UUID userId) {
