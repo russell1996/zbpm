@@ -364,7 +364,7 @@
   "memberRemoved": "Қатысушы жойылды",
   "failedToRemoveMember": "Қатысушыны жою мүмкін болмады",
   "addMember": "Қатысушы қосу",
-  "searchCandidatePlaceholder": "Пайдаланушы атымен іздеу",
+  "searchCandidatePlaceholder": "Атымен, логинмен немесе поштамен іздеу",
   "searchCandidateHint": "Тізімді тарылту үшін атын енгізіңіз немесе бірінші беттен таңдаңыз",
   "noCandidates": "Ешкім табылмады",
   "candidatesTruncated": "Алғашқы 20 адам көрсетілген — іздеуді нақтылаңыз",

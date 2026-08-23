@@ -175,7 +175,8 @@ public class MemberResource implements MemberContract {
             .collect(Collectors.toSet());
 
         List<Specification<UiUserEntity>> specs = new ArrayList<>();
-        specs.add(UiUserRepository.byUsernameContains(query));
+        // WO-ACL-17: match login, full name or email — the fields the dialog displays
+        specs.add(UiUserRepository.byCandidateSearchContains(query));
         specs.add(UiUserRepository.byActive(true));
         // WO-INT-4 criterion 3: system accounts are never offered as candidates — a human
         // task assigned to a system would never be executed and would appear in nobody's inbox.
