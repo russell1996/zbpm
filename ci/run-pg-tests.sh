@@ -64,11 +64,13 @@ echo "=== postgres is ready ==="
 #
 # set +e so a test failure doesn't abort before we capture the exit code; the EXIT
 # trap still tears postgres down.
-run_pg_suite() {
-  local module="$1"
-  local with_am="$2"
-  local am_flag=""
-  if [ "$with_am" = "yes" ]; then am_flag="-am"; fi
+# Install rest's DEPENDENCIES and then verify rest INSIDE THE SAME container:
+# the container has no persistent ~/.m2, so a separate install step would throw
+# the sibling SNAPSHOTs away before the rest suite could resolve them. Rest must
+# NOT use -am for verify: that would drag engine failsafe (and its
+# HotColumnIndexUsagePgIT ui_users pollution) back into the database the rest
+# tests need clean.
+run_rest_suite() {
   set +e
   docker run --rm \
     --network host \
@@ -80,58 +82,40 @@ run_pg_suite() {
     -e PG_PASSWORD="$PG_PASSWORD" \
     -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
     maven:3.9.9-eclipse-temurin-21 \
-    mvn -B -ntp clean verify \
-      -pl "$module" \
-      $am_flag \
-      -Dsurefire.skip=true \
-      -Dgroups=pg \
-      -Dzbpm.excludedGroups= \
-      -Dsurefire.failIfNoSpecifiedTests=false \
-      -DPG_HOST=127.0.0.1 \
-      -DPG_PORT="$PG_PORT" \
-      -DPG_DB="$PG_DB" \
-      -DPG_USER="$PG_USER" \
-      -DPG_PASSWORD="$PG_PASSWORD"
+    bash -c "mvn -B -ntp install -pl zorrobpm-rest -am -DskipTests -q \
+      && mvn -B -ntp clean verify \
+        -pl zorrobpm-rest \
+        -Dsurefire.skip=true \
+        -Dgroups=pg \
+        -Dzbpm.excludedGroups= \
+        -Dsurefire.failIfNoSpecifiedTests=false \
+        -DPG_HOST=127.0.0.1 \
+        -DPG_PORT=$PG_PORT \
+        -DPG_DB=$PG_DB \
+        -DPG_USER=$PG_USER \
+        -DPG_PASSWORD=$PG_PASSWORD"
   local rc=$?
   set -e
-  echo "=== $module PG suite exited with code $rc ==="
+  echo "=== zorrobpm-rest PG suite exited with code $rc ==="
   return $rc
 }
 
-# Install rest's DEPENDENCIES into the shared ~/.m2 WITHOUT running their tests.
-# The rest suite must NOT use -am: that would drag engine failsafe (and its
-# HotColumnIndexUsagePgIT ui_users pollution) back into the same database the
-# rest tests need clean.
-install_rest_deps() {
-  echo "=== Installing zorrobpm-rest dependencies (tests skipped) ==="
-  docker run --rm \
-    -v "$(pwd)":/build -w /build \
-    -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
-    -v "${HOME}/.m2:/root/.m2" \
-    maven:3.9.9-eclipse-temurin-21 \
-    mvn -B -ntp install -pl zorrobpm-rest -am -DskipTests
-}
-
-recreate_schema() {
+reset_schema() {
   echo "=== Resetting public schema for the next suite ==="
   docker compose -f "$COMPOSE" -p "$PROJECT" exec -T postgres \
     psql -U "$PG_USER" -d "$PG_DB" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 }
 
 echo "=== PG suite 1/2: zorrobpm-engine ==="
-if ! run_pg_suite zorrobpm-engine yes; then
+if ! run_pg_suite zorrobpm-engine; then
   echo "=== FAILED: engine PG suite ==="
   exit 1
 fi
 
-recreate_schema
+reset_schema
 
 echo "=== PG suite 2/2: zorrobpm-rest ==="
-if ! install_rest_deps; then
-  echo "=== FAILED: installing rest dependencies ==="
-  exit 1
-fi
-if ! run_pg_suite zorrobpm-rest no; then
+if ! run_rest_suite; then
   echo "=== FAILED: rest PG suite ==="
   exit 1
 fi
