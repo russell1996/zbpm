@@ -79,7 +79,7 @@ onMounted(loadApiKey)
 
 <template>
   <div class="space-y-6 max-w-2xl">
-    <h1 class="text-2xl font-bold">{{ t('myApiKey') }}</h1>
+    <h1 class="text-lg font-semibold">{{ t('apiKey') }}</h1>
     <p class="text-sm text-muted-foreground">
       {{ t('myApiKeyDescription') }}
       {{ t('myApiKeyHint') }}
