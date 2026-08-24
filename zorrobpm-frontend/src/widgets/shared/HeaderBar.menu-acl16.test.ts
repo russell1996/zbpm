@@ -57,7 +57,7 @@ describe('WO-ACL-16 criterion 7: header user menu reaches the personal API key s
     vi.clearAllMocks()
   })
 
-  it('the user menu contains the "My API key" item next to logout', async () => {
+  it('the user menu contains a single "My profile" item (duplicate myApiKey removed per WO-UI-5)', async () => {
     const router = makeRouter()
     await router.push('/')
     await router.isReady()
@@ -65,15 +65,17 @@ describe('WO-ACL-16 criterion 7: header user menu reaches the personal API key s
 
     expect(wrapper.find('[aria-haspopup="menu"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('myApiKey')
+    expect(wrapper.text()).not.toContain('myProfile')
 
     await wrapper.find('[aria-haspopup="menu"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('myApiKey')
+    expect(wrapper.text()).toContain('myProfile')
+    expect(wrapper.text()).not.toContain('myApiKey')
     expect(wrapper.text()).toContain('logout')
   })
 
-  it('clicking "My API key" opens the real page (route my-api-key renders MyApiKey)', async () => {
+  it('clicking "My profile" opens the real page (route my-profile renders MyProfile)', async () => {
     const router = makeRouter()
     await router.push('/')
     await router.isReady()
