@@ -27,3 +27,9 @@ export async function updateUser(id: string, dto: UpdateUserDTO): Promise<IdDTO>
   const { data } = await api.put<IdDTO>(`/users/${id}`, dto)
   return data
 }
+
+/** WO-SEC-58: self-service password change (PUT /me/password). */
+export async function changeMyPassword(currentPassword: string, newPassword: string): Promise<IdDTO> {
+  const { data } = await api.put<IdDTO>('/me/password', { currentPassword, newPassword })
+  return data
+}
