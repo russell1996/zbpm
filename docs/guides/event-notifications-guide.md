@@ -301,7 +301,7 @@ public void onEvent(EventEnvelope e) {
 | **EVT-8a** | добавить в `data` события `assignee`, `candidateGroups` | ✅ В проде |
 | **EVT-8b** | эмитить `user-task.assigned`/`unassigned` при claim/reassign | ✅ В проде (INT-5) |
 
-> Состояние конверта в коде: [DomainEventEmitter.java](../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventEmitter.java)
+> Состояние конверта в коде: [DomainEventEmitter.java](../../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventEmitter.java)
 > кладёт `eventId, type, occurredAt, processInstanceId, processDefinitionId, processDefinitionKey, elementId, data`.
 > assignee и candidateGroups в `data` — EVT-8a. user-task.assigned/unassigned — INT-5.
 
