@@ -123,4 +123,19 @@ describe('resolveGuard — forcePasswordChange (WO-SEC-19)', () => {
     const result = resolveGuard(route, authState({ forcePasswordChange: false }))
     expect(result).toBeNull()
   })
+
+  // WO-SEC-58 HOLD-fix (P-65): the profile page is the second screen that can
+  // complete the forced change (PUT /me/password) — it must stay reachable while
+  // locked out, and everything else must still be blocked.
+  it('forcePasswordChange=true + target = my-profile → allowed (WO-SEC-58)', () => {
+    const route = { ...makeRoute(), name: 'my-profile' } as unknown as RouteLocationNormalized
+    const result = resolveGuard(route, authState({ forcePasswordChange: true }))
+    expect(result).toBeNull()
+  })
+
+  it('forcePasswordChange=true + target = dashboard → still redirected (exemption is not "see all")', () => {
+    const route = { ...makeRoute({ requiresAuth: true }), name: 'dashboard' } as unknown as RouteLocationNormalized
+    const result = resolveGuard(route, authState({ forcePasswordChange: true }))
+    expect(result).toEqual({ name: 'change-password' })
+  })
 })

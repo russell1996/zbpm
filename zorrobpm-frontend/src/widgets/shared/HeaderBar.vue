@@ -74,7 +74,15 @@ const userMenuOpen = ref(false)
             {{ auth.user.fullName || auth.user.username }}
           </div>
           <RouterLink
-            :to="{ name: 'my-api-key' }"
+            :to="{ name: 'my-profile' }"
+            class="flex items-center gap-2 px-4 py-2 text-sm hover:bg-muted"
+            @click="userMenuOpen = false"
+          >
+            <User class="h-4 w-4" />
+            {{ t('myProfile') }}
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'my-profile' }"
             class="flex items-center gap-2 px-4 py-2 text-sm hover:bg-muted"
             @click="userMenuOpen = false"
           >

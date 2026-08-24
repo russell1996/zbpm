@@ -10,6 +10,19 @@
 
       <form @submit.prevent="handleChangePassword" class="space-y-4">
         <div>
+          <label for="currentPassword" class="block text-sm font-medium text-gray-700 mb-1">
+            {{ t('currentPassword') }}
+          </label>
+          <input
+            id="currentPassword"
+            v-model="currentPassword"
+            type="password"
+            required
+            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+
+        <div>
           <label for="newPassword" class="block text-sm font-medium text-gray-700 mb-1">
             {{ t('newPassword') }}
           </label>
@@ -18,7 +31,7 @@
             v-model="newPassword"
             type="password"
             required
-            minlength="8"
+            minlength="12"
             class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
@@ -32,7 +45,7 @@
             v-model="confirmPassword"
             type="password"
             required
-            minlength="8"
+            minlength="12"
             class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
@@ -58,13 +71,14 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
-import { updateUser } from '@/services/userService'
+import { changeMyPassword } from '@/services/userService'
 
 const { t } = useI18n()
 
 const router = useRouter()
 const auth = useAuthStore()
 
+const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const isLoading = ref(false)
@@ -72,19 +86,17 @@ const error = ref<string | null>(null)
 
 const mismatch = computed(() => confirmPassword.value !== '' && newPassword.value !== confirmPassword.value)
 
+// WO-SEC-58 (P-65 fix): the locked-out user's screen now calls the self-service
+// endpoint PUT /me/password (identity from the JWT) — the old call went to
+// PUT /users/{id}, which is SUPER_ADMIN-only and returned 403 for exactly the
+// users this screen exists for.
 async function handleChangePassword() {
-  if (!auth.user || mismatch.value || !newPassword.value) return
+  if (!auth.user || mismatch.value || !newPassword.value || !currentPassword.value) return
 
   isLoading.value = true
   error.value = null
   try {
-    await updateUser(auth.user.id, {
-      fullName: auth.user.fullName,
-      email: auth.user.email,
-      role: auth.user.role,
-      active: auth.user.active,
-      password: newPassword.value,
-    })
+    await changeMyPassword(currentPassword.value, newPassword.value)
     // Refresh user data — forcePasswordChange should now be false
     await auth.refreshUser()
     if (!auth.forcePasswordChange) {
