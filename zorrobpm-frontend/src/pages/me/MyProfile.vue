@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-7xl mx-auto p-4">
+  <div class="max-w-5xl mx-auto p-4">
     <h1 class="text-2xl font-bold mb-6">{{ t('accountSettings') }}</h1>
     <div class="flex gap-6">
       <!-- Left nav — Settings navigation, not a card -->
@@ -86,7 +86,8 @@
               <input id="currentPassword" v-model="currentPassword" :type="showCurrent ? 'text' : 'password'" required
                 class="w-full px-3 py-2 border border-border rounded-md bg-background pr-10" />
               <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground" @click="showCurrent = !showCurrent" tabindex="-1">
-                <span class="text-xs">{{ showCurrent ? '🙈' : '👁' }}</span>
+                <EyeOff v-if="showCurrent" class="h-4 w-4" />
+                <Eye v-else class="h-4 w-4" />
               </button>
             </div>
           </div>
@@ -97,7 +98,8 @@
                 class="w-full px-3 py-2 border rounded-md bg-background pr-10"
                 :class="newPassword && newPasswordWeak ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-border'" />
               <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground" @click="showNew = !showNew" tabindex="-1">
-                <span class="text-xs">{{ showNew ? '🙈' : '👁' }}</span>
+                <EyeOff v-if="showNew" class="h-4 w-4" />
+                <Eye v-else class="h-4 w-4" />
               </button>
             </div>
             <p v-if="newPassword && newPasswordWeak" class="text-sm text-red-600 mt-1" data-testid="password-weak">
@@ -111,7 +113,8 @@
                 class="w-full px-3 py-2 border rounded-md bg-background pr-10"
                 :class="mismatch ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-border'" />
               <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground" @click="showConfirm = !showConfirm" tabindex="-1">
-                <span class="text-xs">{{ showConfirm ? '🙈' : '👁' }}</span>
+                <EyeOff v-if="showConfirm" class="h-4 w-4" />
+                <Eye v-else class="h-4 w-4" />
               </button>
             </div>
             <p v-if="mismatch" class="text-sm text-red-600 mt-1">{{ t('passwordsDoNotMatch') }}</p>
@@ -138,6 +141,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { changeMyPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
+import { Eye, EyeOff } from 'lucide-vue-next'
 import MyApiKey from './MyApiKey.vue'
 
 const { t } = useI18n()
