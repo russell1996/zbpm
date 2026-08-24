@@ -49,7 +49,7 @@ public class ServiceTaskHandler implements ElementHandler, TypedElementHandler {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement));
+        dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement), elementSupport.serviceTaskJob(bpmnElement));
         elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());

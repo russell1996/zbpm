@@ -135,7 +135,7 @@ public class MultiInstanceExecutor {
                 ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
             dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
         } else {
-            dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(element));
+            dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(element), elementSupport.serviceTaskJob(element));
             elementSupport.applyIoMappings(processInstanceId, activityId, element, true);
             serviceTaskEnqueueService.enqueueAfterCommit(activityId);
         }

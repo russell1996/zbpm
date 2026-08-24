@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -137,6 +138,14 @@ public class ElementSupport {
             .map(BpmnElementExtensionModel::getServiceTaskExtension)
             .map(ext -> ext.getRetries())
             .orElse(3);
+    }
+
+    /** WO-EVT-9: stable job identifier from the BPMN model (zeebe:taskDefinition type analog). */
+    public String serviceTaskJob(BpmnElementModel element) {
+        return Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .map(ServiceTaskExtensionModel::getJob)
+            .orElse(null);
     }
 
     // ─── IO mapping ────────────────────────────────────────────────────
