@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
 import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.security.KeyHasher;
+import com.zorrodev.bpm.engine.security.TokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ReadListener;
@@ -94,6 +95,11 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     /** WO-INT-4: resolves API-key identity for per-key data quotas. */
     private ApiKeyRepository apiKeyRepository;
 
+    /** WO-SEC-58 HOLD-fix: verifies the access JWT to key /me/password per user. */
+    private TokenService tokenService;
+
+    void setTokenService(TokenService tokenService) { this.tokenService = tokenService; }
+
     void setRateLimitEnabled(boolean enabled) { this.enabled = enabled; }
     void setCapacity(int capacity) { this.capacity = capacity; }
     void setWindowSeconds(int windowSeconds) { this.windowSeconds = windowSeconds; }
@@ -172,6 +178,36 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             }
 
             chain.doFilter(wrappedRequest, response);
+            return;
+        }
+
+        // WO-SEC-58: self-service password change — brute-force on the CURRENT
+        // password must hit a login-strength limit.
+        // HOLD-fix (P-63/P-65 class): the bucket is keyed on the USER resolved from
+        // the access JWT, NOT on client IP. This filter runs before JwtAuthFilter,
+        // so identity comes from verifying the token directly (same sources as
+        // JwtAuthFilter: Bearer header, then zbpm_token cookie). Behind the shared
+        // prod proxy every visitor presents the same address — an IP key here is ONE
+        // bucket for the whole installation, and since this check runs BEFORE auth,
+        // an anonymous flood would lock every user out of escaping
+        // forcePasswordChange. With a user key a flood burns only the attacker's own
+        // budget; requests without a valid token fall back to the IP key (they 401
+        // downstream regardless).
+        if ("PUT".equalsIgnoreCase(method) && "/me/password".equals(path)) {
+            String userId = extractUserIdFromAccessJwt(request);
+            // Authenticated → per-user bucket (real prod identity). Anonymous → one
+            // shared bucket: without a valid JWT there is no per-client identity to
+            // key on, and without trusted-proxies clientIp is the proxy's address
+            // for everyone anyway — "anon" makes the shared-bucket nature explicit
+            // and keeps G13 honest (no hidden per-IP bucket behind a proxy).
+            String key = (userId != null) ? "me-password:user:" + userId : "me-password:anon";
+            RateBucket bucket = ipBuckets.get(key, k -> new RateBucket(capacity, windowSeconds));
+            long retryAfter = bucket.tryConsume();
+            if (retryAfter > 0) {
+                send429(response, retryAfter);
+                return;
+            }
+            chain.doFilter(request, response);
             return;
         }
 
@@ -357,6 +393,39 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             }
         }
         return null;
+    }
+
+    /**
+     * WO-SEC-58 HOLD-fix: resolve the authenticated user for /me/password bucketing.
+     * Same token sources as JwtAuthFilter (Bearer header, then zbpm_token cookie);
+     * signature is verified via TokenService, so a client cannot pick an arbitrary
+     * userId key. API keys and invalid/absent tokens → null → caller falls back to
+     * the per-IP key. Never throws into the chain.
+     */
+    private String extractUserIdFromAccessJwt(HttpServletRequest request) {
+        if (tokenService == null) return null;
+        String header = request.getHeader("Authorization");
+        String token = (header != null && header.startsWith("Bearer ")) ? header.substring(7) : null;
+        if (token == null) {
+            Cookie[] cookies = request.getCookies();
+            if (cookies != null) {
+                for (Cookie cookie : cookies) {
+                    if ("zbpm_token".equals(cookie.getName())) {
+                        token = cookie.getValue();
+                        break;
+                    }
+                }
+            }
+        }
+        if (token == null || token.isBlank() || token.startsWith(JwtAuthFilter.API_KEY_PREFIX)) {
+            return null;
+        }
+        try {
+            TokenService.Claims claims = tokenService.verify(token);
+            return claims != null ? claims.userId().toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Clears all buckets — for tests only. */

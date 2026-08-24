@@ -15,8 +15,16 @@ export function resolveGuard(
   to: RouteLocationNormalized,
   auth: AuthState,
 ): { name: string } | null {
-  // WO-SEC-19: force password change → block all routes except change-password
-  if (auth.isAuthenticated && auth.forcePasswordChange && to.name !== 'change-password') {
+  // WO-SEC-19: force password change → block all routes except the two that can
+  // complete or serve the unlock: 'change-password' (dedicated screen) and
+  // 'my-profile' (WO-SEC-58: profile page calls PUT /me/password). Blocking
+  // my-profile too made the fix unreachable exactly for locked-out users (P-65).
+  if (
+    auth.isAuthenticated &&
+    auth.forcePasswordChange &&
+    to.name !== 'change-password' &&
+    to.name !== 'my-profile'
+  ) {
     return { name: 'change-password' }
   }
   if (to.meta.requiresSuperAdmin && !auth.isSuperAdmin) {

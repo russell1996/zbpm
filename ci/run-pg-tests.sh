@@ -50,36 +50,106 @@ done
 echo "=== postgres is ready ==="
 
 # Run PG-only tests inside a Maven container with --network host to reach the host
-# postgres published on 127.0.0.1:$PG_PORT. -Dgroups=pg selects @Tag("pg"); the pom
-# clears its default pg exclusion when -Dgroups is set (see zorrobpm-engine/pom.xml).
+# postgres published on 127.0.0.1:$PG_PORT. -Dgroups=pg selects @Tag("pg"); each
+# module's pom clears its default pg exclusion when -Dgroups is set.
+#
+# WO-OPS-6: BOTH modules run. `-am` pulls DEPENDENCIES only, so a single
+# `-pl zorrobpm-engine -am` never reached zorrobpm-rest and its three PgITs
+# (Acl12SubmissionRacePgIT / RefreshTokenRacePgIT / QueryResourceAuthzPgIT)
+# never executed in CI. The rest suite runs against a FRESH database: engine's
+# HotColumnIndexUsagePgIT seeds thousands of perfuser* rows into ui_users, which
+# starves UiUserBootstrap of the admin seed and 401s every rest test (documented
+# in WO-ACL-12). Recreating the DB between suites keeps both sets green without
+# touching that foreign test.
+#
 # set +e so a test failure doesn't abort before we capture the exit code; the EXIT
 # trap still tears postgres down.
-echo "=== Running PG-IT: mvn -Dgroups=pg verify ==="
-set +e
-docker run --rm \
-  --network host \
-  -v "$(pwd)":/build -w /build \
-  -e PG_HOST=127.0.0.1 \
-  -e PG_PORT="$PG_PORT" \
-  -e PG_DB="$PG_DB" \
-  -e PG_USER="$PG_USER" \
-  -e PG_PASSWORD="$PG_PASSWORD" \
-  -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
-  maven:3.9.9-eclipse-temurin-21 \
-  mvn -B -ntp clean verify \
-    -pl zorrobpm-engine \
-    -am \
-    -Dsurefire.skip=true \
-    -Dgroups=pg \
-    -Dzbpm.excludedGroups= \
-    -Dsurefire.failIfNoSpecifiedTests=false \
-    -DPG_HOST=127.0.0.1 \
-    -DPG_PORT="$PG_PORT" \
-    -DPG_DB="$PG_DB" \
-    -DPG_USER="$PG_USER" \
-    -DPG_PASSWORD="$PG_PASSWORD"
-MVN_EXIT=$?
-set -e
+run_pg_suite() {
+  local module="$1"
+  set +e
+  docker run --rm \
+    --network host \
+    -v "${BUILD_DIR:-$(pwd)}":/build -w /build \
+    -e PG_HOST=127.0.0.1 \
+    -e PG_PORT="$PG_PORT" \
+    -e PG_DB="$PG_DB" \
+    -e PG_USER="$PG_USER" \
+    -e PG_PASSWORD="$PG_PASSWORD" \
+    -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
+    maven:3.9.9-eclipse-temurin-21 \
+    mvn -B -ntp clean verify \
+      -pl "$module" \
+      -am \
+      -Dsurefire.skip=true \
+      -Dgroups=pg \
+      -Dzbpm.excludedGroups= \
+      -Dsurefire.failIfNoSpecifiedTests=false \
+      -DPG_HOST=127.0.0.1 \
+      -DPG_PORT="$PG_PORT" \
+      -DPG_DB="$PG_DB" \
+      -DPG_USER="$PG_USER" \
+      -DPG_PASSWORD="$PG_PASSWORD"
+  local rc=$?
+  set -e
+  echo "=== $module PG suite exited with code $rc ==="
+  return $rc
+}
 
-echo "=== mvn exited with code $MVN_EXIT ==="
-exit $MVN_EXIT
+# Install rest's DEPENDENCIES and then verify rest INSIDE THE SAME container:
+# the container has no persistent ~/.m2, so a separate install step would throw
+# the sibling SNAPSHOTs away before the rest suite could resolve them. Rest must
+# NOT use -am for verify: that would drag engine failsafe (and its
+# HotColumnIndexUsagePgIT ui_users pollution) back into the database the rest
+# tests need clean.
+run_rest_suite() {
+  set +e
+  docker run --rm \
+    --network host \
+    -v "${BUILD_DIR:-$(pwd)}":/build -w /build \
+    -e PG_HOST=127.0.0.1 \
+    -e PG_PORT="$PG_PORT" \
+    -e PG_DB="$PG_DB" \
+    -e PG_USER="$PG_USER" \
+    -e PG_PASSWORD="$PG_PASSWORD" \
+    -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
+    maven:3.9.9-eclipse-temurin-21 \
+    bash -c "mvn -B -ntp install -pl zorrobpm-rest -am -DskipTests -q \
+      && mvn -B -ntp clean verify \
+        -pl zorrobpm-rest \
+        -Dsurefire.skip=true \
+        -Dgroups=pg \
+        -Dzbpm.excludedGroups= \
+        -Dsurefire.failIfNoSpecifiedTests=false \
+        -DPG_HOST=127.0.0.1 \
+        -DPG_PORT=$PG_PORT \
+        -DPG_DB=$PG_DB \
+        -DPG_USER=$PG_USER \
+        -DPG_PASSWORD=$PG_PASSWORD"
+  local rc=$?
+  set -e
+  echo "=== zorrobpm-rest PG suite exited with code $rc ==="
+  return $rc
+}
+
+reset_schema() {
+  echo "=== Resetting public schema for the next suite ==="
+  docker compose -f "$COMPOSE" -p "$PROJECT" exec -T postgres \
+    psql -U "$PG_USER" -d "$PG_DB" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+}
+
+echo "=== PG suite 1/2: zorrobpm-engine ==="
+if ! run_pg_suite zorrobpm-engine; then
+  echo "=== FAILED: engine PG suite ==="
+  exit 1
+fi
+
+reset_schema
+
+echo "=== PG suite 2/2: zorrobpm-rest ==="
+if ! run_rest_suite; then
+  echo "=== FAILED: rest PG suite ==="
+  exit 1
+fi
+
+echo "=== all PG suites passed ==="
+exit 0

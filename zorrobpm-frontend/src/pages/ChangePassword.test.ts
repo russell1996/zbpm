@@ -17,7 +17,10 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('@/services/userService', () => ({
-  updateUser: vi.fn().mockResolvedValue({ id: 'test-id' }),
+  // WO-SEC-58 HOLD-fix: the locked-out screen uses the self-service endpoint.
+  // The old contract (updateUser → PUT /users/{id}) is SUPER_ADMIN-only and
+  // returned 403 for exactly the users this screen serves (P-65).
+  changeMyPassword: vi.fn().mockResolvedValue({ id: 'test-id' }),
 }))
 
 describe('ChangePassword.vue', () => {
@@ -53,9 +56,10 @@ describe('ChangePassword.vue', () => {
     }
   }
 
-  it('renders the form with password inputs and submit button', () => {
+  it('renders current + new + confirm inputs and submit button', () => {
     const wrapper = mountComponent()
     expect(wrapper.find('h1').text()).toBe('changePassword')
+    expect(wrapper.find('#currentPassword').exists()).toBe(true)
     expect(wrapper.find('#newPassword').exists()).toBe(true)
     expect(wrapper.find('#confirmPassword').exists()).toBe(true)
     expect(wrapper.find('button[type="submit"]').exists()).toBe(true)
@@ -63,15 +67,15 @@ describe('ChangePassword.vue', () => {
 
   it('shows mismatch error when passwords differ', async () => {
     const wrapper = mountComponent()
-    await wrapper.find('#newPassword').setValue('newpass123')
-    await wrapper.find('#confirmPassword').setValue('differentpass')
+    await wrapper.find('#newPassword').setValue('newpass123456')
+    await wrapper.find('#confirmPassword').setValue('differentpass12')
     expect(wrapper.text()).toContain('passwordsDoNotMatch')
   })
 
   it('submit button disabled when passwords mismatch', async () => {
     const wrapper = mountComponent()
-    await wrapper.find('#newPassword').setValue('newpass123')
-    await wrapper.find('#confirmPassword').setValue('differentpass')
+    await wrapper.find('#newPassword').setValue('newpass123456')
+    await wrapper.find('#confirmPassword').setValue('differentpass12')
     const btn = wrapper.find('button[type="submit"]')
     expect(btn.attributes('disabled')).toBeDefined()
   })
@@ -82,37 +86,55 @@ describe('ChangePassword.vue', () => {
     expect(btn.attributes('disabled')).toBeDefined()
   })
 
-  // --- Criterion #2: successful submit → updateUser + refreshUser + navigate ---
+  // --- Criterion #10 (UI path): successful submit → changeMyPassword(current,new)
+  // → refreshUser → navigate to dashboard.
+  //
+  // Proof-of-failure for the WO-SEC-58 HOLD fix: revert ChangePassword.vue to the
+  // old updateUser(...) call and this test goes RED ("changeMyPassword was never
+  // called") — the same mutation that broke real users in production.
 
-  it('criterion2: successful submit calls updateUser, refreshUser, then navigates to dashboard', async () => {
+  it('criterion10: submit calls changeMyPassword(current, new), refreshes user, navigates to dashboard', async () => {
     setupForcedUser()
     const auth = useAuthStore()
 
     // Mock refreshUser to simulate backend resetting forcePasswordChange
-    const origRefreshUser = auth.refreshUser.bind(auth)
     auth.refreshUser = vi.fn(async () => {
       auth.user = { ...auth.user!, forcePasswordChange: false }
     })
 
     const wrapper = mountComponent()
+    await wrapper.find('#currentPassword').setValue('TempPass!2026')
     await wrapper.find('#newPassword').setValue('NewSecure123!')
     await wrapper.find('#confirmPassword').setValue('NewSecure123!')
 
     await wrapper.find('form').trigger('submit')
 
-    // 1. updateUser called with auth.user.id and the new password
-    expect(userService.updateUser).toHaveBeenCalledWith('user-123', {
-      fullName: 'Forced Admin',
-      email: null,
-      role: 'SUPER_ADMIN',
-      active: true,
-      password: 'NewSecure123!',
-    })
+    // 1. self-service endpoint called with BOTH fields — identity comes from JWT
+    expect(userService.changeMyPassword).toHaveBeenCalledWith('TempPass!2026', 'NewSecure123!')
 
     // 2. refreshUser was called (which set forcePasswordChange to false)
     expect(auth.refreshUser).toHaveBeenCalled()
 
     // 3. router.push to dashboard after successful change
     expect(pushMock).toHaveBeenCalledWith({ name: 'dashboard' })
+  })
+
+  it('criterion10: server error surfaces inside the form (no navigation)', async () => {
+    setupForcedUser()
+    vi.mocked(userService.changeMyPassword).mockRejectedValueOnce({
+      response: { data: { message: 'Current password is incorrect' } },
+    })
+    const auth = useAuthStore()
+    auth.refreshUser = vi.fn(async () => {})
+
+    const wrapper = mountComponent()
+    await wrapper.find('#currentPassword').setValue('WrongCurrent!1')
+    await wrapper.find('#newPassword').setValue('NewSecure123!')
+    await wrapper.find('#confirmPassword').setValue('NewSecure123!')
+
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.text()).toContain('Current password is incorrect')
+    expect(pushMock).not.toHaveBeenCalled()
   })
 })

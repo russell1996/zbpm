@@ -32,7 +32,9 @@ import java.util.stream.Collectors;
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
-    private static final String API_KEY_PREFIX = "zbpm_sk_";
+    // package-visible: RateLimitFilter reuses the prefix to skip API keys when
+    // resolving the /me/password bucket owner (WO-SEC-58 HOLD-fix).
+    static final String API_KEY_PREFIX = "zbpm_sk_";
     /** WO-SEC-34: debounce interval — don't update lastUsedAt more than once per 5 minutes */
     private static final long DEBOUNCE_MS = 5 * 60 * 1000L;
 
@@ -87,7 +89,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             || "/auth/refresh".equals(path)
             || "/auth/logout".equals(path)
             || "/auth/me".equals(path)
-            || isUsersPath(path);
+            || isUsersPath(path)
+            || "/me/password".equals(path);
     }
 
     /**
@@ -121,7 +124,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // WO-SEC-26: deny-by-default — only explicitly public paths are unprotected
         if (isPublicPath(path)) return false;
         // /auth/me and /users/* always require auth, even when requireApiAuth=false
-        if (path.equals("/auth/me") || isUsersPath(path)) return true;
+        if (path.equals("/auth/me") || path.startsWith("/me/") || isUsersPath(path)) return true;
         if (!requireApiAuth) return false;
         return true;
     }
