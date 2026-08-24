@@ -71,12 +71,15 @@ test:gate:
 test:backend:
   stage: test
   tags: [zbpm]
+  coverage: '/Total.*?([0-9]{1,3})%/'
   artifacts:
     # WO-OPS-2: surefire/failsafe reports — 3 days
+    # WO-PERF-5: jacoco coverage — 7 days (larger report, useful for trend analysis; 3 days for test reports is enough for immediate debugging, coverage trend benefits from a week)
     paths:
       - "**/surefire-reports/"
       - "**/failsafe-reports/"
-    expire_in: 3 days
+      - "**/site/jacoco/"
+    expire_in: 7 days
     when: always
   script:
     # `--target test` runs `mvn -B clean verify` (full reactor: unit + integration) inside the build
@@ -87,6 +90,7 @@ test:backend:
     - docker create --name test-extract zorrobpm-app-test:$IMAGE_TAG || true
     - docker cp test-extract:/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports || true
     - docker cp test-extract:/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports || true
+    - docker cp test-extract:/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco || true
     - docker cp test-extract:/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports || true
     - docker cp test-extract:/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports || true
     - docker rm -f test-extract || true
