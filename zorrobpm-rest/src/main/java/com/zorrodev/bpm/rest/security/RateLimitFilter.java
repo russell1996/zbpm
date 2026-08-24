@@ -195,7 +195,12 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         // downstream regardless).
         if ("PUT".equalsIgnoreCase(method) && "/me/password".equals(path)) {
             String userId = extractUserIdFromAccessJwt(request);
-            String key = (userId != null) ? "me-password:user:" + userId : "me-password:" + clientIp;
+            // Authenticated → per-user bucket (real prod identity). Anonymous → one
+            // shared bucket: without a valid JWT there is no per-client identity to
+            // key on, and without trusted-proxies clientIp is the proxy's address
+            // for everyone anyway — "anon" makes the shared-bucket nature explicit
+            // and keeps G13 honest (no hidden per-IP bucket behind a proxy).
+            String key = (userId != null) ? "me-password:user:" + userId : "me-password:anon";
             RateBucket bucket = ipBuckets.get(key, k -> new RateBucket(capacity, windowSeconds));
             long retryAfter = bucket.tryConsume();
             if (retryAfter > 0) {
