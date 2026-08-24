@@ -34,9 +34,8 @@ async function submitForm(w: Wrapper) { await w.find('form').trigger('submit') }
 describe('WO-SEC-58 criteria 7-8: My Profile', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('criterion 7: renders who-I-am fields for any authenticated user', async () => {
+  it('criterion 7: renders profile fields for any authenticated user', async () => {
     const wrapper = mount(MyProfile)
-    // about tab is default active, should show whoAmI
     const text = wrapper.text()
     expect(text).toContain('ivan')
     expect(text).toContain('Ivan I.')
@@ -47,14 +46,12 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
   // WO-SEC-58 HOLD-fix (criterion 9): the API-key section must be REAL — mounted
   // component, not a leftover import. Removing <MyApiKey /> from MyProfile.vue
   // makes this test RED, so the section cannot silently disappear.
-  // WO-UI-5: now inside the "apikey" tab, need to click it
+  // Top design: now in apikey view (left nav), need to switch to apikey
   it('criterion 9: the API-key section is mounted inside the profile', async () => {
     const wrapper = mount(MyProfile)
-    // click apikey tab
-    const tabs = wrapper.findAll('[role="tab"]')
-    const apiKeyTab = tabs.find((t) => t.text().includes('myApiKey'))
-    expect(apiKeyTab).toBeDefined()
-    await apiKeyTab!.trigger('click')
+    const apiKeyNav = wrapper.findAll('button').find((b) => b.text().includes('apiKey'))
+    expect(apiKeyNav).toBeDefined()
+    await apiKeyNav!.trigger('click')
     await flushPromises()
     const apiKeySection = wrapper.findComponent(MyApiKey)
     expect(apiKeySection.exists())
@@ -64,10 +61,10 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
   it('criterion 8: server error is shown INSIDE the form', async () => {
     mockChange.mockRejectedValue({ response: { data: { message: 'Current password is incorrect' } } })
     const wrapper = mount(MyProfile)
-    // WO-UI-5: password form is now inside the "password" tab
-    const tabs = wrapper.findAll('[role="tab"]')
-    const pwdTab = tabs.find((t) => t.text().includes('changePassword'))
-    await pwdTab!.trigger('click')
+    // Top design: password form is now in a dialog, open via changePassword
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('changePassword'))
+    expect(btn).toBeDefined()
+    await btn!.trigger('click')
     await flushPromises()
     const f = { current: (v:string)=>setValue(wrapper,"#currentPassword",v), next:(v:string)=>setValue(wrapper,"#newPassword",v), confirm:(v:string)=>setValue(wrapper,"#confirmNew",v), submit:()=>submitForm(wrapper) }
     await f.current('wrong')
@@ -82,9 +79,9 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
   it('criterion 8: success shows confirmation and clears the form', async () => {
     mockChange.mockResolvedValue({ id: 'u1' })
     const wrapper = mount(MyProfile)
-    const tabs = wrapper.findAll('[role="tab"]')
-    const pwdTab = tabs.find((t) => t.text().includes('changePassword'))
-    await pwdTab!.trigger('click')
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('changePassword'))
+    expect(btn).toBeDefined()
+    await btn!.trigger('click')
     await flushPromises()
     const f = { current: (v:string)=>setValue(wrapper,"#currentPassword",v), next:(v:string)=>setValue(wrapper,"#newPassword",v), confirm:(v:string)=>setValue(wrapper,"#confirmNew",v), submit:()=>submitForm(wrapper) }
     await f.current('OldPassw0rd!')
