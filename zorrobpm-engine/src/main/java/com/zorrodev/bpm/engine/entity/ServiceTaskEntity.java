@@ -23,4 +23,6 @@ public class ServiceTaskEntity {
     private Instant completedAt;
     /** Engine-owned retry budget; a worker failure decrements it, an incident is raised at 0. */
     private Integer retriesRemaining;
+    /** WO-EVT-9: stable job identifier (zeebe:taskDefinition type analog), set from BPMN at creation. */
+    private String job;
 }

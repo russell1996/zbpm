@@ -136,19 +136,32 @@ public class DomainEventEmitter {
         emit(DomainEventType.USER_TASK_COMPLETED, processInstanceId, processDefinitionId, elementId, data);
     }
 
-    public void emitServiceTaskCreated(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID activityId) {
-        emit(DomainEventType.SERVICE_TASK_CREATED, processInstanceId, processDefinitionId, elementId,
-            Map.of("activityId", activityId.toString()));
+    public void emitServiceTaskCreated(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID activityId, String job) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("activityId", activityId.toString());
+        if (job != null) data.put("job", job);
+        emit(DomainEventType.SERVICE_TASK_CREATED, processInstanceId, processDefinitionId, elementId, data);
     }
 
-    public void emitIncidentRaised(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID incidentId, String message) {
-        emit(DomainEventType.INCIDENT_RAISED, processInstanceId, processDefinitionId, elementId,
-            Map.of("incidentId", incidentId.toString(), "message", message));
+    public void emitActivityCompleted(UUID processInstanceId, UUID processDefinitionId, String elementId, String job) {
+        Map<String, Object> data = new HashMap<>();
+        if (job != null) data.put("job", job);
+        emit(DomainEventType.ACTIVITY_COMPLETED, processInstanceId, processDefinitionId, elementId, data);
     }
 
-    public void emitIncidentResolved(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID incidentId) {
-        emit(DomainEventType.INCIDENT_RESOLVED, processInstanceId, processDefinitionId, elementId,
-            Map.of("incidentId", incidentId.toString()));
+    public void emitIncidentRaised(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID incidentId, String message, String job) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("incidentId", incidentId.toString());
+        data.put("message", message);
+        if (job != null) data.put("job", job);
+        emit(DomainEventType.INCIDENT_RAISED, processInstanceId, processDefinitionId, elementId, data);
+    }
+
+    public void emitIncidentResolved(UUID processInstanceId, UUID processDefinitionId, String elementId, UUID incidentId, String job) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("incidentId", incidentId.toString());
+        if (job != null) data.put("job", job);
+        emit(DomainEventType.INCIDENT_RESOLVED, processInstanceId, processDefinitionId, elementId, data);
     }
 
     public void emitUserTaskAssigned(UUID processInstanceId, UUID processDefinitionId, String elementId,

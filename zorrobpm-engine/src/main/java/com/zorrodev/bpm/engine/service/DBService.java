@@ -58,8 +58,8 @@ public interface DBService {
 
     void createServiceTask(UUID activityId);
 
-    /** Creates the service-task job with an explicit retry budget (from {@code zeebe:taskDefinition retries}). */
-    void createServiceTask(UUID activityId, int retriesRemaining);
+    /** Creates the service-task job with an explicit retry budget (from {@code zeebe:taskDefinition retries}) and a stable job id (from {@code zeebe:taskDefinition type}). */
+    void createServiceTask(UUID activityId, int retriesRemaining, String job);
 
     /** Decrements the service task's retry budget and returns the remaining value. */
     int decrementServiceTaskRetries(UUID serviceTaskId);

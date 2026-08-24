@@ -1,0 +1,14 @@
+databaseChangeLog:
+  - logicalFilePath: 20260825-078
+  - changeSet:
+      id: 20260825-078
+      author: zorrodev
+      changes:
+        # WO-EVT-9: stable job identifier (zeebe:taskDefinition type analog) carried in domain events.
+        # Nullable — old rows are not backfilled; the value is set on task creation from the BPMN model.
+        - addColumn:
+            tableName: service_tasks
+            columns:
+              - column:
+                  name: job
+                  type: varchar(255)

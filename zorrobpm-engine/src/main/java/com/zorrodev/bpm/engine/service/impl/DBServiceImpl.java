@@ -142,7 +142,9 @@ public class DBServiceImpl implements DBService {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
-        domainEventEmitter.emitActivityCompleted(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId());
+        // WO-EVT-9: service tasks carry their stable job id in the event data; other element types keep data empty.
+        String job = serviceTaskRepository.findById(activityId).map(ServiceTaskEntity::getJob).orElse(null);
+        domainEventEmitter.emitActivityCompleted(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), job);
     }
 
     @Override
@@ -235,11 +237,11 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void createServiceTask(UUID activityId) {
-        createServiceTask(activityId, 3);
+        createServiceTask(activityId, 3, null);
     }
 
     @Override
-    public void createServiceTask(UUID activityId, int retriesRemaining) {
+    public void createServiceTask(UUID activityId, int retriesRemaining, String job) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         ServiceTaskEntity entity = new ServiceTaskEntity();
         entity.setId(activity.getId());
@@ -247,12 +249,13 @@ public class DBServiceImpl implements DBService {
         entity.setProcessInstanceId(activity.getProcessInstanceId());
         entity.setCreatedAt(activity.getCreatedAt());
         entity.setRetriesRemaining(retriesRemaining);
+        entity.setJob(job);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
 
         serviceTaskRepository.save(entity);
-        domainEventEmitter.emitServiceTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId);
+        domainEventEmitter.emitServiceTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId, job);
     }
 
     @Override
@@ -524,7 +527,9 @@ public class DBServiceImpl implements DBService {
         incidentRepository.save(entity);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activityEntity.getProcessInstanceId()).orElseThrow();
-        domainEventEmitter.emitIncidentRaised(activityEntity.getProcessInstanceId(), pi.getProcessDefinitionId(), activityEntity.getBpmnElementId(), id, message);
+        // WO-EVT-9: service tasks carry their stable job id in the event data.
+        String job = serviceTaskRepository.findById(activityId).map(ServiceTaskEntity::getJob).orElse(null);
+        domainEventEmitter.emitIncidentRaised(activityEntity.getProcessInstanceId(), pi.getProcessDefinitionId(), activityEntity.getBpmnElementId(), id, message, job);
 
         return id;
     }
@@ -549,7 +554,9 @@ public class DBServiceImpl implements DBService {
 
         ActivityEntity activity = activityRepository.findById(entity.getActivityId()).orElseThrow();
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
-        domainEventEmitter.emitIncidentResolved(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), incidentId);
+        // WO-EVT-9: service tasks carry their stable job id in the event data.
+        String job = serviceTaskRepository.findById(activity.getId()).map(ServiceTaskEntity::getJob).orElse(null);
+        domainEventEmitter.emitIncidentResolved(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), incidentId, job);
     }
 
     @Override

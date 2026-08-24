@@ -52,6 +52,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -160,7 +161,7 @@ class DBServiceImplTest {
         dbService.completeActivity(activityId);
 
         verify(activityRepository).setStatusAndCompletedAt(eq(activityId), eq(ActivityStatus.COMPLETED), any(Instant.class));
-        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("element1"));
+        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("element1"), isNull());
     }
 
     @Test
@@ -213,6 +214,109 @@ class DBServiceImplTest {
         assertThat(saved.getBpmnElementId()).isEqualTo("svc1");
         assertThat(saved.getProcessInstanceId()).isEqualTo(processInstanceId);
         assertThat(saved.getProcessDefinitionId()).isEqualTo(processDefinitionId);
+    }
+
+    // ─── WO-EVT-9: stable job id in domain events ───────────────────────
+
+    @Test
+    void evt9_createServiceTask_carriesJob_inCreatedEvent_andEntity() {
+        UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+
+        ActivityEntity activity = new ActivityEntity();
+        activity.setId(activityId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId("Activity_7f3"); // deliberately != job (POF 3)
+        activity.setCreatedAt(Instant.now());
+
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(UUID.randomUUID());
+
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
+
+        dbService.createServiceTask(activityId, 3, "draftCreate");
+
+        ArgumentCaptor<ServiceTaskEntity> captor = ArgumentCaptor.forClass(ServiceTaskEntity.class);
+        verify(serviceTaskRepository).save(captor.capture());
+        assertThat(captor.getValue().getJob()).isEqualTo("draftCreate");
+        // criterion 4: elementId stays the diagram id, not the job
+        verify(domainEventEmitter).emitServiceTaskCreated(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq(activityId), eq("draftCreate"));
+    }
+
+    @Test
+    void evt9_activityCompleted_serviceTaskCarriesJob_userTaskStaysEmpty() {
+        UUID serviceActivityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+
+        ActivityEntity svc = new ActivityEntity();
+        svc.setId(serviceActivityId);
+        svc.setProcessInstanceId(processInstanceId);
+        svc.setBpmnElementId("Activity_7f3");
+        when(activityRepository.findById(serviceActivityId)).thenReturn(Optional.of(svc));
+
+        ServiceTaskEntity st = new ServiceTaskEntity();
+        st.setId(serviceActivityId);
+        st.setJob("draftCreate");
+        when(serviceTaskRepository.findById(serviceActivityId)).thenReturn(Optional.of(st));
+
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
+
+        dbService.completeActivity(serviceActivityId);
+        // criterion 2a: service task carries data.job
+        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq("draftCreate"));
+
+        // criterion 2b: non-service-task element keeps data empty (old overload, no job param)
+        UUID gatewayActivityId = UUID.randomUUID();
+        ActivityEntity gw = new ActivityEntity();
+        gw.setId(gatewayActivityId);
+        gw.setProcessInstanceId(processInstanceId);
+        gw.setBpmnElementId("Gateway_1");
+        when(activityRepository.findById(gatewayActivityId)).thenReturn(Optional.of(gw));
+        when(serviceTaskRepository.findById(gatewayActivityId)).thenReturn(Optional.empty());
+
+        dbService.completeActivity(gatewayActivityId);
+        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("Gateway_1"), isNull());
+    }
+
+    @Test
+    void evt9_incidentRaised_serviceTaskCarriesJob() {
+        UUID activityId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+
+        ActivityEntity activityEntity = new ActivityEntity();
+        activityEntity.setId(activityId);
+        activityEntity.setProcessInstanceId(processInstanceId);
+        activityEntity.setBpmnElementId("Activity_7f3");
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activityEntity));
+
+        ServiceTaskEntity st = new ServiceTaskEntity();
+        st.setId(activityId);
+        st.setJob("draftCreate");
+        when(serviceTaskRepository.findById(activityId)).thenReturn(Optional.of(st));
+
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
+
+        UUID id = dbService.createIncident(activityId, "boom");
+        // criterion 3: job next to incidentId/message; elementId unchanged (criterion 4)
+        verify(domainEventEmitter).emitIncidentRaised(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq(id), eq("boom"), eq("draftCreate"));
+
+        // resolved carries job too
+        IncidentEntity incident = new IncidentEntity();
+        incident.setId(id);
+        incident.setActivityId(activityId);
+        incident.setMessage("boom");
+        when(incidentRepository.findById(id)).thenReturn(Optional.of(incident));
+
+        dbService.completeIncident(id);
+        verify(domainEventEmitter).emitIncidentResolved(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq(id), eq("draftCreate"));
     }
 
     @Test
@@ -524,7 +628,7 @@ class DBServiceImplTest {
         verify(incidentRepository).save(captor.capture());
         assertThat(captor.getValue().getActivityId()).isEqualTo(activityId);
         assertThat(captor.getValue().getMessage()).isEqualTo("boom");
-        verify(domainEventEmitter).emitIncidentRaised(eq(processInstanceId), any(UUID.class), eq("element1"), eq(id), eq("boom"));
+        verify(domainEventEmitter).emitIncidentRaised(eq(processInstanceId), any(UUID.class), eq("element1"), eq(id), eq("boom"), isNull());
     }
 
     @Test
@@ -571,7 +675,7 @@ class DBServiceImplTest {
         ArgumentCaptor<IncidentEntity> captor = ArgumentCaptor.forClass(IncidentEntity.class);
         verify(incidentRepository).save(captor.capture());
         assertThat(captor.getValue().getCompletedAt()).isNotNull();
-        verify(domainEventEmitter).emitIncidentResolved(eq(processInstanceId), any(UUID.class), eq("element1"), eq(incidentId));
+        verify(domainEventEmitter).emitIncidentResolved(eq(processInstanceId), any(UUID.class), eq("element1"), eq(incidentId), isNull());
     }
 
     @Test
