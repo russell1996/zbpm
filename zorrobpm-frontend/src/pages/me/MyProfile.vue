@@ -3,21 +3,25 @@
     <h1 class="text-2xl font-bold mb-6">{{ t('accountSettings') }}</h1>
     <div class="flex gap-6">
       <!-- Left nav — Settings navigation, not a card -->
-      <nav class="w-48 shrink-0 space-y-1" :aria-label="t('accountSettings')">
+      <nav ref="tablistRef" class="w-48 shrink-0 space-y-1" role="tablist" aria-orientation="vertical" :aria-label="t('accountSettings')" @keydown="onKeydown">
         <button
+          id="tab-profile"
+          role="tab"
+          :aria-selected="activeView === 'profile' ? 'true' : 'false'"
+          aria-controls="panel-profile"
           class="w-full text-left px-3 py-2 text-sm rounded-md transition-colors"
           :class="activeView === 'profile' ? 'bg-muted font-medium' : 'hover:bg-muted'"
-          :aria-selected="activeView === 'profile' ? 'true' : 'false'"
-          role="tab"
           @click="activeView = 'profile'"
         >
           {{ t('profile') }}
         </button>
         <button
+          id="tab-apikey"
+          role="tab"
+          :aria-selected="activeView === 'apikey' ? 'true' : 'false'"
+          aria-controls="panel-apikey"
           class="w-full text-left px-3 py-2 text-sm rounded-md transition-colors"
           :class="activeView === 'apikey' ? 'bg-muted font-medium' : 'hover:bg-muted'"
-          :aria-selected="activeView === 'apikey' ? 'true' : 'false'"
-          role="tab"
           @click="activeView = 'apikey'"
         >
           {{ t('apiKey') }}
@@ -27,7 +31,7 @@
       <!-- Right content — single surface -->
       <div class="flex-1 min-w-0 bg-card border border-border rounded-lg p-6">
         <!-- Профиль -->
-        <div v-if="activeView === 'profile'" class="space-y-6">
+        <div v-if="activeView === 'profile'" id="panel-profile" role="tabpanel" aria-labelledby="tab-profile" class="space-y-6">
           <section>
             <h2 class="text-lg font-semibold mb-4">{{ t('profile') }}</h2>
             <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
@@ -57,7 +61,7 @@
         </div>
 
         <!-- API-ключ -->
-        <div v-else>
+        <div v-else id="panel-apikey" role="tabpanel" aria-labelledby="tab-apikey">
           <MyApiKey />
         </div>
       </div>
@@ -150,6 +154,26 @@ const toast = useToast()
 
 const activeView = ref<'profile' | 'apikey'>('profile')
 const showPasswordDialog = ref(false)
+const tablistRef = ref<HTMLElement | null>(null)
+
+function onKeydown(e: KeyboardEvent) {
+  const tabs = Array.from(tablistRef.value?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+  if (!tabs.length) return
+  const idx = tabs.indexOf(document.activeElement as HTMLButtonElement)
+  if (idx < 0) return
+  const last = tabs.length - 1
+  let target = -1
+  switch (e.key) {
+    case 'ArrowDown': target = idx === last ? 0 : idx + 1; break
+    case 'ArrowUp': target = idx === 0 ? last : idx - 1; break
+    case 'Home': target = 0; break
+    case 'End': target = last; break
+    default: return
+  }
+  e.preventDefault()
+  tabs[target].focus()
+  tabs[target].click()
+}
 
 const currentPassword = ref('')
 const newPassword = ref('')
