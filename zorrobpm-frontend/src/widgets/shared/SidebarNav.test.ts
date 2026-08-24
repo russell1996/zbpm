@@ -25,6 +25,11 @@ describe('SidebarNav', () => {
   })
 
   it('Forms menu item removed — form/schema editing now lives inside Process Definitions detail', () => {
+    // adminOnly items are invisible to a non-admin regardless of this assertion — mount as
+    // super-admin so this actually exercises "forms is gone from the array", not "non-admins
+    // don't see admin items" (WO-UI-4 re-added it under adminOnly and this test stayed green
+    // for the wrong reason).
+    mockAuth.isSuperAdmin = true
     const wrapper = mount(SidebarNav)
     // forms was superseded by the per-process SchemaEditorPanel (same pattern as processSchemas below)
     const buttons = wrapper.findAll('button')
@@ -53,6 +58,9 @@ describe('SidebarNav', () => {
   })
 
   it('Process Schemas menu item removed — now inside definitions detail (WO-VM-12)', () => {
+    // same reasoning as the forms test above: mount as super-admin or this is blind to the
+    // adminOnly item actually being back in the array.
+    mockAuth.isSuperAdmin = true
     const wrapper = mount(SidebarNav)
     // processSchemas was moved into ProcessDefinitionDetail, so it should NOT be in the sidebar
     const buttons = wrapper.findAll('button')
