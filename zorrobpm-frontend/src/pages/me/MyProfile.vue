@@ -1,6 +1,8 @@
 <template>
   <div class="max-w-4xl mx-auto p-4">
-    <TabsBar :tabs="profileTabs" :active-id="activeTab" @update:active-id="activeTab = $event" />
+    <div class="border-b border-border">
+      <TabsBar :tabs="profileTabs" :active-id="activeTab" @update:active-id="activeTab = $event" />
+    </div>
 
     <!-- Tab: About me -->
     <div v-if="activeTab === 'about'" class="mt-6">
