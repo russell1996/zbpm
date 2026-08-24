@@ -49,6 +49,49 @@ class SyncTaskHandlerPiiTest {
     }
 
     @Test
+    void pof_scriptTask_secretValue_notInDebugLog() {
+        String secret = "secret-salary-99999-debug";
+
+        DBService dbService = mock(DBService.class);
+        ScriptService scriptService = mock(ScriptService.class);
+        ActivityService activityService = mock(ActivityService.class);
+        ElementSupport elementSupport = mock(ElementSupport.class);
+        FlowNavigator flowNavigator = mock(FlowNavigator.class);
+
+        when(dbService.getVariables(any())).thenReturn(List.of());
+        when(scriptService.evaluateExpression(eq("salary"), any())).thenReturn(secret);
+        when(dbService.createActivity(any(UUID.class), any(UUID.class), any(BpmnElementModel.class))).thenReturn(UUID.randomUUID());
+
+        SyncTaskHandler.ScriptTask handler = new SyncTaskHandler.ScriptTask(
+            dbService, scriptService, elementSupport, flowNavigator, activityService);
+
+        ExecutionCtx ctx = new ExecutionCtx(UUID.randomUUID(), UUID.randomUUID(), null, null);
+
+        BpmnProcessDefinitionModel bpmn = mock(BpmnProcessDefinitionModel.class);
+        BpmnElementModel el = mock(BpmnElementModel.class);
+
+        ScriptTaskExtensionModel ext = mock(ScriptTaskExtensionModel.class);
+        when(ext.getScript()).thenReturn("salary");
+        BpmnElementExtensionModel extensions = mock(BpmnElementExtensionModel.class);
+        when(extensions.getScriptTaskExtension()).thenReturn(ext);
+        when(el.getExtensions()).thenReturn(extensions);
+        when(el.getType()).thenReturn(BpmnElementType.SCRIPT_TASK);
+        when(el.getId()).thenReturn("script1");
+
+        // E6: even at DEBUG, secret must NOT appear
+        logger.setLevel(Level.DEBUG);
+        logAppender.list.clear();
+
+        handler.handle(ctx, bpmn, el);
+
+        boolean found = logAppender.list.stream()
+            .anyMatch(e -> e.getFormattedMessage().contains(secret));
+        assertThat(found)
+            .as("Secret value '%s' must NOT appear even in DEBUG logs (WO-SEC-53 E6)", secret)
+            .isFalse();
+    }
+
+    @Test
     void pof_scriptTask_secretValue_notInInfoLog() {
         String secret = "secret-salary-99999";
 
