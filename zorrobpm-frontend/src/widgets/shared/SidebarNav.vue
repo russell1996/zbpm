@@ -51,8 +51,6 @@ const navItems = computed<NavItem[]>(() => [
   { labelKey: 'analytics', icon: BarChart3, to: '/analytics' },
   { labelKey: 'users', icon: Users, to: '/admin/users', adminOnly: true },
   { labelKey: 'submissionQueue', icon: Inbox, to: '/admin/submissions', adminOnly: true },
-  { labelKey: 'forms', icon: Table2, to: '/admin/forms', adminOnly: true },
-  { labelKey: 'processSchemas', icon: Cpu, to: '/admin/process-schemas', adminOnly: true },
 ])
 
 // WO-ACL-8 criteria 1-2: non-super-admins don't see admin-only items.

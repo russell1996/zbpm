@@ -15,7 +15,7 @@ public class WebConfiguration implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
             .allowedOrigins(allowedOrigins.split(","))
-            .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+            .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
             // WO-SEC-31a: explicit header list instead of "*" — narrower surface with credentials
             .allowedHeaders("Authorization", "Content-Type", "X-On-Behalf-Of", "Last-Event-ID")
             .allowCredentials(true);
