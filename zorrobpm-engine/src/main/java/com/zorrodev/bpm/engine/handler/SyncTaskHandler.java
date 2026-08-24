@@ -63,7 +63,11 @@ public class SyncTaskHandler {
 
             List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
             Object result = scriptService.evaluateExpression(script, variables);
-            log.debug("{}/{}: Script task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
+            // WO-SEC-53 (E6): the evaluated VALUE is deliberately not logged — script results
+            // can carry PII/business secrets (same reasoning as WO-SEC-29, which downgraded
+            // this from INFO to DEBUG). Even a DEBUG line would leak it if DEBUG is ever
+            // enabled in prod; the execution fact alone is enough for diagnostics.
+            log.debug("{}/{}: Script task {}: {}/{} evaluated", processInstanceId, tokenId, el.getType(), activityId, el.getId());
 
             String resultVariable = ext.getResultVariable();
             if (resultVariable != null && !resultVariable.isBlank()) {
@@ -112,7 +116,8 @@ public class SyncTaskHandler {
             } else {
                 throw new IllegalStateException("Business rule task '" + el.getId() + "' has neither a decision nor an expression");
             }
-            log.debug("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
+            // WO-SEC-53 (E6): same as above — result value not logged (PII).
+            log.debug("{}/{}: Business rule task {}: {}/{} evaluated", processInstanceId, tokenId, el.getType(), activityId, el.getId());
 
             if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
                 dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(ext.getResultVariable(), result)));

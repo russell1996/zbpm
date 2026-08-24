@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Real env files carry production-specific values — never commit them (WO-SEC-53 A1).
+# The committed .env.production.example is the template with placeholders.
+.env
+.env.*
+!.env.production.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
