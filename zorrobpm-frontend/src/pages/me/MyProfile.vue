@@ -67,49 +67,63 @@
     <div
       v-if="showPasswordDialog"
       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      @click.self="showPasswordDialog = false"
+      @click.self="closePasswordDialog"
     >
       <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-bold">{{ t('changePassword') }}</h2>
-          <button class="p-1 text-muted-foreground hover:text-foreground" @click="showPasswordDialog = false">✕</button>
+          <h2 class="text-lg font-bold">{{ t('changePasswordTitle') }}</h2>
+          <button class="p-1 text-muted-foreground hover:text-foreground" @click="closePasswordDialog">✕</button>
         </div>
 
         <div v-if="passwordError" data-testid="password-error" class="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
           {{ passwordError }}
         </div>
-        <div v-if="passwordSuccess" data-testid="password-success" class="p-3 bg-green-50 border border-green-200 rounded text-sm text-green-700">
-          {{ t('passwordChangedOk') }}
-        </div>
 
         <form @submit.prevent="changePassword" class="space-y-4">
           <div>
             <label for="currentPassword" class="block text-sm font-medium mb-1">{{ t('currentPassword') }}</label>
-            <input id="currentPassword" v-model="currentPassword" type="password" required
-              class="w-full px-3 py-2 border border-border rounded-md bg-background" />
+            <div class="relative">
+              <input id="currentPassword" v-model="currentPassword" :type="showCurrent ? 'text' : 'password'" required
+                class="w-full px-3 py-2 border border-border rounded-md bg-background pr-10" />
+              <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground" @click="showCurrent = !showCurrent" tabindex="-1">
+                <span class="text-xs">{{ showCurrent ? '🙈' : '👁' }}</span>
+              </button>
+            </div>
           </div>
           <div>
             <label for="newPassword" class="block text-sm font-medium mb-1">{{ t('newPassword') }}</label>
-            <input id="newPassword" v-model="newPassword" type="password" required minlength="12"
-              class="w-full px-3 py-2 border border-border rounded-md bg-background" />
+            <div class="relative">
+              <input id="newPassword" v-model="newPassword" :type="showNew ? 'text' : 'password'" required minlength="12"
+                class="w-full px-3 py-2 border rounded-md bg-background pr-10"
+                :class="newPassword && newPasswordWeak ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-border'" />
+              <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground" @click="showNew = !showNew" tabindex="-1">
+                <span class="text-xs">{{ showNew ? '🙈' : '👁' }}</span>
+              </button>
+            </div>
             <p v-if="newPassword && newPasswordWeak" class="text-sm text-red-600 mt-1" data-testid="password-weak">
               {{ newPassword.length < 12 ? t('passwordTooShort') : t('passwordTooWeak') }}
             </p>
           </div>
           <div>
-            <label for="confirmNew" class="block text-sm font-medium mb-1">{{ t('confirmPassword') }}</label>
-            <input id="confirmNew" v-model="confirmNew" type="password" required
-              class="w-full px-3 py-2 border border-border rounded-md bg-background" />
+            <label for="confirmNew" class="block text-sm font-medium mb-1">{{ t('confirmNewPassword') }}</label>
+            <div class="relative">
+              <input id="confirmNew" v-model="confirmNew" :type="showConfirm ? 'text' : 'password'" required
+                class="w-full px-3 py-2 border rounded-md bg-background pr-10"
+                :class="mismatch ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-border'" />
+              <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground" @click="showConfirm = !showConfirm" tabindex="-1">
+                <span class="text-xs">{{ showConfirm ? '🙈' : '👁' }}</span>
+              </button>
+            </div>
+            <p v-if="mismatch" class="text-sm text-red-600 mt-1">{{ t('passwordsDoNotMatch') }}</p>
           </div>
-          <div v-if="mismatch" class="text-sm text-red-600">{{ t('passwordsDoNotMatch') }}</div>
 
           <div class="flex justify-end gap-2">
-            <button type="button" class="px-4 py-2 border border-border rounded-md text-sm hover:bg-muted" @click="showPasswordDialog = false">
+            <button type="button" class="px-4 py-2 border border-border rounded-md text-sm hover:bg-muted" @click="closePasswordDialog">
               {{ t('cancel') }}
             </button>
             <button type="submit" :disabled="busy || mismatch || newPasswordWeak || !currentPassword || !newPassword"
               class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-              {{ busy ? t('changingPassword') : t('changePassword') }}
+              {{ busy ? t('changingPassword') : t('changePasswordAction') }}
             </button>
           </div>
         </form>
@@ -123,10 +137,12 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { changeMyPassword } from '@/services/userService'
+import { useToast } from '@/composables/useToast'
 import MyApiKey from './MyApiKey.vue'
 
 const { t } = useI18n()
 const auth = useAuthStore()
+const toast = useToast()
 
 const activeView = ref<'profile' | 'apikey'>('profile')
 const showPasswordDialog = ref(false)
@@ -134,9 +150,20 @@ const showPasswordDialog = ref(false)
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmNew = ref('')
+const showCurrent = ref(false)
+const showNew = ref(false)
+const showConfirm = ref(false)
 const busy = ref(false)
 const passwordError = ref<string | null>(null)
-const passwordSuccess = ref(false)
+
+function closePasswordDialog() {
+  showPasswordDialog.value = false
+  // Clear form and error state for next open (criterion: clean form on re-open)
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmNew.value = ''
+  passwordError.value = null
+}
 
 const mismatch = computed(() => confirmNew.value !== '' && newPassword.value !== confirmNew.value)
 
@@ -149,16 +176,14 @@ const newPasswordWeak = computed(() => {
 })
 
 async function changePassword() {
-  if (!auth.user || mismatch.value || !newPassword.value || !currentPassword.value) return
+  if (!auth.user || mismatch.value || newPasswordWeak.value || !newPassword.value || !currentPassword.value) return
+  if (busy.value) return
   busy.value = true
   passwordError.value = null
-  passwordSuccess.value = false
   try {
     await changeMyPassword(currentPassword.value, newPassword.value)
-    passwordSuccess.value = true
-    currentPassword.value = ''
-    newPassword.value = ''
-    confirmNew.value = ''
+    toast.success('Пароль успешно изменён')
+    closePasswordDialog()
     await auth.refreshUser()
   } catch (e: unknown) {
     const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message

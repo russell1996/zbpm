@@ -26,6 +26,11 @@ vi.mock('@/services/apiKeyService', () => ({
 }))
 vi.mock('@/composables/useDateFormat', () => ({ useDateFormat: () => ({ formatDate: (v: string) => v }) }))
 
+const mockToastSuccess = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ success: mockToastSuccess, error: vi.fn(), info: vi.fn(), warning: vi.fn(), loading: vi.fn(), dismiss: vi.fn() }),
+}))
+
 import type { VueWrapper } from '@vue/test-utils'
 type Wrapper = VueWrapper<InstanceType<typeof MyProfile>>
 async function setValue(w: Wrapper, sel: string, v: string) { await w.get(sel).setValue(v) }
@@ -76,7 +81,7 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
     expect(err.text()).toContain('Current password is incorrect')
   })
 
-  it('criterion 8: success shows confirmation and clears the form', async () => {
+  it('criterion 8: success shows toast, closes dialog and clears form (top design)', async () => {
     mockChange.mockResolvedValue({ id: 'u1' })
     const wrapper = mount(MyProfile)
     const btn = wrapper.findAll('button').find((b) => b.text().includes('changePassword'))
@@ -90,7 +95,14 @@ describe('WO-SEC-58 criteria 7-8: My Profile', () => {
     await submitForm(wrapper)
     await flushPromises()
     expect(mockChange).toHaveBeenCalledWith('OldPassw0rd!', 'NewPassw0rd!2345')
-    expect(wrapper.get('[data-testid="password-success"]').text()).toContain('passwordChangedOk')
+    expect(mockToastSuccess).toHaveBeenCalledWith('Пароль успешно изменён')
+    // dialog should be closed, form cleared for next open
+    expect(wrapper.find('#currentPassword').exists()).toBe(false)
+    // reopen — clean form
+    const btn2 = wrapper.findAll('button').find((b) => b.text().includes('changePassword'))
+    await btn2!.trigger('click')
+    await flushPromises()
     expect((wrapper.get('#currentPassword').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('[data-testid="password-error"]').exists()).toBe(false)
   })
 })
