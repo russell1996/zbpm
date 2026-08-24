@@ -56,12 +56,6 @@ const router = createRouter({
           meta: { titleKey: 'startProcess' },
         },
         {
-          path: 'processes/submissions',
-          name: 'my-submissions',
-          component: () => import('@/pages/processes/MySubmissions.vue'),
-          meta: { titleKey: 'mySubmissions' },
-        },
-        {
           path: 'processes/instances',
           name: 'process-instances',
           component: () => import('@/pages/processes/ProcessInstanceList.vue'),
