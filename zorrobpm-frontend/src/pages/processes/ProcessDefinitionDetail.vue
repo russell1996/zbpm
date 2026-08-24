@@ -43,9 +43,6 @@ const myMembership = computed(() => {
   if (!auth.user) return null
   return members.value.find((m) => m.userId === auth.user?.id) || null
 })
-// WO-ACL-8 criterion 27: "is the user a member?" — used to distinguish
-// "no access" from "no data" empty states in tabs.
-const isMember = computed(() => auth.isSuperAdmin || myMembership.value !== null)
 // WO-ACL-8 criterion 11: the super-admin manages members even without being a
 // member — the backend allows everything for SUPER_ADMIN, so hiding the controls
 // would make the UI contradict the API (canOperate checks isSuperAdmin first).
