@@ -24,15 +24,17 @@ export function getCurrentTask(cwd?: string): string | null {
   const dir = cwd || process.cwd();
   // Try to find git repo: check if .git exists or use git rev-parse
   try {
-    // Prefer worktree ../zbpm-dev if exists (as per project), else cwd
+    // Prefer worktree via env AGENT_HUB_WORKTREE, else derive correctly:
+    // tools/agent-hub -> ../../.. -> zbpm-dev (sibling of zbpm, not child)
     let targetDir = dir;
-    // If cwd is tools/agent-hub, try to find zbpm-dev worktree
-    const devWorktree = join(dir, '..', '..', 'zbpm-dev');
-    const altDevWorktree = '/c/Users/1/vscode/projects/zorro/zbpm-dev';
-    if (existsSync(devWorktree) && existsSync(join(devWorktree, '.git'))) {
-      targetDir = devWorktree;
-    } else if (existsSync(altDevWorktree)) {
-      targetDir = altDevWorktree;
+    const envWorktree = process.env.AGENT_HUB_WORKTREE;
+    if (envWorktree && existsSync(envWorktree)) {
+      targetDir = envWorktree;
+    } else {
+      const devWorktree = join(dir, '..', '..', '..', 'zbpm-dev');
+      if (existsSync(devWorktree)) {
+        targetDir = devWorktree;
+      }
     }
     const branch = execSync('git rev-parse --abbrev-ref HEAD', {
       cwd: targetDir,
