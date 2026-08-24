@@ -90,6 +90,28 @@ describe('WO-HUB-1 Agent Hub', () => {
     expect(parseTaskFromBranch('master')).toBeNull();
   });
 
+  it('criterion 4 (file): getCurrentTask resolves via cwd', async () => {
+    // Create a temp git repo with a branch feat/test-123-foo
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { execSync } = await import('node:child_process');
+    const tmp = mkdtempSync(join(tmpdir(), 'hub-branch-test-'));
+    try {
+      execSync('git init -q', { cwd: tmp });
+      execSync('git config user.email "test@test.com"', { cwd: tmp });
+      execSync('git config user.name "Test"', { cwd: tmp });
+      writeFileSync(join(tmp, 'README.md'), 'test');
+      execSync('git add .', { cwd: tmp });
+      execSync('git commit -qm init', { cwd: tmp });
+      execSync('git checkout -qb feat/test-123-foo', { cwd: tmp });
+      const { getCurrentTask } = await import('./branch.js');
+      expect(getCurrentTask(tmp)).toBe('WO-TEST-123');
+      execSync('git checkout --detach HEAD -q', { cwd: tmp });
+      expect(getCurrentTask(tmp)).toBeNull();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('criterion 5: buffer limited, old evicted', async () => {
     const { app } = createApp({ stateFile, bufferSize: 3 });
     for (let i = 0; i < 5; i++) {
