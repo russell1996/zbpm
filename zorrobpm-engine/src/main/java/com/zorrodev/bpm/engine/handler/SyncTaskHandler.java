@@ -116,7 +116,8 @@ public class SyncTaskHandler {
             } else {
                 throw new IllegalStateException("Business rule task '" + el.getId() + "' has neither a decision nor an expression");
             }
-            log.debug("{}/{}: Business rule task {}: {}/{} evaluated to {}", processInstanceId, tokenId, el.getType(), activityId, el.getId(), result);
+            // WO-SEC-53 (E6): same as above — result value not logged (PII).
+            log.debug("{}/{}: Business rule task {}: {}/{} evaluated", processInstanceId, tokenId, el.getType(), activityId, el.getId());
 
             if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {
                 dbService.setVariables(processInstanceId, List.of(elementSupport.toProcessVariable(ext.getResultVariable(), result)));
