@@ -433,7 +433,7 @@ async function downloadBpmn() {
               </div>
             </div>
             <p v-if="!store.currentStructure.nodes.length" class="text-sm text-muted-foreground">
-              {{ isMember ? t('noDataYet') : t('noAccess') }}
+              {{ t('noDataYet') }}
             </p>
           </div>
           <p v-else class="p-4 text-sm text-muted-foreground">{{ t('loading') }}</p>
@@ -469,7 +469,7 @@ async function downloadBpmn() {
             </tbody>
           </table>
           <p v-if="!requirements.length && !store.currentStructure?.documentation" class="p-4 text-sm text-muted-foreground">
-            {{ isMember ? t('noDataYet') : t('noAccess') }}
+            {{ t('noDataYet') }}
           </p>
         </div>
       </div>
@@ -604,7 +604,7 @@ async function downloadBpmn() {
             </tbody>
           </table>
           <p v-else class="px-4 py-3 text-sm text-muted-foreground">
-            {{ isMember ? t('noMembers') : t('noAccess') }}
+            {{ t('noDataYet') }}
           </p>
         </div>
       </div>

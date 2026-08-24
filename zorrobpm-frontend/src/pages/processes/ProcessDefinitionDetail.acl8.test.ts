@@ -167,15 +167,15 @@ describe('ProcessDefinitionDetail — WO-ACL-8 stage A visibility', () => {
     expect(wrapper.text()).not.toContain('remove')
   })
 
-  // WO-ACL-8 criterion 27: non-member sees "no access" message, member sees "no data"
-  it('criterion 27: non-member sees noAccess message in Structure tab', async () => {
+  // WO-UI-3 fix: structure tab now shows noDataYet for everyone (definition data is visible to all authenticated per ADR-8, not gated by membership)
+  it('criterion 27: non-member sees noDataYet message in Structure tab (WO-UI-3)', async () => {
     mockAuth.id = 'u-outsider'
     const wrapper = await mountDetail()
     // click Structure tab (label is the i18n key 'bpmnStructure')
     const structureTab = wrapper.findAll('button').find(b => b.text().includes('bpmnStructure'))
     await structureTab?.trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('noAccess')
+    expect(wrapper.text()).toContain('noDataYet')
   })
 
   it('criterion 27: member sees noDataYet message in Structure tab', async () => {
