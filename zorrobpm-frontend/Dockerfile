@@ -4,7 +4,7 @@
 # Debian (bookworm-slim), not alpine: `playwright install --with-deps` has no
 # alpine support (it would install ubuntu deps via apt). Only the builder grows;
 # the runtime stage below stays nginx:alpine.
-FROM node:22-bookworm-slim AS builder
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS builder
 
 WORKDIR /build
 
@@ -18,6 +18,12 @@ RUN npm ci
 RUN npx playwright install --with-deps chromium
 
 COPY . .
+
+# WO-SEC-53 (A1): real .env.production was removed from git — its only load-bearing value
+# (VITE_API_URL=/) now lives here as build-time env (Vite exposes VITE_* from process.env).
+# The external prod proxy has no "/api" location, so the SPA must target the domain root;
+# the committed .env.production.example documents this for local/custom builds.
+ENV VITE_API_URL=/
 
 # Vite picks up .env.production automatically in production mode (relative /api, origin-based redirect)
 RUN npm run build
@@ -33,7 +39,7 @@ RUN npm run test:browser
 
 
 # --- Runtime stage: serve static assets + reverse-proxy /api to the backend ---
-FROM nginx:1.27-alpine
+FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
 
 # SPA fallback + /api proxy to the backend container (resolved by Docker DNS, not a hardcoded IP)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
