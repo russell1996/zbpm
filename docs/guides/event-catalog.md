@@ -1,7 +1,7 @@
 # Справочник доменных событий (routing-key каталог)
 
 > Источник истины по типам — enum
-> [`DomainEventType`](../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventType.java).
+> [`DomainEventType`](../../zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/event/DomainEventType.java).
 > Этот файл — человекочитаемая расшифровка: когда каждое событие срабатывает и что несёт.
 > Общая механика (exchange/queue/binding, фильтр по assignee) — в [event-notifications-guide.md](event-notifications-guide.md).
 
