@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { LogOut, User, Sun, Moon, Menu, FileCode, KeyRound, ChevronDown } from 'lucide-vue-next'
+import { LogOut, User, Sun, Moon, Menu, FileCode, ChevronDown } from 'lucide-vue-next'
 import SearchCommand from './SearchCommand.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 
@@ -19,9 +19,31 @@ const auth = useAuthStore()
 const ui = useUiStore()
 const { t } = useI18n()
 
-// WO-ACL-16 criterion 7: the personal API key screen was unreachable (P-21) —
-// the header is the only place it can live: it is personal, not a system section.
 const userMenuOpen = ref(false)
+const rootEl = ref<HTMLElement | null>(null)
+
+// WO-UI-5 (dropdown): same pattern as LanguageSwitcher.vue:1-46 — close on outside click and Escape
+function onDocumentClick(e: MouseEvent) {
+  if (!rootEl.value || !rootEl.value.contains(e.target as Node)) {
+    userMenuOpen.value = false
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    userMenuOpen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+  document.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
@@ -55,7 +77,7 @@ const userMenuOpen = ref(false)
       >
         <FileCode class="h-4 w-4" />
       </a>
-      <div v-if="auth.user" class="relative">
+      <div v-if="auth.user" ref="rootEl" class="relative">
         <button
           class="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
           aria-haspopup="menu"
@@ -80,14 +102,6 @@ const userMenuOpen = ref(false)
           >
             <User class="h-4 w-4" />
             {{ t('myProfile') }}
-          </RouterLink>
-          <RouterLink
-            :to="{ name: 'my-profile' }"
-            class="flex items-center gap-2 px-4 py-2 text-sm hover:bg-muted"
-            @click="userMenuOpen = false"
-          >
-            <KeyRound class="h-4 w-4" />
-            {{ t('myApiKey') }}
           </RouterLink>
           <button
             class="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-muted"
