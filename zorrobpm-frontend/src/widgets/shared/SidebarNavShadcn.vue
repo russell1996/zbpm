@@ -16,11 +16,7 @@ import {
   Table2,
   Inbox,
 } from 'lucide-vue-next'
-import logoLight from '@/assets/logo-light.svg'
-import logoDark from '@/assets/logo-dark.svg'
-import logoIcon from '@/assets/logo-icon.svg'
 import { useAuthStore } from '@/stores/auth'
-import { useUiStore } from '@/stores/ui'
 import {
   Sidebar,
   SidebarContent,
@@ -37,7 +33,6 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const ui = useUiStore()
 const { state } = useSidebar()
 const isCollapsed = computed(() => state.value === 'collapsed')
 
@@ -109,12 +104,10 @@ function navigate(to: string) {
 
 <template>
     <Sidebar collapsible="icon">
-      <div class="h-14 flex flex-row items-center px-2 border-b border-border group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1">
-        <template v-if="!isCollapsed">
-          <img v-if="ui.darkMode" :src="logoLight" alt="ZorroBPM" class="h-7 w-auto" />
-          <img v-else :src="logoDark" alt="ZorroBPM" class="h-7 w-auto" />
-        </template>
-        <img v-else :src="logoIcon" alt="ZBPM" class="h-7 w-auto" />
+      <div class="h-14 flex flex-row items-center justify-center px-2 border-b border-border">
+        <span class="font-bold tracking-tight transition-all" :class="isCollapsed ? 'text-base' : 'text-xl'">
+          <span class="text-primary">Z</span><template v-if="!isCollapsed"><span class="text-foreground">BPM</span></template>
+        </span>
       </div>
       <SidebarContent>
         <SidebarGroup v-for="group in navGroups" :key="group.labelKey" class="p-2 py-1.5">
