@@ -43,6 +43,29 @@ public class FlowNavigator {
         if (element.getOutgoing() == null) {
             return; // a dead end (e.g. a compensation handler off the main flow has no outgoing flow)
         }
+        // WO-ENG-12: implicit fork — an element with 2+ outgoing without an explicit gateway is an
+        // AND-split in execution terms. Without a pendingBranches counter the first branch to finish
+        // would immediately complete the instance (decrementPendingBranches → -1 → "linear, complete").
+        // Apply the same durable-counter scheme as ParallelGatewayHandler (create child token, set
+        // pendingBranches before any branch starts) so finishBranch waits for all branches.
+        if (element.getOutgoing().size() > 1) {
+            Token newToken = dbService.createToken(tokenId);
+            UUID newTokenId = newToken.getId();
+            dbService.setPendingBranches(newTokenId, element.getOutgoing().size());
+            for (String outgoing : element.getOutgoing()) {
+                processFlow(processInstanceId, newTokenId, outgoing, false, null);
+                BpmnFlowModel flow = bpmn.getFlow(outgoing);
+                if (flow == null) {
+                    throw new IllegalStateException("Sequence flow '" + outgoing + "' not found in the process definition");
+                }
+                BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
+                if (target == null) {
+                    throw new IllegalStateException("Target element '" + flow.getTargetRef() + "' of sequence flow '" + outgoing + "' not found in the process definition");
+                }
+                executor.execute(processInstanceId, newTokenId, bpmn, target);
+            }
+            return;
+        }
         for (String outgoing : element.getOutgoing()) {
             processFlow(processInstanceId, tokenId, outgoing, false, null);
             BpmnFlowModel flow = bpmn.getFlow(outgoing);
