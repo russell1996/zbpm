@@ -13,7 +13,7 @@ const sidebarOpen = ref(!isMobile.value)
 </script>
 
 <template>
-  <SidebarProvider :default-open="sidebarOpen" class="h-screen">
+  <SidebarProvider class="h-screen">
     <div
       v-if="isMobile && sidebarOpen"
       class="fixed inset-0 bg-black/50 z-40"

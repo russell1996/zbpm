@@ -103,10 +103,9 @@ function navigate(to: string) {
 
 <template>
     <Sidebar collapsible="icon">
-      <div class="h-14 flex flex-row items-center px-2 border-b border-border group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1">
-        <img v-if="ui.darkMode" src="/Light.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
-        <img v-else src="/Dark.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
-        <img src="/Logo.svg" alt="ZBPM" class="h-7 w-auto hidden group-data-[collapsible=icon]:block" />
+      <div class="h-14 flex flex-row items-center px-2 border-b border-border group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1 relative overflow-hidden">
+        <img :src="ui.darkMode ? '/Light.svg' : '/Dark.svg'" alt="ZorroBPM" class="h-7 w-auto transition-opacity duration-200 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:pointer-events-none" />
+        <img src="/Logo.svg" alt="ZBPM" class="h-7 w-auto absolute left-2 transition-opacity duration-200 opacity-0 group-data-[collapsible=icon]:opacity-100 group-data-[collapsible=icon]:static group-data-[collapsible=icon]:left-auto" />
       </div>
       <SidebarContent>
         <SidebarGroup v-for="group in navGroups" :key="group.labelKey" class="p-2 py-1.5">
