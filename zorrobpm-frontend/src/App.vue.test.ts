@@ -39,12 +39,13 @@ describe('App.vue notifications (WO-UI-8)', () => {
     document.body.innerHTML = ''
   })
 
-  it('criterion3: position/duration/close-button are forwarded', () => {
+  it('criterion3: position/duration are forwarded, auto-dismiss toasts have no close button', () => {
     const wrapper = mount(App)
     const toaster = wrapper.findComponent(ShadcnSonner)
     expect(toaster.props('position')).toBe('top-center')
     expect(toaster.props('duration')).toBe(5000)
-    expect(toaster.props('closeButton')).toBe(true)
+    // WO-UI-8 step 0b: auto-dismiss toasts disappear on their own — no close button
+    expect(toaster.props('closeButton')).toBeFalsy()
   })
 
   it('criterion4: toast theme follows the app dark mode', async () => {
