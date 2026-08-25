@@ -40,7 +40,7 @@ public class MultiInstanceExecutor {
 
     @PostConstruct
     void init() {
-        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService);
+        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport);
     }
 
     public boolean isMultiInstance(BpmnElementModel element) {

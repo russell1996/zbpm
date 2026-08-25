@@ -978,8 +978,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             if (calledElement != null) {
                 element.getExtensions().getCallActivityExtension().setProcessId(calledElement.getProcessId());
                 element.getExtensions().getCallActivityExtension().setBindingType(calledElement.getBindingType());
+                // WO-ENG-11: parent→child propagation flag (previously silently dropped by JAXB)
+                element.getExtensions().getCallActivityExtension().setPropagateAllParentVariables(calledElement.getPropagateAllParentVariables());
                 element.getExtensions().getCallActivityExtension().setPropagateAllChildVariables(calledElement.getPropagateAllChildVariables());
             }
+            // WO-ENG-11: zeebe:ioMapping on a call activity was never parsed before — explicit
+            // Input mappings seed the child instance, Output mappings override the propagate flag.
+            attachIoMapping(element, callActivity.getExtensionElements());
         }
         return element;
     }
