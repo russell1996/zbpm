@@ -22,6 +22,7 @@ vi.mock('@/stores/ui', () => ({
   useUiStore: () => ({ darkMode: mockUi.darkMode }),
 }))
 
+const mockSidebarState = vi.hoisted(() => ({ value: 'expanded' }))
 vi.mock('@/components/ui/sidebar', () => ({
   Sidebar: { template: '<div><slot /></div>' },
   SidebarContent: { template: '<div><slot /></div>' },
@@ -30,7 +31,7 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarMenu: { template: '<ul><slot /></ul>' },
   SidebarMenuItem: { template: '<li><slot /></li>' },
   SidebarMenuButton: { template: '<button><slot /></button>' },
-  useSidebar: () => ({ state: { value: 'expanded' } }),
+  useSidebar: () => ({ state: mockSidebarState }),
 }))
 
 describe('SidebarNavShadcn', () => {
@@ -98,5 +99,28 @@ describe('SidebarNavShadcn', () => {
             el.text() === 'navAdministration'
     )
     expect(groupLabels.length).toBe(4)
+  })
+
+  it('WO-UI-8 criterion6: logo is text-2xl expanded, lone Z stays text-2xl collapsed', () => {
+    mockSidebarState.value = 'expanded'
+    const wrapper = mount(SidebarNavShadcn)
+    const logo = wrapper.find('span.text-2xl')
+    expect(logo.exists()).toBe(true)
+    expect(logo.classes()).toContain('tracking-tight')
+    // Z keeps its primary accent and heavier weight at the larger size
+    const z = logo.find('span.font-black')
+    expect(z.exists()).toBe(true)
+    expect(z.classes()).toContain('text-primary')
+    wrapper.unmount()
+
+    mockSidebarState.value = 'collapsed'
+    const collapsed = mount(SidebarNavShadcn)
+    const logoCollapsed = collapsed.find('span.text-2xl')
+    expect(logoCollapsed.exists()).toBe(true)
+    // collapsed: only "Z" renders, still at text-2xl (was text-base before WO-UI-8)
+    expect(logoCollapsed.text()).toBe('Z')
+    const zCollapsed = logoCollapsed.find('span.font-black')
+    expect(zCollapsed.classes()).toContain('text-primary')
+    collapsed.unmount()
   })
 })
