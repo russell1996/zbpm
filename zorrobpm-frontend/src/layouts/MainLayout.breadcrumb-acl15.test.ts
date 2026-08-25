@@ -76,7 +76,7 @@ vi.mock('@/composables/useToast', () => ({ useToast: () => ({ success: vi.fn(), 
 vi.mock('@/composables/useDateFormat', () => ({
   useDateFormat: () => ({ formatDate: (v: string) => v, formatDateTime: (v: string) => v }),
 }))
-vi.mock('@/widgets/shared/SidebarNav.vue', () => ({ default: { template: '<div class="sidebar-stub" />' } }))
+vi.mock('@/widgets/shared/SidebarNavShadcn.vue', () => ({ default: { template: '<div class="sidebar-stub" />' } }))
 vi.mock('@/widgets/shared/HeaderBar.vue', () => ({ default: { template: '<div class="header-stub" />' } }))
 vi.mock('@/widgets/bpmn/BpmnViewer.vue', () => ({ default: { template: '<div class="bpmn-stub" />' } }))
 vi.mock('@/widgets/shared/SchemaEditorPanel.vue', () => ({ default: { template: '<div class="schema-stub" />' } }))

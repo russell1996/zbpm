@@ -86,7 +86,7 @@ vi.mock('@/composables/useDateFormat', () => ({
 
 // Sidebar/Header/BPMN widgets are not under test here — real MainLayout and real
 // BreadcrumbNav are; the page's heavy viewers are stubbed like in the page tests.
-vi.mock('@/widgets/shared/SidebarNav.vue', () => ({ default: { template: '<div class="sidebar-stub" />' } }))
+vi.mock('@/widgets/shared/SidebarNavShadcn.vue', () => ({ default: { template: '<div class="sidebar-stub" />' } }))
 vi.mock('@/widgets/shared/HeaderBar.vue', () => ({ default: { template: '<div class="header-stub" />' } }))
 vi.mock('@/widgets/bpmn/BpmnViewer.vue', () => ({ default: { template: '<div class="bpmn-stub" />' } }))
 vi.mock('@/widgets/shared/SchemaEditorPanel.vue', () => ({ default: { template: '<div class="schema-stub" />' } }))

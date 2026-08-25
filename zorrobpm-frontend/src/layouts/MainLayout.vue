@@ -2,14 +2,13 @@
 import { ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useIsMobile } from '@/shared/lib/responsive'
-import SidebarNav from '@/widgets/shared/SidebarNav.vue'
+import SidebarNavShadcn from '@/widgets/shared/SidebarNavShadcn.vue'
 import HeaderBar from '@/widgets/shared/HeaderBar.vue'
 import BreadcrumbNav from '@/widgets/shared/BreadcrumbNav.vue'
 
 const route = useRoute()
 const isMobile = useIsMobile()
 const sidebarOpen = ref(!isMobile.value)
-const sidebarCollapsed = ref(false)
 </script>
 
 <template>
@@ -26,10 +25,8 @@ const sidebarCollapsed = ref(false)
         isMobile && !sidebarOpen ? '-translate-x-full' : 'translate-x-0',
       ]"
     >
-      <SidebarNav
-        :collapsed="sidebarCollapsed"
+      <SidebarNavShadcn
         @navigate="sidebarOpen = false"
-        @toggle-collapse="sidebarCollapsed = !sidebarCollapsed"
       />
     </div>
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
