@@ -19,7 +19,7 @@ const { t } = useI18n()
     data-sidebar="trigger"
     variant="outline"
     size="icon"
-    :class="cn('h-7 w-7 border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted', props.class)"
+    :class="cn('h-7 w-7 border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted shrink-0', props.class)"
     :aria-label="t('collapseSidebar')"
     @click="toggleSidebar"
   >
