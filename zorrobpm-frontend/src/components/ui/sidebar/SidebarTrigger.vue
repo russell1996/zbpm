@@ -17,9 +17,9 @@ const { t } = useI18n()
 <template>
   <Button
     data-sidebar="trigger"
-    variant="ghost"
+    variant="outline"
     size="icon"
-    :class="cn('h-7 w-7', props.class)"
+    :class="cn('h-7 w-7 border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted', props.class)"
     :aria-label="t('collapseSidebar')"
     @click="toggleSidebar"
   >
