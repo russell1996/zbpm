@@ -10,6 +10,6 @@ const toastTheme = computed(() => (ui.darkMode ? 'dark' : 'light') as 'dark' | '
 </script>
 
 <template>
-  <Sonner position="top-center" :duration="5000" close-button :theme="toastTheme" />
+  <Sonner position="top-center" :duration="5000" :theme="toastTheme" />
   <RouterView />
 </template>
