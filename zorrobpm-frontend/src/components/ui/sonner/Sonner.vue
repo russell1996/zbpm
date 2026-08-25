@@ -21,7 +21,8 @@ const delegatedProps = reactiveOmit(props, "toastOptions")
         // viewport ol carries data-sonner-toaster, each toast li carries data-sonner-toast
         // WO-UI-8 step 0b: toast blended into white page (bg-background on bg-background) —
         // make it pop: stronger shadow + hairline ring over the border
-        toast: 'group toast group-data-sonner-toaster:bg-background group-data-sonner-toaster:text-foreground group-data-sonner-toaster:border group-data-sonner-toaster:border-border group-data-sonner-toaster:rounded-lg group-data-sonner-toaster:shadow-xl group-data-sonner-toaster:ring-1 group-data-sonner-toaster:ring-black/5',
+        // variant A: pure elevation — keep white, lift with shadow-2xl + hairline ring
+        toast: 'group toast group-data-sonner-toaster:bg-background group-data-sonner-toaster:text-foreground group-data-sonner-toaster:border group-data-sonner-toaster:border-border group-data-sonner-toaster:rounded-lg group-data-sonner-toaster:shadow-2xl group-data-sonner-toaster:ring-1 group-data-sonner-toaster:ring-black/5',
         description: 'group-data-sonner-toast:text-muted-foreground',
         actionButton:
           'group-data-sonner-toast:bg-primary group-data-sonner-toast:text-primary-foreground',
