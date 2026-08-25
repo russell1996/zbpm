@@ -48,7 +48,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="h-14 border-b border-border flex items-center justify-between px-4 md:px-6 bg-card">
+  <header class="h-14 border-b border-border flex items-center justify-between px-3 md:px-5 bg-card">
     <div class="flex items-center gap-3">
       <button
         v-if="showMenuButton"
