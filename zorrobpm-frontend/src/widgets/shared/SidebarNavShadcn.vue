@@ -110,7 +110,9 @@ function navigate(to: string) {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup v-for="group in navGroups" :key="group.labelKey">
-          <SidebarGroupLabel>{{ t(group.labelKey) }}</SidebarGroupLabel>
+          <SidebarGroupLabel class="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+            {{ t(group.labelKey) }}
+          </SidebarGroupLabel>
           <SidebarMenu>
             <SidebarMenuItem v-for="item in group.items" :key="item.labelKey">
               <SidebarMenuButton
@@ -125,7 +127,9 @@ function navigate(to: string) {
           </SidebarMenu>
         </SidebarGroup>
         <SidebarGroup v-if="visibleAdminItems.length">
-          <SidebarGroupLabel>{{ t('adminRole') }}</SidebarGroupLabel>
+          <SidebarGroupLabel class="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+            {{ t('navAdministration') }}
+          </SidebarGroupLabel>
           <SidebarMenu>
             <SidebarMenuItem v-for="item in visibleAdminItems" :key="item.labelKey">
               <SidebarMenuButton
