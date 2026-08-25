@@ -23,6 +23,9 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 vi.mock('@/app/i18n', () => ({ setLocale: vi.fn() }))
+vi.mock('@/components/ui/sidebar', () => ({
+  SidebarTrigger: { template: '<div class="sidebar-trigger-stub" />' },
+}))
 vi.mock('@/services/apiKeyService', () => ({
   getMyApiKey: vi.fn().mockRejectedValue({ response: { status: 404 } }),
   rotateMyApiKey: vi.fn(),

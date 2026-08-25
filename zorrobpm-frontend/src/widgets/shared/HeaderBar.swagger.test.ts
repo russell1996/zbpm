@@ -18,6 +18,10 @@ vi.mock('@/app/i18n', () => ({
   setLocale: vi.fn(),
 }))
 
+vi.mock('@/components/ui/sidebar', () => ({
+  SidebarTrigger: { template: '<div class="sidebar-trigger-stub" />' },
+}))
+
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ user: null, logout: vi.fn() }),
 }))

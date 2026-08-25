@@ -3,9 +3,10 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { LogOut, User, Sun, Moon, Menu, FileCode, ChevronDown } from 'lucide-vue-next'
+import { LogOut, User, Sun, Moon, Menu, FileCode, ChevronDown, PanelLeft } from 'lucide-vue-next'
 import SearchCommand from './SearchCommand.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
+import { SidebarTrigger } from '@/components/ui/sidebar'
 
 defineProps<{
   showMenuButton?: boolean
@@ -56,6 +57,7 @@ onUnmounted(() => {
       >
         <Menu class="h-5 w-5" />
       </button>
+      <SidebarTrigger v-if="!showMenuButton" />
       <SearchCommand />
     </div>
     <div class="flex items-center gap-4">

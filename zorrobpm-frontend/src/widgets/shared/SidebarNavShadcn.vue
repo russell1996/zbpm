@@ -109,7 +109,7 @@ function navigate(to: string) {
         <span class="text-lg font-bold group-data-[collapsible=icon]:hidden">ZBPM</span>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup v-for="group in navGroups" :key="group.labelKey">
+        <SidebarGroup v-for="group in navGroups" :key="group.labelKey" class="p-2 py-1.5">
           <SidebarGroupLabel class="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
             {{ t(group.labelKey) }}
           </SidebarGroupLabel>
