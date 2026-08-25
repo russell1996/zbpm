@@ -17,6 +17,7 @@ import {
   Inbox,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useUiStore } from '@/stores/ui'
 import {
   Sidebar,
   SidebarHeader,
@@ -34,6 +35,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const ui = useUiStore()
 
 interface NavItem {
   labelKey: string
@@ -103,8 +105,10 @@ function navigate(to: string) {
 
 <template>
     <Sidebar collapsible="icon">
-      <SidebarHeader class="h-14 flex items-center px-3 border-b border-border group-data-[collapsible=icon]:px-2">
-        <span class="text-lg font-bold group-data-[collapsible=icon]:hidden">ZBPM</span>
+      <SidebarHeader class="h-14 flex items-center px-3 border-b border-border group-data-[collapsible=icon]:px-2 group-data-[collapsible=icon]:justify-center">
+        <img v-if="ui.darkMode" src="/Dark.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
+        <img v-else src="/Light.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
+        <img src="/Logo.svg" alt="ZBPM" class="h-7 w-auto hidden group-data-[collapsible=icon]:block" />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup v-for="group in navGroups" :key="group.labelKey" class="p-2 py-1.5">
@@ -119,7 +123,7 @@ function navigate(to: string) {
                 @click="navigate(item.to)"
               >
                 <component :is="item.icon" class="h-4 w-4 shrink-0" />
-                <span>{{ t(item.labelKey) }}</span>
+                <span class="group-data-[collapsible=icon]:hidden">{{ t(item.labelKey) }}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -136,7 +140,7 @@ function navigate(to: string) {
                 @click="navigate(item.to)"
               >
                 <component :is="item.icon" class="h-4 w-4 shrink-0" />
-                <span>{{ t(item.labelKey) }}</span>
+                <span class="group-data-[collapsible=icon]:hidden">{{ t(item.labelKey) }}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
