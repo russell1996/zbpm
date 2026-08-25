@@ -90,7 +90,7 @@ onUnmounted(() => {
 
 <template>
   <button
-    class="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md transition-colors min-w-[200px]"
+    class="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md transition-colors min-w-[240px]"
     @click="open"
   >
     <Search class="h-4 w-4" />
