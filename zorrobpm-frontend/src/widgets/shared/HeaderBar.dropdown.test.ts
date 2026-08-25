@@ -14,6 +14,9 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 vi.mock('@/app/i18n', () => ({ setLocale: vi.fn() }))
+vi.mock('@/components/ui/sidebar', () => ({
+  SidebarTrigger: { template: '<div class="sidebar-trigger-stub" />' },
+}))
 
 describe('HeaderBar dropdown — WO-UI-5 criteria 4/5', () => {
   beforeEach(() => {
