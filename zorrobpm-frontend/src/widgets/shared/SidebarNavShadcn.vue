@@ -18,7 +18,6 @@ import {
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import {
-  SidebarProvider,
   Sidebar,
   SidebarHeader,
   SidebarContent,
@@ -103,7 +102,6 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <SidebarProvider>
     <Sidebar collapsible="icon">
       <SidebarHeader class="h-14 flex items-center px-3 border-b border-border group-data-[collapsible=icon]:px-2">
         <span class="text-lg font-bold group-data-[collapsible=icon]:hidden">ZBPM</span>
@@ -146,5 +144,4 @@ function navigate(to: string) {
       </SidebarContent>
       <SidebarRail />
     </Sidebar>
-  </SidebarProvider>
 </template>
