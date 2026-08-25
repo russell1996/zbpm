@@ -28,9 +28,10 @@ describe('App.vue notifications (WO-UI-8)', () => {
     // a bare vue-sonner <Toaster> would render none of these
     const el = document.querySelector('.toast')
     expect(el).not.toBeNull()
-    expect(el!.className).toContain('group-[.toaster]:bg-background')
-    expect(el!.className).toContain('group-[.toaster]:text-foreground')
-    expect(el!.className).toContain('group-[.toaster]:border-border')
+    // Tailwind v4 idiom: group-data-* variants against vue-sonner's data attributes
+    expect(el!.className).toContain('group-data-sonner-toaster:bg-background')
+    expect(el!.className).toContain('group-data-sonner-toaster:text-foreground')
+    expect(el!.className).toContain('group-data-sonner-toaster:border')
     const container = document.querySelector('.toaster')
     expect(container).not.toBeNull()
     expect(container!.className).toContain('group')
