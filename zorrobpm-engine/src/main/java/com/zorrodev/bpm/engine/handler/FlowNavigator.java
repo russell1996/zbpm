@@ -48,7 +48,9 @@ public class FlowNavigator {
         // would immediately complete the instance (decrementPendingBranches → -1 → "linear, complete").
         // Apply the same durable-counter scheme as ParallelGatewayHandler (create child token, set
         // pendingBranches before any branch starts) so finishBranch waits for all branches.
-        if (element.getOutgoing().size() > 1) {
+        // Gateways have their own handlers and must not be treated as implicit forks (e.g.
+        // event-based gateway with 2 outgoing is an XOR, not an AND — first event win cancels the other).
+        if (element.getOutgoing().size() > 1 && !isGateway(element.getType())) {
             Token newToken = dbService.createToken(tokenId);
             UUID newTokenId = newToken.getId();
             dbService.setPendingBranches(newTokenId, element.getOutgoing().size());
@@ -78,6 +80,10 @@ public class FlowNavigator {
             }
             executor.execute(processInstanceId, tokenId, bpmn, target);
         }
+    }
+
+    private boolean isGateway(BpmnElementType type) {
+        return type != null && type.name().endsWith("_GATEWAY");
     }
 
     /**

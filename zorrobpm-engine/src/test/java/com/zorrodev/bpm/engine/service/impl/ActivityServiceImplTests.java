@@ -247,25 +247,36 @@ public class ActivityServiceImplTests {
         pi.setId(processInstanceId);
         pi.setProcessDefinitionId(processDefinitionId);
 
+        // WO-ENG-12: implicit fork — startEvent with 2 outgoing now creates a child token
+        com.zorrodev.bpm.engine.dto.Token newToken = new com.zorrodev.bpm.engine.dto.Token();
+        newToken.setId(UUID.randomUUID());
+        newToken.setParentId(token);
+        when(dbService.createToken(token)).thenReturn(newToken);
+
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
-        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent1"))).thenReturn(UUID.randomUUID());
-        when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent2"))).thenReturn(UUID.randomUUID());
-        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
-        when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, newToken.getId(), bpmn.getElement("endEvent1"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, newToken.getId(), bpmn.getElement("endEvent2"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, newToken.getId(), bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
+        when(dbService.createActivity(processInstanceId, newToken.getId(), bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
 
         activityService.execute(processInstanceId, token, "startEvent");
 
+        verify(dbService).createToken(token);
+        verify(dbService).setPendingBranches(newToken.getId(), 2);
+
         ArgumentCaptor<BpmnElementModel> elementCaptor = ArgumentCaptor.forClass(BpmnElementModel.class);
-        verify(dbService, times(3)).createActivity(eq(processInstanceId), eq(token), elementCaptor.capture());
+        // startEvent on original token, endEvents on child token
+        verify(dbService).createActivity(eq(processInstanceId), eq(token), eq(bpmn.getElement("startEvent")));
+        verify(dbService, times(2)).createActivity(eq(processInstanceId), eq(newToken.getId()), elementCaptor.capture());
 
         ArgumentCaptor<BpmnFlowModel> flowCaptor = ArgumentCaptor.forClass(BpmnFlowModel.class);
-        verify(dbService, times(2)).createActivity(eq(processInstanceId), eq(token), flowCaptor.capture());
+        verify(dbService, times(2)).createActivity(eq(processInstanceId), eq(newToken.getId()), flowCaptor.capture());
 
         List<BpmnElementType> elementTypes = elementCaptor.getAllValues().stream().map(BpmnElementModel::getType).toList();
 
-        assertThat(elementTypes).contains(BpmnElementType.START_EVENT, BpmnElementType.END_EVENT);
+        assertThat(elementTypes).containsOnly(BpmnElementType.END_EVENT);
     }
 
     @Test
