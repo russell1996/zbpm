@@ -104,7 +104,7 @@ function navigate(to: string) {
 
 <template>
     <Sidebar collapsible="icon">
-      <SidebarHeader class="h-14 flex items-center pl-2 pr-3 border-b border-border group-data-[collapsible=icon]:px-2 group-data-[collapsible=icon]:justify-center">
+      <SidebarHeader class="h-14 flex items-center px-2 border-b border-border group-data-[collapsible=icon]:justify-center">
         <img v-if="ui.darkMode" src="/Light.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
         <img v-else src="/Dark.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
         <img src="/Logo.svg" alt="ZBPM" class="h-7 w-auto hidden group-data-[collapsible=icon]:block" />
