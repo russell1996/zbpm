@@ -18,12 +18,12 @@ describe('style.css WO-ACL-10', () => {
   })
 
   it('criterion 16: every color token from the light palette also exists in .dark', () => {
-    const lightBlock = css.slice(0, css.indexOf('.dark'))
-    const darkBlock = css.slice(css.indexOf('.dark'))
+    const lightBlock = css.slice(0, css.indexOf('.dark {'))
+    const darkBlock = css.slice(css.indexOf('.dark {'))
     const tokens = (block: string) =>
       [...block.matchAll(/--color-([a-z-]+):/g)].map(m => m[1]).sort()
-    const light = tokens(lightBlock)
-    const dark = tokens(darkBlock)
+    const light = [...new Set(tokens(lightBlock))]
+    const dark = [...new Set(tokens(darkBlock))]
     expect(dark).toEqual(light)
   })
 

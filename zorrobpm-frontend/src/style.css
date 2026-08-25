@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
 
 @theme {
   /* WO-ACL-8 criterion 37: brand color tokens.
@@ -28,6 +31,10 @@
   --color-sidebar: #ffffff;
   --color-sidebar-foreground: #363636;
   --color-sidebar-accent: #edf0f2;
+  --color-sidebar-primary: #0075e3;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-border: #e1e4e8;
+  --color-sidebar-ring: rgba(0,117,227,.14);
   --color-destructive: #ef4444;
   --color-popover: #ffffff;
   --color-popover-foreground: #363636;
@@ -61,6 +68,10 @@
   --color-sidebar: #0f172a;
   --color-sidebar-foreground: #f8fafc;
   --color-sidebar-accent: #1e293b;
+  --color-sidebar-primary: #0075e3;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-border: #334155;
+  --color-sidebar-ring: rgba(96,165,250,.25);
   --color-destructive: #f87171;
   --color-popover: #1e293b;
   --color-popover-foreground: #f8fafc;
@@ -80,5 +91,14 @@ body {
      (WO-ACL-15 criterion 13). */
   * {
     border-color: var(--color-border);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }
