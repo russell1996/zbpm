@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -31,6 +32,7 @@ public class FlowNavigator {
     private final DBService dbService;
     private final BpmnService bpmnService;
     private final ScriptService scriptService;
+    private final ElementSupport elementSupport;
 
     /**
      * Follows every outgoing sequence flow of {@code element} unconditionally and executes the
@@ -197,12 +199,29 @@ public class FlowNavigator {
 
             // Camunda 8: propagateAllChildVariables (default true) copies the child's variables up to the
             // parent; when explicitly false, the child's variables are not propagated.
+            // WO-ENG-11: explicit Output mappings take precedence over the toggle — when present they are
+            // applied regardless of propagateAllChildVariables, propagating ONLY the mapped variables.
             boolean propagate = Optional.ofNullable(parentBpmnElement)
                 .map(BpmnElementModel::getExtensions)
                 .map(BpmnElementExtensionModel::getCallActivityExtension)
                 .map(ext -> ext.getPropagateAllChildVariables())
                 .orElse(Boolean.TRUE);
-            if (propagate) {
+            List<IoMappingExtensionModel.Mapping> outputMappings = Optional.ofNullable(parentBpmnElement.getExtensions())
+                .map(BpmnElementExtensionModel::getIoMappingExtension)
+                .map(IoMappingExtensionModel::getOutputs)
+                .orElse(null);
+            if (outputMappings != null && !outputMappings.isEmpty()) {
+                List<ProcessVariable> childVariables = dbService.getVariables(processInstanceId);
+                List<ProcessVariable> picked = new ArrayList<>();
+                for (IoMappingExtensionModel.Mapping mapping : outputMappings) {
+                    ProcessVariable result = elementSupport.evaluateMapping(mapping, childVariables);
+                    if (result != null) {
+                        picked.add(result);
+                    }
+                }
+                dbService.setVariables(parentProcessInstanceId, picked);
+                log.info("{}/{}: Applied {} Output mapping(s) from call activity {} to parent", parentProcessInstanceId, parentToken, picked.size(), parentBpmnElement.getId());
+            } else if (propagate) {
                 dbService.setVariables(parentProcessInstanceId, dbService.getVariables(processInstanceId));
             }
 

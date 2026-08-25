@@ -164,17 +164,32 @@ public class ElementSupport {
         List<ProcessVariable> variables = dbService.getVariables(processInstanceId, activityId);
         List<ProcessVariable> results = new ArrayList<>();
         for (IoMappingExtensionModel.Mapping mapping : mappings) {
-            if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
-                continue;
+            ProcessVariable result = evaluateMapping(mapping, variables);
+            if (result != null) {
+                results.add(result);
             }
-            String expression = mapping.getSource().startsWith("=") ? mapping.getSource().substring(1) : mapping.getSource();
-            Object value = scriptService.evaluateExpression(expression, variables);
-            results.add(toProcessVariable(mapping.getTarget(), value));
         }
         if (!results.isEmpty()) {
             dbService.setVariables(processInstanceId, inputs ? activityId : null, results);
             log.info("{}: Applied {} {} mapping(s) at {} (scope {})", processInstanceId, results.size(), inputs ? "input" : "output", element.getId(), inputs ? activityId : "root");
         }
+    }
+
+    /**
+     * Evaluates one io-mapping {@code source} (FEEL, optional leading '=') against the given
+     * variables and converts the result into a {@link ProcessVariable} named {@code target}.
+     * Returns {@code null} for a malformed mapping (missing source/target) — callers skip it.
+     * <p>Shared by {@link #applyIoMappings} (activity-scoped writes) and WO-ENG-11 call-activity
+     * mappings: input mappings seed a not-yet-created child instance, output mappings override the
+     * propagateAllChildVariables toggle — same evaluation pattern, different write scope.</p>
+     */
+    public ProcessVariable evaluateMapping(IoMappingExtensionModel.Mapping mapping, List<ProcessVariable> variables) {
+        if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
+            return null;
+        }
+        String expression = mapping.getSource().startsWith("=") ? mapping.getSource().substring(1) : mapping.getSource();
+        Object value = scriptService.evaluateExpression(expression, variables);
+        return toProcessVariable(mapping.getTarget(), value);
     }
 
     // ─── Type conversion ────────────────────────────────────────────────
