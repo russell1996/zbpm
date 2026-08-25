@@ -90,12 +90,11 @@ onUnmounted(() => {
 
 <template>
   <button
-    class="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md transition-colors"
+    class="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md transition-colors min-w-[200px]"
     @click="open"
   >
     <Search class="h-4 w-4" />
     <span>{{ t('searchPlaceholder') }}</span>
-    <kbd class="ml-2 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border border-border">⌘K</kbd>
   </button>
 
   <Teleport to="body">
