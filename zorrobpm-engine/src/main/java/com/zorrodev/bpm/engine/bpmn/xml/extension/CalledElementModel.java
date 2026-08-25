@@ -14,6 +14,9 @@ public class CalledElementModel {
     private String processId;
     @XmlAttribute
     private String bindingType;
+    /** WO-ENG-11: parent→child direction (default true). False = only Input mappings seed the child. */
+    @XmlAttribute
+    private Boolean propagateAllParentVariables;
     @XmlAttribute
     private Boolean propagateAllChildVariables;
 }
