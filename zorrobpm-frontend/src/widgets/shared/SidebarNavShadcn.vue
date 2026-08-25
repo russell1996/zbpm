@@ -27,7 +27,6 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
-  SidebarRail,
 } from '@/components/ui/sidebar'
 
 const props = defineProps<{ navigate?: () => void }>()
@@ -105,7 +104,7 @@ function navigate(to: string) {
 
 <template>
     <Sidebar collapsible="icon">
-      <SidebarHeader class="h-14 flex items-center justify-center px-3 border-b border-border group-data-[collapsible=icon]:px-2">
+      <SidebarHeader class="h-14 flex items-center px-3 border-b border-border group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2">
         <img v-if="ui.darkMode" src="/Light.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
         <img v-else src="/Dark.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
         <img src="/Logo.svg" alt="ZBPM" class="h-7 w-auto hidden group-data-[collapsible=icon]:block" />
@@ -146,6 +145,5 @@ function navigate(to: string) {
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarRail />
     </Sidebar>
 </template>
