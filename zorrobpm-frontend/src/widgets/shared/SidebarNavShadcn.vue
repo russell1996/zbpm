@@ -105,8 +105,9 @@ function navigate(to: string) {
 <template>
     <Sidebar collapsible="icon">
       <div class="h-14 flex flex-row items-center justify-center px-2 border-b border-border">
-        <span class="font-bold tracking-tight transition-all" :class="isCollapsed ? 'text-base' : 'text-xl'">
-          <span class="text-primary">Z</span><template v-if="!isCollapsed"><span class="text-foreground">BPM</span></template>
+        <!-- WO-UI-8: bigger logo; in collapsed mode the lone "Z" carries the brand at text-2xl -->
+        <span class="text-2xl font-bold tracking-tight transition-all">
+          <span class="text-primary font-black">Z</span><template v-if="!isCollapsed"><span class="text-foreground">BPM</span></template>
         </span>
       </div>
       <SidebarContent>
