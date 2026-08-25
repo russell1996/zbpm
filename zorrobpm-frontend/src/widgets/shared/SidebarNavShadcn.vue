@@ -20,7 +20,6 @@ import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import {
   Sidebar,
-  SidebarHeader,
   SidebarContent,
   SidebarGroup,
   SidebarGroupLabel,
@@ -104,11 +103,11 @@ function navigate(to: string) {
 
 <template>
     <Sidebar collapsible="icon">
-      <SidebarHeader class="h-14 flex items-center justify-start px-2 border-b border-border group-data-[collapsible=icon]:justify-center">
+      <div class="h-14 flex flex-row items-center px-2 border-b border-border group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1">
         <img v-if="ui.darkMode" src="/Light.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
         <img v-else src="/Dark.svg" alt="ZorroBPM" class="h-7 w-auto group-data-[collapsible=icon]:hidden" />
         <img src="/Logo.svg" alt="ZBPM" class="h-7 w-auto hidden group-data-[collapsible=icon]:block" />
-      </SidebarHeader>
+      </div>
       <SidebarContent>
         <SidebarGroup v-for="group in navGroups" :key="group.labelKey" class="p-2 py-1.5">
           <SidebarGroupLabel class="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
