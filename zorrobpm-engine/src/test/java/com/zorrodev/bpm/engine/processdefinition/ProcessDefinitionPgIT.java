@@ -39,10 +39,18 @@ public class ProcessDefinitionPgIT extends PostgresIT {
     @BeforeEach
     void setUp() throws Exception {
         bpmnV1 = Files.readString(Path.of("src/test/files/test1.bpmn"));
-        // Second BPMN: same key "test1", but add a different task → different sha256
-        bpmnV2 = bpmnV1.replace(
-            "<bpmn:endEvent id=\"endEvent\"",
-            "<bpmn:serviceTask id=\"svc1\" name=\"extra\" /><bpmn:endEvent id=\"endEvent\"");
+        // Second BPMN: same key "test1", but add a different task → different sha256.
+        // WO-REL-18: the extra serviceTask needs a real job (zeebe:taskDefinition), otherwise deploy
+        // validation rejects it — so the zeebe namespace is added alongside the injected task.
+        bpmnV2 = bpmnV1
+            .replace(
+                "xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\"",
+                "xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\"")
+            .replace(
+                "<bpmn:endEvent id=\"endEvent\"",
+                "<bpmn:serviceTask id=\"svc1\" name=\"extra\"><bpmn:extensionElements>"
+                    + "<zeebe:taskDefinition type=\"svc1\" /></bpmn:extensionElements></bpmn:serviceTask>"
+                    + "<bpmn:endEvent id=\"endEvent\"");
         processKey = "test1";
         // Clean up existing versions
         jdbc.update("DELETE FROM process_definitions WHERE code = ?", processKey);
