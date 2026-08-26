@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.repository;
 
 import com.zorrodev.bpm.engine.entity.DomainEventEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -9,7 +10,13 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
-public interface DomainEventRepository extends JpaRepository<DomainEventEntity, Long> {
+/**
+ * WO-INT-7: extends JpaSpecificationExecutor so /events can compose its filters
+ * (cursor, grant narrowing, processDefinitionKey, type, processInstanceId) into ONE
+ * SQL query — filtering must happen before the window is cut, not after.
+ */
+public interface DomainEventRepository
+        extends JpaRepository<DomainEventEntity, Long>, JpaSpecificationExecutor<DomainEventEntity> {
 
     @Query(value = "SELECT * FROM events WHERE sequence > :since ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
     List<DomainEventEntity> findSince(@Param("since") long since, @Param("limit") int limit);
@@ -22,7 +29,7 @@ public interface DomainEventRepository extends JpaRepository<DomainEventEntity, 
 
     /**
      * Cursor-based query with AuthZ filtering: only events whose process_definition_id
-     * is in the allowed set. Used by GET /events (WO-EVT-3).
+     * is in the allowed set. Used by the SSE catch-up stream.
      */
     @Query(value = "SELECT * FROM events " +
         "WHERE sequence > :since " +
@@ -31,31 +38,5 @@ public interface DomainEventRepository extends JpaRepository<DomainEventEntity, 
     List<DomainEventEntity> findSinceForPrincipal(
         @Param("since") long since,
         @Param("pdIds") Collection<UUID> processDefinitionIds,
-        @Param("limit") int limit);
-
-    /**
-     * Cursor-based query with processInstanceId filter.
-     */
-    @Query(value = "SELECT * FROM events " +
-        "WHERE sequence > :since " +
-        "AND process_instance_id = :processInstanceId " +
-        "ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
-    List<DomainEventEntity> findSinceByProcessInstanceId(
-        @Param("since") long since,
-        @Param("processInstanceId") UUID processInstanceId,
-        @Param("limit") int limit);
-
-    /**
-     * Cursor-based query with AuthZ + processInstanceId filter.
-     */
-    @Query(value = "SELECT * FROM events " +
-        "WHERE sequence > :since " +
-        "AND process_definition_id IN :pdIds " +
-        "AND process_instance_id = :processInstanceId " +
-        "ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
-    List<DomainEventEntity> findSinceForPrincipalByProcessInstanceId(
-        @Param("since") long since,
-        @Param("pdIds") Collection<UUID> processDefinitionIds,
-        @Param("processInstanceId") UUID processInstanceId,
         @Param("limit") int limit);
 }

@@ -8,22 +8,32 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
  * GET /events — cursor-based pagination over domain events (ADR-7, WO-EVT-3).
  * AuthZ: only events for process-definitions the principal has grants on.
+ * <p>
+ * WO-INT-7: ALL filters (grant narrowing, processDefinitionKey, type, processInstanceId)
+ * are composed into the SQL query BEFORE the cursor window is cut. The previous version cut
+ * the window over the whole table first and post-filtered in memory — a keyed request on a
+ * live database returned EMPTY once foreign events filled the window, and the filter strength
+ * depended on who asked (superAdmin got the weak path). Contract unchanged: same parameters,
+ * same response shape, same {@code since} cursor semantics.
  */
 @RestController
 @RequestMapping("/events")
@@ -58,9 +68,15 @@ public class EventResource {
             }
         }
 
-        // Resolve allowed processDefinitionIds based on grants (null = see all)
-        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKey);
-        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
+        // Grant narrowing WITHOUT the key: superAdmin -> null (see all), otherwise the
+        // principal's allowed processDefinitionIds (empty -> see nothing).
+        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, null);
+
+        // WO-INT-7: the key resolves to ids of ALL versions of that definition and is
+        // INTERSECTED with the grants here, so every branch of the query filters in SQL.
+        List<UUID> keyPdIds = resolveKeyPdIds(processDefinitionKey);
+        Collection<UUID> pdFilter = intersect(allowedPdIds, keyPdIds);
+        if (pdFilter != null && pdFilter.isEmpty()) {
             PagedDataDTO<Map<String, Object>> empty = new PagedDataDTO<>();
             empty.setData(List.of());
             empty.setTotalElements(0L);
@@ -70,37 +86,27 @@ public class EventResource {
         long cursor = since != null ? since : 0;
         int maxResults = limit != null ? Math.min(limit, 100) : 50;
 
-        List<DomainEventEntity> events;
+        Specification<DomainEventEntity> spec = (root, query, cb) -> cb.greaterThan(root.get("sequence"), cursor);
+        final Collection<UUID> pdFilterF = pdFilter;
+        if (pdFilter != null) {
+            spec = spec.and((root, query, cb) -> root.get("processDefinitionId").in(pdFilterF));
+        }
         if (piId != null) {
-            // ProcessInstanceId filter — SQL-level
-            if (allowedPdIds == null) {
-                events = domainEventRepository.findSinceByProcessInstanceId(cursor, piId, maxResults + 100);
-            } else {
-                events = domainEventRepository.findSinceForPrincipalByProcessInstanceId(cursor, allowedPdIds, piId, maxResults + 100);
-            }
-        } else if (allowedPdIds == null) {
-            // Full access — no filter
-            events = domainEventRepository.findSince(cursor, maxResults + 100);
-        } else {
-            events = domainEventRepository.findSinceForPrincipal(cursor, allowedPdIds, maxResults + 100);
+            final UUID piIdF = piId;
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("processInstanceId"), piIdF));
         }
-
-        // Apply type filter in memory (not in SQL for simplicity)
         if (type != null && !type.isBlank()) {
-            events = events.stream()
-                .filter(e -> type.equals(e.getType()))
-                .collect(Collectors.toList());
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("type"), type));
         }
 
-        // Apply processDefinitionKey filter in memory if needed (for superAdmin/full-access)
-        if (processDefinitionKey != null && !processDefinitionKey.isBlank() && allowedPdIds == null) {
-            List<UUID> filteredPdIds = processDefinitionRepository.findAll(
-                (root, query, cb) -> cb.equal(root.get("key"), processDefinitionKey))
-                .stream().map(ProcessDefinitionEntity::getId).collect(Collectors.toList());
-            events = events.stream()
-                .filter(e -> filteredPdIds.contains(e.getProcessDefinitionId()))
-                .collect(Collectors.toList());
-        }
+        // WO-INT-7 HOLD: findBy(spec, FluentQuery) issues ONLY the windowed select — unlike
+        // findAll(spec, PageRequest), which returns a Page and lets Spring Data fire a second
+        // COUNT(*) over the same (unbounded) table whenever the window fills up. The counted
+        // total was discarded anyway. limit(maxResults + 1) is enough for the hasMore flag.
+        List<DomainEventEntity> events = domainEventRepository
+            .findBy(spec, q -> q.sortBy(Sort.by(Sort.Direction.ASC, "sequence"))
+                .limit(maxResults + 1)
+                .all());
 
         boolean hasMore = events.size() > maxResults;
         if (hasMore) {
@@ -109,12 +115,31 @@ public class EventResource {
 
         List<Map<String, Object>> envelopes = events.stream()
             .map(this::toEnvelope)
-            .collect(Collectors.toList());
+            .toList();
 
         PagedDataDTO<Map<String, Object>> result = new PagedDataDTO<>();
         result.setData(envelopes);
         result.setTotalElements((long) envelopes.size());
         return ResponseEntity.ok(result);
+    }
+
+    /** Ids of all versions of the given definition key; null when no key requested. */
+    private List<UUID> resolveKeyPdIds(String processDefinitionKey) {
+        if (processDefinitionKey == null || processDefinitionKey.isBlank()) {
+            return null;
+        }
+        return processDefinitionRepository.findAll(
+                (root, query, cb) -> cb.equal(root.get("key"), processDefinitionKey))
+            .stream().map(ProcessDefinitionEntity::getId).toList();
+    }
+
+    /** null = unrestricted; intersecting "see all" with a key filter yields the key filter. */
+    private Collection<UUID> intersect(Collection<UUID> allowed, Collection<UUID> extra) {
+        if (allowed == null) return extra;
+        if (extra == null) return allowed;
+        Set<UUID> result = new LinkedHashSet<>(allowed);
+        result.retainAll(new LinkedHashSet<>(extra));
+        return new ArrayList<>(result);
     }
 
     private Map<String, Object> toEnvelope(DomainEventEntity event) {
