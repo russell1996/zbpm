@@ -20,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -51,7 +52,19 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
 
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
         BpmnElementModel element = bpmn.getElement(bpmnElementId);
-        String job = element.getExtensions().getServiceTaskExtension().getJob();
+        // WO-REL-18: null-safe job extraction — defense in depth if deploy validation was bypassed
+        String job = Optional.ofNullable(element.getExtensions())
+            .map(ext -> ext.getServiceTaskExtension())
+            .map(ext -> ext.getJob())
+            .orElse(null);
+
+        if (job == null || job.isBlank()) {
+            log.error("Service task {} (element {}) has no job definition — creating incident", serviceTaskId, bpmnElementId);
+            dbService.createIncident(
+                serviceTaskId,
+                "Service task '" + bpmnElementId + "' has no assigned job — fix the process model");
+            return;
+        }
 
         Map<String, ProcessVariable> variables = dbService.getVariables(processInstanceId, serviceTaskId).stream()
             .collect(Collectors.toMap(com.zorrodev.bpm.contract.model.ProcessVariable::getName, pv -> {
