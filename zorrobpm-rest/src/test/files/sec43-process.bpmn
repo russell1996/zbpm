@@ -9,6 +9,9 @@
       <bpmn:outgoing>flow2</bpmn:outgoing>
     </bpmn:userTask>
     <bpmn:serviceTask id="serviceTask1" name="Service Task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="serviceTask1" retries="3" />
+      </bpmn:extensionElements>
       <bpmn:incoming>flow2</bpmn:incoming>
       <bpmn:outgoing>flow3</bpmn:outgoing>
     </bpmn:serviceTask>
