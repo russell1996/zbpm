@@ -194,4 +194,47 @@ public class NestedTokenPendingBranchesIntegrationTests {
             .as("instance must be COMPLETED after both branches finished")
             .isNotNull();
     }
+
+    /**
+     * Criterion 5 (CTO HOLD fix): recursive bubble-up across the FULL parent-token chain.
+     *
+     * Implicit fork (forkTask, 2 outgoing):
+     *   Branch A: forkTask → gwA (1 degenerate gateway) → endA
+     *   Branch B: forkTask → gwB → gwB2 (2 degenerate gateways in a row) → endB
+     *
+     * Token nesting: T1 (fork, pending=2) → gwA creates T2 (pending=1) → endA;
+     * T1 → gwB creates T3 (pending=1) → gwB2 creates T4 (pending=1) → endB.
+     *
+     * With the SINGLE-LEVEL bubble-up (pre-fix):
+     *   - endA finishes T2 (1→0): parent T1 pending=2>0 → decrement T1 → 1, return.
+     *   - endB finishes T4 (1→0): parent T3 pending=1>0 → decrement T3 → 0, return.
+     *   T3 was itself exhausted *through* that bubble-up, but the chain never reaches the
+     *   grandparent T1. T1.pending stays at 1 → instance HANGS forever (silently, no incident).
+     *
+     * With the RECURSIVE fix:
+     *   - endB finishes T4 (1→0): parent T3 pending=1>0 → decrement T3 → 0, move up to T3;
+     *     T3 pending=0, parent T1 pending=1>0 → decrement T1 → 0, move up to T1;
+     *     T1 pending=0, no pending parent → complete instance.
+     */
+    @Transactional
+    @Test
+    void criterion5_threeLevelNesting_completesAfterAllBranches() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-nested-token-3level.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID piId = runtimeService.startProcessInstance(dto).getId();
+
+        // forkTask is the implicit fork (2 outgoing, not a gateway)
+        ActivityEntity fork = findActiveActivity(piId, "forkTask");
+        runtimeService.completeServiceTask(fork.getId(), List.of());
+
+        // Both branches auto-propagate through degenerate gateways to endA / endB.
+        // After all branches finish, the recursive bubble-up must have reached the root fork
+        // token (T1), which is now exhausted → instance COMPLETED.
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt())
+            .as("instance must COMPLETE after BOTH branches finish (endA + endB) — recursive bubble-up must reach the root fork token")
+            .isNotNull();
+    }
 }
