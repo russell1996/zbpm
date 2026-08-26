@@ -12,4 +12,8 @@ public class TestConfiguration {
         return new TestServiceTaskEnqueueService();
     }
 
+    // WO-INT-5: the mail stub is no longer registered here. StubMailSender is now a
+    // @Component with @Profile("test") inside the engine itself, so every test-profile
+    // context binds it automatically (this auto-configuration was never on any classpath).
+
 }
