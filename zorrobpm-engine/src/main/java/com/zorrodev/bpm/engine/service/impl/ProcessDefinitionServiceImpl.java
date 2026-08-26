@@ -81,6 +81,29 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         String key = model.getKey();
         String name = model.getName();
 
+        // WO-REL-18: reject deployment if any SERVICE_TASK lacks a resolvable job.
+        // JAXB silently ignores unknown namespaces (e.g. flowable:* instead of zeebe:taskDefinition),
+        // so a BPMN from a third-party tool passes XML parsing but will NPE at runtime.
+        List<String> missingJobIds = model.getElements().stream()
+            .filter(e -> e.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.SERVICE_TASK)
+            .filter(e -> {
+                String job = Optional.ofNullable(e.getExtensions())
+                    .map(com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel::getServiceTaskExtension)
+                    .map(com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel::getJob)
+                    .orElse(null);
+                return job == null || job.isBlank();
+            })
+            .map(com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel::getId)
+            .toList();
+        if (!missingJobIds.isEmpty()) {
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                "SERVICE_TASK_MISSING_JOB",
+                "Service task(s) without a job definition: " + missingJobIds
+                    + " — add zeebe:taskDefinition to each service task, or remove them.",
+                java.util.Map.of("elementIds", missingJobIds));
+        }
+
         // WO-REL-15 (R-05): ALL database artifacts of a deployment (version row, bpmn model/file,
         // message/signal start subscriptions, timer start jobs, element bindings) are created
         // inside ONE transaction — either everything commits or nothing does. A failure between

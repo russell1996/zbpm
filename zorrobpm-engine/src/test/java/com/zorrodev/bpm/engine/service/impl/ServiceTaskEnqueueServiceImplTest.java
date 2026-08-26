@@ -27,6 +27,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -87,5 +90,46 @@ class ServiceTaskEnqueueServiceImplTest {
         assertThat(entry.getPayload()).isNotEmpty();
         // WO-REL-12 R-01: producer writes the explicit kind — no payload guessing downstream
         assertThat(entry.getKind()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxKind.SERVICE_TASK);
+    }
+
+    @Test
+    void enqueueAfterCommit_nullJob_createsIncidentAndSkipsOutbox() {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskNoJob";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        // serviceTaskExtension exists but job is null
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob(null);
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+
+        service.enqueueAfterCommit(serviceTaskId);
+
+        // must create an incident, not NPE
+        verify(dbService).createIncident(eq(serviceTaskId), contains(bpmnElementId));
+        // must NOT create outbox entry
+        verify(outboxRepository, never()).save(any());
     }
 }
