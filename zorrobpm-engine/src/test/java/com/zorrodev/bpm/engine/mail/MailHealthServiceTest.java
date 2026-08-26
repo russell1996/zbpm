@@ -3,68 +3,49 @@ package com.zorrodev.bpm.engine.mail;
 import com.zorrodev.bpm.contract.dto.MailHealthDTO;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
-
-import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-INT-5 criteria 7, 9: unit tests for MailHealthService.
- * Verifies health DTO aggregation from MailProperties + MailStatus,
- * and the live reachability probe (CTO HOLD round 3, criteria 7/9 "доступность").
+ * WO-INT-6 criteria 7, 9: unit tests for MailHealthService.
+ * Verifies health DTO aggregation from MailConfigResolver + MailStatus, and the live
+ * reachability probe (criteria 7/9 "доступность"). The resolver/factory are collaborators:
+ * the resolver supplies the effective config, the factory builds the probe transport.
  */
 class MailHealthServiceTest {
 
-    @SuppressWarnings("unchecked")
-    private static ObjectProvider<JavaMailSender> providerOf(Supplier<JavaMailSender> s) {
-        ObjectProvider<JavaMailSender> p = Mockito.mock(ObjectProvider.class);
-        Mockito.when(p.getIfAvailable()).thenAnswer(inv -> s.get());
-        return p;
-    }
-
-    private static MailHealthService service(MailProperties props, MailStatus status,
-                                             Supplier<JavaMailSender> sender) {
-        return new MailHealthService(props, status, providerOf(sender));
+    private static MailHealthService service(ResolvedMailConfig cfg, MailStatus status) {
+        MailConfigResolver resolver = Mockito.mock(MailConfigResolver.class);
+        Mockito.when(resolver.getEffectiveConfig()).thenReturn(cfg);
+        return new MailHealthService(resolver, new MailTransportFactory(), status);
     }
 
     @Test
-    void criterion7_configuredProperties_returnsConfigured() {
-        MailProperties props = new MailProperties("smtp.test.com", 587, "user", "pass", "from@test.com", "");
-        MailStatus status = new MailStatus();
-        MailHealthService service = service(props, status, () -> null);
-
+    void criterion7_configuredDbRow_returnsConfigured() {
+        ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.test.com", 587, "user", "pass", "from@test.com", "");
+        MailHealthService service = service(cfg, new MailStatus());
         MailHealthDTO health = service.getHealth();
-
         assertThat(health.isConfigured()).isTrue();
         assertThat(health.getLastSuccess()).isNull();
         assertThat(health.getLastError()).isNull();
         assertThat(health.getLastErrorMessage()).isNull();
-        assertThat(health.getReachable()).isNull();
+        assertThat(health.getReachable()).isNotNull(); // probe ran (false in offline test env)
     }
 
     @Test
     void criterion7_missingHost_returnsNotConfigured() {
-        MailProperties props = new MailProperties(null, 587, "user", "pass", "from@test.com", "");
-        MailStatus status = new MailStatus();
-        MailHealthService service = service(props, status, () -> null);
-
-        MailHealthDTO health = service.getHealth();
-
-        assertThat(health.isConfigured()).isFalse();
+        ResolvedMailConfig cfg = new ResolvedMailConfig(null, 587, "user", "pass", "from@test.com", "");
+        MailHealthService service = service(cfg, new MailStatus());
+        assertThat(service.getHealth().isConfigured()).isFalse();
     }
 
     @Test
     void criterion9_afterSuccess_showsLastSuccess() {
-        MailProperties props = new MailProperties("smtp.test.com", 587, "user", "pass", "from@test.com", "");
+        ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.test.com", 587, "user", "pass", "from@test.com", "");
         MailStatus status = new MailStatus();
         status.recordSuccess();
-        MailHealthService service = service(props, status, () -> null);
-
+        MailHealthService service = service(cfg, status);
         MailHealthDTO health = service.getHealth();
-
         assertThat(health.isConfigured()).isTrue();
         assertThat(health.getLastSuccess()).isNotNull();
         assertThat(health.getLastError()).isNull();
@@ -72,42 +53,27 @@ class MailHealthServiceTest {
 
     @Test
     void criterion9_afterFailure_showsLastError() {
-        MailProperties props = new MailProperties("smtp.test.com", 587, "user", "pass", "from@test.com", "");
+        ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.test.com", 587, "user", "pass", "from@test.com", "");
         MailStatus status = new MailStatus();
         status.recordError("Connection refused");
-        MailHealthService service = service(props, status, () -> null);
-
+        MailHealthService service = service(cfg, status);
         MailHealthDTO health = service.getHealth();
-
-        assertThat(health.isConfigured()).isTrue();
         assertThat(health.getLastError()).isNotNull();
         assertThat(health.getLastErrorMessage()).contains("Connection refused");
     }
 
-    // ==================== Reachability probe (criteria 7/9) ====================
-
     @Test
-    void probe_noTransport_reachableUnknown() {
-        MailProperties props = new MailProperties("smtp.test.com", 587, "user", "pass", "from@test.com", "");
-        MailHealthService svc = service(props, new MailStatus(), () -> null);
-
-        // No JavaMailSender bean (test profile / unconfigured) — nothing to probe.
-        assertThat(svc.probeReachable()).isNull();
+    void probe_noHost_reachableUnknown() {
+        ResolvedMailConfig cfg = new ResolvedMailConfig(null, null, null, null, null, "");
+        MailHealthService svc = service(cfg, new MailStatus());
+        assertThat(svc.probeReachable(cfg)).isNull();
         assertThat(svc.getHealth().getReachable()).isNull();
     }
 
     @Test
     void probe_unreachableHost_returnsFalse() {
-        JavaMailSenderImpl impl = new JavaMailSenderImpl();
-        impl.setHost("127.0.0.1");
-        impl.setPort(1);              // nothing listens here; connection refused immediately
-        impl.setUsername("u");
-        impl.setPassword("p");
-
-        MailHealthService svc = service(
-            new MailProperties("127.0.0.1", 1, "u", "p", "from@test.com", ""),
-            new MailStatus(), () -> impl);
-
-        assertThat(svc.probeReachable()).isFalse();
+        ResolvedMailConfig cfg = new ResolvedMailConfig("127.0.0.1", 1, "u", "p", "from@test.com", "");
+        MailHealthService svc = service(cfg, new MailStatus());
+        assertThat(svc.probeReachable(cfg)).isFalse();
     }
 }

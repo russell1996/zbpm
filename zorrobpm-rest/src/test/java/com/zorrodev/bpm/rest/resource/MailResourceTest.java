@@ -22,14 +22,11 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.time.Instant;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * WO-INT-5 criteria 7, 8, 9: mail health and test send integration tests.
- * Full-context tests using real Spring context + MockMvc.
- */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -50,7 +47,6 @@ class MailResourceTest {
     void setup() throws Exception {
         superAdminToken = loginAndGetToken("admin", "admin");
 
-        // Create a regular (non-admin) user for 403 tests
         UiUserEntity regularUser = new UiUserEntity();
         regularUser.setId(UUID.randomUUID());
         regularUser.setUsername("mail-regular-user");
@@ -65,108 +61,131 @@ class MailResourceTest {
         regularUserToken = loginAndGetToken("mail-regular-user", "pass123");
     }
 
-    // ==================== Criterion 7: Health indicator reflects config status ====================
+    private static final String SETTINGS_BODY =
+        "{\"host\":\"smtp.x\",\"port\":587,\"username\":\"u\",\"from\":\"f@x\",\"allowedRecipients\":\"\"}";
+    private static final String TESTSELF_BODY =
+        "{\"host\":\"smtp.x\",\"port\":587,\"username\":\"u\",\"password\":\"p\",\"from\":\"f@x\"}";
+
+    // ==================== Criterion 7: Health ====================
 
     @Test
     void criterion7_healthEndpoint_returnsConfiguredStatus() throws Exception {
-        // criterion 7: health endpoint returns configured flag
         MvcResult result = mockMvc.perform(get("/admin/mail/health")
                 .header("Authorization", "Bearer " + superAdminToken))
             .andExpect(status().isOk())
             .andExpect(content().contentType(MediaType.APPLICATION_JSON))
             .andReturn();
-
         JsonNode json = mapper.readTree(result.getResponse().getContentAsString());
         assertTrue(json.has("configured"), "Response must have 'configured' field");
     }
 
     @Test
     void criterion7_healthEndpoint_noAuth_gets401() throws Exception {
-        // criterion 7: unauthenticated access is rejected
-        mockMvc.perform(get("/admin/mail/health"))
-            .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/admin/mail/health")).andExpect(status().isUnauthorized());
     }
 
     @Test
     void criterion7_healthEndpoint_invalidToken_gets401() throws Exception {
-        // criterion 7: invalid token is rejected with 401
         mockMvc.perform(get("/admin/mail/health")
-                .header("Authorization", "Bearer invalid-token"))
-            .andExpect(status().isUnauthorized());
+                .header("Authorization", "Bearer invalid-token")).andExpect(status().isUnauthorized());
     }
 
     @Test
     void criterion7_healthEndpoint_nonSuperAdmin_gets403() throws Exception {
-        // criterion 7: regular user gets 403
         mockMvc.perform(get("/admin/mail/health")
-                .header("Authorization", "Bearer " + regularUserToken))
-            .andExpect(status().isForbidden());
+                .header("Authorization", "Bearer " + regularUserToken)).andExpect(status().isForbidden());
     }
 
-    // ==================== Criterion 8: Test email send ====================
+    // ==================== Criterion 4: Settings require SUPER_ADMIN ====================
 
     @Test
-    void criterion8_testEmail_invalidToken_gets401() throws Exception {
-        // criterion 8: invalid token is rejected with 401
-        mockMvc.perform(post("/admin/mail/test")
-                .header("Authorization", "Bearer invalid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("\"admin@example.com\""))
-            .andExpect(status().isUnauthorized());
+    void criterion4_settingsGet_superAdmin_gets200() throws Exception {
+        mockMvc.perform(get("/admin/mail/settings")
+                .header("Authorization", "Bearer " + superAdminToken)).andExpect(status().isOk());
     }
 
     @Test
-    void criterion8_testEmail_noAuth_gets401() throws Exception {
-        // criterion 8: unauthenticated access is rejected
-        mockMvc.perform(post("/admin/mail/test")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("\"admin@example.com\""))
-            .andExpect(status().isUnauthorized());
+    void criterion4_settingsGet_nonSuperAdmin_gets403() throws Exception {
+        mockMvc.perform(get("/admin/mail/settings")
+                .header("Authorization", "Bearer " + regularUserToken)).andExpect(status().isForbidden());
     }
 
     @Test
-    void criterion8_testEmail_nonSuperAdmin_gets403() throws Exception {
-        // criterion 8: regular user gets 403
-        mockMvc.perform(post("/admin/mail/test")
+    void criterion4_settingsGet_noAuth_gets401() throws Exception {
+        mockMvc.perform(get("/admin/mail/settings")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void criterion5_settingsGet_responseHasPasswordSet_notPasswordValue() throws Exception {
+        MvcResult result = mockMvc.perform(get("/admin/mail/settings")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isOk()).andReturn();
+        JsonNode json = mapper.readTree(result.getResponse().getContentAsString());
+        assertTrue(json.has("passwordSet"), "Response must indicate whether a password is set");
+        String raw = result.getResponse().getContentAsString();
+        assertFalse(raw.contains("\"password\":\"topsecret\""), "Password value must not be returned");
+    }
+
+    @Test
+    void criterion4_settingsPut_superAdmin_gets200() throws Exception {
+        mockMvc.perform(put("/admin/mail/settings")
+                .header("Authorization", "Bearer " + superAdminToken)
+                .contentType(MediaType.APPLICATION_JSON).content(SETTINGS_BODY))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void criterion4_settingsPut_nonSuperAdmin_gets403() throws Exception {
+        mockMvc.perform(put("/admin/mail/settings")
                 .header("Authorization", "Bearer " + regularUserToken)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("\"admin@example.com\""))
+                .contentType(MediaType.APPLICATION_JSON).content(SETTINGS_BODY))
             .andExpect(status().isForbidden());
     }
 
-    // ==================== Criterion 2/4 wiring: test profile isolation (POF 1 target) ====================
+    // ==================== Criterion 6: test-self requires SUPER_ADMIN ====================
 
-    @org.springframework.beans.factory.annotation.Autowired
-    org.springframework.context.ApplicationContext ctx;
+    @Test
+    void criterion6_testSelf_superAdmin_reachesService_notAuthBlocked() throws Exception {
+        mockMvc.perform(post("/admin/mail/test-self")
+                .header("Authorization", "Bearer " + superAdminToken)
+                .contentType(MediaType.APPLICATION_JSON).content(TESTSELF_BODY))
+            .andExpect(result -> {
+                int s = result.getResponse().getStatus();
+                assertTrue(s != 401 && s != 403,
+                    "super-admin must pass auth and reach the service, got " + s);
+            });
+    }
 
-    @org.junit.jupiter.api.Test
+    @Test
+    void criterion6_testSelf_nonSuperAdmin_gets403() throws Exception {
+        mockMvc.perform(post("/admin/mail/test-self")
+                .header("Authorization", "Bearer " + regularUserToken)
+                .contentType(MediaType.APPLICATION_JSON).content(TESTSELF_BODY))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void criterion6_testSelf_noAuth_gets401() throws Exception {
+        mockMvc.perform(post("/admin/mail/test-self")
+                .contentType(MediaType.APPLICATION_JSON).content(TESTSELF_BODY))
+            .andExpect(status().isUnauthorized());
+    }
+
+    // ==================== Criterion 2/4 wiring: test profile isolation ====================
+
+    @Autowired org.springframework.context.ApplicationContext ctx;
+
+    @Test
     void profileWiring_testProfile_noRealMailTransportAnywhere() {
-        // In the REST test context (test profile, no ZORROBPM_MAIL_*) there must be NO real
-        // SMTP machinery: no JavaMailSender bean, no delivery listener. The MailSender role
-        // itself is bound by the engine's test-profile stub when zorrobpm-test is on the
-        // module's classpath; here we assert the transport side is fully absent.
-        // Mutations that must turn this red:
-        //  - removing @Profile("!test") from MailDeliveryListener → context fails to start
-        //    (it would require a JavaMailSender bean this profile does not provide) — every
-        //    test in this class goes red;
-        //  - removing @Profile("!test") from SmtpMailSender → a MailSender bean appears in
-        //    the context → the assertion below catches it.
-        org.assertj.core.api.Assertions.assertThat(
-                ctx.getBeansOfType(org.springframework.mail.javamail.JavaMailSender.class))
-            .isEmpty();
-        org.assertj.core.api.Assertions.assertThat(
-                ctx.getBeansOfType(com.zorrodev.bpm.engine.mail.MailDeliveryListener.class))
-            .isEmpty();
-        org.assertj.core.api.Assertions.assertThat(
-                ctx.getBeansOfType(com.zorrodev.bpm.engine.mail.SmtpMailSender.class))
-            .isEmpty();
+        assertThat(ctx.getBeansOfType(org.springframework.mail.javamail.JavaMailSender.class)).isEmpty();
+        assertThat(ctx.getBeansOfType(com.zorrodev.bpm.engine.mail.MailDeliveryListener.class)).isEmpty();
+        assertThat(ctx.getBeansOfType(com.zorrodev.bpm.engine.mail.SmtpMailSender.class)).isEmpty();
     }
 
     // ==================== Criterion 9: Status tracking ====================
 
     @Test
     void criterion9_statusRecords_lastSuccess() {
-        // criterion 9: MailStatus tracks last success time
         mailStatus.recordSuccess();
         assertNotNull(mailStatus.getLastSuccess(), "lastSuccess should be recorded after success");
         assertNull(mailStatus.getLastErrorMessage(), "lastErrorMessage should be cleared on success");
@@ -174,7 +193,6 @@ class MailResourceTest {
 
     @Test
     void criterion9_statusRecords_lastError() {
-        // criterion 9: MailStatus tracks last error time and message
         mailStatus.recordError("SMTP connection refused");
         assertNotNull(mailStatus.getLastError(), "lastError should be recorded after failure");
         assertNotNull(mailStatus.getLastErrorMessage(), "lastErrorMessage should be recorded");
@@ -183,20 +201,16 @@ class MailResourceTest {
 
     @Test
     void criterion9_healthEndpoint_showsStatusTimes() throws Exception {
-        // criterion 9: health endpoint returns lastSuccess and lastError
         mailStatus.recordSuccess();
-
         MvcResult result = mockMvc.perform(get("/admin/mail/health")
                 .header("Authorization", "Bearer " + superAdminToken))
-            .andExpect(status().isOk())
-            .andReturn();
-
+            .andExpect(status().isOk()).andReturn();
         JsonNode json = mapper.readTree(result.getResponse().getContentAsString());
-        assertTrue(json.has("configured"), "Response must have 'configured'");
-        assertTrue(json.has("reachable"), "Response must have 'reachable' (live SMTP probe)");
-        assertTrue(json.has("lastSuccess"), "Response must have 'lastSuccess'");
-        assertTrue(json.has("lastError"), "Response must have 'lastError'");
-        assertTrue(json.has("lastErrorMessage"), "Response must have 'lastErrorMessage'");
+        assertTrue(json.has("configured"));
+        assertTrue(json.has("reachable"));
+        assertTrue(json.has("lastSuccess"));
+        assertTrue(json.has("lastError"));
+        assertTrue(json.has("lastErrorMessage"));
     }
 
     // ==================== Helpers ====================

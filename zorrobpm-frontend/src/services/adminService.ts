@@ -122,3 +122,51 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
   const { data } = await api.get<{ data: ProcessInfo[] }>('/process-definitions?pageSize=100&latestVersionOnly=true')
   return data.data
 }
+
+// --- WO-INT-6: in-app mail settings management (super-admin only) ---
+export interface MailHealth {
+  configured: boolean
+  reachable: boolean | null
+  lastSuccess: string | null
+  lastError: string | null
+  lastErrorMessage: string | null
+}
+
+export interface MailSettings {
+  host: string | null
+  port: number | null
+  username: string | null
+  password: string | null
+  from: string | null
+  allowedRecipients: string | null
+  passwordSet: boolean
+}
+
+export interface MailSettingsUpdate {
+  host?: string | null
+  port?: number | null
+  username?: string | null
+  password?: string | null
+  from?: string | null
+  allowedRecipients?: string | null
+}
+
+export async function getMailHealth(): Promise<MailHealth> {
+  const { data } = await api.get<MailHealth>('/admin/mail/health')
+  return data
+}
+
+export async function getMailSettings(): Promise<MailSettings> {
+  const { data } = await api.get<MailSettings>('/admin/mail/settings')
+  return data
+}
+
+export async function saveMailSettings(dto: MailSettingsUpdate): Promise<MailSettings> {
+  const { data } = await api.put<MailSettings>('/admin/mail/settings', dto)
+  return data
+}
+
+export async function testMailSettingsToSelf(dto: MailSettingsUpdate): Promise<string> {
+  const { data } = await api.post<string>('/admin/mail/test-self', dto)
+  return data
+}

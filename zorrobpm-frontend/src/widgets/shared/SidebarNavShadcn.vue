@@ -85,6 +85,7 @@ const navGroups = computed<NavGroup[]>(() => [
 const adminItems: NavItem[] = [
   { labelKey: 'users', icon: Users, to: '/admin/users' },
   { labelKey: 'submissionQueue', icon: Inbox, to: '/admin/submissions' },
+  { labelKey: 'mailSettings', icon: Mail, to: '/admin/mail-settings' },
 ]
 
 // WO-ACL-8 criteria 1-2: adminOnly filtering preserved.
