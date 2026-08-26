@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.MailContract;
 import com.zorrodev.bpm.contract.dto.MailHealthDTO;
 import com.zorrodev.bpm.engine.mail.MailHealthService;
 import com.zorrodev.bpm.engine.mail.MailProperties;
+import com.zorrodev.bpm.engine.mail.MailRecipientPolicy;
 import com.zorrodev.bpm.engine.mail.MailStatus;
 import com.zorrodev.bpm.engine.security.Principal;
 import jakarta.mail.internet.MimeMessage;
@@ -41,6 +42,7 @@ public class MailResource implements MailContract {
     private final MailProperties mailProperties;
     private final MailStatus mailStatus;
     private final HttpServletRequest request;
+    private final MailRecipientPolicy recipientPolicy;
 
     /** Present in production profiles; absent under the test profile (no spring.mail.host). */
     @Lazy
@@ -58,6 +60,16 @@ public class MailResource implements MailContract {
         requireSuperAdmin();
         if (recipientAddress == null || recipientAddress.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Recipient address is required");
+        }
+
+        // CTO HOLD round 5 / P-66: the test-send endpoint must enforce the SAME recipient
+        // allow-list as the production sender, not bypass it via direct JavaMailSender.
+        if (!recipientPolicy.isAllowed(recipientAddress)) {
+            log.warn("WO-INT-5: test-mail recipient {} not in allowed list, refusing to send", recipientAddress);
+            throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Recipient not in allowed recipients list"
+            );
         }
 
         if (javaMailSender == null) {

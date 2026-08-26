@@ -14,10 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /**
  * WO-INT-5: production mail sender. Writes a {@link MailRequest} to the outbox
@@ -39,12 +36,10 @@ public class SmtpMailSender implements MailSender {
 
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final MailRecipientPolicy recipientPolicy;
 
     @Value("${zorrobpm.mail.from:}")
     private String defaultFrom;
-
-    @Value("${zorrobpm.mail.allowed-recipients:}")
-    private String allowedRecipientsRaw;
 
     @Override
     public void send(String to, String subject, String body) {
@@ -58,7 +53,7 @@ public class SmtpMailSender implements MailSender {
 
     @Transactional
     void send0(String to, String subject, String body, boolean html) {
-        if (!isRecipientAllowed(to)) {
+        if (!recipientPolicy.isAllowed(to)) {
             log.warn("WO-INT-5: recipient {} not in allowed list, skipping mail to='{}' subject='{}'",
                 to, to, subject);
             return;
@@ -81,17 +76,4 @@ public class SmtpMailSender implements MailSender {
         }
     }
 
-    /**
-     * Criteria 10-11: if the allowed-recipients list is empty, all recipients are accepted.
-     */
-    private boolean isRecipientAllowed(String to) {
-        if (allowedRecipientsRaw == null || allowedRecipientsRaw.isBlank()) {
-            return true; // criterion 11: empty list = no restriction
-        }
-        Set<String> allowed = Arrays.stream(allowedRecipientsRaw.split(","))
-            .map(String::trim)
-            .filter(s -> !s.isEmpty())
-            .collect(Collectors.toSet());
-        return allowed.contains(to);
-    }
 }

@@ -3,6 +3,7 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.dto.MailHealthDTO;
 import com.zorrodev.bpm.engine.mail.MailHealthService;
 import com.zorrodev.bpm.engine.mail.MailProperties;
+import com.zorrodev.bpm.engine.mail.MailRecipientPolicy;
 import com.zorrodev.bpm.engine.mail.MailStatus;
 import com.zorrodev.bpm.engine.security.Principal;
 import jakarta.mail.MessagingException;
@@ -45,7 +46,8 @@ class MailResourceTestSendResultTest {
     @BeforeEach
     void setUp() {
         MailProperties props = new MailProperties("smtp.test.com", 587, "u", "p", "from@test.com", "");
-        resource = new MailResource(mailHealthService, props, new MailStatus(), request);
+        // empty allow-list → all recipients accepted (criterion 11)
+        resource = new MailResource(mailHealthService, props, new MailStatus(), request, new MailRecipientPolicy(""));
         resource.javaMailSender = javaMailSender; // package-field injection, prod wiring is @Autowired
 
         Principal.UserPrincipal admin =
