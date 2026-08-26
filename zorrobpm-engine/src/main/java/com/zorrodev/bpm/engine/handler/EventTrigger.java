@@ -340,15 +340,16 @@ public class EventTrigger {
                 }
                 continue;
             }
-            dbService.consumeSignalSubscription(subscription.getId());
-            if (subscription.getBoundaryElementId() != null) {
-                // signal boundary: fire the boundary (interrupt/non-interrupt the host)
-                log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
-                fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, executor);
-            } else {
-                // signal catch: signal the waiting activity
-                log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
-                signalFn.accept(subscription.getActivityId(), variables);
+            if (dbService.consumeSignalSubscription(subscription.getId())) {
+                if (subscription.getBoundaryElementId() != null) {
+                    // signal boundary: fire the boundary (interrupt/non-interrupt the host)
+                    log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                    fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, executor);
+                } else {
+                    // signal catch: signal the waiting activity
+                    log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                    signalFn.accept(subscription.getActivityId(), variables);
+                }
             }
         }
     }

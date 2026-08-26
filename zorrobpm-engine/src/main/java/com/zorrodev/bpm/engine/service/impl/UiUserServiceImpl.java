@@ -11,6 +11,7 @@ import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.mapper.UiUserMapper;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.repository.RefreshTokenRepository;
 import com.zorrodev.bpm.engine.security.AdminPasswordValidator;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.security.TokenService;
@@ -39,6 +40,7 @@ public class UiUserServiceImpl implements UiUserService {
     private final UiUserMapper mapper;
     private final PasswordHasher passwordHasher;
     private final TokenService tokenService;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -175,7 +177,9 @@ public class UiUserServiceImpl implements UiUserService {
             if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
             entity.setPasswordHash(passwordHasher.hash(dto.getPassword()));
             entity.setForcePasswordChange(false);
-        
+            // WO-SEC-59 #6: admin password reset must revoke all of the user's refresh tokens,
+            // otherwise a stolen/held token keeps refreshing access after the reset.
+            refreshTokenRepository.revokeAllByUserId(id);
         }
         entity.setUpdatedAt(Instant.now());
         repository.save(entity);

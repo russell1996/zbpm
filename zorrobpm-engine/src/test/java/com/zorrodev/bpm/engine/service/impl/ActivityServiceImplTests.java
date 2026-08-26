@@ -688,6 +688,9 @@ public class ActivityServiceImplTests {
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
         when(dbService.findMessageSubscriptions("order-approved", processInstanceId)).thenReturn(List.of(subscription));
+        // WO-SEC-59 #2: consume* now returns boolean (true == this call won the CAS).
+        // Old behaviour was "void / always succeeds", so default existing tests to true.
+        when(dbService.consumeMessageSubscription(any())).thenReturn(true);
 
         activityService.execute(processInstanceId, token, "startEvent");
 

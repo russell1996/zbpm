@@ -356,6 +356,9 @@ public class FormResource implements FormContract {
         ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
 
+        // WO-SEC-59 #7: authz first — a principal without access to the process must not read its form schema.
+        requirePdAccess(pd.getId());
+
         // Parse BPMN to get elements
         var model = bpmnService.getProcessDefinitionModelById(pd.getId());
 

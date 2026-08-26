@@ -84,6 +84,9 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
             String targetRef = flow.getTargetRef();
             BpmnElementModel target = bpmn.getElement(targetRef);
             executor.execute(processInstanceId, token, bpmn, target);
+        } else {
+            throw new IllegalStateException("Exclusive gateway '" + bpmnElement.getId()
+                + "' has an unsupported incoming/outgoing shape: N=" + incoming.size() + "/M=" + outgoings.size());
         }
     }
 }
