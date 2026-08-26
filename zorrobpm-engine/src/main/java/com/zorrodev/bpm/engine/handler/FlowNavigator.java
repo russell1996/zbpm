@@ -194,15 +194,44 @@ public class FlowNavigator {
             return;
         }
 
-        int remaining = dbService.decrementPendingBranches(tokenId);
-        if (remaining == -1) {
-            log.info("{}/{}: Linear token (no pending branches), completing instance", processInstanceId, tokenId);
-        } else if (remaining > 0) {
-            log.info("{}/{}: {} branch(es) still pending — instance stays RUNNING",
-                processInstanceId, tokenId, remaining);
-            return;
-        } else {
-            log.info("{}/{}: All branches consumed, completing instance", processInstanceId, tokenId);
+        // WO-ENG-13: recursive bubble-up across the full parent-token chain.
+        //
+        // When a token's pendingBranches reaches 0, it may have a parent token that is itself an
+        // implicit fork (its pendingBranches was only decremented *through* this bubble-up, not via a
+        // direct finishBranch call on it). We must walk up the chain: if the parent still has pending
+        // branches, move up to the parent and re-check; only complete the instance when we reach a
+        // token with no parent (root) or a parent with no pending branches of its own.
+        //
+        // This handles arbitrary nesting depth (a degenerate parallelGateway 1-in/1-out nested inside
+        // a fork, nested inside another fork, etc.). Without the loop a degenerate gateway that is the
+        // second level deep exhausts its immediate parent but never propagates to the grandparent,
+        // leaving the instance hung forever (silently, with no incident).
+        UUID currentTokenId = tokenId;
+        while (true) {
+            int remaining = dbService.decrementPendingBranches(currentTokenId);
+            if (remaining == -1) {
+                log.info("{}/{}: Linear token (no pending branches), completing instance", processInstanceId, currentTokenId);
+                break;
+            }
+            if (remaining > 0) {
+                log.info("{}/{}: {} branch(es) still pending — instance stays RUNNING",
+                    processInstanceId, currentTokenId, remaining);
+                return;
+            }
+            // remaining == 0 — all branches of currentToken consumed. Bubble up to parent if it is
+            // itself still waiting on sibling branches.
+            Token currentToken = dbService.getToken(currentTokenId);
+            if (currentToken != null && currentToken.getParentId() != null) {
+                Token parentToken = dbService.getToken(currentToken.getParentId());
+                if (parentToken != null && parentToken.getPendingBranches() != null && parentToken.getPendingBranches() > 0) {
+                    log.info("{}/{}: Nested token bubble-up — moving up to parent {}/{} (pending={})",
+                        processInstanceId, currentTokenId, currentToken.getParentId(), parentToken.getId(), parentToken.getPendingBranches());
+                    currentTokenId = currentToken.getParentId();
+                    continue;
+                }
+            }
+            log.info("{}/{}: All branches consumed, completing instance", processInstanceId, currentTokenId);
+            break;
         }
 
         dbService.completeProcessInstance(processInstanceId);
