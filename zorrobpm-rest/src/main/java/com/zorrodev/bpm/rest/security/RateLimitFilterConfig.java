@@ -91,7 +91,8 @@ public class RateLimitFilterConfig {
             "/process-instances/*",
             "/user-tasks/*",
             "/service-tasks/*",
-            "/incidents/*"
+            "/incidents/*",
+            "/process-definitions/*"
         );
         registration.setName("rateLimitFilter");
         return registration;
