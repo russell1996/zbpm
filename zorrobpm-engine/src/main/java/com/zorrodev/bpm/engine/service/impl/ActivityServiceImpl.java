@@ -246,13 +246,14 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
         for (MessageSubscription subscription : subscriptions) {
             if (subscription.getEventSubprocessId() != null) {
-                // message-started event sub-process: start the handler within the subscribed instance. The
-                // subscription is consumed only for interrupting handlers (a non-interrupting one keeps
-                // listening and can fire again) — triggerEventSubprocess decides.
-                log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
-                boolean interrupting = eventTrigger.triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, this);
-                if (interrupting) {
-                    dbService.consumeMessageSubscription(subscription.getId());
+                // message-started event sub-process: an interrupting handler must fire EXACTLY once.
+                // CAS-consume the subscription first (WO-SEC-59 #2); only the winning correlation triggers
+                // the subprocess. A non-interrupting handler re-fires on every message and keeps listening.
+                boolean interrupting = eventTrigger.isInterruptingEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId());
+                boolean shouldFire = interrupting ? dbService.consumeMessageSubscription(subscription.getId()) : true;
+                if (shouldFire) {
+                    log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
+                    eventTrigger.triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, this);
                 }
                 continue;
             }
