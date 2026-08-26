@@ -48,6 +48,35 @@ default:
   # WO-A-02: self-heal runs as root container to reclaim file ownership
 
 # ---------------------------------------------------------------------------
+# Shared changes: list — only run the expensive build/test/security/deploy jobs
+# when the diff touches actual product code. A governance-only commit (WO
+# reports, dispatch notes, diffstat-sync churn — the dominant CI volume from
+# the review workflow) skips all of them. test:gate is deliberately exempt:
+# it specifically validates governance file discipline, so it must run for
+# governance-only commits too.
+# ---------------------------------------------------------------------------
+.rules-code-changes: &rules-code-changes
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    changes: &code-changes-paths
+      - "zorrobpm-contract/**/*"
+      - "zorrobpm-engine/**/*"
+      - "zorrobpm-rest/**/*"
+      - "zorrobpm-rabbitmq/**/*"
+      - "zorrobpm-ce/**/*"
+      - "zorrobpm-client/**/*"
+      - "zorrobpm-job-handler-spring-boot-starter/**/*"
+      - "zorrobpm-test/**/*"
+      - "zorrobpm-exchange/**/*"
+      - "zorrobpm-frontend/**/*"
+      - "pom.xml"
+      - "Dockerfile"
+      - "owasp-suppressions.xml"
+      - "ci/**/*"
+      - ".gitlab-ci.yml"
+  - if: '$CI_COMMIT_BRANCH'
+    changes: *code-changes-paths
+
+# ---------------------------------------------------------------------------
 # Test gate — blocks PRs that change src/main without a covering test
 # (WO-PROC-2 + WO-OPS-4a). Runs before docker builds (cheap shell check).
 # Self-test first: throwaway-commit fixtures assert the gate's own behaviour,
@@ -95,6 +124,7 @@ test:backend:
     - docker cp test-extract:/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports || true
     - docker rm -f test-extract || true
     - docker image rm zorrobpm-app-test:$IMAGE_TAG || true
+  rules: *rules-code-changes
 
 # ---------------------------------------------------------------------------
 # PG-IT — runs @Tag("pg") tests against a real postgres:16 sidecar.
@@ -117,6 +147,7 @@ test:pg:
     PG_PORT: "55432"
   script:
     - bash ci/run-pg-tests.sh
+  rules: *rules-code-changes
 
 test:frontend:
   stage: test
@@ -130,6 +161,7 @@ test:frontend:
     # kazakh labels, BPMN canvas height, properties panel height).
     - docker build --target builder -f zorrobpm-frontend/Dockerfile -t zorrobpm-frontend-build:$IMAGE_TAG zorrobpm-frontend
     - docker image rm zorrobpm-frontend-build:$IMAGE_TAG || true
+  rules: *rules-code-changes
 
 # ---------------------------------------------------------------------------
 # Security — CVE scan (WO-SEC-32)
@@ -172,9 +204,7 @@ cve:scan:
       -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
       node:22-alpine
       sh -c "npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev || echo 'npm audit found vulnerabilities (non-blocking)'"
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH'
+  rules: *rules-code-changes
   artifacts:
     when: always
     paths:
@@ -214,7 +244,9 @@ build:
     - echo "backend=$IMAGE_BACKEND:$IMAGE_TAG frontend=$IMAGE_FRONTEND:$IMAGE_TAG built=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > build-manifest.txt
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: *code-changes-paths
     - if: '$CI_COMMIT_BRANCH'
+      changes: *code-changes-paths
       when: manual
       allow_failure: false
 
@@ -248,9 +280,11 @@ deploy:
     url: https://zorro.i-smet.kz
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: *code-changes-paths
       when: manual
       allow_failure: false
     - if: '$CI_COMMIT_BRANCH'
+      changes: *code-changes-paths
       when: manual
       allow_failure: false
 
