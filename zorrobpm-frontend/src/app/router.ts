@@ -152,6 +152,12 @@ const router = createRouter({
           meta: { titleKey: 'processSchemas', requiresSuperAdmin: true },
         },
         {
+          path: 'admin/mail-settings',
+          name: 'admin-mail-settings',
+          component: () => import('@/pages/admin/MailSettings.vue'),
+          meta: { titleKey: 'mailSettings', requiresSuperAdmin: true },
+        },
+        {
           path: 'me/profile',
           name: 'my-profile',
           component: () => import('@/pages/me/MyProfile.vue'),

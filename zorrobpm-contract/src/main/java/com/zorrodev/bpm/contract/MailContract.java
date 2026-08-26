@@ -1,27 +1,26 @@
 package com.zorrodev.bpm.contract;
 
 import com.zorrodev.bpm.contract.dto.MailHealthDTO;
+import com.zorrodev.bpm.contract.dto.MailSettingsDTO;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.PostExchange;
+import org.springframework.web.service.annotation.PutExchange;
 
 /**
- * WO-INT-5 criteria 7, 8, 9: mail health and test send endpoints.
- * Admin-only — managed by {@code MailResource}.
+ * WO-INT-6: in-app mail settings management. Admin-only — enforced by {@code MailResource}.
  */
 public interface MailContract {
 
-    /**
-     * Criterion 7, 9: returns current mail configuration and delivery status.
-     * Shows: configured (all required properties present), lastSuccess, lastError.
-     */
     @GetExchange("/admin/mail/health")
     MailHealthDTO getMailHealth();
 
-    /**
-     * Criterion 8: sends a test email to the caller's address.
-     * Returns success or SMTP error details.
-     */
-    @PostExchange("/admin/mail/test")
-    String sendTestMail(@RequestBody String recipientAddress);
+    @GetExchange("/admin/mail/settings")
+    MailSettingsDTO getMailSettings();
+
+    @PutExchange("/admin/mail/settings")
+    MailSettingsDTO saveMailSettings(@RequestBody MailSettingsDTO settings);
+
+    @PostExchange("/admin/mail/test-self")
+    String testMailSettingsToSelf(@RequestBody MailSettingsDTO settings);
 }

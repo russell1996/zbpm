@@ -66,7 +66,8 @@ describe('SidebarNavShadcn', () => {
     const labels = buttons.map(b => b.text())
     expect(labels).toContain('users')
     expect(labels).toContain('submissionQueue')
-    expect(labels.length).toBe(12)
+    expect(labels).toContain('mailSettings')
+    expect(labels.length).toBe(13)
   })
 
   it('non-super-admin does NOT see admin items', () => {
