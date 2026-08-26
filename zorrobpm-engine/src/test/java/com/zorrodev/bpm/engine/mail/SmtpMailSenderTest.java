@@ -4,6 +4,7 @@ import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.MailRequest;
+import com.zorrodev.bpm.engine.mail.MailRecipientPolicy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,7 +39,7 @@ class SmtpMailSenderTest {
 
     @BeforeEach
     void setUp() {
-        sender = new SmtpMailSender(outboxRepository, objectMapper);
+        sender = new SmtpMailSender(outboxRepository, objectMapper, new MailRecipientPolicy(""));
     }
 
     @Test
@@ -197,12 +198,6 @@ class SmtpMailSenderTest {
     }
 
     private void setAllowedRecipients(String value) {
-        try {
-            var field = SmtpMailSender.class.getDeclaredField("allowedRecipientsRaw");
-            field.setAccessible(true);
-            field.set(sender, value);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        sender = new SmtpMailSender(outboxRepository, objectMapper, new MailRecipientPolicy(value));
     }
 }
