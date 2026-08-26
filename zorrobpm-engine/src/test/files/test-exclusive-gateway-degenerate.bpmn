@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_deg" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-exclusive-gateway-degenerate" name="test-exclusive-gateway-degenerate" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="xor" name="xor">
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowEnd</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flowEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowStart" name="flowStart" sourceRef="startEvent" targetRef="xor" />
+    <bpmn:sequenceFlow id="flowEnd" name="flowEnd" sourceRef="xor" targetRef="endEvent" />
+  </bpmn:process>
+</bpmn:definitions>

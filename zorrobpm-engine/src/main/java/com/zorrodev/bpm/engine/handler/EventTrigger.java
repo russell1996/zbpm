@@ -255,6 +255,24 @@ public class EventTrigger {
     }
 
     /**
+     * WO-SEC-59 #2: determine whether the referenced event sub-process is interrupting WITHOUT firing it.
+     * Used to decide whether a signal/message correlation may consume the subscription (interrupting
+     * handlers must fire exactly once; non-interrupting ones re-fire and keep listening).
+     */
+    public boolean isInterruptingEventSubprocess(UUID processInstanceId, String eventSubprocessId) {
+        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+        if (pi == null || pi.getCompletedAt() != null) {
+            return false;
+        }
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+        BpmnElementModel esp = bpmn.getElement(eventSubprocessId);
+        return Optional.ofNullable(esp.getExtensions())
+                .map(BpmnElementExtensionModel::getSubProcessExtension)
+                .map(SubProcessExtensionModel::isInterrupting)
+                .orElse(false);
+    }
+
+    /**
      * Starts a process instance beginning at a specific start element (used by message/timer start
      * events, which begin at their own start node rather than the plain start).
      */
@@ -332,23 +350,27 @@ public class EventTrigger {
 
         for (SignalSubscription subscription : subscriptions) {
             if (subscription.getEventSubprocessId() != null) {
-                // signal-started event sub-process: consume only for interrupting handlers (it can re-fire otherwise)
-                log.info("Broadcasting signal '{}' to event sub-process {} on instance {}", signalName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
-                boolean interrupting = triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, executor);
-                if (interrupting) {
-                    dbService.consumeSignalSubscription(subscription.getId());
+                // signal-started event sub-process: an interrupting handler must fire EXACTLY once.
+                // CAS-consume the subscription first (WO-SEC-59 #2); only the winning correlation triggers
+                // the subprocess. A non-interrupting handler re-fires on every signal and keeps listening.
+                boolean interrupting = isInterruptingEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId());
+                boolean shouldFire = interrupting ? dbService.consumeSignalSubscription(subscription.getId()) : true;
+                if (shouldFire) {
+                    log.info("Broadcasting signal '{}' to event sub-process {} on instance {}", signalName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
+                    triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, executor);
                 }
                 continue;
             }
-            dbService.consumeSignalSubscription(subscription.getId());
-            if (subscription.getBoundaryElementId() != null) {
-                // signal boundary: fire the boundary (interrupt/non-interrupt the host)
-                log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
-                fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, executor);
-            } else {
-                // signal catch: signal the waiting activity
-                log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
-                signalFn.accept(subscription.getActivityId(), variables);
+            if (dbService.consumeSignalSubscription(subscription.getId())) {
+                if (subscription.getBoundaryElementId() != null) {
+                    // signal boundary: fire the boundary (interrupt/non-interrupt the host)
+                    log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                    fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, executor);
+                } else {
+                    // signal catch: signal the waiting activity
+                    log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                    signalFn.accept(subscription.getActivityId(), variables);
+                }
             }
         }
     }

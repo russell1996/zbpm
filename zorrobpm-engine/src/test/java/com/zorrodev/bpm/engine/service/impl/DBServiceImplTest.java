@@ -28,6 +28,7 @@ import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
+import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
@@ -69,6 +70,7 @@ class DBServiceImplTest {
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
+    @Mock private SignalSubscriptionRepository signalSubscriptionRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
 
@@ -755,17 +757,37 @@ class DBServiceImplTest {
     }
 
     @Test
-    void consumeMessageSubscription_setsConsumed() {
+    void consumeMessageSubscription_returnsTrue_whenNotYetConsumed() {
         UUID id = UUID.randomUUID();
-        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
-        entity.setId(id);
-        when(messageSubscriptionRepository.findById(id)).thenReturn(Optional.of(entity));
+        when(messageSubscriptionRepository.markConsumed(eq(id))).thenReturn(1);
 
-        dbService.consumeMessageSubscription(id);
+        assertThat(dbService.consumeMessageSubscription(id)).isTrue();
+        verify(messageSubscriptionRepository).markConsumed(eq(id));
+    }
 
-        ArgumentCaptor<MessageSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageSubscriptionEntity.class);
-        verify(messageSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().isConsumed()).isTrue();
+    @Test
+    void consumeMessageSubscription_returnsFalse_whenAlreadyConsumed() {
+        UUID id = UUID.randomUUID();
+        when(messageSubscriptionRepository.markConsumed(eq(id))).thenReturn(0);
+
+        assertThat(dbService.consumeMessageSubscription(id)).isFalse();
+    }
+
+    @Test
+    void consumeSignalSubscription_returnsTrue_whenNotYetConsumed() {
+        UUID id = UUID.randomUUID();
+        when(signalSubscriptionRepository.markConsumed(eq(id))).thenReturn(1);
+
+        assertThat(dbService.consumeSignalSubscription(id)).isTrue();
+        verify(signalSubscriptionRepository).markConsumed(eq(id));
+    }
+
+    @Test
+    void consumeSignalSubscription_returnsFalse_whenAlreadyConsumed() {
+        UUID id = UUID.randomUUID();
+        when(signalSubscriptionRepository.markConsumed(eq(id))).thenReturn(0);
+
+        assertThat(dbService.consumeSignalSubscription(id)).isFalse();
     }
 
     private static ProcessVariable newVar(String name, String value, ProcessVariableType type) {

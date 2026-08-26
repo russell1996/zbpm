@@ -7,7 +7,9 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -15,9 +17,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +33,10 @@ class FormResourceSchemaMapLogTest {
     private ElementArtifactBindingRepository bindingRepository;
     @Mock
     private BpmnService bpmnService;
+    @Mock
+    private HttpServletRequest request;
+    @Mock
+    private EventAuthzResolver eventAuthzResolver;
 
     @InjectMocks
     private FormResource formResource;
@@ -68,6 +76,12 @@ class FormResourceSchemaMapLogTest {
         // Broken PD throws an exception
         when(bpmnService.getProcessDefinitionModelById(brokenId))
             .thenThrow(new RuntimeException("Invalid BPMN XML"));
+
+        // The caller is an authenticated principal that is allowed to read the valid PD
+        // (WO-SEC-59 #7 added an authz gate to getSchemaMap).
+        Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "tester", "USER");
+        when(request.getAttribute("principal")).thenReturn(principal);
+        when(eventAuthzResolver.visibleDefinitionIds(any(), any())).thenReturn(Set.of(validId));
 
         // When: getSchemaMap is called
         SchemaMapDTO result = formResource.getSchemaMap("test-form");

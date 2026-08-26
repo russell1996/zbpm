@@ -173,7 +173,7 @@ public interface DBService {
     /** Active subscriptions matching the message name and correlation-key value (targeted delivery). */
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey);
 
-    void consumeMessageSubscription(UUID subscriptionId);
+    boolean consumeMessageSubscription(UUID subscriptionId);
 
     UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName);
 
@@ -186,7 +186,7 @@ public interface DBService {
     /** All active (unconsumed) subscriptions for {@code signalName}; a signal throw wakes them all. */
     List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName);
 
-    void consumeSignalSubscription(UUID subscriptionId);
+    boolean consumeSignalSubscription(UUID subscriptionId);
 
     /** Replaces any signal-start subscriptions for {@code processKey} with a fresh one (newer
      *  versions supersede older ones). */
