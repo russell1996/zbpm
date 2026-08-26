@@ -256,15 +256,16 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
                 }
                 continue;
             }
-            dbService.consumeMessageSubscription(subscription.getId());
-            if (subscription.getBoundaryElementId() != null) {
-                // message boundary: fire the boundary (interrupt/non-interrupt the host)
-                log.info("Correlating message '{}' to boundary {} on instance {} activity {}", messageName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
-                eventTrigger.fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, this);
-            } else {
-                // message catch: signal the waiting activity
-                log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
-                signal(subscription.getActivityId(), variables);
+            if (dbService.consumeMessageSubscription(subscription.getId())) {
+                if (subscription.getBoundaryElementId() != null) {
+                    // message boundary: fire the boundary (interrupt/non-interrupt the host)
+                    log.info("Correlating message '{}' to boundary {} on instance {} activity {}", messageName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                    eventTrigger.fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, this);
+                } else {
+                    // message catch: signal the waiting activity
+                    log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                    signal(subscription.getActivityId(), variables);
+                }
             }
         }
     }

@@ -4,6 +4,9 @@ import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.UUID;
@@ -15,6 +18,10 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
     List<MessageSubscriptionEntity> findByConsumedFalseAndMessageName(String messageName);
 
     List<MessageSubscriptionEntity> findByConsumedFalseAndMessageNameAndCorrelationKey(String messageName, String correlationKey);
+
+    @Modifying
+    @Query("UPDATE MessageSubscriptionEntity e SET e.consumed = true WHERE e.id = :id AND e.consumed = false")
+    int markConsumed(@Param("id") UUID id);
 
     static Specification<MessageSubscriptionEntity> byProcessInstanceId(UUID processInstanceId) {
         return (root, query, cb) -> cb.equal(root.get("processInstanceId"), processInstanceId);

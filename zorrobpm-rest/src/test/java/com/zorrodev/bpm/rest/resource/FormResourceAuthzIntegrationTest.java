@@ -425,4 +425,28 @@ class FormResourceAuthzIntegrationTest {
         mockMvc.perform(get("/forms"))
                 .andExpect(status().isUnauthorized());
     }
+
+    /**
+     * WO-SEC-59 #7: schema-map must enforce process authz. A restricted user (grant on procA only)
+     * calling schema-map for procB must be denied (404 — same resolution as getForm), not leak the
+     * form schema of an inaccessible process.
+     */
+    @Test
+    @Order(13)
+    void criteria7_schemaMap_restrictedUser_procB_returns404() throws Exception {
+        mockMvc.perform(get("/process-definitions/" + PROC_B_KEY + "/schema-map")
+                        .header("Authorization", "Bearer " + restrictedToken))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Regression: admin can read schema-map for an accessible process.
+     */
+    @Test
+    @Order(14)
+    void criteria7_schemaMap_admin_procA_returns200() throws Exception {
+        mockMvc.perform(get("/process-definitions/" + PROC_A_KEY + "/schema-map")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+    }
 }

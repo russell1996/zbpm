@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.dto.CreateUiUserDTO;
 import com.zorrodev.bpm.contract.dto.UpdateUiUserDTO;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.engine.mapper.UiUserMapper;
+import com.zorrodev.bpm.engine.repository.RefreshTokenRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.security.TokenService;
@@ -38,6 +39,7 @@ class UiUserServiceImplPasswordPolicyTest {
     @Mock UiUserMapper mapper;
     @Mock PasswordHasher passwordHasher;
     @Mock TokenService tokenService;
+    @Mock RefreshTokenRepository refreshTokenRepository;
 
     @InjectMocks UiUserServiceImpl service;
 
