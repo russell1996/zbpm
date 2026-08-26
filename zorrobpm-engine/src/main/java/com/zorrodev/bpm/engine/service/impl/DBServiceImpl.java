@@ -729,10 +729,11 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public void consumeMessageSubscription(UUID subscriptionId) {
-        MessageSubscriptionEntity entity = messageSubscriptionRepository.findById(subscriptionId).orElseThrow();
-        entity.setConsumed(true);
-        messageSubscriptionRepository.save(entity);
+    public boolean consumeMessageSubscription(UUID subscriptionId) {
+        // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
+        // A plain findById+save would let two concurrent callers both observe "not consumed"
+        // and both apply the signal/message (double branch on a non-interrupting boundary).
+        return messageSubscriptionRepository.markConsumed(subscriptionId) == 1;
     }
 
     @Override
@@ -787,10 +788,9 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public void consumeSignalSubscription(UUID subscriptionId) {
-        SignalSubscriptionEntity entity = signalSubscriptionRepository.findById(subscriptionId).orElseThrow();
-        entity.setConsumed(true);
-        signalSubscriptionRepository.save(entity);
+    public boolean consumeSignalSubscription(UUID subscriptionId) {
+        // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
+        return signalSubscriptionRepository.markConsumed(subscriptionId) == 1;
     }
 
     @Override

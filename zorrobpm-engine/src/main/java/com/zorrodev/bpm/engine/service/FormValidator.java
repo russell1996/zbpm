@@ -107,7 +107,9 @@ public class FormValidator {
                 }
             }
         } catch (Exception e) {
+            // WO-SEC-59 #3: fail-closed — a schema that cannot be parsed must NOT be treated as valid.
             log.warn("Failed to parse form schema for validation: {}", e.getMessage());
+            errors.add(new ValidationError("schema", "Form schema could not be parsed: " + e.getMessage()));
         }
 
         return errors;
