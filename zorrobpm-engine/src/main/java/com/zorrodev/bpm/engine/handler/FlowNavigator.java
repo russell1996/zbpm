@@ -202,6 +202,24 @@ public class FlowNavigator {
                 processInstanceId, tokenId, remaining);
             return;
         } else {
+            // WO-ENG-13: nested token bubble-up — when a nested token's pendingBranches reaches 0,
+            // check if its parent token still has pending branches. If so, bubble up: decrement the
+            // parent's counter and return without completing the instance. The parent's finishBranch
+            // will handle completion when all its branches are consumed.
+            //
+            // Without this check, a degenerate parallelGateway (1-in/1-out) inside an implicit fork
+            // creates a nested token that, upon reaching an end event and decrementing its own
+            // pendingBranches to 0, prematurely completes the entire instance while the parent fork's
+            // other branches are still active.
+            if (endToken != null && endToken.getParentId() != null) {
+                Token parentToken = dbService.getToken(endToken.getParentId());
+                if (parentToken != null && parentToken.getPendingBranches() != null && parentToken.getPendingBranches() > 0) {
+                    int parentRemaining = dbService.decrementPendingBranches(endToken.getParentId());
+                    log.info("{}/{}: Nested token bubble-up — decremented parent {}/{} pending branches to {}",
+                        processInstanceId, tokenId, endToken.getParentId(), parentToken.getId(), parentRemaining);
+                    return;
+                }
+            }
             log.info("{}/{}: All branches consumed, completing instance", processInstanceId, tokenId);
         }
 
