@@ -47,6 +47,7 @@ public class RetroPgIT extends PostgresIT {
     @BeforeEach
     void cleanOutbox() {
         outboxRepository.deleteAllInBatch();
+        auditLogRepository.deleteAllInBatch();
     }
 
     // ==================== WO-AUD-2: hot table indexes exist on PG ====================

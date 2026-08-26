@@ -105,6 +105,13 @@ services:
       ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}
       # Browser origins allowed for the SPA (same-origin via nginx doesn't need this, but set for safety)
       ZORROBPM_CORS_ORIGINS: ${ZORROBPM_CORS_ORIGINS:-https://zorro.i-smet.kz}
+      # WO-INT-5: mail transport — values in .env on host, never in repo
+      ZORROBPM_MAIL_HOST: ${ZORROBPM_MAIL_HOST:-}
+      ZORROBPM_MAIL_PORT: ${ZORROBPM_MAIL_PORT:-}
+      ZORROBPM_MAIL_USERNAME: ${ZORROBPM_MAIL_USERNAME:-}
+      ZORROBPM_MAIL_PASSWORD: ${ZORROBPM_MAIL_PASSWORD:-}
+      ZORROBPM_MAIL_FROM: ${ZORROBPM_MAIL_FROM:-}
+      ZORROBPM_MAIL_ALLOWED_RECIPIENTS: ${ZORROBPM_MAIL_ALLOWED_RECIPIENTS:-}
       TZ: Asia/Almaty
     volumes:
       - app-files:/app/files

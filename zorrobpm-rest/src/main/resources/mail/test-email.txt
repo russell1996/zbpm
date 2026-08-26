@@ -1,0 +1,11 @@
+ZorroBPM test email
+
+Hello,
+
+This is a test email from ZorroBPM, sent to ${recipient} at your request.
+If you received this message, the mail transport is working correctly.
+
+Sent at: ${timestamp}
+
+You are receiving this because a ZorroBPM super-administrator triggered
+a mail transport check for this address.

@@ -5,6 +5,8 @@ import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.DomainEventPublished;
 import com.zorrodev.bpm.exchange.JobDetailModel;
+import com.zorrodev.bpm.exchange.MailRequest;
+import com.zorrodev.bpm.exchange.MailSendRequested;
 import com.zorrodev.bpm.exchange.ServiceTaskEnqueued;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -62,6 +64,11 @@ public class OutboxBatchProcessor {
                         JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
                         publisher.publishEvent(new ServiceTaskEnqueued(detail, entry.getId().toString()));
                         log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
+                    }
+                    case EMAIL -> {
+                        MailRequest request = objectMapper.readValue(entry.getPayload(), MailRequest.class);
+                        publisher.publishEvent(new MailSendRequested(request, entry.getId().toString()));
+                        log.info("Published mail outbox entry {} to {}", entry.getId(), request.getTo());
                     }
                 }
                 // WO-REL-12 R-02: no markPublished here — the row is marked only after the
