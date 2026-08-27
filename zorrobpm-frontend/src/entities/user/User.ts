@@ -10,9 +10,13 @@ export interface User {
   forcePasswordChange: boolean
   /** WO-INT-4: 'HUMAN' (default) or 'SYSTEM'. A system account is an integration, not a person. */
   userType?: 'HUMAN' | 'SYSTEM'
+  /** WO-ACL-18 criterion 5: an outstanding invite token means the user has not set a password yet. */
+  pendingInvitation?: boolean
   createdAt: string
   updatedAt: string
 }
+
+export type CreationMode = 'PASSWORD' | 'INVITE'
 
 export interface CreateUserDTO {
   username: string
@@ -21,6 +25,8 @@ export interface CreateUserDTO {
   email: string | null
   role: UserRole
   active: boolean
+  /** WO-ACL-18: 'INVITE' (default — one-time link) or 'PASSWORD' (admin sets it directly). */
+  creationMode?: CreationMode
 }
 
 export interface UpdateUserDTO {

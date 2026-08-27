@@ -12,6 +12,8 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
 
     Optional<UiUserEntity> findByUsername(String username);
 
+    Optional<UiUserEntity> findByEmail(String email);
+
     boolean existsByUsername(String username);
 
     static Specification<UiUserEntity> byUsernameContains(String username) {

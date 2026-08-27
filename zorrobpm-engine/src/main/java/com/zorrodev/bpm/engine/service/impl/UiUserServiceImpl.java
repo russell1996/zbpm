@@ -41,6 +41,7 @@ public class UiUserServiceImpl implements UiUserService {
     private final PasswordHasher passwordHasher;
     private final TokenService tokenService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final com.zorrodev.bpm.engine.repository.PasswordTokenRepository passwordTokenRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -87,7 +88,13 @@ public class UiUserServiceImpl implements UiUserService {
         dto.setPageIndex(result.getNumber());
         dto.setPageSize(result.getSize());
         List<UiUser> data = new ArrayList<>();
-        for (UiUserEntity e : result.getContent()) data.add(mapper.toDTO(e));
+        for (UiUserEntity e : result.getContent()) {
+            UiUser u = mapper.toDTO(e);
+            // WO-ACL-18 criterion 5: surface an outstanding invitation to the admin list.
+            u.setPendingInvitation(passwordTokenRepository
+                .existsByUserIdAndTypeAndUsedFalseAndExpiresAtAfter(e.getId(), "INVITE", Instant.now()));
+            data.add(u);
+        }
         dto.setData(data);
         return dto;
     }
@@ -99,13 +106,20 @@ public class UiUserServiceImpl implements UiUserService {
         if (repository.existsByUsername(dto.getUsername())) throw new EngineException("Username already exists");
 
         boolean system = "SYSTEM".equalsIgnoreCase(dto.getUserType());
+        // WO-ACL-18: INVITE mode creates the account WITHOUT a usable password — the user
+        // receives a one-time link to set it. SYSTEM accounts are never invited.
+        boolean invite = "INVITE".equalsIgnoreCase(dto.getCreationMode());
         // WO-INT-4: a SYSTEM account has NO password — login is impossible. The password
         // supplied in the DTO (if any) is deliberately ignored: storing it would create a
         // second way in (one day forcePasswordChange would lock the integration, and someone
         // would "fix" it by using the password). We still store a hash — of an unknowable
         // random secret — so the constant-time login path (WO-SEC-17 M7) compares against
         // a real hash instead of short-circuiting on null.
-        if (!system) {
+        if (invite) {
+            if (dto.getEmail() == null || dto.getEmail().isBlank()) {
+                throw new EngineException("Email is required to send an invitation");
+            }
+        } else if (!system) {
             if (dto.getPassword() == null || dto.getPassword().isBlank()) throw new EngineException("Password is required");
             // WO-SEC-46: enforce password complexity on create
             if (AdminPasswordValidator.isWeak(dto.getPassword())) throw new EngineException("Password does not meet complexity requirements");
@@ -114,7 +128,7 @@ public class UiUserServiceImpl implements UiUserService {
         UiUserEntity entity = new UiUserEntity();
         entity.setId(UUID.randomUUID());
         entity.setUsername(dto.getUsername());
-        entity.setPasswordHash(system
+        entity.setPasswordHash(invite || system
             ? passwordHasher.hash(UUID.randomUUID().toString())
             : passwordHasher.hash(dto.getPassword()));
         entity.setFullName(dto.getFullName());

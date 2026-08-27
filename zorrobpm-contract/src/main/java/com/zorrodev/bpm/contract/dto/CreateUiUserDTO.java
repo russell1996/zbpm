@@ -17,4 +17,7 @@ public class CreateUiUserDTO {
      *  A SYSTEM account has no password (login is impossible) and is exempt
      *  from forcePasswordChange. */
     private String userType;
+    /** WO-ACL-18: "INVITE" (default path — user receives a one-time link to set a password)
+     *  or "PASSWORD" (admin sets the initial password directly). */
+    private String creationMode;
 }
