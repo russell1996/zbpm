@@ -63,7 +63,7 @@ public class UserInvitationService {
         }
         invalidatePriorTokens(userId, TYPE_INVITE);
         String raw = issueToken(userId, TYPE_INVITE, user.getEmail(), invitationTtlHours);
-        String link = linkBaseUrl + "/auth/accept-invitation?token=" + raw;
+        String link = linkBaseUrl + "/ui/accept-invitation?token=" + raw;
         mailSender.send(user.getEmail(), "ZorroBPM: приглашение в систему",
                 "Вас пригласили в ZorroBPM. Установите пароль по ссылке: " + link);
         auditLogService.record(principal, "USER_INVITE_SENT", null, userId.toString());
@@ -83,7 +83,7 @@ public class UserInvitationService {
         }
         invalidatePriorTokens(userId, TYPE_RESET);
         String raw = issueToken(userId, TYPE_RESET, user.getEmail(), resetTtlHours);
-        String link = linkBaseUrl + "/auth/reset-password?token=" + raw;
+        String link = linkBaseUrl + "/ui/reset-password?token=" + raw;
         mailSender.send(user.getEmail(), "ZorroBPM: сброс пароля",
                 "Сбросьте пароль по ссылке: " + link);
         auditLogService.record(principal, "USER_RESET_SENT", null, userId.toString());
@@ -136,9 +136,12 @@ public class UserInvitationService {
         userRepository.save(user);
 
         // WO-ACL-18 criterion 6: the token is now spent — a second use must fail.
-        token.setUsed(true);
-        token.setConsumedAt(Instant.now());
-        tokenRepository.save(token);
+        // Atomic, DB-level single-use: only ONE concurrent consumer can flip used=false -> true.
+        int consumed = tokenRepository.consumeByTokenHash(hash, Instant.now());
+        if (consumed == 0) {
+            // Lost the race (or already consumed) — reject rather than silently succeed.
+            throw new EngineException("Invalid or expired token");
+        }
         auditLogService.record(null, "USER_PASSWORD_SET", null, user.getId().toString());
     }
 
