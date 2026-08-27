@@ -252,6 +252,7 @@
   "failedToSaveUser": "Пайдаланушыны сақтау мүмкін болмады",
   "userRole": "Пайдаланушы",
   "adminRole": "Админ",
+  "superAdminRole": "Супер-админ",
   "navOverview": "Шолу",
   "navDesign": "Жобалау",
   "navExecution": "Орындау",

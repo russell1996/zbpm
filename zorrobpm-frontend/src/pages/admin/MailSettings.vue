@@ -67,7 +67,7 @@ async function onSave() {
     form.value.password = ''
     toast.success(t('mailSaved'))
   } catch (e: any) {
-    toast.error(e?.response?.data ?? 'Failed to save')
+    toast.error(e?.response?.data?.message ?? 'Failed to save')
   } finally {
     saving.value = false
   }
@@ -87,7 +87,7 @@ async function onTest() {
     })
     testResult.value = msg
   } catch (e: any) {
-    testError.value = e?.response?.data ?? 'SMTP error'
+    testError.value = e?.response?.data?.message ?? 'SMTP error'
   } finally {
     testing.value = false
   }
@@ -95,7 +95,7 @@ async function onTest() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 max-w-2xl">
     <h1 class="text-2xl font-bold">{{ t('mailSettings') }}</h1>
 
     <div v-if="loading" class="text-sm text-muted-foreground" data-testid="loading">{{ t('loading') }}</div>

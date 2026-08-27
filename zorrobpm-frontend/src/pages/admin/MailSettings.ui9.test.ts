@@ -1,0 +1,132 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import MailSettings from './MailSettings.vue'
+
+const mockGetMailHealth = vi.fn()
+const mockGetMailSettings = vi.fn()
+const mockSaveMailSettings = vi.fn()
+const mockTestMailSettingsToSelf = vi.fn()
+const mockToastError = vi.fn()
+const mockToastSuccess = vi.fn()
+
+vi.mock('@/services/adminService', () => ({
+  getMailHealth: (...a: any[]) => mockGetMailHealth(...a),
+  getMailSettings: (...a: any[]) => mockGetMailSettings(...a),
+  saveMailSettings: (...a: any[]) => mockSaveMailSettings(...a),
+  testMailSettingsToSelf: (...a: any[]) => mockTestMailSettingsToSelf(...a),
+}))
+
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ success: mockToastSuccess, error: mockToastError }),
+}))
+
+describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
+  beforeEach(() => {
+    mockGetMailHealth.mockResolvedValue({
+      configured: true,
+      reachable: null,
+      lastSuccess: null,
+      lastError: null,
+      lastErrorMessage: null,
+    })
+    mockGetMailSettings.mockResolvedValue({
+      host: 'smtp.example.com',
+      port: 587,
+      username: 'sender',
+      password: null,
+      from: 'noreply@example.com',
+      allowedRecipients: '',
+      passwordSet: false,
+    })
+    mockSaveMailSettings.mockResolvedValue({
+      host: 'smtp.example.com',
+      port: 587,
+      username: 'sender',
+      password: null,
+      from: 'noreply@example.com',
+      allowedRecipients: '',
+      passwordSet: true,
+    })
+    mockTestMailSettingsToSelf.mockResolvedValue('Test email sent successfully to admin@corp.kz')
+    mockToastError.mockClear()
+    mockToastSuccess.mockClear()
+  })
+
+  it('onSave: toast shows .message, not JSON stringified object', async () => {
+    const backendMessage = 'У вашей учётки нет email, некуда слать тестовое письмо'
+    mockSaveMailSettings.mockRejectedValueOnce({
+      response: { data: { code: 'VALIDATION_ERROR', message: backendMessage } },
+    })
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    expect(mockToastError).toHaveBeenCalledTimes(1)
+    const arg = mockToastError.mock.calls[0][0] as string
+    expect(arg).toBe(backendMessage)
+    expect(arg).not.toContain('VALIDATION_ERROR')
+    expect(arg).not.toContain('{')
+    // ensure raw object was NOT passed
+    expect(typeof arg).toBe('string')
+  })
+
+  it('onTest: testError shows .message, not raw JSON', async () => {
+    const backendMessage = 'У вашей учётки нет email, некуда слать тестовое письмо'
+    mockTestMailSettingsToSelf.mockRejectedValueOnce({
+      response: { data: { code: 'VALIDATION_ERROR', message: backendMessage } },
+    })
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="test"]').trigger('click')
+    await flushPromises()
+    const errEl = wrapper.find('[data-testid="testError"]')
+    expect(errEl.exists()).toBe(true)
+    expect(errEl.text()).toBe(backendMessage)
+    expect(errEl.text()).not.toContain('VALIDATION_ERROR')
+    expect(errEl.text()).not.toContain('{')
+  })
+
+  it('onSave/onTest fall back to default when .message missing', async () => {
+    mockSaveMailSettings.mockRejectedValueOnce({ response: { data: { code: 'ERR' } } })
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    expect(mockToastError).toHaveBeenCalledWith('Failed to save')
+  })
+})
+
+describe('WO-UI-9 point 3 — MailSettings has max-w-2xl', () => {
+  beforeEach(() => {
+    mockGetMailHealth.mockResolvedValue({
+      configured: true,
+      reachable: null,
+      lastSuccess: null,
+      lastError: null,
+      lastErrorMessage: null,
+    })
+    mockGetMailSettings.mockResolvedValue({
+      host: 'smtp.example.com',
+      port: 587,
+      username: 'sender',
+      password: null,
+      from: 'noreply@example.com',
+      allowedRecipients: '',
+      passwordSet: false,
+    })
+  })
+
+  it('root wrapper has max-w-2xl (like MyApiKey.vue)', async () => {
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    // the root div in <template> is the first div with space-y-6
+    const root = wrapper.find('div.space-y-6')
+    expect(root.exists()).toBe(true)
+    expect(root.classes()).toContain('max-w-2xl')
+  })
+})
