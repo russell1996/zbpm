@@ -75,6 +75,8 @@ public class UserResource implements UserContract {
             return id(userService.update(id, dto));
         } catch (NoSuchElementException e) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+        } catch (EngineException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
         }
     }
 
