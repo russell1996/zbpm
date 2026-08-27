@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,10 +15,14 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class PasswordResetRateLimiter {
 
-    private volatile int emailCapacity = 5;
-    private volatile int emailWindowSeconds = 3600;
-    private volatile int ipCapacity = 20;
-    private volatile int ipWindowSeconds = 3600;
+    @Value("${zorrobpm.security.rate-limit.reset-email-capacity:5}")
+    private int emailCapacity = 5;
+    @Value("${zorrobpm.security.rate-limit.reset-email-window-seconds:3600}")
+    private int emailWindowSeconds = 3600;
+    @Value("${zorrobpm.security.rate-limit.reset-ip-capacity:20}")
+    private int ipCapacity = 20;
+    @Value("${zorrobpm.security.rate-limit.reset-ip-window-seconds:3600}")
+    private int ipWindowSeconds = 3600;
 
     private final ConcurrentHashMap<String, Bucket> emailBuckets = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Bucket> ipBuckets = new ConcurrentHashMap<>();
