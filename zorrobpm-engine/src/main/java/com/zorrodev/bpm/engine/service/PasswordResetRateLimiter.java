@@ -1,9 +1,11 @@
 package com.zorrodev.bpm.engine.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * WO-ACL-18 criterion 13: throttles password-reset REQUESTS per email address AND per client IP,
@@ -24,8 +26,14 @@ public class PasswordResetRateLimiter {
     @Value("${zorrobpm.security.rate-limit.reset-ip-window-seconds:3600}")
     private int ipWindowSeconds = 3600;
 
-    private final ConcurrentHashMap<String, Bucket> emailBuckets = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Bucket> ipBuckets = new ConcurrentHashMap<>();
+    private final Cache<String, Bucket> emailBuckets = Caffeine.newBuilder()
+        .maximumSize(100_000)
+        .expireAfterAccess(1, TimeUnit.HOURS)
+        .build();
+    private final Cache<String, Bucket> ipBuckets = Caffeine.newBuilder()
+        .maximumSize(100_000)
+        .expireAfterAccess(1, TimeUnit.HOURS)
+        .build();
 
     public void setEmailCapacity(int capacity) { this.emailCapacity = capacity; }
     public void setEmailWindowSeconds(int windowSeconds) { this.emailWindowSeconds = windowSeconds; }
@@ -42,15 +50,15 @@ public class PasswordResetRateLimiter {
         return acquire(ipBuckets, ip, ipCapacity, ipWindowSeconds);
     }
 
-    private synchronized boolean acquire(ConcurrentHashMap<String, Bucket> map, String key, int capacity, int windowSeconds) {
+    private synchronized boolean acquire(Cache<String, Bucket> cache, String key, int capacity, int windowSeconds) {
         long now = System.currentTimeMillis();
-        Bucket bucket = map.computeIfAbsent(key, k -> new Bucket(capacity, windowSeconds));
+        Bucket bucket = cache.get(key, k -> new Bucket(capacity, windowSeconds));
         return bucket.tryConsume(now);
     }
 
     public void reset() {
-        emailBuckets.clear();
-        ipBuckets.clear();
+        emailBuckets.invalidateAll();
+        ipBuckets.invalidateAll();
     }
 
     static class Bucket {
