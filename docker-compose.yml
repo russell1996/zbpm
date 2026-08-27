@@ -112,6 +112,9 @@ services:
       ZORROBPM_MAIL_PASSWORD: ${ZORROBPM_MAIL_PASSWORD:-}
       ZORROBPM_MAIL_FROM: ${ZORROBPM_MAIL_FROM:-}
       ZORROBPM_MAIL_ALLOWED_RECIPIENTS: ${ZORROBPM_MAIL_ALLOWED_RECIPIENTS:-}
+      # WO-INT-6: missing from the original service definition — .env having the var is not enough,
+      # compose only forwards vars explicitly listed here into the container.
+      ZORROBPM_MAIL_PASSWORD_ENCRYPTION_KEY: ${ZORROBPM_MAIL_PASSWORD_ENCRYPTION_KEY:-}
       TZ: Asia/Almaty
     volumes:
       - app-files:/app/files
