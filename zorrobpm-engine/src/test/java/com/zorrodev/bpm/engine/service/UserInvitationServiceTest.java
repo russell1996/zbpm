@@ -172,6 +172,18 @@ class UserInvitationServiceTest {
                 .isInstanceOf(EngineException.class);
     }
 
+    // ---- Criterion 11: admin reset for an account WITHOUT email is rejected with a clear message ----
+    @Test
+    void adminReset_rejectsAccountWithoutEmail() {
+        humanUser.setEmail(null);
+        when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
+        assertThatThrownBy(() -> service.adminReset(humanUser.getId(), admin))
+                .isInstanceOf(EngineException.class)
+                .hasMessageContaining("no email");
+        // No reset link may be sent to a non-existent address.
+        verify(mailSender, never()).send(anyString(), anyString(), anyString());
+    }
+
     // ---- Criterion 12: forgot-password is enumeration-safe (service level) ----
     @Test
     void requestReset_sendsEmailForEligibleUser_only() {

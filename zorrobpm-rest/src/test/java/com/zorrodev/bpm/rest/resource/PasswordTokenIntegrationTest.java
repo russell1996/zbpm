@@ -131,6 +131,30 @@ class PasswordTokenIntegrationTest {
     }
 
     @Test
+    void criterion11_adminResetWithoutEmailRejected() throws Exception {
+        // An account that has no email cannot receive a reset link — the request must fail clearly.
+        UiUserEntity target = new UiUserEntity();
+        target.setId(UUID.randomUUID());
+        target.setUsername("acl18-noemail");
+        target.setRole("USER");
+        target.setActive(true);
+        target.setPasswordHash(passwordHasher.hash("InitPassw0rd!"));
+        target.setCreatedAt(Instant.now());
+        target.setUpdatedAt(Instant.now());
+        userRepository.save(target);
+
+        stubMail.clear();
+        mockMvc.perform(post("/users/" + target.getId() + "/reset-password")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
+
+        // No reset email must have been dispatched to a non-existent address.
+        assertThat(stubMail.getSent()).isEmpty();
+
+        userRepository.deleteById(target.getId());
+    }
+
+    @Test
     void criterion12_forgotPasswordIsEnumerationSafe() throws Exception {
         // Known and unknown emails must produce an identical (200) response.
         mockMvc.perform(post("/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
@@ -138,6 +162,30 @@ class PasswordTokenIntegrationTest {
                 .andExpect(status().isOk());
         mockMvc.perform(post("/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
                         .content(mapper.writeValueAsString(Map.of("email", "definitely-not-here@corp.kz"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void criterion1_passwordCreationWorks() throws Exception {
+        String username = "acl18-pwd-" + UUID.randomUUID().toString().substring(0, 8);
+        CreateUiUserDTO dto = new CreateUiUserDTO();
+        dto.setUsername(username);
+        dto.setEmail(username + "@corp.kz");
+        dto.setRole("USER");
+        dto.setActive(true);
+        dto.setPassword("PwdPassw0rd!");
+        dto.setCreationMode("PASSWORD");
+
+        mockMvc.perform(post("/users").header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(dto)))
+                .andExpect(status().isOk());
+
+        // PASSWORD path → usable password immediately, no invitation link needed.
+        LoginDTO login = new LoginDTO();
+        login.setUsername(username);
+        login.setPassword("PwdPassw0rd!");
+        mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(login)))
                 .andExpect(status().isOk());
     }
 
