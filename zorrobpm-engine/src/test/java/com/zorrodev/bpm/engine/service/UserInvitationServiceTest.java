@@ -123,11 +123,24 @@ class UserInvitationServiceTest {
         verify(tokenRepository).invalidateByUserAndType(eq(humanUser.getId()), eq("INVITE"), any(Instant.class));
     }
 
+    // ---- B1: invitation link must point at the SPA route (/ui/...), not the API path (/auth/...) ----
+    @Test
+    void createInvitation_linkUsesUiPath() {
+        when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
+
+        service.createInvitation(humanUser.getId(), admin);
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mailSender).send(eq("invitee@corp.kz"), anyString(), bodyCaptor.capture());
+        assertThat(bodyCaptor.getValue()).contains("/ui/accept-invitation").doesNotContain("/auth/accept-invitation");
+    }
+
     // ---- Criterion 4 + 6: consume sets password and makes token single-use ----
     @Test
     void consumeToken_setsPassword_andIsSingleUse() {
         PasswordTokenEntity token = token();
         when(tokenRepository.findByTokenHashAndUsedFalse("HASHED-TOKEN")).thenReturn(Optional.of(token), Optional.empty());
+        when(tokenRepository.consumeByTokenHash(eq("HASHED-TOKEN"), any(Instant.class))).thenReturn(1);
         when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
 
         service.consumeToken("RAW-TOKEN", "NewPassw0rd!");
@@ -136,11 +149,10 @@ class UserInvitationServiceTest {
         verify(userRepository).save(userCaptor.capture());
         assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("NEW-HASH");
 
-        ArgumentCaptor<PasswordTokenEntity> tokenCaptor = ArgumentCaptor.forClass(PasswordTokenEntity.class);
-        verify(tokenRepository).save(tokenCaptor.capture());
-        assertThat(tokenCaptor.getValue().isUsed()).isTrue();
+        // Criterion 6: single-use is enforced atomically (CAS), not via a separate save().
+        verify(tokenRepository).consumeByTokenHash(eq("HASHED-TOKEN"), any(Instant.class));
 
-        // Second use must fail (criterion 6).
+        // Second use must fail (criterion 6) — the token is already spent.
         assertThatThrownBy(() -> service.consumeToken("RAW-TOKEN", "OtherPass1!"))
                 .isInstanceOf(EngineException.class);
     }
@@ -161,7 +173,11 @@ class UserInvitationServiceTest {
     void adminReset_sendsResetEmail() {
         when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
         service.adminReset(humanUser.getId(), admin);
-        verify(mailSender).send(eq("invitee@corp.kz"), anyString(), contains("RAW-TOKEN"));
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mailSender).send(eq("invitee@corp.kz"), anyString(), bodyCaptor.capture());
+        assertThat(bodyCaptor.getValue()).contains("RAW-TOKEN");
+        // B1: the link must point at the SPA route (/ui/...), not the API path (/auth/...), or it 404s.
+        assertThat(bodyCaptor.getValue()).contains("/ui/reset-password").doesNotContain("/auth/reset-password");
         verify(auditLogService).record(eq(admin), eq("USER_RESET_SENT"), isNull(), eq(humanUser.getId().toString()));
     }
 
