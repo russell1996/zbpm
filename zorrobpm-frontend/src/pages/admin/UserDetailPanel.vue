@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import type { User } from '@/entities/user/User'
 import * as admin from '@/services/adminService'
+import { adminResetPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 
@@ -208,6 +209,20 @@ onMounted(() => {
   loadMembers()
   loadProcesses()
 })
+
+// WO-ACL-18 criterion 10/11: super-admin can trigger a password reset link for a (non-system) user.
+const resettingPassword = ref(false)
+async function resetUserPassword() {
+  resettingPassword.value = true
+  try {
+    await adminResetPassword(props.user.id)
+    toast.success(t('resetPasswordSent'))
+  } catch {
+    toast.error(t('failedToResetPassword'))
+  } finally {
+    resettingPassword.value = false
+  }
+}
 </script>
 
 <template>
@@ -215,6 +230,22 @@ onMounted(() => {
     <div class="flex items-center justify-between">
       <h3 class="font-bold text-lg">{{ user.username }}</h3>
       <button class="text-sm text-muted-foreground hover:text-foreground" @click="emit('close')">{{ t('close') }}</button>
+    </div>
+
+    <!-- === Account Section (WO-ACL-18) === -->
+    <div class="space-y-3">
+      <h4 class="font-semibold text-sm uppercase text-muted-foreground">{{ t('account') }}</h4>
+      <div v-if="user.userType === 'SYSTEM'" class="text-sm text-muted-foreground">{{ t('systemAccountNoReset') }}</div>
+      <button
+        v-else
+        class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50"
+        :disabled="resettingPassword"
+        data-testid="reset-password-button"
+        @click="resetUserPassword"
+      >
+        {{ t('resetPassword') }}
+      </button>
+      <p class="text-xs text-muted-foreground">{{ t('resetPasswordHint') }}</p>
     </div>
 
     <!-- === API Key Section === -->

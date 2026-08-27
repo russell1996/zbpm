@@ -115,6 +115,14 @@ services:
       # WO-INT-6: missing from the original service definition — .env having the var is not enough,
       # compose only forwards vars explicitly listed here into the container.
       ZORROBPM_MAIL_PASSWORD_ENCRYPTION_KEY: ${ZORROBPM_MAIL_PASSWORD_ENCRYPTION_KEY:-}
+      # WO-ACL-18: invitation / password-reset links + rate-limit tuning.
+      ZORROBPM_MAIL_LINK_BASE_URL: ${ZORROBPM_MAIL_LINK_BASE_URL:-http://localhost:5173}
+      ZORROBPM_INVITATION_TTL_HOURS: ${ZORROBPM_INVITATION_TTL_HOURS:-24}
+      ZORROBPM_RESET_TTL_HOURS: ${ZORROBPM_RESET_TTL_HOURS:-24}
+      ZORROBPM_RESET_EMAIL_CAPACITY: ${ZORROBPM_RESET_EMAIL_CAPACITY:-5}
+      ZORROBPM_RESET_EMAIL_WINDOW: ${ZORROBPM_RESET_EMAIL_WINDOW:-3600}
+      ZORROBPM_RESET_IP_CAPACITY: ${ZORROBPM_RESET_IP_CAPACITY:-20}
+      ZORROBPM_RESET_IP_WINDOW: ${ZORROBPM_RESET_IP_WINDOW:-3600}
       TZ: Asia/Almaty
     volumes:
       - app-files:/app/files

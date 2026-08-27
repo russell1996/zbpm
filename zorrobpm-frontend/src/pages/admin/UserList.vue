@@ -31,6 +31,8 @@ const formFullName = ref('')
 const formEmail = ref('')
 const formRole = ref<UserRole>('USER')
 const formActive = ref(true)
+/** WO-ACL-18: default creation path is an invitation (one-time link), not a direct password. */
+const formCreationMode = ref<string>('INVITE')
 
 async function loadUsers() {
   loading.value = true
@@ -51,6 +53,7 @@ function openCreate() {
   formEmail.value = ''
   formRole.value = 'USER'
   formActive.value = true
+  formCreationMode.value = 'INVITE'
   showForm.value = true
 }
 
@@ -66,6 +69,20 @@ function openEdit(user: User) {
 }
 
 async function save() {
+  if (!formUsername.value) {
+    toast.warning(t('fillRequired'))
+    return
+  }
+  // WO-ACL-18: in INVITE mode a password is not set here and an email is required;
+  // in PASSWORD mode the password is required instead.
+  if (!editingUser.value && formCreationMode.value === 'INVITE' && !formEmail.value) {
+    toast.warning(t('emailRequiredForInvite'))
+    return
+  }
+  if (!editingUser.value && formCreationMode.value === 'PASSWORD' && !formPassword.value) {
+    toast.warning(t('passwordRequired'))
+    return
+  }
   saving.value = true
   try {
     if (editingUser.value) {
@@ -79,11 +96,12 @@ async function save() {
     } else {
       await createUser({
         username: formUsername.value,
-        password: formPassword.value,
+        password: formCreationMode.value === 'PASSWORD' ? formPassword.value : '',
         fullName: formFullName.value || null,
         email: formEmail.value || null,
         role: formRole.value,
         active: formActive.value,
+        creationMode: formCreationMode.value,
       })
     }
     showForm.value = false
@@ -174,6 +192,14 @@ onMounted(loadUsers)
               >
                 {{ t('systemAccount') }}
               </span>
+              <!-- WO-ACL-18 criterion 5: an outstanding invite token means the account is not yet active-with-password -->
+              <span
+                v-if="user.pendingInvitation"
+                class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-700"
+                data-testid="pending-invitation-badge"
+              >
+                {{ t('invited') }}
+              </span>
             </td>
             <td class="px-4 py-3">{{ user.fullName || '—' }}</td>
             <td class="px-4 py-3">{{ user.email || '—' }}</td>
@@ -226,7 +252,18 @@ onMounted(loadUsers)
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
             />
           </div>
-          <div>
+          <!-- WO-ACL-18: choose how the account is created (invitation link vs direct password) -->
+          <div v-if="!editingUser">
+            <label class="block text-sm font-medium mb-1">{{ t('creationModeLabel') }}</label>
+            <select v-model="formCreationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+              <option value="INVITE">{{ t('invitationMode') }}</option>
+              <option value="PASSWORD">{{ t('passwordMode') }}</option>
+            </select>
+            <p v-if="formCreationMode === 'INVITE'" class="mt-1 text-xs text-muted-foreground">
+              {{ t('inviteHint') }}
+            </p>
+          </div>
+          <div v-if="editingUser || formCreationMode === 'PASSWORD'">
             <label class="block text-sm font-medium mb-1">{{ editingUser ? t('newPasswordOptional') : t('password') }}</label>
             <input
               v-model="formPassword"
@@ -234,6 +271,9 @@ onMounted(loadUsers)
               autocomplete="new-password"
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
+          </div>
+          <div v-else-if="formCreationMode === 'INVITE'" class="text-xs text-muted-foreground">
+            {{ t('inviteEmailNote') }}
           </div>
           <div>
             <label class="block text-sm font-medium mb-1">{{ t('fullName') }}</label>

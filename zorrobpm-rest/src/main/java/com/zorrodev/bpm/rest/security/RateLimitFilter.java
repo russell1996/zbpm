@@ -292,7 +292,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
      * If remoteAddr is a trusted proxy, extract real IP from X-Forwarded-For (leftmost).
      * Otherwise, use remoteAddr directly (XFF ignored — anti-spoofing).
      */
-    private String getClientIp(HttpServletRequest request) {
+    public String getClientIp(HttpServletRequest request) {
         String remoteAddr = request.getRemoteAddr();
         if (trustedProxies.isEmpty() || !isTrustedProxy(remoteAddr)) {
             return remoteAddr;

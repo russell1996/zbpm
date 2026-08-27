@@ -8,7 +8,12 @@ import com.zorrodev.bpm.contract.dto.UpdateUiUserDTO;
 import com.zorrodev.bpm.contract.dto.query.UiUserQuery;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.UiUser;
+import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.security.TokenService;
+import com.zorrodev.bpm.engine.service.AuditLogService;
+import com.zorrodev.bpm.engine.service.UserInvitationService;
 import com.zorrodev.bpm.engine.service.UiUserService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springdoc.core.annotations.ParameterObject;
@@ -27,6 +32,9 @@ import java.util.UUID;
 public class UserResource implements UserContract {
 
     private final UiUserService userService;
+    private final UserInvitationService invitationService;
+    private final AuditLogService auditLogService;
+    private final HttpServletRequest request;
 
     @Override
     public PagedDataDTO<UiUser> getUsers(@ParameterObject UiUserQuery query) {
@@ -45,7 +53,16 @@ public class UserResource implements UserContract {
     @Override
     public IdDTO createUser(@RequestBody CreateUiUserDTO dto) {
         try {
-            return id(userService.create(dto));
+            UUID id = userService.create(dto);
+            // WO-ACL-18: the chosen creation path is recorded (criterion 3), and an
+            // invitation link is emailed when the INVITE path was selected.
+            if ("INVITE".equalsIgnoreCase(dto.getCreationMode())) {
+                invitationService.createInvitation(id, principalFromRequest());
+                auditLogService.record(principalFromRequest(), "USER_CREATE_INVITE", null, id.toString());
+            } else {
+                auditLogService.record(principalFromRequest(), "USER_CREATE_PASSWORD", null, id.toString());
+            }
+            return id(id);
         } catch (EngineException e) {
             log.warn("Failed to create user: {}", e.getMessage());
             throw new ResponseStatusException(HttpStatus.CONFLICT, "User creation failed");
@@ -59,6 +76,24 @@ public class UserResource implements UserContract {
         } catch (NoSuchElementException e) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
         }
+    }
+
+    /** WO-ACL-18 criterion 10: admin "reset password" button — issues a reset link. */
+    @org.springframework.web.bind.annotation.PostMapping("/users/{id}/reset-password")
+    public IdDTO resetPassword(@PathVariable UUID id) {
+        try {
+            invitationService.adminReset(id, principalFromRequest());
+            return id(id);
+        } catch (EngineException e) {
+            log.warn("Failed to reset password for {}: {}", id, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+    }
+
+    private Principal principalFromRequest() {
+        TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
+        if (claims == null) return null;
+        return new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role());
     }
 
     private IdDTO id(UUID value) {
