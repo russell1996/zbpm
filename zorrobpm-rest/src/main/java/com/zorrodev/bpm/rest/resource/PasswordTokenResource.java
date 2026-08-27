@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.PasswordTokenContract;
 import com.zorrodev.bpm.contract.dto.ForgotPasswordDTO;
 import com.zorrodev.bpm.contract.dto.ResetPasswordDTO;
 import com.zorrodev.bpm.engine.service.UserInvitationService;
+import com.zorrodev.bpm.rest.security.RateLimitFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,12 +24,16 @@ public class PasswordTokenResource implements PasswordTokenContract {
 
     private final UserInvitationService invitationService;
     private final HttpServletRequest request;
+    private final RateLimitFilter rateLimitFilter;
 
     @Override
     public void forgotPassword(@RequestBody ForgotPasswordDTO dto) {
         // WO-ACL-18 criterion 12: enumeration-safe — always 200, identical response
         // regardless of whether the email maps to a real account.
-        String clientIp = request.getRemoteAddr();
+        // B5 (HOLD): use the proxy-aware client IP (honors X-Forwarded-For behind a
+        // configured trusted proxy) instead of the raw socket peer, so the per-IP
+        // reset bucket is not collapsed onto the proxy address for all users.
+        String clientIp = rateLimitFilter.getClientIp(request);
         invitationService.requestReset(dto.getEmail(), clientIp);
     }
 
