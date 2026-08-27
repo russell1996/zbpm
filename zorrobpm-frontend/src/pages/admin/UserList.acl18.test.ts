@@ -31,7 +31,7 @@ describe('UserList WO-ACL-18', () => {
 
   it('criterion5: shows an "invited" badge when the account has a pending invitation', async () => {
     const { getUsers } = await import('@/services/userService')
-    vi.mocked(getUsers).mockResolvedValue({ data: [pendingUser(true)], totalElements: 1 })
+    vi.mocked(getUsers).mockResolvedValue({ data: [pendingUser(true)], totalElements: 1, pageIndex: 0, pageSize: 100 })
     const wrapper = mount(UserList)
     await flushPromises()
     const badge = wrapper.find('[data-testid="pending-invitation-badge"]')
@@ -41,7 +41,7 @@ describe('UserList WO-ACL-18', () => {
 
   it('criterion5: no badge once the invitation has been accepted', async () => {
     const { getUsers } = await import('@/services/userService')
-    vi.mocked(getUsers).mockResolvedValue({ data: [pendingUser(false)], totalElements: 1 })
+    vi.mocked(getUsers).mockResolvedValue({ data: [pendingUser(false)], totalElements: 1, pageIndex: 0, pageSize: 100 })
     const wrapper = mount(UserList)
     await flushPromises()
     expect(wrapper.find('[data-testid="pending-invitation-badge"]').exists()).toBe(false)
