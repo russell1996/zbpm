@@ -21,6 +21,22 @@ const router = createRouter({
       component: () => import('@/pages/AccessDenied.vue'),
     },
     {
+      // WO-ACL-18: public, unauthenticated password recovery / invitation acceptance.
+      path: '/forgot-password',
+      name: 'forgot-password',
+      component: () => import('@/pages/ForgotPassword.vue'),
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: () => import('@/pages/ResetPassword.vue'),
+    },
+    {
+      path: '/accept-invitation',
+      name: 'accept-invitation',
+      component: () => import('@/pages/AcceptInvitation.vue'),
+    },
+    {
       path: '/change-password',
       name: 'change-password',
       component: () => import('@/pages/ChangePassword.vue'),

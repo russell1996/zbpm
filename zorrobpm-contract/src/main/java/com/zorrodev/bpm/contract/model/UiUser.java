@@ -21,4 +21,6 @@ public class UiUser {
     private String userType;
     private Instant createdAt;
     private Instant updatedAt;
+    /** WO-ACL-18: true while an unexpired invitation link for this user is outstanding. */
+    private boolean pendingInvitation;
 }
