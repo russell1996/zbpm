@@ -165,7 +165,8 @@ class UserInvitationServiceTest {
         when(tokenRepository.findByTokenHashAndUsedFalse("HASHED-TOKEN")).thenReturn(Optional.of(token));
 
         assertThatThrownBy(() -> service.consumeToken("RAW-TOKEN", "NewPassw0rd!"))
-                .isInstanceOf(EngineException.class);
+                .isInstanceOf(EngineException.class)
+                .hasMessageContaining("Invalid or expired token");
     }
 
     // ---- Criterion 10: admin reset rejects system / missing email, sends reset email ----
