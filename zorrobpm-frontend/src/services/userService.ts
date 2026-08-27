@@ -33,3 +33,27 @@ export async function changeMyPassword(currentPassword: string, newPassword: str
   const { data } = await api.put<IdDTO>('/me/password', { currentPassword, newPassword })
   return data
 }
+
+/**
+ * WO-ACL-18 criterion 12: request a password-reset link.
+ * Enumeration-safe by design — the server returns 200 regardless of whether the email exists,
+ * so this call never leaks account existence.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await api.post('/auth/forgot-password', { email })
+}
+
+/** WO-ACL-18: consume a one-time reset/invitation token and set a new password. */
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await api.post('/auth/reset-password', { token, password: newPassword })
+}
+
+/** WO-ACL-18: consume a one-time invitation token and set the account's first password. */
+export async function acceptInvitation(token: string, newPassword: string): Promise<void> {
+  await api.post('/auth/accept-invitation', { token, password: newPassword })
+}
+
+/** WO-ACL-18 criterion 10/11: super-admin triggered a password reset for a user. */
+export async function adminResetPassword(userId: string): Promise<void> {
+  await api.post(`/users/${userId}/reset-password`)
+}
