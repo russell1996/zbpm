@@ -82,6 +82,15 @@ async function submit() {
       >
         {{ isLoading ? t('signingIn') : t('signIn') }}
       </button>
+
+      <button
+        type="button"
+        class="w-full text-sm text-primary hover:underline"
+        data-testid="forgot-password-link"
+        @click="router.push('/forgot-password')"
+      >
+        {{ t('forgotPasswordTitle') }}
+      </button>
     </form>
   </div>
 </template>
