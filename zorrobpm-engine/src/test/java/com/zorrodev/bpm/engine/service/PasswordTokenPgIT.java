@@ -36,11 +36,13 @@ public class PasswordTokenPgIT extends PostgresIT {
 
     @Test
     void migrationApplied_tableExists_andHashStoredNotRaw() {
+        // Unique per run so the assertion is isolated from any leftover rows in a shared PG DB.
+        String tokenHash = "HASHED-" + UUID.randomUUID();
         PasswordTokenEntity e = new PasswordTokenEntity();
         e.setId(UUID.randomUUID());
         e.setUserId(UUID.randomUUID());
         e.setType("INVITE");
-        e.setTokenHash("HASHED-VALUE");
+        e.setTokenHash(tokenHash);
         e.setEmail("invitee@corp.kz");
         e.setExpiresAt(Instant.now().plusSeconds(3600));
         e.setUsed(false);
@@ -50,10 +52,10 @@ public class PasswordTokenPgIT extends PostgresIT {
         // Raw column must hold the hash, not a raw token.
         String raw = jdbcTemplate.queryForObject(
                 "select token_hash from password_tokens where id = ?", String.class, e.getId());
-        assertThat(raw).isEqualTo("HASHED-VALUE");
+        assertThat(raw).isEqualTo(tokenHash);
         assertThat(raw).isNotEqualTo("RAW-TOKEN");
 
-        Optional<PasswordTokenEntity> reloaded = tokenRepository.findByTokenHashAndUsedFalse("HASHED-VALUE");
+        Optional<PasswordTokenEntity> reloaded = tokenRepository.findByTokenHashAndUsedFalse(tokenHash);
         assertThat(reloaded).isPresent();
         assertThat(reloaded.get().getEmail()).isEqualTo("invitee@corp.kz");
     }
@@ -66,16 +68,20 @@ public class PasswordTokenPgIT extends PostgresIT {
     @Test
     void consumeToken_isAtomicUnderConcurrentSubmits() throws Exception {
         UUID userId = UUID.randomUUID();
+        // Unique username/email/token per run so the race test is isolated from any leftover rows
+        // in a shared PG volume (the CAS assertion relies on exactly one row for this token).
+        String username = "racer-" + UUID.randomUUID();
+        String email = username + "@corp.kz";
         jdbcTemplate.update(
                 "INSERT INTO ui_users (id, username, password_hash, role, active, created_at, updated_at) " +
-                        "VALUES (?, 'racer', 'OLD-HASH', 'USER', true, now(), now())", userId);
+                        "VALUES (?, ?, 'OLD-HASH', 'USER', true, now(), now())", userId, username);
 
-        String raw = "RACE-RAW-TOKEN";
+        String raw = "RACE-RAW-TOKEN-" + UUID.randomUUID();
         String hash = tokenService.hashToken(raw);
         jdbcTemplate.update(
                 "INSERT INTO password_tokens (id, user_id, type, token_hash, email, expires_at, used, created_at) " +
-                        "VALUES (?, ?, 'RESET', ?, 'racer@corp.kz', now() + interval '1 hour', false, now())",
-                UUID.randomUUID(), userId, hash);
+                        "VALUES (?, ?, 'RESET', ?, ?, now() + interval '1 hour', false, now())",
+                UUID.randomUUID(), userId, hash, email);
 
         int threadCount = 2;
         ExecutorService pool = Executors.newFixedThreadPool(threadCount);

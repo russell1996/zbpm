@@ -107,7 +107,7 @@ public class UserInvitationService {
         }
         invalidatePriorTokens(user.get().getId(), TYPE_RESET);
         String raw = issueToken(user.get().getId(), TYPE_RESET, user.get().getEmail(), resetTtlHours);
-        String link = linkBaseUrl + "/auth/reset-password?token=" + raw;
+        String link = linkBaseUrl + "/ui/reset-password?token=" + raw;
         mailSender.send(user.get().getEmail(), "ZorroBPM: сброс пароля",
                 "Сбросьте пароль по ссылке: " + link);
     }
