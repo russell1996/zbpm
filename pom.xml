@@ -28,11 +28,15 @@
              (42.7.11 fixed CVE-2026-42198 but not CVE-2026-54291 per dependency-check scan.) -->
         <postgresql.version>42.7.13</postgresql.version>
         <!-- WO-SEC-38: override netty 4.2.12.Final→4.2.16.Final to fix 38 CVE (CVSS 10.0).
-             Spring Boot 4.0.6 BOM pins netty 4.2.12.Final; 4.2.16.Final is the patched release. -->
-        <netty.version>4.2.16.Final</netty.version>
+             WO-SEC-61: 4.2.16.Final→4.2.17.Final to fix CVE-2026-62380 (SOCKS4/5 client encoder
+             null-byte/CRLF/credential injection). Spring Boot 4.0.6 BOM pins netty 4.2.12.Final;
+             4.2.17.Final is the current patched release. -->
+        <netty.version>4.2.17.Final</netty.version>
         <!-- WO-SEC-38: override tomcat 11.0.21→11.0.24 to fix 15 CVE (CVSS 9.8).
-             Spring Boot 4.0.6 BOM pins tomcat-embed-core 11.0.21; 11.0.24 is the patched release. -->
-        <tomcat.version>11.0.24</tomcat.version>
+             WO-SEC-61: 11.0.24→11.0.25 to fix 9 more CVE disclosed 2026-08-25 (CVSS up to 9.8):
+             CVE-2026-65183/65927/66422/68763/68525/65182/68569/65905/65637.
+             Spring Boot 4.0.6 BOM pins tomcat-embed-core 11.0.21; 11.0.25 is the current patched release. -->
+        <tomcat.version>11.0.25</tomcat.version>
         <!-- WO-SEC-38: override spring-amqp 4.0.3→4.0.4 to fix CVE-2026-41714 (TLS bypass, CVSS 4.0).
              Spring Boot 4.0.6 BOM pins spring-amqp 4.0.3; 4.0.4 is the patched release. -->
         <spring-amqp.version>4.0.4</spring-amqp.version>
