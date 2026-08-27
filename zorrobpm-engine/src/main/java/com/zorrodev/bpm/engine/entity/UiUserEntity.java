@@ -21,7 +21,7 @@ public class UiUserEntity {
     private String passwordHash;
     private String fullName;
     private String email;
-    /** "ADMIN" or "USER". */
+    /** "SUPER_ADMIN", "ADMIN" or "USER". */
     private String role;
     private boolean active;
     private boolean forcePasswordChange;
