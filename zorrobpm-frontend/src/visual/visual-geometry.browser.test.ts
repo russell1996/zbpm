@@ -24,6 +24,7 @@ import SidebarNav from '@/widgets/shared/SidebarNav.vue'
 import TimerList from '@/pages/timers/TimerList.vue'
 import AppDrawer from '@/widgets/shared/AppDrawer.vue'
 import MySubmissions from '@/pages/processes/MySubmissions.vue'
+import MailSettings from '@/pages/admin/MailSettings.vue'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
 import kz from '@/locales/kz.json'
@@ -83,6 +84,8 @@ vi.mock('@/stores/breadcrumb', () => ({
 }))
 
 const mockListMembers = vi.hoisted(() => vi.fn())
+const mockGetMailHealth = vi.hoisted(() => vi.fn())
+const mockGetMailSettings = vi.hoisted(() => vi.fn())
 vi.mock('@/services/adminService', () => ({
   listMembers: mockListMembers,
   changeMemberRole: vi.fn().mockResolvedValue({}),
@@ -92,6 +95,10 @@ vi.mock('@/services/adminService', () => ({
     { userId: 'u-bob', username: 'bob', fullName: '', email: '' },
   ]),
   addMember: vi.fn().mockResolvedValue({}),
+  getMailHealth: mockGetMailHealth,
+  getMailSettings: mockGetMailSettings,
+  saveMailSettings: vi.fn().mockResolvedValue({ passwordSet: true }),
+  testMailSettingsToSelf: vi.fn().mockResolvedValue('ok'),
 }))
 
 const mockGetTimers = vi.hoisted(() => vi.fn())
@@ -664,5 +671,46 @@ describe('WO-ACL-14 criteria 20-22 — My Submissions drawer', () => {
     expect(getComputedStyle(scroller!).overflowX).toBe('auto')
 
     await page.screenshot({ path: `${SHOT_DIR}/wo-acl-14-my-submissions.png` })
+  })
+})
+
+// ---- WO-UI-9 point 3 — MailSettings form is capped at max-w-2xl (like MyApiKey) ----
+
+describe('WO-UI-9 point 3 — MailSettings max-w-2xl', () => {
+  it('root is capped at max-w-2xl (672px) — not full-width stretched', async () => {
+    mockGetMailHealth.mockResolvedValue({
+      configured: true,
+      lastSuccess: null,
+      lastError: null,
+      lastErrorMessage: null,
+    } as any)
+    mockGetMailSettings.mockResolvedValue({
+      host: 'smtp.example.com',
+      port: 587,
+      username: 'sender',
+      password: null,
+      from: 'noreply@example.com',
+      allowedRecipients: '',
+      passwordSet: false,
+    } as any)
+
+    const host = mountHost(1280, 720)
+    hosts.push(host)
+    const wrapper = mount(MailSettings, {
+      attachTo: host,
+      global: { plugins: [createPinia(), makeI18n('en')] },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    await until(() => !!wrapper.find('[data-testid="host"]').exists())
+
+    const root = wrapper.find('div.space-y-6').element as HTMLElement
+    expect(root.classList.contains('max-w-2xl')).toBe(true)
+    const rect = root.getBoundingClientRect()
+    // max-w-2xl = 42rem = 672px. On a 1280px viewport the form must be capped.
+    expect(rect.width).toBeLessThanOrEqual(672 + 2)
+    expect(rect.width).toBeGreaterThan(0)
+
+    await page.screenshot({ path: `${SHOT_DIR}/wo-ui-9-mail-settings.png` })
   })
 })

@@ -252,6 +252,7 @@
   "failedToSaveUser": "Не удалось сохранить пользователя",
   "userRole": "Пользователь",
   "adminRole": "Админ",
+  "superAdminRole": "Супер-админ",
   "navOverview": "Обзор",
   "navDesign": "Проектирование",
   "navExecution": "Выполнение",

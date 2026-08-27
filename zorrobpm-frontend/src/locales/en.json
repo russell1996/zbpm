@@ -251,6 +251,7 @@
   "failedToSaveUser": "Failed to save user",
   "userRole": "User",
   "adminRole": "Admin",
+  "superAdminRole": "Super Admin",
   "navOverview": "Overview",
   "navDesign": "Design",
   "navExecution": "Execution",
