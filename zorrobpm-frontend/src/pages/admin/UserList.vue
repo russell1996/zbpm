@@ -296,6 +296,7 @@ onMounted(loadUsers)
             <select v-model="formRole" class="w-full px-3 py-2 border border-input rounded-md text-sm">
               <option value="USER">{{ t('userRole') }}</option>
               <option value="ADMIN">{{ t('adminRole') }}</option>
+              <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
             </select>
           </div>
           <div class="flex items-center gap-2">
