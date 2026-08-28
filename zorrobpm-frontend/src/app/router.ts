@@ -168,6 +168,36 @@ const router = createRouter({
           meta: { titleKey: 'processSchemas', requiresSuperAdmin: true },
         },
         {
+          // WO-UI-10: consolidated admin settings hub with tabs. The standalone
+          // /admin/users, /admin/submissions, /admin/mail-settings routes are kept
+          // (deep links / backward compat) but the sidebar now points here.
+          path: 'admin/settings',
+          name: 'admin-settings',
+          component: () => import('@/pages/admin/AdminSettings.vue'),
+          meta: { titleKey: 'adminSettings', requiresSuperAdmin: true },
+          children: [
+            { path: '', redirect: { name: 'admin-settings-mail' } },
+            {
+              path: 'mail-settings',
+              name: 'admin-settings-mail',
+              component: () => import('@/pages/admin/MailSettings.vue'),
+              meta: { titleKey: 'mailSettings', requiresSuperAdmin: true },
+            },
+            {
+              path: 'users',
+              name: 'admin-settings-users',
+              component: () => import('@/pages/admin/UserList.vue'),
+              meta: { titleKey: 'users', requiresSuperAdmin: true },
+            },
+            {
+              path: 'submissions',
+              name: 'admin-settings-submissions',
+              component: () => import('@/pages/admin/SubmissionQueue.vue'),
+              meta: { titleKey: 'submissionQueue', requiresSuperAdmin: true },
+            },
+          ],
+        },
+        {
           path: 'admin/mail-settings',
           name: 'admin-mail-settings',
           component: () => import('@/pages/admin/MailSettings.vue'),
