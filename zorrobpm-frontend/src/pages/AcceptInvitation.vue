@@ -4,6 +4,7 @@ import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { acceptInvitation } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
+import { isWeakPassword } from '@/utils/weakPassword'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -16,6 +17,7 @@ const confirm = ref('')
 const submitting = ref(false)
 const done = ref(false)
 const error = ref<string | null>(null)
+const passwordWeak = computed(() => isWeakPassword(password.value))
 
 async function submit() {
   error.value = null
@@ -25,6 +27,11 @@ async function submit() {
   }
   if (password.value.length < 12) {
     error.value = t('passwordTooShort')
+    return
+  }
+  // WO-ACL-19 (P2): apply the shared weak-password blocklist, not just length.
+  if (passwordWeak.value) {
+    error.value = t('passwordTooWeak')
     return
   }
   if (password.value !== confirm.value) {
@@ -77,7 +84,7 @@ async function submit() {
         </div>
         <button
           type="submit"
-          :disabled="submitting"
+          :disabled="submitting || passwordWeak"
           class="w-full px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
         >
           {{ t('setNewPassword') }}

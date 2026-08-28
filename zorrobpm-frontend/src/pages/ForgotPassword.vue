@@ -10,6 +10,7 @@ const toast = useToast()
 const email = ref('')
 const submitting = ref(false)
 const submitted = ref(false)
+const error = ref<string | null>(null)
 
 async function submit() {
   if (!email.value) {
@@ -17,13 +18,16 @@ async function submit() {
     return
   }
   submitting.value = true
+  error.value = null
   try {
     // WO-ACL-18 criterion 12: enumeration-safe — always succeeds visibly regardless of account existence.
     await requestPasswordReset(email.value)
     submitted.value = true
   } catch {
-    // Even on a transport error we must not leak whether the account exists.
-    submitted.value = true
+    // WO-ACL-19 (P1): a real transport/5xx error (like the prod incident) must NOT be masked as
+    // success. The backend already guarantees identical 200 for "account not found", so reaching
+    // this catch means an actual failure that support/users need to see.
+    error.value = t('resetRequestFailed')
   } finally {
     submitting.value = false
   }
@@ -41,6 +45,7 @@ async function submit() {
       </div>
 
       <form v-else class="space-y-4" @submit.prevent="submit">
+        <div v-if="error" class="text-sm text-red-600" data-testid="forgot-password-error">{{ error }}</div>
         <div>
           <label class="block text-sm font-medium mb-1">{{ t('email') }}</label>
           <input

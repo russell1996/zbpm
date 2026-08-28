@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { User } from '@/entities/user/User'
 import * as admin from '@/services/adminService'
 import { adminResetPassword } from '@/services/userService'
@@ -212,17 +212,34 @@ onMounted(() => {
 
 // WO-ACL-18 criterion 10/11: super-admin can trigger a password reset link for a (non-system) user.
 const resettingPassword = ref(false)
+const resetCooldown = ref(0)
+let cooldownTimer: ReturnType<typeof setInterval> | null = null
+
+// WO-ACL-19 (P3): the backend already throttles admin resets per-email; mirror that on the client
+// so a super-admin cannot spam the button (and the user's inbox) within a single session.
 async function resetUserPassword() {
   resettingPassword.value = true
   try {
     await adminResetPassword(props.user.id)
     toast.success(t('resetPasswordSent'))
+    resetCooldown.value = 60
+    cooldownTimer = setInterval(() => {
+      resetCooldown.value -= 1
+      if (resetCooldown.value <= 0 && cooldownTimer) {
+        clearInterval(cooldownTimer)
+        cooldownTimer = null
+      }
+    }, 1000)
   } catch {
     toast.error(t('failedToResetPassword'))
   } finally {
     resettingPassword.value = false
   }
 }
+
+onUnmounted(() => {
+  if (cooldownTimer) clearInterval(cooldownTimer)
+})
 </script>
 
 <template>
@@ -239,7 +256,7 @@ async function resetUserPassword() {
       <button
         v-else
         class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50"
-        :disabled="resettingPassword"
+        :disabled="resettingPassword || resetCooldown > 0"
         data-testid="reset-password-button"
         @click="resetUserPassword"
       >
