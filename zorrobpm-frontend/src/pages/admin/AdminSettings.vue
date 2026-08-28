@@ -26,13 +26,13 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <div class="w-full">
+  <div class="w-full h-full flex flex-col">
     <h1 class="text-2xl font-bold mb-6">{{ t('adminSettings') }}</h1>
 
     <!-- Single unified container for the whole "Настройки администратора" section.
          Width/position/nav are constant; only the right content changes between sections. -->
-    <div class="bg-card border border-border rounded-lg">
-      <SidebarProvider class="!min-h-0">
+    <div class="bg-card border border-border rounded-lg flex-1 min-h-0 flex">
+      <SidebarProvider class="!min-h-0 flex-1">
         <div class="flex gap-0 flex-1">
           <!-- Left nav — fixed vertical section navigation -->
           <nav
@@ -58,7 +58,7 @@ function navigate(to: string) {
 
           <!-- Right working area — fills remaining width; height is content-driven -->
           <div
-            class="flex-1 min-w-0 p-6"
+            class="flex-1 min-w-0 p-6 overflow-auto"
             role="tabpanel"
             :aria-labelledby="activePanelId"
           >
