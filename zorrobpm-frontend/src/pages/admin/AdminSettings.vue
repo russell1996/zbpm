@@ -9,9 +9,9 @@ const router = useRouter()
 const { t } = useI18n()
 
 const sections = [
-  { to: '/admin/settings/mail-settings', labelKey: 'mailSettings', id: 'panel-mail-settings' },
   { to: '/admin/settings/users', labelKey: 'users', id: 'panel-users' },
   { to: '/admin/settings/submissions', labelKey: 'submissionQueue', id: 'panel-submissions' },
+  { to: '/admin/settings/mail-settings', labelKey: 'mailSettings', id: 'panel-mail-settings' },
 ]
 
 function isActive(to: string) {
@@ -26,10 +26,10 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <div class="w-full">
+  <div class="w-full h-full flex flex-col">
     <h1 class="text-2xl font-bold mb-6">{{ t('adminSettings') }}</h1>
-    <SidebarProvider>
-      <div class="flex gap-6">
+    <SidebarProvider class="!min-h-0 flex-1">
+      <div class="flex gap-6 h-full">
         <!-- Left nav — vertical section navigation (shadcn Sidebar primitives) -->
         <div class="w-48 shrink-0" role="tablist" aria-orientation="vertical" :aria-label="t('adminSettings')">
           <SidebarMenu class="space-y-1">
@@ -49,7 +49,7 @@ function navigate(to: string) {
 
         <!-- Right content — single surface (shadcn card tokens) -->
         <div
-          class="flex-1 min-w-0 bg-card border border-border rounded-lg p-6"
+          class="flex-1 min-w-0 bg-card border border-border rounded-lg p-6 h-full overflow-auto"
           role="tabpanel"
           :aria-labelledby="activePanelId"
         >
