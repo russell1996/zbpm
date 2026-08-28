@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
 import { getPendingSubmissions, approveSubmission, rejectSubmission, getSubmissionBpmn, type ProcessSubmission } from '@/services/submissionService'
@@ -12,8 +11,6 @@ import { RefreshCw } from 'lucide-vue-next'
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 const toast = useToast()
-const route = useRoute()
-const inAdminHub = route.path.startsWith('/admin/settings/')
 
 /**
  * WO-ACL-15 criterion 9: the queue is a HISTORY view — the tab switches the
@@ -129,7 +126,7 @@ onMounted(load)
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <div v-if="!inAdminHub">
+      <div>
         <h1 class="text-2xl font-bold">{{ t('submissionQueue') }}</h1>
         <p class="text-sm text-muted-foreground">{{ t('submissionQueueHint') }}</p>
       </div>
