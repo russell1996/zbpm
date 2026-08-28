@@ -26,13 +26,18 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <div class="w-full h-full flex flex-col">
+  <div class="w-full">
     <h1 class="text-2xl font-bold mb-6">{{ t('adminSettings') }}</h1>
-    <SidebarProvider class="!min-h-0 flex-1">
-      <div class="flex gap-6 h-full">
-        <!-- Left nav — vertical section navigation (shadcn Sidebar primitives) -->
-        <div class="w-48 shrink-0" role="tablist" aria-orientation="vertical" :aria-label="t('adminSettings')">
-          <SidebarMenu class="space-y-1">
+    <SidebarProvider class="!min-h-0">
+      <div class="flex gap-6">
+        <!-- Left nav — fixed vertical section navigation -->
+        <div
+          class="w-48 shrink-0 border-r border-border"
+          role="tablist"
+          aria-orientation="vertical"
+          :aria-label="t('adminSettings')"
+        >
+          <SidebarMenu class="space-y-1 pr-2">
             <SidebarMenuItem v-for="section in sections" :key="section.to">
               <SidebarMenuButton
                 :is-active="isActive(section.to)"
@@ -47,9 +52,9 @@ function navigate(to: string) {
           </SidebarMenu>
         </div>
 
-        <!-- Right content — single surface (shadcn card tokens) -->
+        <!-- Right working area — fills available width; height is content-driven -->
         <div
-          class="flex-1 min-w-0 bg-card border border-border rounded-lg p-6 h-full overflow-auto"
+          class="flex-1 min-w-0"
           role="tabpanel"
           :aria-labelledby="activePanelId"
         >
