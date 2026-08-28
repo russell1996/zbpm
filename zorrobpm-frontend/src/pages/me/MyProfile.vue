@@ -147,6 +147,7 @@ import { changeMyPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { Eye, EyeOff } from 'lucide-vue-next'
 import MyApiKey from './MyApiKey.vue'
+import { isWeakPassword } from '@/utils/weakPassword'
 
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -195,13 +196,7 @@ function closePasswordDialog() {
 
 const mismatch = computed(() => confirmNew.value !== '' && newPassword.value !== confirmNew.value)
 
-const weakBlocklist = new Set(['admin', 'password', 'zorrodev', '123456', 'qwerty', 'letmein', 'welcome', 'monkey', 'dragon', 'master', 'abc123', 'passw0rd', 'changeme', 'default', 'root', 'toor', 'test', 'demo', 'sample'])
-const newPasswordWeak = computed(() => {
-  const v = newPassword.value
-  if (!v) return false
-  if (v.length < 12) return true
-  return weakBlocklist.has(v.toLowerCase())
-})
+const newPasswordWeak = computed(() => isWeakPassword(newPassword.value))
 
 async function changePassword() {
   if (!auth.user || mismatch.value || newPasswordWeak.value || !newPassword.value || !currentPassword.value) return

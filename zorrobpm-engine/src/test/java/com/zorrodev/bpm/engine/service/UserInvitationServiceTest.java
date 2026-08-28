@@ -1,6 +1,8 @@
 package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.contract.exception.EngineException;
+import com.zorrodev.bpm.contract.dto.CreateUiUserDTO;
+import com.zorrodev.bpm.contract.dto.UpdateUiUserDTO;
 import com.zorrodev.bpm.engine.entity.PasswordTokenEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.PasswordTokenRepository;
@@ -222,6 +224,64 @@ class UserInvitationServiceTest {
         when(rateLimiter.tryAcquireForEmail("invitee@corp.kz")).thenReturn(false);
         service.requestReset("invitee@corp.kz", "1.2.3.4");
         verify(mailSender, never()).send(anyString(), anyString(), anyString());
+    }
+
+    // ---- WO-ACL-19 criterion 5: email subjects use the new "ZBPM:" brand, not "ZorroBPM:" ----
+    @Test
+    void requestReset_emailSubjectUsesZbpmBrand() {
+        when(userRepository.findByEmail("invitee@corp.kz")).thenReturn(Optional.of(humanUser));
+        service.requestReset("invitee@corp.kz", "1.2.3.4");
+        ArgumentCaptor<String> subjectCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mailSender).send(eq("invitee@corp.kz"), subjectCaptor.capture(), any());
+        assertThat(subjectCaptor.getValue()).startsWith("ZBPM:");
+    }
+
+    // ---- WO-ACL-19 criterion 3: admin reset is throttled per-email via the shared rate limiter ----
+    @Test
+    void adminReset_whenRateLimited_throws() {
+        when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
+        when(rateLimiter.tryAcquireForEmail(any())).thenReturn(false);
+        assertThatThrownBy(() -> service.adminReset(humanUser.getId(), admin))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Too many reset");
+        verify(mailSender, never()).send(anyString(), anyString(), anyString());
+    }
+
+    // ---- WO-ACL-19 criterion 6: a HUMAN account must have a valid email on create ----
+    @Test
+    void createUser_humanWithoutEmail_throws() {
+        CreateUiUserDTO dto = new CreateUiUserDTO();
+        dto.setUsername("newbie");
+        dto.setUserType("HUMAN");
+        dto.setCreationMode("PASSWORD");
+        dto.setPassword("Password123!");
+        assertThatThrownBy(() -> service.create(dto, admin))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Email is required");
+    }
+
+    @Test
+    void createUser_humanWithInvalidEmail_throws() {
+        CreateUiUserDTO dto = new CreateUiUserDTO();
+        dto.setUsername("newbie");
+        dto.setUserType("HUMAN");
+        dto.setCreationMode("PASSWORD");
+        dto.setPassword("Password123!");
+        dto.setEmail("not-an-email");
+        assertThatThrownBy(() -> service.create(dto, admin))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Email format is invalid");
+    }
+
+    // ---- WO-ACL-19 criterion 6: editing a HUMAN account cannot blank its email ----
+    @Test
+    void updateUser_humanBlankEmail_throws() {
+        when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
+        UpdateUiUserDTO dto = new UpdateUiUserDTO();
+        dto.setEmail("");
+        assertThatThrownBy(() -> service.update(humanUser.getId(), dto))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Email is required");
     }
 
     private PasswordTokenEntity token() {
