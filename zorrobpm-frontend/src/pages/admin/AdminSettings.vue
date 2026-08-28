@@ -28,39 +28,44 @@ function navigate(to: string) {
 <template>
   <div class="w-full">
     <h1 class="text-2xl font-bold mb-6">{{ t('adminSettings') }}</h1>
-    <SidebarProvider class="!min-h-0">
-      <div class="flex gap-6">
-        <!-- Left nav — fixed vertical section navigation -->
-        <div
-          class="w-48 shrink-0 border-r border-border"
-          role="tablist"
-          aria-orientation="vertical"
-          :aria-label="t('adminSettings')"
-        >
-          <SidebarMenu class="space-y-1 pr-2">
-            <SidebarMenuItem v-for="section in sections" :key="section.to">
-              <SidebarMenuButton
-                :is-active="isActive(section.to)"
-                role="tab"
-                :aria-selected="isActive(section.to) ? 'true' : 'false'"
-                :aria-controls="section.id"
-                @click="navigate(section.to)"
-              >
-                {{ t(section.labelKey) }}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </div>
 
-        <!-- Right working area — fills available width; height is content-driven -->
-        <div
-          class="flex-1 min-w-0 p-6"
-          role="tabpanel"
-          :aria-labelledby="activePanelId"
-        >
-          <router-view />
+    <!-- Single unified container for the whole "Настройки администратора" section.
+         Width/position/nav are constant; only the right content changes between sections. -->
+    <div class="bg-card border border-border rounded-lg">
+      <SidebarProvider class="!min-h-0">
+        <div class="flex gap-0">
+          <!-- Left nav — fixed vertical section navigation -->
+          <nav
+            class="w-48 shrink-0 border-r border-border p-3"
+            role="tablist"
+            aria-orientation="vertical"
+            :aria-label="t('adminSettings')"
+          >
+            <SidebarMenu class="space-y-1">
+              <SidebarMenuItem v-for="section in sections" :key="section.to">
+                <SidebarMenuButton
+                  :is-active="isActive(section.to)"
+                  role="tab"
+                  :aria-selected="isActive(section.to) ? 'true' : 'false'"
+                  :aria-controls="section.id"
+                  @click="navigate(section.to)"
+                >
+                  {{ t(section.labelKey) }}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </nav>
+
+          <!-- Right working area — fills remaining width; height is content-driven -->
+          <div
+            class="flex-1 min-w-0 p-6"
+            role="tabpanel"
+            :aria-labelledby="activePanelId"
+          >
+            <router-view />
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </div>
   </div>
 </template>
