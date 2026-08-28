@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -49,6 +50,7 @@ class UiUserServiceImplPasswordPolicyTest {
     void crit1_create_shortPassword_rejected() {
         CreateUiUserDTO dto = new CreateUiUserDTO();
         dto.setUsername("newuser");
+        dto.setEmail("newuser@example.com");
         dto.setPassword("short");
 
         assertThatThrownBy(() -> service.create(dto))
@@ -62,6 +64,7 @@ class UiUserServiceImplPasswordPolicyTest {
     void crit1_create_blocklistedPassword_rejected() {
         CreateUiUserDTO dto = new CreateUiUserDTO();
         dto.setUsername("newuser");
+        dto.setEmail("newuser@example.com");
         dto.setPassword("admin"); // blocklisted (will fail on length first)
 
         assertThatThrownBy(() -> service.create(dto))
@@ -124,6 +127,7 @@ class UiUserServiceImplPasswordPolicyTest {
 
         CreateUiUserDTO dto = new CreateUiUserDTO();
         dto.setUsername("newuser");
+        dto.setEmail("newuser@example.com");
         dto.setPassword("MyStr0ng!P@ssw0rd");
 
         UUID result = service.create(dto);
@@ -158,6 +162,7 @@ class UiUserServiceImplPasswordPolicyTest {
     void crit4_errorMessage_generic() {
         CreateUiUserDTO dto = new CreateUiUserDTO();
         dto.setUsername("newuser");
+        dto.setEmail("newuser@example.com");
         dto.setPassword("123456");
 
         assertThatThrownBy(() -> service.create(dto))
@@ -193,5 +198,72 @@ class UiUserServiceImplPasswordPolicyTest {
 
         assertThat(result).isEqualTo(userId);
         verify(repository).save(any());
+    }
+
+    // --- WO-ACL-19 criterion 6: a HUMAN account must have a valid email on create ---
+
+    @Test
+    void acl19_createHumanWithoutEmail_rejected() {
+        CreateUiUserDTO dto = new CreateUiUserDTO();
+        dto.setUsername("newbie");
+        dto.setUserType("HUMAN");
+        dto.setCreationMode("PASSWORD");
+        dto.setPassword("MyStr0ng!P@ssw0rd");
+
+        assertThatThrownBy(() -> service.create(dto))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Email is required for HUMAN users");
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void acl19_createHumanWithInvalidEmail_rejected() {
+        CreateUiUserDTO dto = new CreateUiUserDTO();
+        dto.setUsername("newbie");
+        dto.setUserType("HUMAN");
+        dto.setCreationMode("PASSWORD");
+        dto.setPassword("MyStr0ng!P@ssw0rd");
+        dto.setEmail("not-an-email");
+
+        assertThatThrownBy(() -> service.create(dto))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Email format is invalid");
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void acl19_createSystemWithoutEmail_allowed() {
+        // SYSTEM accounts have no email by design (WO-INT-4); the HUMAN email rule must not apply.
+        CreateUiUserDTO dto = new CreateUiUserDTO();
+        dto.setUsername("svc");
+        dto.setUserType("SYSTEM");
+        dto.setCreationMode("PASSWORD");
+
+        assertThatCode(() -> service.create(dto)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void acl19_updateHumanBlankEmail_rejected() {
+        UUID userId = UUID.randomUUID();
+        com.zorrodev.bpm.engine.entity.UiUserEntity existing = new com.zorrodev.bpm.engine.entity.UiUserEntity();
+        existing.setId(userId);
+        existing.setUsername("user1");
+        existing.setUserType("HUMAN");
+        existing.setPasswordHash("old-hash");
+
+        when(repository.findById(userId)).thenReturn(Optional.of(existing));
+
+        UpdateUiUserDTO dto = new UpdateUiUserDTO();
+        dto.setEmail("");
+
+        assertThatThrownBy(() -> service.update(userId, dto))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Email is required for HUMAN users");
+
+        // The entity must not be mutated / persisted when the email is invalid.
+        assertThat(existing.getEmail()).isNull();
+        verify(repository, never()).save(any());
     }
 }

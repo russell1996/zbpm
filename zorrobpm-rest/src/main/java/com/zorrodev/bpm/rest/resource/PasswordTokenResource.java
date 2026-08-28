@@ -33,8 +33,16 @@ public class PasswordTokenResource implements PasswordTokenContract {
         // B5 (HOLD): use the proxy-aware client IP (honors X-Forwarded-For behind a
         // configured trusted proxy) instead of the raw socket peer, so the per-IP
         // reset bucket is not collapsed onto the proxy address for all users.
+        // WO-ACL-19 (P0): any internal failure (DB error, NPE, ...) MUST NOT escape as a
+        // 500 — the endpoint is enumeration-safe and must look identical to the client.
+        // We log the real exception on ERROR so the next incident has a stack trace in
+        // `docker logs`, then return normally (the client always sees the same 200).
         String clientIp = rateLimitFilter.getClientIp(request);
-        invitationService.requestReset(dto.getEmail(), clientIp);
+        try {
+            invitationService.requestReset(dto.getEmail(), clientIp);
+        } catch (Exception e) {
+            log.error("forgotPassword failed for email={}", dto.getEmail(), e);
+        }
     }
 
     @Override

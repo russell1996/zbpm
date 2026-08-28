@@ -224,6 +224,30 @@ class UserInvitationServiceTest {
         verify(mailSender, never()).send(anyString(), anyString(), anyString());
     }
 
+    // ---- WO-ACL-19 criterion 5: email subjects use the new "ZBPM:" brand, not "ZorroBPM:" ----
+    @Test
+    void requestReset_emailSubjectUsesZbpmBrand() {
+        when(userRepository.findByEmail("invitee@corp.kz")).thenReturn(Optional.of(humanUser));
+        service.requestReset("invitee@corp.kz", "1.2.3.4");
+        ArgumentCaptor<String> subjectCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mailSender).send(eq("invitee@corp.kz"), subjectCaptor.capture(), any());
+        assertThat(subjectCaptor.getValue()).startsWith("ZBPM:");
+    }
+
+    // ---- WO-ACL-19 criterion 3: admin reset is throttled per-email via the shared rate limiter ----
+    @Test
+    void adminReset_whenRateLimited_throws() {
+        when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
+        when(rateLimiter.tryAcquireForEmail(any())).thenReturn(false);
+        assertThatThrownBy(() -> service.adminReset(humanUser.getId(), admin))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("Too many reset");
+        verify(mailSender, never()).send(anyString(), anyString(), anyString());
+    }
+
+    // NOTE: WO-ACL-19 criterion 6 (HUMAN email required) is enforced in UiUserServiceImpl, not here.
+    // Those tests live in UiUserServiceImplPasswordPolicyTest where the create/update methods exist.
+
     private PasswordTokenEntity token() {
         PasswordTokenEntity t = new PasswordTokenEntity();
         t.setId(UUID.randomUUID());

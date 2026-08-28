@@ -106,6 +106,17 @@ public class UiUserServiceImpl implements UiUserService {
         if (repository.existsByUsername(dto.getUsername())) throw new EngineException("Username already exists");
 
         boolean system = "SYSTEM".equalsIgnoreCase(dto.getUserType());
+        // WO-ACL-19 (P2): a HUMAN account MUST have a valid email — every password-reset path
+        // (public forgot-password, admin reset, invitation) is email-driven and silently no-ops
+        // when email is missing, which is worse than a clear 400 at creation time.
+        if (!system) {
+            if (dto.getEmail() == null || dto.getEmail().isBlank()) {
+                throw new EngineException("Email is required for HUMAN users");
+            }
+            if (!isValidEmail(dto.getEmail())) {
+                throw new EngineException("Email format is invalid");
+            }
+        }
         // WO-ACL-18: INVITE mode creates the account WITHOUT a usable password — the user
         // receives a one-time link to set it. SYSTEM accounts are never invited.
         boolean invite = "INVITE".equalsIgnoreCase(dto.getCreationMode());
@@ -116,9 +127,7 @@ public class UiUserServiceImpl implements UiUserService {
         // random secret — so the constant-time login path (WO-SEC-17 M7) compares against
         // a real hash instead of short-circuiting on null.
         if (invite) {
-            if (dto.getEmail() == null || dto.getEmail().isBlank()) {
-                throw new EngineException("Email is required to send an invitation");
-            }
+            // email presence/format already enforced above for HUMAN users
         } else if (!system) {
             if (dto.getPassword() == null || dto.getPassword().isBlank()) throw new EngineException("Password is required");
             // WO-SEC-46: enforce password complexity on create
@@ -196,7 +205,20 @@ public class UiUserServiceImpl implements UiUserService {
             }
         }
         if (dto.getFullName() != null) entity.setFullName(dto.getFullName());
-        if (dto.getEmail() != null) entity.setEmail(dto.getEmail());
+        if (dto.getEmail() != null) {
+            // WO-ACL-19 (P2): a HUMAN account cannot be left without a valid email.
+            if (system) {
+                entity.setEmail(dto.getEmail());
+            } else {
+                if (dto.getEmail().isBlank()) {
+                    throw new EngineException("Email is required for HUMAN users");
+                }
+                if (!isValidEmail(dto.getEmail())) {
+                    throw new EngineException("Email format is invalid");
+                }
+                entity.setEmail(dto.getEmail());
+            }
+        }
         if (dto.getRole() != null) entity.setRole(newRole);
         if (dto.getActive() != null) entity.setActive(newActive);
         // WO-INT-4: a system account never gets a password and forcePasswordChange is
@@ -220,5 +242,14 @@ public class UiUserServiceImpl implements UiUserService {
         if ("SUPER_ADMIN".equalsIgnoreCase(role)) return "SUPER_ADMIN";
         if ("ADMIN".equalsIgnoreCase(role)) return "ADMIN";
         return "USER";
+    }
+
+    private static boolean isValidEmail(String email) {
+        if (email == null) return false;
+        // Minimal but sufficient: one @, no spaces, a dot in the domain part.
+        int at = email.indexOf('@');
+        if (at <= 0 || at == email.length() - 1) return false;
+        String domain = email.substring(at + 1);
+        return domain.contains(".") && !email.contains(" ") && !domain.contains(" ");
     }
 }
