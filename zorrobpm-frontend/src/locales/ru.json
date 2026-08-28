@@ -12,6 +12,7 @@
   "dmn": "DMN",
   "analytics": "Аналитика",
   "users": "Пользователи",
+  "adminSettings": "Настройки администратора",
   "userType": "Тип учётки",
   "userTypeHuman": "Пользователь",
   "userTypeSystem": "Системная",

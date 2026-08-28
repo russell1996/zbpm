@@ -12,6 +12,7 @@
   "dmn": "DMN",
   "analytics": "Analytics",
   "users": "Users",
+  "adminSettings": "Admin Settings",
   "userType": "Account type",
   "userTypeHuman": "Human",
   "userTypeSystem": "System",
