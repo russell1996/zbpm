@@ -54,7 +54,7 @@ function navigate(to: string) {
 
         <!-- Right working area — fills available width; height is content-driven -->
         <div
-          class="flex-1 min-w-0"
+          class="flex-1 min-w-0 p-6"
           role="tabpanel"
           :aria-labelledby="activePanelId"
         >

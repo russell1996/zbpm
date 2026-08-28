@@ -4,14 +4,11 @@ import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
 import UserDetailPanel from './UserDetailPanel.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const toast = useToast()
 const { t } = useI18n()
-const route = useRoute()
-const inAdminHub = route.path.startsWith('/admin/settings/')
 
 const users = ref<User[]>([])
 const totalCount = ref(0)
@@ -142,7 +139,7 @@ onMounted(loadUsers)
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between">
-      <h1 v-if="!inAdminHub" class="text-2xl font-bold">{{ t('users') }}</h1>
+      <h1 class="text-2xl font-bold">{{ t('users') }}</h1>
       <button
         class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
         @click="openCreate"
