@@ -26,7 +26,7 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto p-4">
+  <div class="w-full">
     <h1 class="text-2xl font-bold mb-6">{{ t('adminSettings') }}</h1>
     <SidebarProvider>
       <div class="flex gap-6">

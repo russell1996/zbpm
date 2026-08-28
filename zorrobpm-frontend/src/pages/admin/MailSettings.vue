@@ -154,7 +154,7 @@ async function onTest() {
 </script>
 
 <template>
-  <div class="space-y-6 max-w-2xl">
+  <div class="space-y-6 max-w-2xl mx-auto">
     <h1 class="text-2xl font-bold">{{ t('mailSettings') }}</h1>
 
     <div v-if="loading" class="space-y-4" data-testid="loading">
