@@ -51,7 +51,7 @@ WO-ENG-11…13, WO-UI-9 и другие). Полная сверка этого �
 | WO-TEST-5 — `TokenServiceAlgVerificationTest` не может упасть | 🔧 в пуле, 1-я — защита от alg-confusion стоит на слепом тесте |
 | WO-PERF-5 — покрытие строится и выбрасывается | 🔧 в пуле, 2-я — **решено: публиковать** |
 | WO-SEC-51 — блокирующий CVE-гейт | 🔧 в пуле, 3-я — **решено: валим на CVSS ≥ 9.0, HIGH предупреждением** |
-| WO-SEC-49 — fail-fast на дефолтных кредах | 🟡 код готов на ветке; ждёт строки `ZORROBPM_ENFORCE_DB_CREDS=false` в host `.env` |
+| WO-SEC-49 — fail-fast на дефолтных кредах | 🟡 код готов на ветке; ждёт строки `ZORROBPM_SECURITY_ENFORCE_DB_CREDS=true` в host `.env` после ротации кредов (см. `governance/runbooks/credential-rotation.md`) |
 | WO-OPS-4b — гейты прод-доставки | ⬜ деплой с любой ветки, без health-check. Ведёт CTO: нужны пуш и реальные выкатки |
 | WO-SEC-53 — housekeeping мелких находок | ⬜ есть черновик на ветке, без DoD |
 | WO-SEC-52 — глобальный rate-limit | ⬜ нужно архитектурное решение |
