@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { SidebarProvider, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,42 +25,43 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <div class="w-full h-full flex flex-col">
+  <div class="w-full h-full flex flex-col p-4">
     <h1 class="text-2xl font-bold mb-6">{{ t('adminSettings') }}</h1>
 
-    <!-- Left vertical nav is part of the page layout (no own card/frame); only a thin
-         vertical divider (border-r) separates it from the working area. Layout fills the
-         whole section height; only the right content changes between sections. -->
-    <SidebarProvider class="!min-h-0 flex-1">
+    <!-- Layout mirrors the account Settings page (MyProfile.vue): plain vertical nav on the
+         left (active item = bg-muted, no card/frame), working area on the right as a card.
+         Stretched to fill the whole screen; only the right content changes between sections. -->
+    <div class="flex gap-6 flex-1 min-h-0">
+      <!-- Left nav — plain buttons, not a card -->
       <nav
-        class="w-48 shrink-0 border-r border-border p-3"
+        class="w-48 shrink-0 space-y-1"
         role="tablist"
         aria-orientation="vertical"
         :aria-label="t('adminSettings')"
       >
-        <SidebarMenu class="space-y-1">
-          <SidebarMenuItem v-for="section in sections" :key="section.to">
-            <SidebarMenuButton
-              :is-active="isActive(section.to)"
-              role="tab"
-              :aria-selected="isActive(section.to) ? 'true' : 'false'"
-              :aria-controls="section.id"
-              @click="navigate(section.to)"
-            >
-              {{ t(section.labelKey) }}
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <button
+          v-for="section in sections"
+          :key="section.to"
+          type="button"
+          role="tab"
+          :aria-selected="isActive(section.to) ? 'true' : 'false'"
+          :aria-controls="section.id"
+          class="w-full text-left px-3 py-2 text-sm rounded-md transition-colors"
+          :class="isActive(section.to) ? 'bg-muted font-medium' : 'hover:bg-muted'"
+          @click="navigate(section.to)"
+        >
+          {{ t(section.labelKey) }}
+        </button>
       </nav>
 
-      <!-- Right working area — fills remaining width, scrolls within the section height -->
+      <!-- Right working area — card surface, fills remaining width/height -->
       <div
-        class="flex-1 min-w-0 p-6 overflow-auto"
+        class="flex-1 min-w-0 bg-card border border-border rounded-lg p-6 overflow-auto"
         role="tabpanel"
         :aria-labelledby="activePanelId"
       >
         <router-view />
       </div>
-    </SidebarProvider>
+    </div>
   </div>
 </template>
