@@ -74,7 +74,8 @@ class RateLimitXffFullContextTest {
             "/auth/login", "/auth/refresh", "/me/password",
             "/events/*", "/variables/*",
             "/process-instances/*", "/user-tasks/*",
-            "/service-tasks/*", "/incidents/*");
+            "/service-tasks/*", "/incidents/*",
+            "/process-definitions/*");
     }
 
     private HttpRequest buildLoginRequest(String xffValue) throws Exception {
