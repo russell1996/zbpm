@@ -64,7 +64,7 @@ public class UserInvitationService {
         invalidatePriorTokens(userId, TYPE_INVITE);
         String raw = issueToken(userId, TYPE_INVITE, user.getEmail(), invitationTtlHours);
         String link = linkBaseUrl + "/ui/accept-invitation?token=" + raw;
-        mailSender.send(user.getEmail(), "ZorroBPM: приглашение в систему",
+        mailSender.send(user.getEmail(), "ZBPM: приглашение в систему",
                 "Вас пригласили в ZorroBPM. Установите пароль по ссылке: " + link);
         auditLogService.record(principal, "USER_INVITE_SENT", null, userId.toString());
         return raw;
@@ -81,10 +81,16 @@ public class UserInvitationService {
         if (user.getEmail() == null || user.getEmail().isBlank()) {
             throw new EngineException("User has no email — cannot send reset link");
         }
+        // WO-ACL-19 (P1): throttle admin-initiated resets on the recipient email, reusing the
+        // same bucket as the public "forgot password" flow so an admin cannot spam reset
+        // emails (and invalidate prior tokens) by clicking repeatedly.
+        if (!rateLimiter.tryAcquireForEmail(user.getEmail().toLowerCase())) {
+            throw new EngineException("Too many reset requests for this email, please try again later");
+        }
         invalidatePriorTokens(userId, TYPE_RESET);
         String raw = issueToken(userId, TYPE_RESET, user.getEmail(), resetTtlHours);
         String link = linkBaseUrl + "/ui/reset-password?token=" + raw;
-        mailSender.send(user.getEmail(), "ZorroBPM: сброс пароля",
+        mailSender.send(user.getEmail(), "ZBPM: сброс пароля",
                 "Сбросьте пароль по ссылке: " + link);
         auditLogService.record(principal, "USER_RESET_SENT", null, userId.toString());
         return raw;
@@ -108,7 +114,7 @@ public class UserInvitationService {
         invalidatePriorTokens(user.get().getId(), TYPE_RESET);
         String raw = issueToken(user.get().getId(), TYPE_RESET, user.get().getEmail(), resetTtlHours);
         String link = linkBaseUrl + "/ui/reset-password?token=" + raw;
-        mailSender.send(user.get().getEmail(), "ZorroBPM: сброс пароля",
+        mailSender.send(user.get().getEmail(), "ZBPM: сброс пароля",
                 "Сбросьте пароль по ссылке: " + link);
     }
 

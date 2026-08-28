@@ -73,10 +73,14 @@ async function save() {
     toast.warning(t('fillRequired'))
     return
   }
-  // WO-ACL-18: in INVITE mode a password is not set here and an email is required;
-  // in PASSWORD mode the password is required instead.
-  if (!editingUser.value && formCreationMode.value === 'INVITE' && !formEmail.value) {
-    toast.warning(t('emailRequiredForInvite'))
+  // WO-ACL-19 (P2): a HUMAN account MUST have an email (every reset path is email-driven).
+  // All accounts created through this form are HUMAN.
+  if (!editingUser.value && !formEmail.value) {
+    toast.warning(t('emailRequired'))
+    return
+  }
+  if (editingUser.value && editingUser.value.userType === 'HUMAN' && !formEmail.value) {
+    toast.warning(t('emailRequired'))
     return
   }
   if (!editingUser.value && formCreationMode.value === 'PASSWORD' && !formPassword.value) {
