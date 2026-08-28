@@ -10,7 +10,7 @@ public class CreateUiUserDTO {
     private String password;
     private String fullName;
     private String email;
-    /** "ADMIN" or "USER"; defaults to USER when omitted. */
+    /** "SUPER_ADMIN", "ADMIN" or "USER"; defaults to USER when omitted. */
     private String role;
     private Boolean active;
     /** WO-INT-4: "HUMAN" or "SYSTEM"; defaults to HUMAN when omitted.

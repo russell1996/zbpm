@@ -179,10 +179,26 @@ public class UiUserServiceImpl implements UiUserService {
     public UUID update(UUID id, UpdateUiUserDTO dto) {
         UiUserEntity entity = repository.findById(id).orElseThrow();
         boolean system = "SYSTEM".equals(entity.getUserType());
+        String previousRole = entity.getRole();
+        boolean previousActive = entity.isActive();
+        // WO-SEC-60: protect last active SUPER_ADMIN — check BEFORE mutating the entity,
+        // otherwise the persistence context flush would make countByRoleAndActive see the
+        // already-demoted state and the count would be off by one.
+        String newRole = dto.getRole() != null ? normalizeRole(dto.getRole()) : previousRole;
+        boolean newActive = dto.getActive() != null ? dto.getActive() : previousActive;
+        boolean wasActiveSuperAdmin = "SUPER_ADMIN".equals(previousRole) && previousActive;
+        boolean willBeActiveSuperAdmin = "SUPER_ADMIN".equals(newRole) && newActive;
+        if (wasActiveSuperAdmin && !willBeActiveSuperAdmin) {
+            // Use PESSIMISTIC_WRITE to prevent race where two concurrent demotions both see count=2
+            long activeSuperAdminCount = repository.findByRoleAndActiveAndUserTypeForUpdate("SUPER_ADMIN", true, "HUMAN").size();
+            if (activeSuperAdminCount <= 1) {
+                throw new EngineException("Cannot demote or deactivate the last active SUPER_ADMIN");
+            }
+        }
         if (dto.getFullName() != null) entity.setFullName(dto.getFullName());
         if (dto.getEmail() != null) entity.setEmail(dto.getEmail());
-        if (dto.getRole() != null) entity.setRole(normalizeRole(dto.getRole()));
-        if (dto.getActive() != null) entity.setActive(dto.getActive());
+        if (dto.getRole() != null) entity.setRole(newRole);
+        if (dto.getActive() != null) entity.setActive(newActive);
         // WO-INT-4: a system account never gets a password and forcePasswordChange is
         // not applicable to it — both are ignored so the integration cannot be locked
         // by a password-flow decision.
@@ -201,6 +217,8 @@ public class UiUserServiceImpl implements UiUserService {
     }
 
     private static String normalizeRole(String role) {
-        return "ADMIN".equalsIgnoreCase(role) ? "ADMIN" : "USER";
+        if ("SUPER_ADMIN".equalsIgnoreCase(role)) return "SUPER_ADMIN";
+        if ("ADMIN".equalsIgnoreCase(role)) return "ADMIN";
+        return "USER";
     }
 }
