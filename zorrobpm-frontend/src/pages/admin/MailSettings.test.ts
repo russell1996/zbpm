@@ -53,16 +53,28 @@ describe('MailSettings', () => {
     mockTestMailSettingsToSelf.mockResolvedValue('Test email sent successfully to admin@corp.kz')
   })
 
-  it('loads health and settings on mount and binds host', async () => {
+  it('shows saved config in view mode (form hidden)', async () => {
     const wrapper = mount(MailSettings)
     await flushPromises()
     expect(mockGetMailHealth).toHaveBeenCalled()
-    expect(mockGetMailSettings).toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="host"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('smtp.example.com')
+    expect(wrapper.text()).toContain('mailConfigured')
+  })
+
+  it('edit mode reveals the form bound to saved values', async () => {
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="host"]').exists()).toBe(true)
     expect((wrapper.find('[data-testid="host"]').element as HTMLInputElement).value).toBe('smtp.example.com')
   })
 
-  it('save sends entered values to service', async () => {
+  it('save sends entered values and returns to view mode', async () => {
     const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
     await flushPromises()
     await wrapper.find('[data-testid="host"]').setValue('new.host.example')
     await wrapper.find('[data-testid="save"]').trigger('click')
@@ -70,14 +82,51 @@ describe('MailSettings', () => {
     expect(mockSaveMailSettings).toHaveBeenCalledWith(
       expect.objectContaining({ host: 'new.host.example' }),
     )
+    expect(wrapper.find('[data-testid="host"]').exists()).toBe(false)
+  })
+
+  it('cancel discards edits and returns to view mode', async () => {
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="host"]').setValue('changed.example')
+    await wrapper.find('[data-testid="cancel"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="host"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('smtp.example.com')
   })
 
   it('test sends to self and shows returned result', async () => {
     const wrapper = mount(MailSettings)
     await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
     await wrapper.find('[data-testid="test"]').trigger('click')
     await flushPromises()
     expect(mockTestMailSettingsToSelf).toHaveBeenCalled()
     expect(wrapper.find('[data-testid="testResult"]').text()).toContain('admin@corp.kz')
+  })
+
+  it('password visibility toggle switches input type', async () => {
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const input = wrapper.find('[data-testid="password"]')
+    const toggle = wrapper.find('[data-testid="togglePassword"]')
+    expect((input.element as HTMLInputElement).type).toBe('password')
+    expect(wrapper.find('[data-testid="togglePassword"] svg').exists()).toBe(true)
+    await toggle.trigger('click')
+    await flushPromises()
+    expect((wrapper.find('[data-testid="password"]').element as HTMLInputElement).type).toBe('text')
+  })
+
+  it('health loads in background and shows config + connection state', async () => {
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    expect(mockGetMailHealth).toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="healthLoading"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('mailConfigured')
   })
 })

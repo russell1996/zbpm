@@ -28,7 +28,7 @@ vi.mock('@/composables/useToast', () => ({
 describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
   beforeEach(() => {
     mockGetMailHealth.mockResolvedValue({
-      configured: true,
+      configured: false,
       reachable: null,
       lastSuccess: null,
       lastError: null,
@@ -104,7 +104,7 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
 describe('WO-UI-9 point 3 — MailSettings has max-w-2xl', () => {
   beforeEach(() => {
     mockGetMailHealth.mockResolvedValue({
-      configured: true,
+      configured: false,
       reachable: null,
       lastSuccess: null,
       lastError: null,
