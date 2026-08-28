@@ -33,6 +33,8 @@ const formRole = ref<UserRole>('USER')
 const formActive = ref(true)
 /** WO-ACL-18: default creation path is an invitation (one-time link), not a direct password. */
 const formCreationMode = ref<string>('INVITE')
+/** WO-UI-10 Phase 2: account type — HUMAN (default) or SYSTEM (integration, API-key only). */
+const formUserType = ref<'HUMAN' | 'SYSTEM'>('HUMAN')
 
 async function loadUsers() {
   loading.value = true
@@ -54,6 +56,7 @@ function openCreate() {
   formRole.value = 'USER'
   formActive.value = true
   formCreationMode.value = 'INVITE'
+  formUserType.value = 'HUMAN'
   showForm.value = true
 }
 
@@ -65,6 +68,7 @@ function openEdit(user: User) {
   formEmail.value = user.email || ''
   formRole.value = user.role
   formActive.value = user.active
+  formUserType.value = user.userType ?? 'HUMAN'
   showForm.value = true
 }
 
@@ -73,13 +77,12 @@ async function save() {
     toast.warning(t('fillRequired'))
     return
   }
-  // WO-ACL-19 (P2): a HUMAN account MUST have an email (every reset path is email-driven).
-  // All accounts created through this form are HUMAN.
-  if (!editingUser.value && !formEmail.value) {
-    toast.warning(t('emailRequired'))
-    return
-  }
-  if (editingUser.value && editingUser.value.userType === 'HUMAN' && !formEmail.value) {
+  // WO-ACL-19 (P2) + WO-UI-10 Phase 2: a HUMAN account MUST have an email (every reset path is
+  // email-driven). A SYSTEM account is an integration and has no email requirement.
+  const requiresEmail = editingUser.value
+    ? editingUser.value.userType === 'HUMAN'
+    : formUserType.value === 'HUMAN'
+  if (requiresEmail && !formEmail.value) {
     toast.warning(t('emailRequired'))
     return
   }
@@ -100,12 +103,13 @@ async function save() {
     } else {
       await createUser({
         username: formUsername.value,
-        password: formCreationMode.value === 'PASSWORD' ? formPassword.value : '',
+        password: formUserType.value === 'SYSTEM' ? '' : (formCreationMode.value === 'PASSWORD' ? formPassword.value : ''),
         fullName: formFullName.value || null,
         email: formEmail.value || null,
         role: formRole.value,
         active: formActive.value,
-        creationMode: formCreationMode.value,
+        creationMode: formUserType.value === 'SYSTEM' ? undefined : formCreationMode.value,
+        userType: formUserType.value,
       })
     }
     showForm.value = false
@@ -253,13 +257,24 @@ onMounted(loadUsers)
               v-model="formUsername"
               type="text"
               :disabled="!!editingUser"
+              data-testid="form-username"
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
             />
           </div>
-          <!-- WO-ACL-18: choose how the account is created (invitation link vs direct password) -->
-          <div v-if="!editingUser">
+          <!-- WO-UI-10 Phase 2: account type (HUMAN / SYSTEM). Immutable after creation. -->
+          <div>
+            <label class="block text-sm font-medium mb-1">{{ t('userType') }}</label>
+            <select v-model="formUserType" :disabled="!!editingUser" data-testid="userType" class="w-full px-3 py-2 border border-input rounded-md text-sm disabled:opacity-50">
+              <option value="HUMAN">{{ t('userTypeHuman') }}</option>
+              <option value="SYSTEM">{{ t('userTypeSystem') }}</option>
+            </select>
+            <p v-if="formUserType === 'SYSTEM'" class="mt-1 text-xs text-muted-foreground">{{ t('systemAccountHint') }}</p>
+            <p v-else-if="editingUser" class="mt-1 text-xs text-muted-foreground">{{ t('userTypeImmutableHint') }}</p>
+          </div>
+          <!-- WO-ACL-18: choose how the account is created (invitation link vs direct password). Hidden for SYSTEM. -->
+          <div v-if="!editingUser && formUserType !== 'SYSTEM'">
             <label class="block text-sm font-medium mb-1">{{ t('creationModeLabel') }}</label>
-            <select v-model="formCreationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+            <select v-model="formCreationMode" data-testid="creationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
               <option value="INVITE">{{ t('invitationMode') }}</option>
               <option value="PASSWORD">{{ t('passwordMode') }}</option>
             </select>
@@ -267,7 +282,7 @@ onMounted(loadUsers)
               {{ t('inviteHint') }}
             </p>
           </div>
-          <div v-if="editingUser || formCreationMode === 'PASSWORD'">
+          <div v-if="editingUser || (formUserType === 'HUMAN' && formCreationMode === 'PASSWORD')">
             <label class="block text-sm font-medium mb-1">{{ editingUser ? t('newPasswordOptional') : t('password') }}</label>
             <input
               v-model="formPassword"
@@ -276,7 +291,7 @@ onMounted(loadUsers)
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          <div v-else-if="formCreationMode === 'INVITE'" class="text-xs text-muted-foreground">
+          <div v-else-if="formUserType === 'HUMAN' && formCreationMode === 'INVITE'" class="text-xs text-muted-foreground">
             {{ t('inviteEmailNote') }}
           </div>
           <div>
@@ -318,6 +333,7 @@ onMounted(loadUsers)
           <button
             :disabled="saving"
             class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+            data-testid="submit-user"
             @click="save"
           >
             {{ editingUser ? t('save') : t('add') }}

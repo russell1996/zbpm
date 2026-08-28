@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import UserList from './UserList.vue'
+import { createUser } from '@/services/userService'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
@@ -19,7 +20,7 @@ vi.mock('@/services/userService', () => ({
   updateUser: vi.fn(),
 }))
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn() }),
+  useToast: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
 }))
 
 describe('UserList render', () => {
@@ -98,5 +99,59 @@ describe('UserList render', () => {
     const allRows = wrapper.findAll('tbody tr').map((tr) => tr.text())
     expect(allRows.some((t) => t.includes('alice'))).toBe(true)
     expect(allRows.some((t) => t.includes('bob'))).toBe(true)
+  })
+})
+
+describe('WO-UI-10 Phase 2: SYSTEM account creation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('offers HUMAN/SYSTEM and sends userType=SYSTEM on create; creationMode hidden, email optional', async () => {
+    const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('addUser'), { timeout: 2000 })
+    await wrapper.findAll('button').find((b) => b.text() === 'addUser')!.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="userType"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="creationMode"]').exists()).toBe(true)
+    expect((wrapper.find('[data-testid="userType"]').element as HTMLSelectElement).value).toBe('HUMAN')
+
+    await wrapper.find('[data-testid="userType"]').setValue('SYSTEM')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="creationMode"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="form-username"]').setValue('svc1')
+    await wrapper.find('[data-testid="submit-user"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    await vi.waitFor(() => expect(createUser).toHaveBeenCalled(), { timeout: 2000 })
+    const payload = (createUser as unknown as { mock: { calls: unknown[] } }).mock.calls[0][0] as Record<string, unknown>
+    expect(payload.userType).toBe('SYSTEM')
+    expect(payload.email).toBeNull()
+    expect(payload.creationMode).toBeUndefined()
+  })
+
+  it('HUMAN create still requires email (no regression of WO-ACL-19)', async () => {
+    const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('addUser'), { timeout: 2000 })
+    await wrapper.findAll('button').find((b) => b.text() === 'addUser')!.trigger('click')
+    await wrapper.vm.$nextTick()
+    expect((wrapper.find('[data-testid="userType"]').element as HTMLSelectElement).value).toBe('HUMAN')
+    await wrapper.find('[data-testid="form-username"]').setValue('human1')
+    await wrapper.find('[data-testid="submit-user"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(createUser).not.toHaveBeenCalled()
+  })
+
+  it('editing a SYSTEM user shows userType disabled (immutable)', async () => {
+    const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('bob'), { timeout: 2000 })
+    const bobRow = wrapper.findAll('tbody tr').find((r) => r.text().includes('bob'))!
+    await bobRow.findAll('button').find((b) => b.text() === 'edit')!.trigger('click')
+    await wrapper.vm.$nextTick()
+    const sel = wrapper.find('[data-testid="userType"]')
+    expect(sel.exists()).toBe(true)
+    expect((sel.element as HTMLSelectElement).disabled).toBe(true)
+    expect((sel.element as HTMLSelectElement).value).toBe('SYSTEM')
   })
 })
