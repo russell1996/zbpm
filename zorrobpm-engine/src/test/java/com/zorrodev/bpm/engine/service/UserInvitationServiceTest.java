@@ -1,8 +1,6 @@
 package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.contract.exception.EngineException;
-import com.zorrodev.bpm.contract.dto.CreateUiUserDTO;
-import com.zorrodev.bpm.contract.dto.UpdateUiUserDTO;
 import com.zorrodev.bpm.engine.entity.PasswordTokenEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.PasswordTokenRepository;
@@ -247,42 +245,8 @@ class UserInvitationServiceTest {
         verify(mailSender, never()).send(anyString(), anyString(), anyString());
     }
 
-    // ---- WO-ACL-19 criterion 6: a HUMAN account must have a valid email on create ----
-    @Test
-    void createUser_humanWithoutEmail_throws() {
-        CreateUiUserDTO dto = new CreateUiUserDTO();
-        dto.setUsername("newbie");
-        dto.setUserType("HUMAN");
-        dto.setCreationMode("PASSWORD");
-        dto.setPassword("Password123!");
-        assertThatThrownBy(() -> service.create(dto, admin))
-            .isInstanceOf(EngineException.class)
-            .hasMessageContaining("Email is required");
-    }
-
-    @Test
-    void createUser_humanWithInvalidEmail_throws() {
-        CreateUiUserDTO dto = new CreateUiUserDTO();
-        dto.setUsername("newbie");
-        dto.setUserType("HUMAN");
-        dto.setCreationMode("PASSWORD");
-        dto.setPassword("Password123!");
-        dto.setEmail("not-an-email");
-        assertThatThrownBy(() -> service.create(dto, admin))
-            .isInstanceOf(EngineException.class)
-            .hasMessageContaining("Email format is invalid");
-    }
-
-    // ---- WO-ACL-19 criterion 6: editing a HUMAN account cannot blank its email ----
-    @Test
-    void updateUser_humanBlankEmail_throws() {
-        when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
-        UpdateUiUserDTO dto = new UpdateUiUserDTO();
-        dto.setEmail("");
-        assertThatThrownBy(() -> service.update(humanUser.getId(), dto))
-            .isInstanceOf(EngineException.class)
-            .hasMessageContaining("Email is required");
-    }
+    // NOTE: WO-ACL-19 criterion 6 (HUMAN email required) is enforced in UiUserServiceImpl, not here.
+    // Those tests live in UiUserServiceImplPasswordPolicyTest where the create/update methods exist.
 
     private PasswordTokenEntity token() {
         PasswordTokenEntity t = new PasswordTokenEntity();
