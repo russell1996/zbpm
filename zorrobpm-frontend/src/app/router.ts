@@ -176,7 +176,7 @@ const router = createRouter({
           component: () => import('@/pages/admin/AdminSettings.vue'),
           meta: { titleKey: 'adminSettings', requiresSuperAdmin: true },
           children: [
-            { path: '', redirect: { name: 'admin-settings-mail' } },
+            { path: '', redirect: { name: 'admin-settings-users' } },
             {
               path: 'mail-settings',
               name: 'admin-settings-mail',
