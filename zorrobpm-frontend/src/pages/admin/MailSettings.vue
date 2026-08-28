@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { CheckCircle2, XCircle, Eye, EyeOff, Loader2 } from 'lucide-vue-next'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -15,6 +16,8 @@ import {
 
 const { t } = useI18n()
 const toast = useToast()
+const route = useRoute()
+const inAdminHub = route.path.startsWith('/admin/settings/')
 
 const loading = ref(true)
 const healthLoading = ref(true)
@@ -154,8 +157,8 @@ async function onTest() {
 </script>
 
 <template>
-  <div class="space-y-6 max-w-2xl mx-auto">
-    <h1 class="text-2xl font-bold">{{ t('mailSettings') }}</h1>
+  <div class="space-y-6 max-w-2xl">
+    <h1 v-if="!inAdminHub" class="text-2xl font-bold">{{ t('mailSettings') }}</h1>
 
     <div v-if="loading" class="space-y-4" data-testid="loading">
       <Skeleton class="h-24 w-full rounded-lg" />
