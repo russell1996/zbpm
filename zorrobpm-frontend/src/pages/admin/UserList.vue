@@ -116,7 +116,7 @@ async function save() {
     await loadUsers()
     toast.success(t('saved'))
   } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    const msg = (e as { response?: { data?: { message?: string } }>)?.response?.data?.message
     toast.error(msg || t('failedToSaveUser'))
   } finally {
     saving.value = false
@@ -137,92 +137,76 @@ onMounted(loadUsers)
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">{{ t('users') }}</h1>
-      <button
-        class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
-        @click="openCreate"
-      >
+  <div class="t9-font">
+    <!-- Title bar — classic telecom console caption -->
+    <div class="t9-titlebar px-3 py-2 mb-3 flex items-center justify-between">
+      <span class="text-base">{{ t('users') }}</span>
+      <button class="t9-btn t9-btn-primary px-3 py-1 text-sm" @click="openCreate">
         {{ t('addUser') }}
       </button>
     </div>
 
-    <div class="flex items-center gap-4">
+    <!-- Toolbar — filterable list, one screen (WO-INT-4) -->
+    <div class="t9-panel px-3 py-2 mb-3 flex items-center gap-3">
       <input
         v-model="search"
         type="text"
         :placeholder="t('searchByUsername')"
-        class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
+        class="t9-input w-64"
         @input="loadUsers"
       />
-      <!-- WO-INT-4 criterion 2: one list with a type filter — systems are not a separate screen -->
       <select
         v-model="typeFilter"
-        class="px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        class="t9-input"
         data-testid="user-type-filter"
       >
         <option value="ALL">{{ t('filterAllUsers') }}</option>
         <option value="HUMAN">{{ t('filterHumanUsers') }}</option>
         <option value="SYSTEM">{{ t('filterSystemUsers') }}</option>
       </select>
-      <span class="text-sm text-muted-foreground">{{ totalCount }} {{ t('usersCount') }}</span>
+      <span class="t9-count">{{ totalCount }} {{ t('usersCount') }}</span>
     </div>
 
-    <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
+    <div v-if="loading" class="t9-status">{{ t('loading') }}</div>
 
-    <div v-else class="border border-border rounded-lg overflow-hidden">
-      <table class="w-full text-sm">
-        <thead class="bg-muted">
-          <tr>
-            <th class="px-4 py-3 text-left font-medium">{{ t('username') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('fullName') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('email') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('role') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="user in visibleUsers" :key="user.id">
+    <table v-else class="t9-table w-full text-sm">
+      <thead>
+        <tr>
+          <th class="px-3 py-2">{{ t('username') }}</th>
+          <th class="px-3 py-2">{{ t('fullName') }}</th>
+          <th class="px-3 py-2">{{ t('email') }}</th>
+          <th class="px-3 py-2">{{ t('role') }}</th>
+          <th class="px-3 py-2">{{ t('status') }}</th>
+          <th class="px-3 py-2">{{ t('actions') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template v-for="user in visibleUsers" :key="user.id">
           <tr
-            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            class="t9-row"
             tabindex="0"
             @click="expandedUserId = expandedUserId === user.id ? null : user.id"
             @keydown.enter="expandedUserId = expandedUserId === user.id ? null : user.id"
           >
-            <td class="px-4 py-3 font-mono">
+            <td class="px-3 py-2 t9-mono">
               {{ user.username }}
               <!-- WO-INT-4 criterion 2: a system account is an integration, not a person -->
-              <span
-                v-if="user.userType === 'SYSTEM'"
-                class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-violet-100 text-violet-700"
-              >
-                {{ t('systemAccount') }}
-              </span>
+              <span v-if="user.userType === 'SYSTEM'" class="t9-chip t9-chip-sys">{{ t('systemAccount') }}</span>
               <!-- WO-ACL-18 criterion 5: an outstanding invite token means the account is not yet active-with-password -->
-              <span
-                v-if="user.pendingInvitation"
-                class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-700"
-                data-testid="pending-invitation-badge"
-              >
-                {{ t('invited') }}
-              </span>
+              <span v-if="user.pendingInvitation" class="t9-chip t9-chip-inv" data-testid="pending-invitation-badge">{{ t('invited') }}</span>
             </td>
-            <td class="px-4 py-3">{{ user.fullName || '—' }}</td>
-            <td class="px-4 py-3">{{ user.email || '—' }}</td>
-            <td class="px-4 py-3">
-              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span>
-            </td>
-            <td class="px-4 py-3">
+            <td class="px-3 py-2">{{ user.fullName || '—' }}</td>
+            <td class="px-3 py-2">{{ user.email || '—' }}</td>
+            <td class="px-3 py-2"><span class="t9-role">{{ user.role }}</span></td>
+            <td class="px-3 py-2">
               <StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" />
             </td>
-            <td class="px-4 py-3">
+            <td class="px-3 py-2">
               <div class="flex items-center gap-2">
-                <button class="text-sm text-primary hover:underline" @click.stop="openEdit(user)">{{ t('edit') }}</button>
+                <button class="t9-link" @click.stop="openEdit(user)">{{ t('edit') }}</button>
                 <button
-                  class="text-sm hover:underline"
-                  :class="user.active ? 'text-red-600' : 'text-green-600'"
+                  class="t9-link"
+                  :class="user.active ? 't9-link-danger' : 't9-link-ok'"
                   @click.stop="toggleActive(user)"
                 >
                   {{ user.active ? t('deactivate') : t('activate') }}
@@ -235,104 +219,89 @@ onMounted(loadUsers)
               <UserDetailPanel :user="user" @close="expandedUserId = null" />
             </td>
           </tr>
-          </template>
-          <tr v-if="users.length === 0">
-            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noUsers') }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+        </template>
+        <tr v-if="users.length === 0">
+          <td colspan="6" class="t9-empty">{{ t('noUsers') }}</td>
+        </tr>
+      </tbody>
+    </table>
 
+    <!-- Create / edit window — classic bordered dialog -->
     <div
       v-if="showForm"
       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
       @click.self="showForm = false"
     >
-      <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-        <h2 class="text-lg font-bold">{{ editingUser ? t('editUser') : t('addUser') }}</h2>
-        <div class="space-y-3">
-          <div>
-            <label class="block text-sm font-medium mb-1">{{ t('username') }}</label>
+      <div class="t9-window w-full max-w-md">
+        <div class="t9-titlebar px-3 py-2">{{ editingUser ? t('editUser') : t('addUser') }}</div>
+        <div class="t9-window-body space-y-3">
+          <div class="t9-field">
+            <label class="t9-label">{{ t('username') }}</label>
             <input
               v-model="formUsername"
               type="text"
               :disabled="!!editingUser"
               data-testid="form-username"
-              class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+              class="t9-input"
             />
           </div>
           <!-- WO-UI-10 Phase 2: account type (HUMAN / SYSTEM). Immutable after creation. -->
-          <div>
-            <label class="block text-sm font-medium mb-1">{{ t('userType') }}</label>
-            <select v-model="formUserType" :disabled="!!editingUser" data-testid="userType" class="w-full px-3 py-2 border border-input rounded-md text-sm disabled:opacity-50">
+          <div class="t9-field">
+            <label class="t9-label">{{ t('userType') }}</label>
+            <select v-model="formUserType" :disabled="!!editingUser" data-testid="userType" class="t9-input">
               <option value="HUMAN">{{ t('userTypeHuman') }}</option>
               <option value="SYSTEM">{{ t('userTypeSystem') }}</option>
             </select>
-            <p v-if="formUserType === 'SYSTEM'" class="mt-1 text-xs text-muted-foreground">{{ t('systemAccountHint') }}</p>
-            <p v-else-if="editingUser" class="mt-1 text-xs text-muted-foreground">{{ t('userTypeImmutableHint') }}</p>
+            <p v-if="formUserType === 'SYSTEM'" class="t9-hint">{{ t('systemAccountHint') }}</p>
+            <p v-else-if="editingUser" class="t9-hint">{{ t('userTypeImmutableHint') }}</p>
           </div>
           <!-- WO-ACL-18: choose how the account is created (invitation link vs direct password). Hidden for SYSTEM. -->
-          <div v-if="!editingUser && formUserType !== 'SYSTEM'">
-            <label class="block text-sm font-medium mb-1">{{ t('creationModeLabel') }}</label>
-            <select v-model="formCreationMode" data-testid="creationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+          <div v-if="!editingUser && formUserType !== 'SYSTEM'" class="t9-field">
+            <label class="t9-label">{{ t('creationModeLabel') }}</label>
+            <select v-model="formCreationMode" data-testid="creationMode" class="t9-input">
               <option value="INVITE">{{ t('invitationMode') }}</option>
               <option value="PASSWORD">{{ t('passwordMode') }}</option>
             </select>
-            <p v-if="formCreationMode === 'INVITE'" class="mt-1 text-xs text-muted-foreground">
-              {{ t('inviteHint') }}
-            </p>
+            <p v-if="formCreationMode === 'INVITE'" class="t9-hint">{{ t('inviteHint') }}</p>
           </div>
-          <div v-if="editingUser || (formUserType === 'HUMAN' && formCreationMode === 'PASSWORD')">
-            <label class="block text-sm font-medium mb-1">{{ editingUser ? t('newPasswordOptional') : t('password') }}</label>
+          <div v-if="editingUser || (formUserType === 'HUMAN' && formCreationMode === 'PASSWORD')" class="t9-field">
+            <label class="t9-label">{{ editingUser ? t('newPasswordOptional') : t('password') }}</label>
             <input
               v-model="formPassword"
               type="password"
               autocomplete="new-password"
-              class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              class="t9-input"
             />
           </div>
-          <div v-else-if="formUserType === 'HUMAN' && formCreationMode === 'INVITE'" class="text-xs text-muted-foreground">
+          <div v-else-if="formUserType === 'HUMAN' && formCreationMode === 'INVITE'" class="t9-hint">
             {{ t('inviteEmailNote') }}
           </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">{{ t('fullName') }}</label>
-            <input
-              v-model="formFullName"
-              type="text"
-              class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
+          <div class="t9-field">
+            <label class="t9-label">{{ t('fullName') }}</label>
+            <input v-model="formFullName" type="text" class="t9-input" />
           </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">{{ t('email') }}</label>
-            <input
-              v-model="formEmail"
-              type="email"
-              class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
+          <div class="t9-field">
+            <label class="t9-label">{{ t('email') }}</label>
+            <input v-model="formEmail" type="email" class="t9-input" />
           </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">{{ t('role') }}</label>
-            <select v-model="formRole" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+          <div class="t9-field">
+            <label class="t9-label">{{ t('role') }}</label>
+            <select v-model="formRole" class="t9-input">
               <option value="USER">{{ t('userRole') }}</option>
               <option value="ADMIN">{{ t('adminRole') }}</option>
               <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
             </select>
           </div>
           <div class="flex items-center gap-2">
-            <input id="active" v-model="formActive" type="checkbox" class="rounded" />
-            <label for="active" class="text-sm">{{ t('active') }}</label>
+            <input id="active" v-model="formActive" type="checkbox" />
+            <label for="active" class="t9-label">{{ t('active') }}</label>
           </div>
         </div>
-        <div class="flex justify-end gap-2 pt-2">
-          <button
-            class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-            @click="showForm = false"
-          >
-            {{ t('cancel') }}
-          </button>
+        <div class="t9-window-foot">
+          <button class="t9-btn px-4 py-1 text-sm" @click="showForm = false">{{ t('cancel') }}</button>
           <button
             :disabled="saving"
-            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+            class="t9-btn t9-btn-primary px-4 py-1 text-sm"
             data-testid="submit-user"
             @click="save"
           >
@@ -343,3 +312,172 @@ onMounted(loadUsers)
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 1999 telecom admin-console aesthetic (scoped to this page) */
+.t9-font {
+  font-family: Tahoma, Verdana, "MS Sans Serif", Geneva, sans-serif;
+  color: #000;
+}
+.t9-mono {
+  font-family: "Courier New", Courier, monospace;
+}
+.t9-titlebar {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  color: #ffffff;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.t9-panel {
+  background: #d4d0c8;
+  border: 2px solid;
+  border-color: #ffffff #404040 #404040 #ffffff; /* outset bevel */
+  padding: 6px 8px;
+}
+.t9-btn {
+  background: #d4d0c8;
+  border: 2px solid;
+  border-color: #ffffff #404040 #404040 #ffffff;
+  color: #000080;
+  font-weight: 600;
+  font-family: Tahoma, Verdana, "MS Sans Serif", sans-serif;
+  cursor: pointer;
+}
+.t9-btn:active {
+  border-color: #404040 #ffffff #ffffff #404040; /* inset on press */
+}
+.t9-btn:disabled {
+  color: #808080;
+  cursor: default;
+}
+.t9-btn-primary {
+  background: linear-gradient(180deg, #1084d0 0%, #000080 100%);
+  color: #ffffff;
+  border-color: #ffffff #003a6c #003a6c #ffffff;
+}
+.t9-input {
+  background: #ffffff;
+  border: 2px solid;
+  border-color: #808080 #ffffff #ffffff #808080; /* inset field */
+  padding: 2px 4px;
+  font-family: Tahoma, Verdana, "MS Sans Serif", sans-serif;
+  font-size: 13px;
+  color: #000;
+}
+.t9-input:focus {
+  outline: 1px dotted #000080;
+}
+.t9-count {
+  color: #000080;
+  font-weight: 700;
+  font-size: 13px;
+}
+.t9-status {
+  color: #404040;
+  font-size: 13px;
+  padding: 8px 0;
+}
+.t9-table {
+  border-collapse: collapse;
+  background: #ffffff;
+}
+.t9-table th {
+  background: linear-gradient(180deg, #1084d0 0%, #000080 100%);
+  color: #ffffff;
+  font-weight: 700;
+  border: 1px solid #404040;
+  text-align: left;
+}
+.t9-table td {
+  border: 1px solid #a0a0a0;
+}
+.t9-row:nth-child(odd) {
+  background: #f0f0f0;
+}
+.t9-row:hover {
+  background: #cfe4ff;
+}
+.t9-row {
+  cursor: pointer;
+}
+.t9-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border: 1px solid;
+}
+.t9-chip-sys {
+  background: #fff2cc;
+  border-color: #d9a300;
+  color: #7a5c00;
+}
+.t9-chip-inv {
+  background: #ffe0b3;
+  border-color: #d9730a;
+  color: #8a4b00;
+}
+.t9-role {
+  display: inline-block;
+  background: #dbeafc;
+  border: 1px solid #7fb0e0;
+  color: #0a3d6b;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.t9-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #000080;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: Tahoma, Verdana, "MS Sans Serif", sans-serif;
+}
+.t9-link-danger { color: #aa0000; }
+.t9-link-ok { color: #007a00; }
+.t9-empty {
+  text-align: center;
+  color: #808080;
+  padding: 16px 0;
+}
+.t9-window {
+  background: #d4d0c8;
+  border: 2px solid;
+  border-color: #ffffff #404040 #404040 #ffffff;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
+}
+.t9-window-body {
+  background: #d4d0c8;
+  padding: 10px 12px;
+}
+.t9-window-foot {
+  background: #d4d0c8;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #a0a0a0;
+}
+.t9-field {
+  display: block;
+}
+.t9-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: #000080;
+}
+.t9-hint {
+  font-size: 11px;
+  color: #404040;
+  margin-top: 2px;
+}
+</style>
