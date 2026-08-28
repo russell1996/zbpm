@@ -189,7 +189,8 @@ public class UiUserServiceImpl implements UiUserService {
         boolean wasActiveSuperAdmin = "SUPER_ADMIN".equals(previousRole) && previousActive;
         boolean willBeActiveSuperAdmin = "SUPER_ADMIN".equals(newRole) && newActive;
         if (wasActiveSuperAdmin && !willBeActiveSuperAdmin) {
-            long activeSuperAdminCount = repository.countByRoleAndActive("SUPER_ADMIN", true);
+            // Use PESSIMISTIC_WRITE to prevent race where two concurrent demotions both see count=2
+            long activeSuperAdminCount = repository.findByRoleAndActiveAndUserTypeForUpdate("SUPER_ADMIN", true, "HUMAN").size();
             if (activeSuperAdminCount <= 1) {
                 throw new EngineException("Cannot demote or deactivate the last active SUPER_ADMIN");
             }
