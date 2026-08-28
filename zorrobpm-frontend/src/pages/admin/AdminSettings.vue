@@ -33,7 +33,7 @@ function navigate(to: string) {
          Width/position/nav are constant; only the right content changes between sections. -->
     <div class="bg-card border border-border rounded-lg">
       <SidebarProvider class="!min-h-0">
-        <div class="flex gap-0">
+        <div class="flex gap-0 flex-1">
           <!-- Left nav — fixed vertical section navigation -->
           <nav
             class="w-48 shrink-0 border-r border-border p-3"
