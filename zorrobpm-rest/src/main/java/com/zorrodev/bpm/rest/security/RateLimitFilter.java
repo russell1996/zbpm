@@ -44,8 +44,9 @@ import java.util.concurrent.TimeUnit;
  * <p>Data endpoints: per-IP generous limit (WO-SEC-45).
  *
  * <p>Trusted proxy support: when {@code zorrobpm.security.rate-limit.trusted-proxies} is configured,
- * the filter extracts the real client IP from X-Forwarded-For (leftmost non-trusted IP).
- * Untrusted XFF headers are ignored (WO-SEC-12/13 anti-spoofing preserved).
+ * the filter trusts the connection remote address as the real client IP (set by nginx {@code real_ip_header}
+ * + {@code set_real_ip_from}, WO-SEC-52). It does NOT parse the leftmost X-Forwarded-For entry, which an
+ * upstream client can spoof (SEC-4). Untrusted XFF headers are ignored (WO-SEC-12/13 anti-spoofing preserved).
  *
  * <p>HOLD-fix (body-buffering DoS): per-IP check runs BEFORE any body read.
  * The body is only buffered (with a 16 KB cap) after the IP bucket allows the request.
@@ -267,7 +268,8 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         if ("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method)) {
             return path.startsWith("/events") || path.startsWith("/variables")
                 || path.startsWith("/process-instances") || path.startsWith("/user-tasks")
-                || path.startsWith("/service-tasks") || path.startsWith("/incidents");
+                || path.startsWith("/service-tasks") || path.startsWith("/incidents")
+                || path.startsWith("/process-definitions");
         }
         return false;
     }
@@ -288,23 +290,25 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     }
 
     /**
-     * WO-SEC-44: extract client IP, respecting trusted proxy configuration.
-     * If remoteAddr is a trusted proxy, extract real IP from X-Forwarded-For (leftmost).
-     * Otherwise, use remoteAddr directly (XFF ignored — anti-spoofing).
+     * WO-SEC-44/SEC-52: extract client IP, respecting trusted proxy configuration.
+     * <p>
+     * When the immediate peer is a trusted proxy (e.g. nginx with {@code real_ip_header
+     * X-Forwarded-For} + {@code set_real_ip_from}), the proxy has already rewritten the
+     * connection's remote address to the real client IP — so we trust {@code remoteAddr}
+     * directly. Reading the LEFTMOST X-Forwarded-For entry (the old behaviour, SEC-4) is
+     * spoofable: an upstream client can prepend arbitrary addresses to XFF, and the
+     * leftmost is exactly the attacker-controlled one, letting a client dodge/forge its
+     * rate-limit bucket. Without a trusted proxy in front, {@code remoteAddr} is the
+     * direct client — also correct.
      */
     public String getClientIp(HttpServletRequest request) {
         String remoteAddr = request.getRemoteAddr();
         if (trustedProxies.isEmpty() || !isTrustedProxy(remoteAddr)) {
             return remoteAddr;
         }
-        // Trusted proxy: extract real client IP from X-Forwarded-For
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff == null || xff.isBlank()) {
-            return remoteAddr;
-        }
-        // XFF format: "client, proxy1, proxy2" — take leftmost (original client)
-        String[] ips = xff.split(",");
-        return ips[0].trim();
+        // Trusted proxy in front: rely on it having resolved the real client IP into the
+        // connection remote address (nginx real_ip). Do NOT parse XFF leftmost (SEC-4).
+        return remoteAddr;
     }
 
     /**

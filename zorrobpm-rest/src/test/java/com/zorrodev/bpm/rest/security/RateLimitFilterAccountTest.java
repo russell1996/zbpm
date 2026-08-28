@@ -119,14 +119,20 @@ class RateLimitFilterAccountTest {
         req6.addHeader("X-Forwarded-For", "192.168.1.99");
         int status6 = doFilter(req6);
         assertThat(status6)
-            .as("6th login for charlie -> 429 (per-account limit)")
+            .as("6th login for charlie -> 429 (per-account OR shared-IP limit)")
             .isEqualTo(429);
+        // WO-SEC-52 / SEC-4: the LEFTMOST X-Forwarded-For entry is NO LONGER trusted to
+        // separate clients behind a trusted proxy. Without nginx `real_ip_header` rewriting
+        // the connection remote address, every client behind this proxy shares the SAME
+        // bucket keyed on the proxy address (10.0.0.1). That is the secure choice — a client
+        // cannot dodge the limit by forging XFF. The cost: to get per-client buckets you MUST
+        // deploy nginx `real_ip_header X-Forwarded-For` + `set_real_ip_from` (see WO-SEC-52).
         MockHttpServletRequest reqOther = loginRequest("10.0.0.1", "eve");
         reqOther.addHeader("X-Forwarded-For", "192.168.1.50");
         int statusOther = doFilter(reqOther);
         assertThat(statusOther)
-            .as("Different user from same proxy should pass")
-            .isEqualTo(200);
+            .as("Different user behind the SAME proxy shares the proxy bucket (SEC-4) -> 429")
+            .isEqualTo(429);
     }
 
     @Test
