@@ -83,6 +83,19 @@ class UserInvitationServiceTest {
         verify(auditLogService).record(eq(admin), eq("USER_INVITE_SENT"), isNull(), eq(humanUser.getId().toString()));
     }
 
+    // ---- The invited user has no other way to learn their own username before setting a
+    // password (login is by username, not email) — the invite email must say it. ----
+    @Test
+    void createInvitation_emailBodyIncludesUsername() {
+        when(userRepository.findById(humanUser.getId())).thenReturn(Optional.of(humanUser));
+
+        service.createInvitation(humanUser.getId(), admin);
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mailSender).send(eq(humanUser.getEmail()), anyString(), bodyCaptor.capture());
+        assertThat(bodyCaptor.getValue()).contains(humanUser.getUsername());
+    }
+
     // ---- Criterion 8: token stored hashed, never raw ----
     @Test
     void createInvitation_storesHashNotRawToken() {

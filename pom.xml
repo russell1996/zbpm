@@ -78,7 +78,7 @@
         <module>zorrobpm-test</module>
         <module>zorrobpm-exchange</module>
         <module>zorrobpm-rabbitmq</module>
-        <module>zorrobpm-ce</module>
+        <module>zorrobpm-app</module>
     </modules>
 
     <dependencyManagement>
