@@ -59,15 +59,18 @@ describe('SidebarNavShadcn', () => {
     expect(labels).not.toContain('submissionQueue')
   })
 
-  it('super-admin sees all 12 items including admin group', () => {
+  it('super-admin sees the consolidated admin item (WO-UI-10: one hub instead of three)', () => {
     mockAuth.isSuperAdmin = true
     const wrapper = mount(SidebarNavShadcn)
     const buttons = wrapper.findAll('button')
     const labels = buttons.map(b => b.text())
-    expect(labels).toContain('users')
-    expect(labels).toContain('submissionQueue')
-    expect(labels).toContain('mailSettings')
-    expect(labels.length).toBe(13)
+    // Phase 3 consolidation: a single "adminSettings" hub replaces the three
+    // separate users/submissions/mail-settings sidebar items (those are now tabs inside it).
+    expect(labels).toContain('adminSettings')
+    expect(labels).not.toContain('users')
+    expect(labels).not.toContain('submissionQueue')
+    expect(labels).not.toContain('mailSettings')
+    expect(labels.length).toBe(11)
   })
 
   it('non-super-admin does NOT see admin items', () => {
