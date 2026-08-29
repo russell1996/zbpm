@@ -68,7 +68,7 @@ const { t } = useI18n()
             <ChevronDown class="h-3 w-3 hidden md:inline" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" class="w-48">
+        <DropdownMenuContent align="end" class="w-56">
           <DropdownMenuItem as-child class="hover:bg-accent hover:text-accent-foreground">
             <RouterLink :to="{ name: 'my-profile' }" class="flex items-center gap-2">
               <User class="h-4 w-4" />
