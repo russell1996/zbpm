@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import { ChevronRight } from 'lucide-vue-next'
 
 const toast = useToast()
 const { t } = useI18n()
@@ -187,12 +188,13 @@ onMounted(loadUsers)
             <th class="px-4 py-3 text-left font-medium">{{ t('role') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
+            <th class="px-4 py-3 w-8"></th>
           </tr>
         </thead>
         <tbody>
           <template v-for="user in visibleUsers" :key="user.id">
           <tr
-            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer group"
             tabindex="0"
             @click="selectedUser = user"
             @keydown.enter="selectedUser = user"
@@ -235,10 +237,13 @@ onMounted(loadUsers)
                 </button>
               </div>
             </td>
+            <td class="px-4 py-3 text-right text-muted-foreground group-hover:text-foreground">
+              <ChevronRight class="h-4 w-4" />
+            </td>
           </tr>
           </template>
           <tr v-if="users.length === 0">
-            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noUsers') }}</td>
+            <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">{{ t('noUsers') }}</td>
           </tr>
         </tbody>
       </table>
@@ -349,7 +354,7 @@ onMounted(loadUsers)
       <SheetContent
         side="right"
         data-testid="user-detail-drawer"
-        :style="{ width: '520px', maxWidth: '90vw', padding: '0' }"
+        :style="{ width: '700px', maxWidth: '90vw', padding: '0' }"
         class="flex flex-col"
       >
         <div class="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
