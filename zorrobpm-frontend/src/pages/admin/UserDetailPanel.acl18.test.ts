@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+// jsdom lacks PointerEvent capture APIs that reka-ui's SelectTrigger calls on pointerdown.
+if (!HTMLElement.prototype.hasPointerCapture) {
+  HTMLElement.prototype.hasPointerCapture = () => false
+  HTMLElement.prototype.setPointerCapture = () => {}
+  HTMLElement.prototype.releasePointerCapture = () => {}
+}
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import UserDetailPanel from '@/pages/admin/UserDetailPanel.vue'
 import * as userService from '@/services/userService'
@@ -38,6 +44,11 @@ function user(userType: 'HUMAN' | 'SYSTEM') {
 
 describe('UserDetailPanel WO-ACL-18', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  // reka teleports Select content to <body>; clear leftovers so option queries stay scoped.
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
 
   it('criterion10: shows a reset-password button for a HUMAN user and calls adminResetPassword', async () => {
     const wrapper = mount(UserDetailPanel, { props: { user: user('HUMAN') } })

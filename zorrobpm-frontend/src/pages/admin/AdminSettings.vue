@@ -7,10 +7,11 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 
+// Tab order per WO-UI-10 brief: mail-settings, users, submissions.
 const sections = [
+  { to: '/admin/settings/mail-settings', labelKey: 'mailSettings', id: 'panel-mail-settings' },
   { to: '/admin/settings/users', labelKey: 'users', id: 'panel-users' },
   { to: '/admin/settings/submissions', labelKey: 'submissionQueue', id: 'panel-submissions' },
-  { to: '/admin/settings/mail-settings', labelKey: 'mailSettings', id: 'panel-mail-settings' },
 ]
 
 function isActive(to: string) {
@@ -25,13 +26,13 @@ function navigate(to: string) {
 </script>
 
 <template>
-  <div class="w-full h-full flex flex-col p-4">
-    <h1 class="text-2xl font-bold mb-6">{{ t('adminSettings') }}</h1>
+  <div class="h-full flex flex-col space-y-6">
+    <h1 class="text-2xl font-bold">{{ t('adminSettings') }}</h1>
 
     <!-- Layout mirrors the account Settings page (MyProfile.vue): plain vertical nav on the
          left (active item = bg-muted, no card/frame), working area on the right as a card.
          Stretched to fill the whole screen; only the right content changes between sections. -->
-    <div class="flex gap-6 flex-1 min-h-0">
+      <div class="flex gap-6 flex-1 min-h-0">
       <!-- Left nav — plain buttons, not a card -->
       <nav
         class="w-48 shrink-0 space-y-1"

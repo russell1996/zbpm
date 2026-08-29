@@ -6,6 +6,7 @@ import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import { ChevronRight } from 'lucide-vue-next'
 
@@ -175,15 +176,16 @@ onMounted(loadUsers)
         @input="loadUsers"
       />
       <!-- WO-INT-4 criterion 2: one list with a type filter — systems are not a separate screen -->
-      <select
-        v-model="typeFilter"
-        class="px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-        data-testid="user-type-filter"
-      >
-        <option value="ALL">{{ t('filterAllUsers') }}</option>
-        <option value="HUMAN">{{ t('filterHumanUsers') }}</option>
-        <option value="SYSTEM">{{ t('filterSystemUsers') }}</option>
-      </select>
+      <Select v-model="typeFilter" class="w-48">
+        <SelectTrigger data-testid="user-type-filter" class="w-48 px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="ALL" data-testid="user-type-filter-ALL">{{ t('filterAllUsers') }}</SelectItem>
+          <SelectItem value="HUMAN" data-testid="user-type-filter-HUMAN">{{ t('filterHumanUsers') }}</SelectItem>
+          <SelectItem value="SYSTEM" data-testid="user-type-filter-SYSTEM">{{ t('filterSystemUsers') }}</SelectItem>
+        </SelectContent>
+      </Select>
       <span class="text-sm text-muted-foreground">{{ totalCount }} {{ t('usersCount') }}</span>
     </div>
 
@@ -268,20 +270,30 @@ onMounted(loadUsers)
           <!-- WO-UI-10 Phase 2: account type (HUMAN / SYSTEM). Immutable after creation. -->
           <div>
             <label class="block text-sm font-medium mb-1">{{ t('userType') }}</label>
-            <select v-model="formUserType" :disabled="!!editingUser" data-testid="userType" class="w-full px-3 py-2 border border-input rounded-md text-sm disabled:opacity-50">
-              <option value="HUMAN">{{ t('userTypeHuman') }}</option>
-              <option value="SYSTEM">{{ t('userTypeSystem') }}</option>
-            </select>
+            <Select v-model="formUserType" :disabled="!!editingUser" class="w-full">
+              <SelectTrigger data-testid="userType" class="w-full px-3 py-2 border border-input rounded-md text-sm disabled:opacity-50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="HUMAN" data-testid="userType-item-HUMAN">{{ t('userTypeHuman') }}</SelectItem>
+                <SelectItem value="SYSTEM" data-testid="userType-item-SYSTEM">{{ t('userTypeSystem') }}</SelectItem>
+              </SelectContent>
+            </Select>
             <p v-if="formUserType === 'SYSTEM'" class="mt-1 text-xs text-muted-foreground">{{ t('systemAccountHint') }}</p>
             <p v-else-if="editingUser" class="mt-1 text-xs text-muted-foreground">{{ t('userTypeImmutableHint') }}</p>
           </div>
           <!-- WO-ACL-18: choose how the account is created (invitation link vs direct password). Hidden for SYSTEM. -->
           <div v-if="!editingUser && formUserType !== 'SYSTEM'">
             <label class="block text-sm font-medium mb-1">{{ t('creationModeLabel') }}</label>
-            <select v-model="formCreationMode" data-testid="creationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
-              <option value="INVITE">{{ t('invitationMode') }}</option>
-              <option value="PASSWORD">{{ t('passwordMode') }}</option>
-            </select>
+            <Select v-model="formCreationMode" class="w-full">
+              <SelectTrigger data-testid="creationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="INVITE">{{ t('invitationMode') }}</SelectItem>
+                <SelectItem value="PASSWORD">{{ t('passwordMode') }}</SelectItem>
+              </SelectContent>
+            </Select>
             <p v-if="formCreationMode === 'INVITE'" class="mt-1 text-xs text-muted-foreground">
               {{ t('inviteHint') }}
             </p>
@@ -316,11 +328,16 @@ onMounted(loadUsers)
           </div>
           <div>
             <label class="block text-sm font-medium mb-1">{{ t('role') }}</label>
-            <select v-model="formRole" class="w-full px-3 py-2 border border-input rounded-md text-sm">
-              <option value="USER">{{ t('userRole') }}</option>
-              <option value="ADMIN">{{ t('adminRole') }}</option>
-              <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
-            </select>
+            <Select v-model="formRole" class="w-full">
+              <SelectTrigger data-testid="create-role-trigger" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="USER">{{ t('userRole') }}</SelectItem>
+                <SelectItem value="ADMIN">{{ t('adminRole') }}</SelectItem>
+                <SelectItem value="SUPER_ADMIN" data-testid="create-role-SUPER_ADMIN">{{ t('superAdminRole') }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div class="flex items-center gap-2">
             <input id="active" v-model="formActive" type="checkbox" class="rounded" />
