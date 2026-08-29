@@ -65,7 +65,8 @@ public class UserInvitationService {
         String raw = issueToken(userId, TYPE_INVITE, user.getEmail(), invitationTtlHours);
         String link = linkBaseUrl + "/ui/accept-invitation?token=" + raw;
         mailSender.send(user.getEmail(), "ZBPM: приглашение в систему",
-                "Вас пригласили в ZorroBPM. Установите пароль по ссылке: " + link);
+                "Вас пригласили в ZBPM. Ваш логин: " + user.getUsername()
+                        + "\nУстановите пароль по ссылке: " + link);
         auditLogService.record(principal, "USER_INVITE_SENT", null, userId.toString());
         return raw;
     }
