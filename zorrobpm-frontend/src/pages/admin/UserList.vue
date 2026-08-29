@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
@@ -20,6 +20,10 @@ const showForm = ref(false)
 const saving = ref(false)
 const editingUser = ref<User | null>(null)
 const selectedUser = ref<User | null>(null)
+const editing = ref(false)
+const editForm = reactive<{ fullName: string; email: string; role: UserRole; active: boolean; password: string }>({
+  fullName: '', email: '', role: 'USER', active: true, password: '',
+})
 // WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
 const typeFilter = ref<'ALL' | 'HUMAN' | 'SYSTEM'>('ALL')
 
@@ -62,20 +66,50 @@ function openCreate() {
   showForm.value = true
 }
 
-function openEdit(user: User) {
-  editingUser.value = user
-  formUsername.value = user.username
-  formPassword.value = ''
-  formFullName.value = user.fullName || ''
-  formEmail.value = user.email || ''
-  formRole.value = user.role
-  formActive.value = user.active
-  formUserType.value = user.userType ?? 'HUMAN'
-  showForm.value = true
+function startEdit() {
+  if (!selectedUser.value) return
+  editForm.fullName = selectedUser.value.fullName || ''
+  editForm.email = selectedUser.value.email || ''
+  editForm.role = selectedUser.value.role
+  editForm.active = selectedUser.value.active
+  editForm.password = ''
+  editing.value = true
 }
 
-function editSelected() {
-  if (selectedUser.value) openEdit(selectedUser.value)
+async function saveEdit() {
+  if (!selectedUser.value) return
+  // WO-ACL-19 (P2): a HUMAN account MUST have an email; a SYSTEM account is an integration (no email).
+  const requiresEmail = selectedUser.value.userType === 'HUMAN'
+  if (requiresEmail && !editForm.email) {
+    toast.warning(t('emailRequired'))
+    return
+  }
+  saving.value = true
+  try {
+    const updated = await updateUser(selectedUser.value.id, {
+      fullName: editForm.fullName || null,
+      email: editForm.email || null,
+      role: editForm.role,
+      active: editForm.active,
+      password: editForm.password || undefined,
+    })
+    const idx = users.value.findIndex((u) => u.id === updated.id)
+    if (idx >= 0) users.value[idx] = updated
+    selectedUser.value = updated
+    editing.value = false
+    editForm.password = ''
+    toast.success(t('saved'))
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } }
+    toast.error(err?.response?.data?.message || t('failedToSaveUser'))
+  } finally {
+    saving.value = false
+  }
+}
+
+function cancelEdit() {
+  editing.value = false
+  editForm.password = ''
 }
 
 async function save() {
@@ -85,39 +119,27 @@ async function save() {
   }
   // WO-ACL-19 (P2) + WO-UI-10 Phase 2: a HUMAN account MUST have an email (every reset path is
   // email-driven). A SYSTEM account is an integration and has no email requirement.
-  const requiresEmail = editingUser.value
-    ? editingUser.value.userType === 'HUMAN'
-    : formUserType.value === 'HUMAN'
+  const requiresEmail = formUserType.value === 'HUMAN'
   if (requiresEmail && !formEmail.value) {
     toast.warning(t('emailRequired'))
     return
   }
-  if (!editingUser.value && formCreationMode.value === 'PASSWORD' && !formPassword.value) {
+  if (formUserType.value !== 'SYSTEM' && formCreationMode.value === 'PASSWORD' && !formPassword.value) {
     toast.warning(t('passwordRequired'))
     return
   }
   saving.value = true
   try {
-    if (editingUser.value) {
-      await updateUser(editingUser.value.id, {
-        fullName: formFullName.value || null,
-        email: formEmail.value || null,
-        role: formRole.value,
-        active: formActive.value,
-        password: formPassword.value || undefined,
-      })
-    } else {
-      await createUser({
-        username: formUsername.value,
-        password: formUserType.value === 'SYSTEM' ? '' : (formCreationMode.value === 'PASSWORD' ? formPassword.value : ''),
-        fullName: formFullName.value || null,
-        email: formEmail.value || null,
-        role: formRole.value,
-        active: formActive.value,
-        creationMode: formUserType.value === 'SYSTEM' ? undefined : formCreationMode.value,
-        userType: formUserType.value,
-      })
-    }
+    await createUser({
+      username: formUsername.value,
+      password: formUserType.value === 'SYSTEM' ? '' : (formCreationMode.value === 'PASSWORD' ? formPassword.value : ''),
+      fullName: formFullName.value || null,
+      email: formEmail.value || null,
+      role: formRole.value,
+      active: formActive.value,
+      creationMode: formUserType.value === 'SYSTEM' ? undefined : formCreationMode.value,
+      userType: formUserType.value,
+    })
     showForm.value = false
     await loadUsers()
     toast.success(t('saved'))
@@ -128,16 +150,6 @@ async function save() {
   } finally {
     saving.value = false
   }
-}
-
-async function toggleActive(user: User) {
-  await updateUser(user.id, {
-    fullName: user.fullName,
-    email: user.email,
-    role: user.role,
-    active: !user.active,
-  })
-  await loadUsers()
 }
 
 onMounted(loadUsers)
@@ -178,17 +190,16 @@ onMounted(loadUsers)
 
     <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
-    <div v-else class="border border-border rounded-lg overflow-hidden">
+    <div v-else class="border border-border rounded-lg overflow-y-auto max-h-[60vh]">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">{{ t('username') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('fullName') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('email') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('role') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
-            <th class="px-4 py-3 w-8"></th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('username') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('fullName') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('email') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('role') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('status') }}</th>
+            <th class="px-4 py-3 w-8 sticky top-0 bg-muted"></th>
           </tr>
         </thead>
         <tbody>
@@ -225,25 +236,13 @@ onMounted(loadUsers)
             <td class="px-4 py-3">
               <StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" />
             </td>
-            <td class="px-4 py-3">
-              <div class="flex items-center gap-2">
-                <button class="text-sm text-primary hover:underline" @click.stop="openEdit(user)">{{ t('edit') }}</button>
-                <button
-                  class="text-sm hover:underline"
-                  :class="user.active ? 'text-red-600' : 'text-green-600'"
-                  @click.stop="toggleActive(user)"
-                >
-                  {{ user.active ? t('deactivate') : t('activate') }}
-                </button>
-              </div>
-            </td>
             <td class="px-4 py-3 text-right text-muted-foreground group-hover:text-foreground">
               <ChevronRight class="h-4 w-4" />
             </td>
           </tr>
           </template>
           <tr v-if="users.length === 0">
-            <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">{{ t('noUsers') }}</td>
+            <td colspan="6" class="px-4 py-8 text-center text-muted-foreground">{{ t('noUsers') }}</td>
           </tr>
         </tbody>
       </table>
@@ -348,29 +347,53 @@ onMounted(loadUsers)
       </div>
     </div>
 
-    <!-- User detail Drawer: opens from the right (~520px), overlays the work area.
-         The user list is unchanged (no row expansion, no height shift) — details show on the side. -->
-    <Sheet :open="!!selectedUser" @update:open="(v) => { if (!v) selectedUser = null }">
+    <!-- User detail Drawer: a single place to view AND edit a user. A row click opens it;
+         editing switches the same Drawer into an editable state (no second modal on top). -->
+    <Sheet :open="!!selectedUser" @update:open="(v) => { if (!v) { selectedUser = null; editing = false } }">
       <SheetContent
         side="right"
         data-testid="user-detail-drawer"
-        :style="{ width: '700px', maxWidth: '90vw', padding: '0' }"
+        :style="{ width: '600px', maxWidth: '90vw', padding: '0' }"
         class="flex flex-col"
       >
         <div class="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <SheetTitle class="text-lg font-bold truncate pr-8">{{ selectedUser?.username }}</SheetTitle>
         </div>
-        <div class="overflow-y-auto flex-1 p-4" data-testid="user-detail-body">
-          <UserDetailPanel v-if="selectedUser" :user="selectedUser" @close="selectedUser = null" />
+        <div class="overflow-y-auto flex-1 p-4 space-y-6" data-testid="user-detail-body">
+          <UserDetailPanel
+            v-if="selectedUser"
+            :user="selectedUser"
+            :editing="editing"
+            :edit-form="editForm"
+            @close="selectedUser = null"
+          />
         </div>
         <div class="shrink-0 border-t border-border p-4">
           <button
-            class="w-full px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+            v-if="!editing"
+            class="w-full px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity"
             data-testid="drawer-edit-user"
-            @click="editSelected()"
+            @click="startEdit()"
           >
             {{ t('edit') }}
           </button>
+          <div v-else class="flex gap-2">
+            <button
+              class="flex-1 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+              data-testid="drawer-save-user"
+              :disabled="saving"
+              @click="saveEdit()"
+            >
+              {{ t('save') }}
+            </button>
+            <button
+              class="flex-1 px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+              data-testid="drawer-cancel-user"
+              @click="cancelEdit()"
+            >
+              {{ t('cancel') }}
+            </button>
+          </div>
         </div>
       </SheetContent>
     </Sheet>

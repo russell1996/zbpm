@@ -505,6 +505,7 @@
   "resetPasswordSent": "A password reset link has been sent.",
   "resetPasswordHint": "Sends the user a one-time link to set a new password by email.",
   "account": "Account",
+  "basicData": "Basic data",
   "systemAccountNoReset": "System accounts cannot be reset by email.",
   "forgotPasswordTitle": "Forgot password",
   "forgotPasswordHint": "Enter your email and we'll send you a link to reset your password.",

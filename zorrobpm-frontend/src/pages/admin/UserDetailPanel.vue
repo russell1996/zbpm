@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import type { User } from '@/entities/user/User'
+import type { User, UserRole } from '@/entities/user/User'
 import * as admin from '@/services/adminService'
 import { adminResetPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
-const props = defineProps<{ user: User }>()
+const props = withDefaults(defineProps<{
+  user: User
+  editing?: boolean
+  editForm?: { fullName: string; email: string; role: UserRole; active: boolean; password?: string }
+}>(), {
+  editing: false,
+  editForm: () => ({ fullName: '', email: '', role: 'USER' as UserRole, active: true, password: '' }),
+})
 const emit = defineEmits<{ close: [] }>()
 
 const toast = useToast()
@@ -245,15 +252,57 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
-    <!-- Compact identity: the Drawer header already shows the username, so no duplicate heading here -->
-    <div class="space-y-0.5">
-      <div class="text-sm font-semibold leading-tight">{{ user.fullName || '—' }}</div>
-      <div class="text-sm text-muted-foreground truncate">{{ user.email || '—' }}</div>
-      <div class="flex items-center gap-2 pt-1">
-        <StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" />
-        <span class="text-xs text-muted-foreground">{{ user.role }}</span>
+    <!-- Основные данные: compact identity at the top of the Drawer; the same fields become
+         editable inputs when the Drawer is in edit mode (no separate form/modal). -->
+    <section class="space-y-3">
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('basicData') }}</h4>
+
+      <div class="space-y-1">
+        <div class="text-xs text-muted-foreground">{{ t('username') }}</div>
+        <div class="text-sm font-mono">{{ user.username }}</div>
       </div>
-    </div>
+
+      <div class="space-y-1">
+        <div class="text-xs text-muted-foreground">{{ t('userType') }}</div>
+        <div class="text-sm">{{ user.userType === 'SYSTEM' ? t('userTypeSystem') : t('userTypeHuman') }}</div>
+      </div>
+
+      <div class="space-y-1">
+        <div class="text-xs text-muted-foreground">{{ t('fullName') }}</div>
+        <div v-if="!editing" class="text-sm">{{ user.fullName || '—' }}</div>
+        <input v-else v-model="editForm.fullName" type="text" data-testid="edit-fullName" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
+      </div>
+
+      <div class="space-y-1">
+        <div class="text-xs text-muted-foreground">{{ t('email') }}</div>
+        <div v-if="!editing" class="text-sm">{{ user.email || '—' }}</div>
+        <input v-else v-model="editForm.email" type="email" data-testid="edit-email" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
+      </div>
+
+      <div class="space-y-1">
+        <div class="text-xs text-muted-foreground">{{ t('role') }}</div>
+        <div v-if="!editing" class="text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span></div>
+        <select v-else v-model="editForm.role" data-testid="edit-role" class="w-full px-2 py-1 text-sm border border-input rounded-md bg-background">
+          <option value="USER">{{ t('userRole') }}</option>
+          <option value="ADMIN">{{ t('adminRole') }}</option>
+          <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
+        </select>
+      </div>
+
+      <div class="space-y-1">
+        <div class="text-xs text-muted-foreground">{{ t('status') }}</div>
+        <div v-if="!editing"><StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" /></div>
+        <label v-else class="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" v-model="editForm.active" class="rounded" />
+          {{ t('active') }}
+        </label>
+      </div>
+
+      <div v-if="editing" class="space-y-1">
+        <div class="text-xs text-muted-foreground">{{ t('newPasswordOptional') }}</div>
+        <input v-model="editForm.password" type="password" autocomplete="new-password" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
+      </div>
+    </section>
 
     <!-- === Account Section (WO-ACL-18) === -->
     <section class="space-y-2">
@@ -339,7 +388,7 @@ onUnmounted(() => {
 
       <!-- Memberships list (vertical, adapted to narrow drawer width, no horizontal overflow) -->
       <div v-if="membersLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
-      <div v-else-if="members.length" class="divide-y divide-border">
+      <div v-else-if="members.length" class="divide-y divide-border max-h-72 overflow-y-auto pr-1">
         <div v-for="m in members" :key="m.processKey" class="py-2 space-y-1">
           <div class="flex items-center justify-between gap-2">
             <span class="font-mono text-xs truncate" :title="m.processKey">{{ m.processKey }}</span>
