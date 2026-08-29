@@ -44,7 +44,7 @@ describe('UserList render', () => {
     expect(wrapper.text()).toContain('apiKey')
   })
 
-  it('WO-ACL-11 criterion 8: the Drawer "edit account" action opens the existing edit modal', async () => {
+  it('WO-ACL-11 criterion 8: "Редактировать учётную запись" switches the Drawer to inline edit (no modal)', async () => {
     const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
     await vi.waitFor(() => { expect(wrapper.text()).toContain('alice') }, { timeout: 2000 })
 
@@ -58,12 +58,15 @@ describe('UserList render', () => {
     expect(wrapper.text()).toContain('apiKey')
 
     // The Drawer's account section offers "Редактировать учётную запись" (editAccount),
-    // which opens the existing create/edit modal — not a second panel.
+    // which switches the SAME Drawer to edit mode — no second dialog/overlay opens.
     const editBtn = wrapper.findAll('button').find((b) => b.text() === 'editAccount')
     expect(editBtn).toBeDefined()
     await editBtn!.trigger('click')
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="form-username"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="drawer-save-user"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="drawer-cancel-user"]').exists()).toBe(true)
+    // no create/edit modal opened on top
+    expect(wrapper.find('[data-testid="form-username"]').exists()).toBe(false)
   })
 
   it('WO-ACL-11 criterion 9: Enter on the focused row expands the user detail panel', async () => {
@@ -155,7 +158,7 @@ describe('WO-UI-10 Phase 2: SYSTEM account creation', () => {
     expect(createUser).not.toHaveBeenCalled()
   })
 
-  it('editing a SYSTEM user shows userType immutable (modal opened from the Drawer)', async () => {
+  it('editing a SYSTEM user shows userType immutable (inline edit, no modal)', async () => {
     const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
     await vi.waitFor(() => expect(wrapper.text()).toContain('bob'), { timeout: 2000 })
     const bobRow = wrapper.findAll('tbody tr').find((r) => r.text().includes('bob'))!
@@ -164,9 +167,12 @@ describe('WO-UI-10 Phase 2: SYSTEM account creation', () => {
     const editBtn = wrapper.findAll('button').find((b) => b.text() === 'editAccount')!
     await editBtn.trigger('click')
     await wrapper.vm.$nextTick()
-    const sel = wrapper.find('[data-testid="userType"]')
-    expect(sel.exists()).toBe(true)
-    expect((sel.element as HTMLSelectElement).disabled).toBe(true)
-    expect((sel.element as HTMLSelectElement).value).toBe('SYSTEM')
+    // inline edit mode: save/cancel present, no second modal
+    expect(wrapper.find('[data-testid="drawer-save-user"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="drawer-cancel-user"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="form-username"]').exists()).toBe(false)
+    // userType is not editable in the Drawer (immutable) — only the role is
+    expect(wrapper.find('[data-testid="userType"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-role"]').exists()).toBe(true)
   })
 })

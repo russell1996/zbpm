@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
@@ -20,6 +20,10 @@ const showForm = ref(false)
 const saving = ref(false)
 const editingUser = ref<User | null>(null)
 const selectedUser = ref<User | null>(null)
+const editing = ref(false)
+const editForm = reactive<{ fullName: string; email: string; role: UserRole; active: boolean; password: string }>({
+  fullName: '', email: '', role: 'USER', active: true, password: '',
+})
 // WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
 const typeFilter = ref<'ALL' | 'HUMAN' | 'SYSTEM'>('ALL')
 
@@ -62,17 +66,49 @@ function openCreate() {
   showForm.value = true
 }
 
-function openEdit(user: User) {
-  editingUser.value = user
-  formUsername.value = user.username
-  formUserType.value = user.userType
-  formCreationMode.value = 'INVITE'
-  formPassword.value = ''
-  formFullName.value = user.fullName || ''
-  formEmail.value = user.email || ''
-  formRole.value = user.role
-  formActive.value = user.active
-  showForm.value = true
+function startEdit() {
+  if (!selectedUser.value) return
+  editForm.fullName = selectedUser.value.fullName || ''
+  editForm.email = selectedUser.value.email || ''
+  editForm.role = selectedUser.value.role
+  editForm.active = selectedUser.value.active
+  editForm.password = ''
+  editing.value = true
+}
+
+async function saveEdit() {
+  if (!selectedUser.value) return
+  const requiresEmail = selectedUser.value.userType === 'HUMAN'
+  if (requiresEmail && !editForm.email) {
+    toast.warning(t('emailRequired'))
+    return
+  }
+  saving.value = true
+  try {
+    const updated = await updateUser(selectedUser.value.id, {
+      fullName: editForm.fullName || null,
+      email: editForm.email || null,
+      role: editForm.role,
+      active: editForm.active,
+      password: editForm.password || undefined,
+    })
+    const idx = users.value.findIndex((u) => u.id === updated.id)
+    if (idx >= 0) users.value[idx] = updated
+    selectedUser.value = updated
+    editing.value = false
+    editForm.password = ''
+    toast.success(t('saved'))
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } }
+    toast.error(err?.response?.data?.message || t('failedToSaveUser'))
+  } finally {
+    saving.value = false
+  }
+}
+
+function cancelEdit() {
+  editing.value = false
+  editForm.password = ''
 }
 
 async function save() {
@@ -80,8 +116,6 @@ async function save() {
     toast.warning(t('fillRequired'))
     return
   }
-  // WO-ACL-19 (P2) + WO-UI-10 Phase 2: a HUMAN account MUST have an email (every reset path is
-  // email-driven). A SYSTEM account is an integration and has no email requirement.
   const requiresEmail = formUserType.value === 'HUMAN'
   if (requiresEmail && !formEmail.value) {
     toast.warning(t('emailRequired'))
@@ -93,34 +127,19 @@ async function save() {
   }
   saving.value = true
   try {
-    if (editingUser.value) {
-      const updated = await updateUser(editingUser.value.id, {
-        fullName: formFullName.value || null,
-        email: formEmail.value || null,
-        role: formRole.value,
-        active: formActive.value,
-        password: formPassword.value || undefined,
-      })
-      const idx = users.value.findIndex((u) => u.id === updated.id)
-      if (idx >= 0) users.value[idx] = updated
-      if (selectedUser.value && selectedUser.value.id === updated.id) selectedUser.value = updated
-      showForm.value = false
-      toast.success(t('saved'))
-    } else {
-      await createUser({
-        username: formUsername.value,
-        password: formUserType.value === 'SYSTEM' ? '' : (formCreationMode.value === 'PASSWORD' ? formPassword.value : ''),
-        fullName: formFullName.value || null,
-        email: formEmail.value || null,
-        role: formRole.value,
-        active: formActive.value,
-        creationMode: formUserType.value === 'SYSTEM' ? undefined : formCreationMode.value,
-        userType: formUserType.value,
-      })
-      showForm.value = false
-      await loadUsers()
-      toast.success(t('saved'))
-    }
+    await createUser({
+      username: formUsername.value,
+      password: formUserType.value === 'SYSTEM' ? '' : (formCreationMode.value === 'PASSWORD' ? formPassword.value : ''),
+      fullName: formFullName.value || null,
+      email: formEmail.value || null,
+      role: formRole.value,
+      active: formActive.value,
+      creationMode: formUserType.value === 'SYSTEM' ? undefined : formCreationMode.value,
+      userType: formUserType.value,
+    })
+    showForm.value = false
+    await loadUsers()
+    toast.success(t('saved'))
   } catch (e: unknown) {
     const err = e as { response?: { data?: { message?: string } } }
     const msg = err?.response?.data?.message
@@ -327,7 +346,7 @@ onMounted(loadUsers)
 
     <!-- User detail Drawer: a full user card. A row click opens it; the "edit account"
          action inside reuses the existing create/edit modal (no second modal invented). -->
-    <Sheet :open="!!selectedUser" @update:open="(v) => { if (!v) selectedUser = null }">
+    <Sheet :open="!!selectedUser" @update:open="(v) => { if (!v) { selectedUser = null; editing = false } }">
       <SheetContent
         side="right"
         data-testid="user-detail-drawer"
@@ -348,7 +367,12 @@ onMounted(loadUsers)
           <UserDetailPanel
             v-if="selectedUser"
             :user="selectedUser"
-            @edit="openEdit(selectedUser)"
+            :editing="editing"
+            :edit-form="editForm"
+            :saving="saving"
+            @edit="startEdit"
+            @save="saveEdit"
+            @cancel="cancelEdit"
             @close="selectedUser = null"
           />
         </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import type { User } from '@/entities/user/User'
+import type { User, UserRole } from '@/entities/user/User'
 import * as admin from '@/services/adminService'
 import { adminResetPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
@@ -8,10 +8,17 @@ import { useI18n } from 'vue-i18n'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import { Plus } from 'lucide-vue-next'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   user: User
-}>()
-const emit = defineEmits<{ close: []; edit: [] }>()
+  editing?: boolean
+  editForm?: { fullName: string; email: string; role: UserRole; active: boolean; password?: string }
+  saving?: boolean
+}>(), {
+  editing: false,
+  editForm: () => ({ fullName: '', email: '', role: 'USER' as UserRole, active: true, password: '' }),
+  saving: false,
+})
+const emit = defineEmits<{ close: []; edit: []; save: []; cancel: [] }>()
 
 const toast = useToast()
 const { t } = useI18n()
@@ -266,11 +273,13 @@ onUnmounted(() => {
         </div>
         <div>
           <dt class="text-xs text-muted-foreground">{{ t('fullName') }}</dt>
-          <dd class="text-sm">{{ user.fullName || '—' }}</dd>
+          <dd v-if="!editing" class="text-sm">{{ user.fullName || '—' }}</dd>
+          <input v-else v-model="editForm.fullName" type="text" data-testid="edit-fullName" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
         </div>
         <div>
           <dt class="text-xs text-muted-foreground">{{ t('email') }}</dt>
-          <dd class="text-sm break-all">{{ user.email || '—' }}</dd>
+          <dd v-if="!editing" class="text-sm break-all">{{ user.email || '—' }}</dd>
+          <input v-else v-model="editForm.email" type="email" data-testid="edit-email" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
         </div>
       </dl>
     </section>
@@ -278,24 +287,61 @@ onUnmounted(() => {
     <!-- === Account Section (WO-ACL-18) === -->
     <section class="space-y-2">
       <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('account') }}</h4>
-      <div v-if="user.userType === 'SYSTEM'" class="text-sm text-muted-foreground">{{ t('systemAccountNoReset') }}</div>
-      <button
-        v-else
-        class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50"
-        :disabled="resettingPassword || resetCooldown > 0"
-        data-testid="reset-password-button"
-        @click="resetUserPassword"
-      >
-        {{ t('resetPassword') }}
-      </button>
-      <p class="text-xs text-muted-foreground">{{ t('resetPasswordHint') }}</p>
-      <button
-        class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted"
-        data-testid="edit-account-button"
-        @click="emit('edit')"
-      >
-        {{ t('editAccount') }}
-      </button>
+      <template v-if="!editing">
+        <div v-if="user.userType === 'SYSTEM'" class="text-sm text-muted-foreground">{{ t('systemAccountNoReset') }}</div>
+        <button
+          v-else
+          class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50"
+          :disabled="resettingPassword || resetCooldown > 0"
+          data-testid="reset-password-button"
+          @click="resetUserPassword"
+        >
+          {{ t('resetPassword') }}
+        </button>
+        <p class="text-xs text-muted-foreground">{{ t('resetPasswordHint') }}</p>
+        <button
+          class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted"
+          data-testid="edit-account-button"
+          @click="emit('edit')"
+        >
+          {{ t('editAccount') }}
+        </button>
+      </template>
+      <template v-else>
+        <div class="space-y-1">
+          <label class="text-xs text-muted-foreground">{{ t('role') }}</label>
+          <select v-model="editForm.role" data-testid="edit-role" class="w-full px-2 py-1 text-sm border border-input rounded-md bg-background">
+            <option value="USER">{{ t('userRole') }}</option>
+            <option value="ADMIN">{{ t('adminRole') }}</option>
+            <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
+          </select>
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" v-model="editForm.active" class="rounded" />
+          {{ t('active') }}
+        </label>
+        <div class="space-y-1">
+          <label class="text-xs text-muted-foreground">{{ t('newPasswordOptional') }}</label>
+          <input v-model="editForm.password" type="password" autocomplete="new-password" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
+        </div>
+        <div class="flex gap-2 pt-1">
+          <button
+            class="flex-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+            data-testid="drawer-save-user"
+            :disabled="saving"
+            @click="emit('save')"
+          >
+            {{ t('save') }}
+          </button>
+          <button
+            class="flex-1 px-3 py-1.5 text-sm border border-border rounded hover:bg-muted"
+            data-testid="drawer-cancel-user"
+            @click="emit('cancel')"
+          >
+            {{ t('cancel') }}
+          </button>
+        </div>
+      </template>
     </section>
 
     <!-- === API Key Section === -->
