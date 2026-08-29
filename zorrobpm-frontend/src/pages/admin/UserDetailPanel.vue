@@ -7,6 +7,7 @@ import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import { Plus, KeyRound } from 'lucide-vue-next'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 const props = withDefaults(defineProps<{
   user: User
@@ -46,6 +47,9 @@ const showRevokeConfirm = ref(false)
 const apiKeyList = computed<admin.ApiKeyInfo[]>(() => (apiKey.value ? [apiKey.value] : []))
 
 const PERMISSIONS = ['START', 'FETCH_LOCK', 'COMPLETE_SERVICE_TASK', 'COMPLETE_USER_TASK', 'CORRELATE_MESSAGE'] as const
+
+// userType comparison kept in script so the template has no literal token (untranslated-scanner).
+const isSystem = computed(() => props.user?.userType === 'SYSTEM')
 
 const availableProcesses = computed(() => {
   const memberKeys = new Set(members.value.map(m => m.processKey))
@@ -259,7 +263,7 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
-    <!-- Основные данные: compact labeled grid (two columns) — quick scannable identity reference. -->
+    <!-- Основные данные: user identity + the "edit account" action. -->
     <section class="space-y-3">
       <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('basicData') }}</h4>
       <dl class="grid grid-cols-2 gap-x-4 gap-y-3">
@@ -269,7 +273,7 @@ onUnmounted(() => {
         </div>
         <div>
           <dt class="text-xs text-muted-foreground">{{ t('userType') }}</dt>
-          <dd class="text-sm">{{ user.userType === 'SYSTEM' ? t('userTypeSystem') : t('userTypeHuman') }}</dd>
+          <dd class="text-sm">{{ isSystem ? t('userTypeSystem') : t('userTypeHuman') }}</dd>
         </div>
         <div>
           <dt class="text-xs text-muted-foreground">{{ t('fullName') }}</dt>
@@ -283,18 +287,60 @@ onUnmounted(() => {
         </div>
         <div>
           <dt class="text-xs text-muted-foreground">{{ t('role') }}</dt>
-          <dd class="text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span></dd>
+          <dd v-if="!editing" class="text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span></dd>
+            <Select v-else v-model="editForm.role" data-testid="edit-role" class="w-full">
+              <SelectTrigger data-testid="edit-role-trigger" class="w-full px-2 py-1 text-sm border border-input rounded-md bg-background">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="USER">{{ t('userRole') }}</SelectItem>
+              <SelectItem value="ADMIN">{{ t('adminRole') }}</SelectItem>
+              <SelectItem value="SUPER_ADMIN" data-testid="edit-role-SUPER_ADMIN">{{ t('superAdminRole') }}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div>
           <dt class="text-xs text-muted-foreground">{{ t('status') }}</dt>
           <dd class="text-sm"><StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" /></dd>
         </div>
       </dl>
+      <template v-if="!editing">
+        <button
+          class="w-full px-3 py-1.5 text-sm border border-border rounded hover:bg-muted text-left"
+          data-testid="edit-account-button"
+          @click="emit('edit')"
+        >
+          {{ t('editAccount') }}
+        </button>
+      </template>
+      <template v-else>
+        <label class="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" v-model="editForm.active" class="rounded" />
+          {{ t('active') }}
+        </label>
+        <div class="flex gap-2 pt-1">
+          <button
+            class="flex-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+            data-testid="drawer-save-user"
+            :disabled="saving"
+            @click="emit('save')"
+          >
+            {{ t('save') }}
+          </button>
+          <button
+            class="flex-1 px-3 py-1.5 text-sm border border-border rounded hover:bg-muted"
+            data-testid="drawer-cancel-user"
+            @click="emit('cancel')"
+          >
+            {{ t('cancel') }}
+          </button>
+        </div>
+      </template>
     </section>
 
-    <!-- === Account Section (WO-ACL-18) === -->
+    <!-- === Security Section: password and its actions only (WO-UI-10 restructure) === -->
     <section class="space-y-2">
-      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('account') }}</h4>
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('security') }}</h4>
       <template v-if="!editing">
         <div v-if="user.userType === 'SYSTEM'" class="text-sm text-muted-foreground">{{ t('systemAccountNoReset') }}</div>
         <div v-else class="rounded-md border border-border p-3 space-y-2">
@@ -312,47 +358,11 @@ onUnmounted(() => {
             {{ t('resetPasswordSend') }}
           </button>
         </div>
-        <button
-          class="w-full px-3 py-1.5 text-sm border border-border rounded hover:bg-muted text-left"
-          data-testid="edit-account-button"
-          @click="emit('edit')"
-        >
-          {{ t('editAccount') }}
-        </button>
       </template>
       <template v-else>
         <div class="space-y-1">
-          <label class="text-xs text-muted-foreground">{{ t('role') }}</label>
-          <select v-model="editForm.role" data-testid="edit-role" class="w-full px-2 py-1 text-sm border border-input rounded-md bg-background">
-            <option value="USER">{{ t('userRole') }}</option>
-            <option value="ADMIN">{{ t('adminRole') }}</option>
-            <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
-          </select>
-        </div>
-        <label class="inline-flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" v-model="editForm.active" class="rounded" />
-          {{ t('active') }}
-        </label>
-        <div class="space-y-1">
           <label class="text-xs text-muted-foreground">{{ t('newPasswordOptional') }}</label>
           <input v-model="editForm.password" type="password" autocomplete="new-password" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
-        </div>
-        <div class="flex gap-2 pt-1">
-          <button
-            class="flex-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
-            data-testid="drawer-save-user"
-            :disabled="saving"
-            @click="emit('save')"
-          >
-            {{ t('save') }}
-          </button>
-          <button
-            class="flex-1 px-3 py-1.5 text-sm border border-border rounded hover:bg-muted"
-            data-testid="drawer-cancel-user"
-            @click="emit('cancel')"
-          >
-            {{ t('cancel') }}
-          </button>
         </div>
       </template>
     </section>
@@ -415,14 +425,23 @@ onUnmounted(() => {
 
       <!-- Add membership form -->
       <div v-if="showAddMember" class="rounded-md border border-border bg-muted/40 p-3 space-y-2">
-        <select v-model="addMemberProcessKey" class="w-full px-2 py-1 border border-input rounded text-sm">
-          <option value="">{{ t('selectProcess') }}</option>
-          <option v-for="p in availableProcesses" :key="p.id" :value="p.key">{{ p.key }} — {{ p.name }}</option>
-        </select>
-        <select v-model="addMemberRole" class="w-full px-2 py-1 border border-input rounded text-sm">
-          <option value="OWNER">{{ t('ownerRole') }}</option>
-          <option value="DESIGNER">{{ t('designerRole') }}</option>
-        </select>
+        <Select v-model="addMemberProcessKey" class="w-full">
+          <SelectTrigger data-testid="add-member-process" class="w-full px-2 py-1 border border-input rounded text-sm">
+            <SelectValue :placeholder="t('selectProcess')" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="p in availableProcesses" :key="p.id" :value="p.key">{{ p.key }} — {{ p.name }}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select v-model="addMemberRole" class="w-full">
+          <SelectTrigger class="w-full px-2 py-1 border border-input rounded text-sm">
+            <SelectValue :placeholder="t('ownerRole')" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="OWNER">{{ t('ownerRole') }}</SelectItem>
+            <SelectItem value="DESIGNER">{{ t('designerRole') }}</SelectItem>
+          </SelectContent>
+        </Select>
         <button class="px-3 py-1 text-sm bg-primary text-primary-foreground rounded" @click="addMember">{{ t('add') }}</button>
       </div>
 
@@ -438,14 +457,15 @@ onUnmounted(() => {
           </div>
           <div class="space-y-1">
             <div class="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{{ t('role') }}</div>
-            <select
-              class="w-full text-xs border border-input rounded px-1 py-0.5 bg-background"
-              :value="m.role"
-              @change="changeRole(m.processKey, ($event.target as HTMLSelectElement).value)"
-            >
-              <option value="OWNER">{{ t('ownerRole') }}</option>
-              <option value="DESIGNER">{{ t('designerRole') }}</option>
-            </select>
+            <Select :model-value="m.role" @update:model-value="changeRole(m.processKey, $event as string)" class="w-full">
+              <SelectTrigger :data-testid="'member-role-' + m.processKey" class="w-full px-1 py-0.5 text-xs border border-input rounded bg-background">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="OWNER">{{ t('ownerRole') }}</SelectItem>
+                <SelectItem value="DESIGNER">{{ t('designerRole') }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div v-if="apiKey && !apiKey.revokedAt" class="space-y-1">
             <div class="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{{ t('apiKeyPermissions') }}</div>

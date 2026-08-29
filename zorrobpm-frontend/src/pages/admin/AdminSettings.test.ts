@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminSettings from './AdminSettings.vue'
 
@@ -43,6 +43,7 @@ describe('WO-UI-10 Phase 3: AdminSettings tab hub', () => {
 
     // navigate to the users tab
     await tabs[1].trigger('click')
+    await flushPromises()
     await router.isReady()
     expect(router.currentRoute.value.name).toBe('admin-settings-users')
 

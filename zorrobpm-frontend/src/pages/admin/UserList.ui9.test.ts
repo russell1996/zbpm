@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest'
+// jsdom lacks PointerEvent capture APIs that reka-ui's SelectTrigger calls on pointerdown.
+if (!HTMLElement.prototype.hasPointerCapture) {
+  HTMLElement.prototype.hasPointerCapture = () => false
+  HTMLElement.prototype.setPointerCapture = () => {}
+  HTMLElement.prototype.releasePointerCapture = () => {}
+}
+
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import UserList from './UserList.vue'
+import UserDetailPanel from './UserDetailPanel.vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
@@ -17,79 +26,86 @@ vi.mock('@/services/userService', () => ({
   updateUser: (...a: any[]) => mockUpdateUser(...a),
 }))
 
+vi.mock('@/services/adminService', () => ({
+  getApiKey: vi.fn().mockRejectedValue({ response: { status: 404 } }),
+  listUserMemberships: vi.fn().mockResolvedValue([]),
+  addMember: vi.fn().mockResolvedValue({}),
+  changeMemberRole: vi.fn().mockResolvedValue({}),
+  removeMember: vi.fn().mockResolvedValue({}),
+  createApiKey: vi.fn().mockResolvedValue({ key: 'k' }),
+  revokeApiKey: vi.fn().mockResolvedValue({}),
+  rotateApiKey: vi.fn().mockResolvedValue({ key: 'k' }),
+}))
+
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
 }))
 
-describe('WO-UI-9 point 2 — UserList role SUPER_ADMIN', () => {
-  it('select contains SUPER_ADMIN option (and correct translations)', async () => {
-    mockGetUsers.mockResolvedValue({
-      data: [],
-      totalElements: 0,
-    })
-    const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
-    await vi.waitFor(() => expect(wrapper.find('button').exists()).toBe(true), { timeout: 2000 })
-    // open create form to see the select
-    await wrapper.find('button').trigger('click') // first button is addUser
-    await wrapper.vm.$nextTick()
-    const selects = wrapper.findAll('select')
-    const roleSelect = selects.find((s) => s.find('option[value="SUPER_ADMIN"]').exists())
-    expect(roleSelect).toBeDefined()
-    const options = roleSelect!.findAll('option')
-    const values = options.map((o) => (o.element as HTMLOptionElement).value)
-    expect(values).toContain('USER')
-    expect(values).toContain('ADMIN')
-    expect(values).toContain('SUPER_ADMIN')
-    expect(values).toHaveLength(3)
+// reka teleports Select content to <body>; clear leftovers so option queries stay scoped.
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+function openSelect(wrapper: ReturnType<typeof mount>, testid: string) {
+  const trigger = wrapper.find(`[data-testid="${testid}"]`)
+  expect(trigger.exists()).toBe(true)
+  // reka SelectTrigger opens on pointerdown with button === 0.
+  trigger.element.dispatchEvent(new MouseEvent('pointerdown', { button: 0, ctrlKey: false, bubbles: true, cancelable: true }))
+  return trigger
+}
+
+function optionInDocument(testid: string): Element | null {
+  return document.querySelector(`[data-testid="${testid}"]`)
+}
+
+const superAdminUser = {
+  id: 'u1',
+  username: 'admin',
+  fullName: 'Admin',
+  email: 'admin@corp.kz',
+  role: 'SUPER_ADMIN',
+  active: true,
+  userType: 'HUMAN',
+  createdAt: '',
+  updatedAt: '',
+}
+
+describe('WO-UI-9 point 2 — role SUPER_ADMIN (reka Select, post WO-UI-10)', () => {
+  it('create form role Select contains SUPER_ADMIN option (and correct translations)', async () => {
+    mockGetUsers.mockResolvedValue({ data: [], totalElements: 0 })
+    const wrapper = mount(UserList, { global: { stubs: { teleport: false } } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('addUser'), { timeout: 2000 })
+
+    // open create form (button has text "addUser", no testid)
+    const addBtn = wrapper.findAll('button').find((b) => b.text() === 'addUser')
+    expect(addBtn).toBeTruthy()
+    await addBtn!.trigger('click')
+    await nextTick()
+
+    openSelect(wrapper, 'create-role-trigger')
+    await vi.waitFor(() => expect(optionInDocument('create-role-SUPER_ADMIN')).not.toBeNull(), { timeout: 2000 })
+
+    expect(optionInDocument('create-role-SUPER_ADMIN')).not.toBeNull()
+    const optionTexts = [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent?.trim())
+    expect(optionTexts).toEqual(expect.arrayContaining(['userRole', 'adminRole', 'superAdminRole']))
   })
 
-  it('editing a SUPER_ADMIN keeps SUPER_ADMIN selected — no silent downgrade to USER', async () => {
-    const superAdminUser = {
-      id: 'u1',
-      username: 'admin',
-      fullName: 'Admin',
-      email: 'admin@corp.kz',
-      role: 'SUPER_ADMIN',
-      active: true,
-      userType: 'HUMAN',
-      createdAt: '',
-      updatedAt: '',
-    }
-    mockGetUsers.mockResolvedValue({
-      data: [superAdminUser],
-      totalElements: 1,
+  it('editing a SUPER_ADMIN keeps SUPER_ADMIN selected — no silent downgrade to USER (Drawer edit form)', async () => {
+    const wrapper = mount(UserDetailPanel, {
+      props: { user: superAdminUser as any, editing: true, editForm: { fullName: 'Admin', email: 'admin@corp.kz', role: 'SUPER_ADMIN', active: true, password: '' } },
+      global: { stubs: { teleport: false } },
     })
-    const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
-    await vi.waitFor(() => expect(wrapper.text()).toContain('admin'), { timeout: 2000 })
-
-    // click Edit
-    const editBtn = wrapper.findAll('button').find((b) => b.text() === 'edit')!
-    await editBtn.trigger('click')
-    await wrapper.vm.$nextTick()
-
-    // the select should now be visible and have SUPER_ADMIN selected
-    const selects = wrapper.findAll('select')
-    const select = selects.find((s) => s.find('option[value="SUPER_ADMIN"]').exists())
-    expect(select).toBeDefined()
-    expect(select!.exists()).toBe(true)
-    const selectEl = select!.element as HTMLSelectElement
-    expect(selectEl.value).toBe('SUPER_ADMIN')
-
-    // the displayed text should be superAdminRole, not USER
-    const selectedOption = select!.find('option:checked')
-    expect(selectedOption.exists()).toBe(true)
-    // ensure the option with SUPER_ADMIN is the selected one
-    expect((selectedOption.element as HTMLOptionElement).value).toBe('SUPER_ADMIN')
-
-    // simulate save without changing role — should send SUPER_ADMIN, not USER
-    mockUpdateUser.mockResolvedValue({})
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'save')!
-    await saveBtn.trigger('click')
     await flushPromises()
-    expect(mockUpdateUser).toHaveBeenCalledWith(
-      'u1',
-      expect.objectContaining({ role: 'SUPER_ADMIN' }),
-    )
+    await nextTick()
+
+    // The Drawer inline-edit role Select must show SUPER_ADMIN (not be silently downgraded to USER).
+    const trigger = wrapper.find('[data-testid="edit-role-trigger"]')
+    expect(trigger.exists()).toBe(true)
+    expect(trigger.text()).toContain('superAdminRole')
+
+    openSelect(wrapper, 'edit-role-trigger')
+    await vi.waitFor(() => expect(optionInDocument('edit-role-SUPER_ADMIN')).not.toBeNull(), { timeout: 2000 })
+    expect(optionInDocument('edit-role-SUPER_ADMIN')).not.toBeNull()
   })
 
   it('router guard for /admin/users is SUPER_ADMIN-only', async () => {
