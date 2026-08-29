@@ -205,6 +205,16 @@ class DBServiceImplCharacterizationTest {
     }
 
     @Test
+    void createToken_withScope_persistsScopeActivityId() {
+        UUID parent = UUID.randomUUID(); UUID scope = UUID.randomUUID();
+        dbService.createToken(parent, scope);
+        ArgumentCaptor<TokenEntity> captor = ArgumentCaptor.forClass(TokenEntity.class);
+        verify(tokenRepository).save(captor.capture());
+        assertThat(captor.getValue().getParentId()).isEqualTo(parent);
+        assertThat(captor.getValue().getScopeActivityId()).isEqualTo(scope);
+    }
+
+    @Test
     void setPendingBranches_saves() {
         UUID tokenId = UUID.randomUUID();
         TokenEntity entity = new TokenEntity(); entity.setId(tokenId); entity.setPendingBranches(0);
@@ -369,6 +379,16 @@ class DBServiceImplCharacterizationTest {
         ArgumentCaptor<SignalSubscriptionEntity> captor = ArgumentCaptor.forClass(SignalSubscriptionEntity.class);
         verify(signalSubscriptionRepository).save(captor.capture());
         assertThat(captor.getValue().getBoundaryElementId()).isEqualTo("boundary");
+    }
+
+    @Test
+    void createSignalSubscription_3arg_persistsWithNullBoundary() {
+        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID();
+        UUID id = dbService.createSignalSubscription(pi, act, "s");
+        assertThat(id).isNotNull();
+        ArgumentCaptor<SignalSubscriptionEntity> captor = ArgumentCaptor.forClass(SignalSubscriptionEntity.class);
+        verify(signalSubscriptionRepository).save(captor.capture());
+        assertThat(captor.getValue().getBoundaryElementId()).isNull();
     }
 
     @Test
