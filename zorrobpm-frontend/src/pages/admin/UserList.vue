@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import { ChevronRight } from 'lucide-vue-next'
 
 const toast = useToast()
 const { t } = useI18n()
@@ -17,7 +20,11 @@ const search = ref('')
 const showForm = ref(false)
 const saving = ref(false)
 const editingUser = ref<User | null>(null)
-const expandedUserId = ref<string | null>(null)
+const selectedUser = ref<User | null>(null)
+const editing = ref(false)
+const editForm = reactive<{ fullName: string; email: string; role: UserRole; active: boolean; password: string }>({
+  fullName: '', email: '', role: 'USER', active: true, password: '',
+})
 // WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
 const typeFilter = ref<'ALL' | 'HUMAN' | 'SYSTEM'>('ALL')
 
@@ -33,6 +40,8 @@ const formRole = ref<UserRole>('USER')
 const formActive = ref(true)
 /** WO-ACL-18: default creation path is an invitation (one-time link), not a direct password. */
 const formCreationMode = ref<string>('INVITE')
+/** WO-UI-10 Phase 2: account type — HUMAN (default) or SYSTEM (integration, API-key only). */
+const formUserType = ref<'HUMAN' | 'SYSTEM'>('HUMAN')
 
 async function loadUsers() {
   loading.value = true
@@ -54,18 +63,55 @@ function openCreate() {
   formRole.value = 'USER'
   formActive.value = true
   formCreationMode.value = 'INVITE'
+  formUserType.value = 'HUMAN'
   showForm.value = true
 }
 
-function openEdit(user: User) {
-  editingUser.value = user
-  formUsername.value = user.username
-  formPassword.value = ''
-  formFullName.value = user.fullName || ''
-  formEmail.value = user.email || ''
-  formRole.value = user.role
-  formActive.value = user.active
-  showForm.value = true
+function startEdit() {
+  if (!selectedUser.value) return
+  editForm.fullName = selectedUser.value.fullName || ''
+  editForm.email = selectedUser.value.email || ''
+  editForm.role = selectedUser.value.role
+  editForm.active = selectedUser.value.active
+  editForm.password = ''
+  editing.value = true
+}
+
+async function saveEdit() {
+  if (!selectedUser.value) return
+  const requiresEmail = selectedUser.value.userType === 'HUMAN'
+  if (requiresEmail && !editForm.email) {
+    toast.warning(t('emailRequired'))
+    return
+  }
+  saving.value = true
+  try {
+    const updated = await updateUser(selectedUser.value.id, {
+      fullName: editForm.fullName || null,
+      email: editForm.email || null,
+      role: editForm.role,
+      active: editForm.active,
+      password: editForm.password || undefined,
+    })
+    // Reload the list so the Drawer shows the full, fresh user (the update response may
+    // omit fields, which would otherwise render as "—" until a page refresh).
+    await loadUsers()
+    const refreshed = users.value.find((u) => u.id === updated.id)
+    selectedUser.value = refreshed ?? updated
+    editing.value = false
+    editForm.password = ''
+    toast.success(t('saved'))
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } }
+    toast.error(err?.response?.data?.message || t('failedToSaveUser'))
+  } finally {
+    saving.value = false
+  }
+}
+
+function cancelEdit() {
+  editing.value = false
+  editForm.password = ''
 }
 
 async function save() {
@@ -73,60 +119,37 @@ async function save() {
     toast.warning(t('fillRequired'))
     return
   }
-  // WO-ACL-19 (P2): a HUMAN account MUST have an email (every reset path is email-driven).
-  // All accounts created through this form are HUMAN.
-  if (!editingUser.value && !formEmail.value) {
+  const requiresEmail = formUserType.value === 'HUMAN'
+  if (requiresEmail && !formEmail.value) {
     toast.warning(t('emailRequired'))
     return
   }
-  if (editingUser.value && editingUser.value.userType === 'HUMAN' && !formEmail.value) {
-    toast.warning(t('emailRequired'))
-    return
-  }
-  if (!editingUser.value && formCreationMode.value === 'PASSWORD' && !formPassword.value) {
+  if (formUserType.value !== 'SYSTEM' && formCreationMode.value === 'PASSWORD' && !formPassword.value) {
     toast.warning(t('passwordRequired'))
     return
   }
   saving.value = true
   try {
-    if (editingUser.value) {
-      await updateUser(editingUser.value.id, {
-        fullName: formFullName.value || null,
-        email: formEmail.value || null,
-        role: formRole.value,
-        active: formActive.value,
-        password: formPassword.value || undefined,
-      })
-    } else {
-      await createUser({
-        username: formUsername.value,
-        password: formCreationMode.value === 'PASSWORD' ? formPassword.value : '',
-        fullName: formFullName.value || null,
-        email: formEmail.value || null,
-        role: formRole.value,
-        active: formActive.value,
-        creationMode: formCreationMode.value,
-      })
-    }
+    await createUser({
+      username: formUsername.value,
+      password: formUserType.value === 'SYSTEM' ? '' : (formCreationMode.value === 'PASSWORD' ? formPassword.value : ''),
+      fullName: formFullName.value || null,
+      email: formEmail.value || null,
+      role: formRole.value,
+      active: formActive.value,
+      creationMode: formUserType.value === 'SYSTEM' ? undefined : formCreationMode.value,
+      userType: formUserType.value,
+    })
     showForm.value = false
     await loadUsers()
     toast.success(t('saved'))
   } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    const err = e as { response?: { data?: { message?: string } } }
+    const msg = err?.response?.data?.message
     toast.error(msg || t('failedToSaveUser'))
   } finally {
     saving.value = false
   }
-}
-
-async function toggleActive(user: User) {
-  await updateUser(user.id, {
-    fullName: user.fullName,
-    email: user.email,
-    role: user.role,
-    active: !user.active,
-  })
-  await loadUsers()
 }
 
 onMounted(loadUsers)
@@ -153,39 +176,40 @@ onMounted(loadUsers)
         @input="loadUsers"
       />
       <!-- WO-INT-4 criterion 2: one list with a type filter — systems are not a separate screen -->
-      <select
-        v-model="typeFilter"
-        class="px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-        data-testid="user-type-filter"
-      >
-        <option value="ALL">{{ t('filterAllUsers') }}</option>
-        <option value="HUMAN">{{ t('filterHumanUsers') }}</option>
-        <option value="SYSTEM">{{ t('filterSystemUsers') }}</option>
-      </select>
+      <Select v-model="typeFilter" class="w-48">
+        <SelectTrigger data-testid="user-type-filter" class="w-48 px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="ALL" data-testid="user-type-filter-ALL">{{ t('filterAllUsers') }}</SelectItem>
+          <SelectItem value="HUMAN" data-testid="user-type-filter-HUMAN">{{ t('filterHumanUsers') }}</SelectItem>
+          <SelectItem value="SYSTEM" data-testid="user-type-filter-SYSTEM">{{ t('filterSystemUsers') }}</SelectItem>
+        </SelectContent>
+      </Select>
       <span class="text-sm text-muted-foreground">{{ totalCount }} {{ t('usersCount') }}</span>
     </div>
 
     <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
-    <div v-else class="border border-border rounded-lg overflow-hidden">
+    <div v-else class="border border-border rounded-lg overflow-y-auto max-h-[60vh]">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">{{ t('username') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('fullName') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('email') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('role') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('status') }}</th>
-            <th class="px-4 py-3 text-left font-medium">{{ t('actions') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('username') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('fullName') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('email') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('role') }}</th>
+            <th class="px-4 py-3 text-left font-medium sticky top-0 bg-muted">{{ t('status') }}</th>
+            <th class="px-4 py-3 w-8 sticky top-0 bg-muted"></th>
           </tr>
         </thead>
         <tbody>
           <template v-for="user in visibleUsers" :key="user.id">
           <tr
-            class="border-t border-border hover:bg-muted/50 cursor-pointer"
+            class="border-t border-border hover:bg-muted/50 cursor-pointer group"
             tabindex="0"
-            @click="expandedUserId = expandedUserId === user.id ? null : user.id"
-            @keydown.enter="expandedUserId = expandedUserId === user.id ? null : user.id"
+            @click="selectedUser = user"
+            @keydown.enter="selectedUser = user"
           >
             <td class="px-4 py-3 font-mono">
               {{ user.username }}
@@ -213,22 +237,8 @@ onMounted(loadUsers)
             <td class="px-4 py-3">
               <StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" />
             </td>
-            <td class="px-4 py-3">
-              <div class="flex items-center gap-2">
-                <button class="text-sm text-primary hover:underline" @click.stop="openEdit(user)">{{ t('edit') }}</button>
-                <button
-                  class="text-sm hover:underline"
-                  :class="user.active ? 'text-red-600' : 'text-green-600'"
-                  @click.stop="toggleActive(user)"
-                >
-                  {{ user.active ? t('deactivate') : t('activate') }}
-                </button>
-              </div>
-            </td>
-          </tr>
-          <tr v-if="expandedUserId === user.id">
-            <td colspan="6" class="p-0">
-              <UserDetailPanel :user="user" @close="expandedUserId = null" />
+            <td class="px-4 py-3 text-right text-muted-foreground group-hover:text-foreground">
+              <ChevronRight class="h-4 w-4" />
             </td>
           </tr>
           </template>
@@ -253,21 +263,42 @@ onMounted(loadUsers)
               v-model="formUsername"
               type="text"
               :disabled="!!editingUser"
+              data-testid="form-username"
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
             />
           </div>
-          <!-- WO-ACL-18: choose how the account is created (invitation link vs direct password) -->
-          <div v-if="!editingUser">
+          <!-- WO-UI-10 Phase 2: account type (HUMAN / SYSTEM). Immutable after creation. -->
+          <div>
+            <label class="block text-sm font-medium mb-1">{{ t('userType') }}</label>
+            <Select v-model="formUserType" :disabled="!!editingUser" class="w-full">
+              <SelectTrigger data-testid="userType" class="w-full px-3 py-2 border border-input rounded-md text-sm disabled:opacity-50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="HUMAN" data-testid="userType-item-HUMAN">{{ t('userTypeHuman') }}</SelectItem>
+                <SelectItem value="SYSTEM" data-testid="userType-item-SYSTEM">{{ t('userTypeSystem') }}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p v-if="formUserType === 'SYSTEM'" class="mt-1 text-xs text-muted-foreground">{{ t('systemAccountHint') }}</p>
+            <p v-else-if="editingUser" class="mt-1 text-xs text-muted-foreground">{{ t('userTypeImmutableHint') }}</p>
+          </div>
+          <!-- WO-ACL-18: choose how the account is created (invitation link vs direct password). Hidden for SYSTEM. -->
+          <div v-if="!editingUser && formUserType !== 'SYSTEM'">
             <label class="block text-sm font-medium mb-1">{{ t('creationModeLabel') }}</label>
-            <select v-model="formCreationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
-              <option value="INVITE">{{ t('invitationMode') }}</option>
-              <option value="PASSWORD">{{ t('passwordMode') }}</option>
-            </select>
+            <Select v-model="formCreationMode" class="w-full">
+              <SelectTrigger data-testid="creationMode" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="INVITE">{{ t('invitationMode') }}</SelectItem>
+                <SelectItem value="PASSWORD">{{ t('passwordMode') }}</SelectItem>
+              </SelectContent>
+            </Select>
             <p v-if="formCreationMode === 'INVITE'" class="mt-1 text-xs text-muted-foreground">
               {{ t('inviteHint') }}
             </p>
           </div>
-          <div v-if="editingUser || formCreationMode === 'PASSWORD'">
+          <div v-if="editingUser || (formUserType === 'HUMAN' && formCreationMode === 'PASSWORD')">
             <label class="block text-sm font-medium mb-1">{{ editingUser ? t('newPasswordOptional') : t('password') }}</label>
             <input
               v-model="formPassword"
@@ -276,7 +307,7 @@ onMounted(loadUsers)
               class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          <div v-else-if="formCreationMode === 'INVITE'" class="text-xs text-muted-foreground">
+          <div v-else-if="formUserType === 'HUMAN' && formCreationMode === 'INVITE'" class="text-xs text-muted-foreground">
             {{ t('inviteEmailNote') }}
           </div>
           <div>
@@ -297,11 +328,16 @@ onMounted(loadUsers)
           </div>
           <div>
             <label class="block text-sm font-medium mb-1">{{ t('role') }}</label>
-            <select v-model="formRole" class="w-full px-3 py-2 border border-input rounded-md text-sm">
-              <option value="USER">{{ t('userRole') }}</option>
-              <option value="ADMIN">{{ t('adminRole') }}</option>
-              <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
-            </select>
+            <Select v-model="formRole" class="w-full">
+              <SelectTrigger data-testid="create-role-trigger" class="w-full px-3 py-2 border border-input rounded-md text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="USER">{{ t('userRole') }}</SelectItem>
+                <SelectItem value="ADMIN">{{ t('adminRole') }}</SelectItem>
+                <SelectItem value="SUPER_ADMIN" data-testid="create-role-SUPER_ADMIN">{{ t('superAdminRole') }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div class="flex items-center gap-2">
             <input id="active" v-model="formActive" type="checkbox" class="rounded" />
@@ -318,6 +354,7 @@ onMounted(loadUsers)
           <button
             :disabled="saving"
             class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+            data-testid="submit-user"
             @click="save"
           >
             {{ editingUser ? t('save') : t('add') }}
@@ -325,5 +362,35 @@ onMounted(loadUsers)
         </div>
       </div>
     </div>
+
+    <!-- User detail Drawer: a full user card. A row click opens it; the "edit account"
+         action inside reuses the existing create/edit modal (no second modal invented). -->
+    <Sheet :open="!!selectedUser" @update:open="(v) => { if (!v) { selectedUser = null; editing = false } }">
+      <SheetContent
+        side="right"
+        data-testid="user-detail-drawer"
+        :style="{ width: '600px', maxWidth: '90vw', padding: '0' }"
+        class="flex flex-col"
+      >
+        <!-- Fixed header: compact identity hero, visually separated from the body -->
+        <div class="shrink-0 border-b border-border px-4 py-3 pr-12">
+          <SheetTitle class="text-lg font-bold truncate text-foreground">{{ selectedUser?.username }}</SheetTitle>
+        </div>
+        <!-- Scrollable body -->
+        <div class="overflow-y-auto flex-1 p-5 space-y-6" data-testid="user-detail-body">
+          <UserDetailPanel
+            v-if="selectedUser"
+            :user="selectedUser"
+            :editing="editing"
+            :edit-form="editForm"
+            :saving="saving"
+            @edit="startEdit"
+            @save="saveEdit"
+            @cancel="cancelEdit"
+            @close="selectedUser = null"
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
   </div>
 </template>

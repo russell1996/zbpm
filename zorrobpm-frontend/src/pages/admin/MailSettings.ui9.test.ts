@@ -28,7 +28,7 @@ vi.mock('@/composables/useToast', () => ({
 describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
   beforeEach(() => {
     mockGetMailHealth.mockResolvedValue({
-      configured: true,
+      configured: false,
       reachable: null,
       lastSuccess: null,
       lastError: null,
@@ -64,6 +64,8 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
     })
     const wrapper = mount(MailSettings)
     await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
     await wrapper.find('[data-testid="save"]').trigger('click')
     await flushPromises()
     expect(mockToastError).toHaveBeenCalledTimes(1)
@@ -82,6 +84,8 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
     })
     const wrapper = mount(MailSettings)
     await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
     await wrapper.find('[data-testid="test"]').trigger('click')
     await flushPromises()
     const errEl = wrapper.find('[data-testid="testError"]')
@@ -95,6 +99,8 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
     mockSaveMailSettings.mockRejectedValueOnce({ response: { data: { code: 'ERR' } } })
     const wrapper = mount(MailSettings)
     await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
     await wrapper.find('[data-testid="save"]').trigger('click')
     await flushPromises()
     expect(mockToastError).toHaveBeenCalledWith('Failed to save')
@@ -104,7 +110,7 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
 describe('WO-UI-9 point 3 — MailSettings has max-w-2xl', () => {
   beforeEach(() => {
     mockGetMailHealth.mockResolvedValue({
-      configured: true,
+      configured: false,
       reachable: null,
       lastSuccess: null,
       lastError: null,

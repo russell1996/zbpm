@@ -168,6 +168,36 @@ const router = createRouter({
           meta: { titleKey: 'processSchemas', requiresSuperAdmin: true },
         },
         {
+          // WO-UI-10: consolidated admin settings hub with tabs. The standalone
+          // /admin/users, /admin/submissions, /admin/mail-settings routes are kept
+          // (deep links / backward compat) but the sidebar now points here.
+          path: 'admin/settings',
+          name: 'admin-settings',
+          component: () => import('@/pages/admin/AdminSettings.vue'),
+          meta: { titleKey: 'adminSettings', requiresSuperAdmin: true },
+          children: [
+            { path: '', redirect: { name: 'admin-settings-mail' } },
+            {
+              path: 'mail-settings',
+              name: 'admin-settings-mail',
+              component: () => import('@/pages/admin/MailSettings.vue'),
+              meta: { titleKey: 'mailSettings', requiresSuperAdmin: true },
+            },
+            {
+              path: 'users',
+              name: 'admin-settings-users',
+              component: () => import('@/pages/admin/UserList.vue'),
+              meta: { titleKey: 'users', requiresSuperAdmin: true },
+            },
+            {
+              path: 'submissions',
+              name: 'admin-settings-submissions',
+              component: () => import('@/pages/admin/SubmissionQueue.vue'),
+              meta: { titleKey: 'submissionQueue', requiresSuperAdmin: true },
+            },
+          ],
+        },
+        {
           path: 'admin/mail-settings',
           name: 'admin-mail-settings',
           component: () => import('@/pages/admin/MailSettings.vue'),
@@ -222,11 +252,19 @@ router.beforeEach(async (to) => {
 
 // WO-MT-9e: reload on chunk-loading failure (stale index referencing deleted chunks).
 // Without this, a failed dynamic import leaves the user on a blank screen.
+// NOTE: `to.fullPath` is app-relative (no base) — a hard `window.location.assign` to it
+// would navigate the browser to a path outside the configured public base (`/ui/`) and
+// Vite's baseMiddleware would answer with a 404 ("did you mean to visit /ui/..."). Always
+// prefix the public base so the reload stays inside the SPA.
 let chunkReloaded = false
+function reloadAfterChunkError(fullPath: string) {
+  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
+  window.location.assign(base + fullPath)
+}
 router.onError((err, to) => {
   if (!chunkReloaded && /Failed to fetch|dynamically imported module/i.test(err.message)) {
     chunkReloaded = true
-    window.location.assign(to.fullPath)
+    reloadAfterChunkError(to.fullPath)
   }
 })
 
@@ -234,7 +272,7 @@ router.onError((err, to) => {
 export function handleError(err: Error, to: { fullPath: string }) {
   if (!chunkReloaded && /Failed to fetch|dynamically imported module/i.test(err.message)) {
     chunkReloaded = true
-    window.location.assign(to.fullPath)
+    reloadAfterChunkError(to.fullPath)
   }
 }
 
