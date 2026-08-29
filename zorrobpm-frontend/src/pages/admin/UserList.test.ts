@@ -125,7 +125,7 @@ describe('WO-UI-10 Phase 2: SYSTEM account creation', () => {
     await wrapper.find('[data-testid="submit-user"]').trigger('click')
     await wrapper.vm.$nextTick()
     await vi.waitFor(() => expect(createUser).toHaveBeenCalled(), { timeout: 2000 })
-    const payload = (createUser as unknown as { mock: { calls: unknown[] } }).mock.calls[0][0] as Record<string, unknown>
+    const payload = (createUser as unknown as { mock: { calls: any[] } }).mock.calls[0][0] as Record<string, unknown>
     expect(payload.userType).toBe('SYSTEM')
     expect(payload.email).toBeNull()
     expect(payload.creationMode).toBeUndefined()
