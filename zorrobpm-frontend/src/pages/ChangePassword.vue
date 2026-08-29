@@ -105,8 +105,7 @@ async function handleChangePassword() {
       error.value = t('passwordChangeFailed')
     }
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { message?: string } } }
-    const msg = err?.response?.data?.message
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
     error.value = msg || t('failedToChangePassword')
   } finally {
     isLoading.value = false

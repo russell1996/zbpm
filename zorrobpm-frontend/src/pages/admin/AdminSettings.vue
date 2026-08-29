@@ -1,11 +1,32 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+
+const tablistRef = ref<HTMLElement | null>(null)
+
+function onKeydown(e: KeyboardEvent) {
+  const tabs = Array.from(tablistRef.value?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+  if (!tabs.length) return
+  const idx = tabs.indexOf(document.activeElement as HTMLButtonElement)
+  if (idx < 0) return
+  const last = tabs.length - 1
+  let target = -1
+  switch (e.key) {
+    case 'ArrowDown': target = idx === last ? 0 : idx + 1; break
+    case 'ArrowUp': target = idx === 0 ? last : idx - 1; break
+    case 'Home': target = 0; break
+    case 'End': target = last; break
+    default: return
+  }
+  e.preventDefault()
+  tabs[target].focus()
+  tabs[target].click()
+}
 
 // Tab order per WO-UI-10 brief: mail-settings, users, submissions.
 const sections = [
@@ -35,10 +56,12 @@ function navigate(to: string) {
       <div class="flex gap-6 flex-1 min-h-0">
       <!-- Left nav — plain buttons, not a card -->
       <nav
+        ref="tablistRef"
         class="w-48 shrink-0 space-y-1"
         role="tablist"
         aria-orientation="vertical"
         :aria-label="t('adminSettings')"
+        @keydown="onKeydown"
       >
         <button
           v-for="section in sections"
