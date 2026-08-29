@@ -149,7 +149,7 @@ collection-driven multi-instance, cron-таймеры, DMN с версионир
 | `zorrobpm-event` / `zorrobpm-exchange` | Полезная нагрузка доменных событий и сообщений брокера |
 | `zorrobpm-client` | Готовые Java-клиенты к API |
 | `zorrobpm-job-handler-spring-boot-starter` | SDK для написания внешних воркеров |
-| `zorrobpm-ce` | Запускаемое Spring Boot приложение (собирает всё вместе) |
+| `zorrobpm-app` | Запускаемое Spring Boot приложение (собирает всё вместе) |
 | `zorrobpm-test` | Общие тестовые помощники |
 | `zorrobpm-frontend` | SPA (Vue 3 + Vite + TS): Operate/Tasklist/Cockpit в одном приложении; отдаётся nginx, ходит в API по относительному `/api` |
 
@@ -206,7 +206,7 @@ docker compose up -d --build
 JAVA_HOME=/путь/к/jdk-21 mvn clean verify
 
 # Запустить только модуль приложения (нужны доступные Postgres + RabbitMQ)
-mvn -pl zorrobpm-ce -am spring-boot:run
+mvn -pl zorrobpm-app -am spring-boot:run
 ```
 
 Docker-сборка образа пропускает тесты (`-DskipTests`); запускайте `mvn verify` локально/в CI как контроль качества.
