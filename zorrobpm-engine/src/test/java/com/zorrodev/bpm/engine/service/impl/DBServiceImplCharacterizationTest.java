@@ -485,7 +485,7 @@ class DBServiceImplCharacterizationTest {
         ArgumentCaptor<TimerStartJobEntity> captor = ArgumentCaptor.forClass(TimerStartJobEntity.class);
         verify(timerStartJobRepository).save(captor.capture());
         assertThat(captor.getValue().getProcessKey()).isEqualTo("key");
-        assertThat(captor.getValue().getFired()).isFalse();
+        assertThat(captor.getValue().isFired()).isFalse();
     }
 
     @Test
