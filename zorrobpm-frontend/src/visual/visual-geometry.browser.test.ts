@@ -702,6 +702,9 @@ describe('WO-UI-9 point 3 — MailSettings max-w-2xl', () => {
     })
     mounted.push(wrapper)
     await flushPromises()
+    // WO-UI-10: the form fields (incl. "host") only render in edit mode now — the page opens
+    // on a read-only health/status view first (data-testid="edit" enters edit mode).
+    await wrapper.find('[data-testid="edit"]').trigger('click')
     await until(() => !!wrapper.find('[data-testid="host"]').exists())
 
     const root = wrapper.find('div.space-y-6').element as HTMLElement
