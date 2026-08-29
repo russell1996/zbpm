@@ -6,7 +6,7 @@ import { adminResetPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
-import { Plus } from 'lucide-vue-next'
+import { Plus, KeyRound } from 'lucide-vue-next'
 
 const props = withDefaults(defineProps<{
   user: User
@@ -281,6 +281,14 @@ onUnmounted(() => {
           <dd v-if="!editing" class="text-sm break-all">{{ user.email || '—' }}</dd>
           <input v-else v-model="editForm.email" type="email" data-testid="edit-email" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
         </div>
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('role') }}</dt>
+          <dd class="text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span></dd>
+        </div>
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('status') }}</dt>
+          <dd class="text-sm"><StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" /></dd>
+        </div>
       </dl>
     </section>
 
@@ -289,18 +297,23 @@ onUnmounted(() => {
       <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('account') }}</h4>
       <template v-if="!editing">
         <div v-if="user.userType === 'SYSTEM'" class="text-sm text-muted-foreground">{{ t('systemAccountNoReset') }}</div>
+        <div v-else class="rounded-md border border-border p-3 space-y-2">
+          <div class="flex items-center gap-2 text-sm font-medium">
+            <KeyRound class="h-4 w-4 text-muted-foreground" />
+            {{ t('resetPassword') }}
+          </div>
+          <p class="text-xs text-muted-foreground">{{ t('resetPasswordHint') }}</p>
+          <button
+            class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50"
+            :disabled="resettingPassword || resetCooldown > 0"
+            data-testid="reset-password-button"
+            @click="resetUserPassword"
+          >
+            {{ t('resetPasswordSend') }}
+          </button>
+        </div>
         <button
-          v-else
-          class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50"
-          :disabled="resettingPassword || resetCooldown > 0"
-          data-testid="reset-password-button"
-          @click="resetUserPassword"
-        >
-          {{ t('resetPassword') }}
-        </button>
-        <p class="text-xs text-muted-foreground">{{ t('resetPasswordHint') }}</p>
-        <button
-          class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted"
+          class="w-full px-3 py-1.5 text-sm border border-border rounded hover:bg-muted text-left"
           data-testid="edit-account-button"
           @click="emit('edit')"
         >

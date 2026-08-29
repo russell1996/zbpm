@@ -506,6 +506,7 @@
   "inviteEmailNote": "An invitation link will be sent to the email above.",
   "resetPassword": "Reset password",
   "resetPasswordSent": "A password reset link has been sent.",
+  "resetPasswordSend": "Send link",
   "resetPasswordHint": "Sends the user a one-time link to set a new password by email.",
   "account": "Account",
   "editAccount": "Edit account",
