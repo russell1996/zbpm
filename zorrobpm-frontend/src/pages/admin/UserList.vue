@@ -341,7 +341,7 @@ onMounted(loadUsers)
           <div class="text-sm text-muted-foreground truncate">{{ selectedUser?.email || '—' }}</div>
           <div class="mt-2 flex items-center gap-2">
             <StatusBadge :status="selectedUser?.active ? 'ACTIVE' : 'INACTIVE'" />
-            <span class="text-xs font-medium text-muted-foreground">{{ selectedUser?.role }}</span>
+            <span class="text-xs font-medium inline-flex items-center px-2 py-0.5 rounded bg-muted">{{ selectedUser?.role }}</span>
           </div>
         </div>
         <!-- Scrollable body -->
