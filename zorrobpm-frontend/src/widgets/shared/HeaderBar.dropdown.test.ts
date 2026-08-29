@@ -32,8 +32,12 @@ describe('HeaderBar dropdown — WO-UI-5 criteria 4/5', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('myProfile')
 
-    // click outside (document body, not inside rootEl)
-    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    // reka-ui DismissableLayer dismisses on outside pointerdown (not click)
+    const pd =
+      typeof PointerEvent !== 'undefined'
+        ? new PointerEvent('pointerdown', { bubbles: true })
+        : new Event('pointerdown', { bubbles: true })
+    document.body.dispatchEvent(pd)
     await flushPromises()
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).not.toContain('myProfile')
