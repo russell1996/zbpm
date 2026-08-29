@@ -729,6 +729,7 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    @Transactional
     public boolean consumeMessageSubscription(UUID subscriptionId) {
         // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
         // A plain findById+save would let two concurrent callers both observe "not consumed"
@@ -788,6 +789,7 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    @Transactional
     public boolean consumeSignalSubscription(UUID subscriptionId) {
         // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
         return signalSubscriptionRepository.markConsumed(subscriptionId) == 1;
