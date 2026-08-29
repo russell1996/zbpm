@@ -1,21 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import type { User, UserRole } from '@/entities/user/User'
+import type { User } from '@/entities/user/User'
 import * as admin from '@/services/adminService'
 import { adminResetPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   user: User
-  editing?: boolean
-  editForm?: { fullName: string; email: string; role: UserRole; active: boolean; password?: string }
-}>(), {
-  editing: false,
-  editForm: () => ({ fullName: '', email: '', role: 'USER' as UserRole, active: true, password: '' }),
-})
-const emit = defineEmits<{ close: [] }>()
+}>()
+const emit = defineEmits<{ close: []; edit: [] }>()
 
 const toast = useToast()
 const { t } = useI18n()
@@ -252,56 +247,35 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
-    <!-- Основные данные: compact identity at the top of the Drawer; the same fields become
-         editable inputs when the Drawer is in edit mode (no separate form/modal). -->
+    <!-- Основные данные: compact labeled grid (two columns) — quick scannable identity reference. -->
     <section class="space-y-3">
       <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('basicData') }}</h4>
-
-      <div class="space-y-1">
-        <div class="text-xs text-muted-foreground">{{ t('username') }}</div>
-        <div class="text-sm font-mono">{{ user.username }}</div>
-      </div>
-
-      <div class="space-y-1">
-        <div class="text-xs text-muted-foreground">{{ t('userType') }}</div>
-        <div class="text-sm">{{ user.userType === 'SYSTEM' ? t('userTypeSystem') : t('userTypeHuman') }}</div>
-      </div>
-
-      <div class="space-y-1">
-        <div class="text-xs text-muted-foreground">{{ t('fullName') }}</div>
-        <div v-if="!editing" class="text-sm">{{ user.fullName || '—' }}</div>
-        <input v-else v-model="editForm.fullName" type="text" data-testid="edit-fullName" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
-      </div>
-
-      <div class="space-y-1">
-        <div class="text-xs text-muted-foreground">{{ t('email') }}</div>
-        <div v-if="!editing" class="text-sm">{{ user.email || '—' }}</div>
-        <input v-else v-model="editForm.email" type="email" data-testid="edit-email" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
-      </div>
-
-      <div class="space-y-1">
-        <div class="text-xs text-muted-foreground">{{ t('role') }}</div>
-        <div v-if="!editing" class="text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span></div>
-        <select v-else v-model="editForm.role" data-testid="edit-role" class="w-full px-2 py-1 text-sm border border-input rounded-md bg-background">
-          <option value="USER">{{ t('userRole') }}</option>
-          <option value="ADMIN">{{ t('adminRole') }}</option>
-          <option value="SUPER_ADMIN">{{ t('superAdminRole') }}</option>
-        </select>
-      </div>
-
-      <div class="space-y-1">
-        <div class="text-xs text-muted-foreground">{{ t('status') }}</div>
-        <div v-if="!editing"><StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" /></div>
-        <label v-else class="inline-flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" v-model="editForm.active" class="rounded" />
-          {{ t('active') }}
-        </label>
-      </div>
-
-      <div v-if="editing" class="space-y-1">
-        <div class="text-xs text-muted-foreground">{{ t('newPasswordOptional') }}</div>
-        <input v-model="editForm.password" type="password" autocomplete="new-password" class="w-full px-2 py-1 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring" />
-      </div>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-3">
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('username') }}</dt>
+          <dd class="text-sm font-mono">{{ user.username }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('userType') }}</dt>
+          <dd class="text-sm">{{ user.userType === 'SYSTEM' ? t('userTypeSystem') : t('userTypeHuman') }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('fullName') }}</dt>
+          <dd class="text-sm">{{ user.fullName || '—' }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('email') }}</dt>
+          <dd class="text-sm break-all">{{ user.email || '—' }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('role') }}</dt>
+          <dd class="text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span></dd>
+        </div>
+        <div>
+          <dt class="text-xs text-muted-foreground">{{ t('status') }}</dt>
+          <dd class="text-sm"><StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" /></dd>
+        </div>
+      </dl>
     </section>
 
     <!-- === Account Section (WO-ACL-18) === -->
@@ -318,11 +292,18 @@ onUnmounted(() => {
         {{ t('resetPassword') }}
       </button>
       <p class="text-xs text-muted-foreground">{{ t('resetPasswordHint') }}</p>
+      <button
+        class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted"
+        data-testid="edit-account-button"
+        @click="emit('edit')"
+      >
+        {{ t('editAccount') }}
+      </button>
     </section>
 
     <!-- === API Key Section === -->
     <section class="space-y-2">
-      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('apiKey') }}</h4>
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('apiKeys') }}</h4>
       <div v-if="apiKeyLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
       <div v-else-if="apiKey" class="space-y-2">
         <div class="flex items-center justify-between gap-2 border rounded-md bg-muted/40 px-3 py-2">
@@ -367,7 +348,7 @@ onUnmounted(() => {
     <!-- === Memberships Section === -->
     <section class="space-y-2">
       <div class="flex items-center justify-between">
-        <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('processMemberships') }}</h4>
+        <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('processAccess') }}</h4>
         <button class="text-xs text-primary hover:underline" @click="showAddMember = !showAddMember">
           {{ showAddMember ? t('cancel') : '+ ' + t('add') }}
         </button>
@@ -386,33 +367,40 @@ onUnmounted(() => {
         <button class="px-3 py-1 text-sm bg-primary text-primary-foreground rounded" @click="addMember">{{ t('add') }}</button>
       </div>
 
-      <!-- Memberships list (vertical, adapted to narrow drawer width, no horizontal overflow) -->
+      <!-- Memberships list — each process is a compact block; role and key permissions are
+           visually separated; permissions wrap instead of forming one long row. -->
       <div v-if="membersLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
-      <div v-else-if="members.length" class="divide-y divide-border max-h-72 overflow-y-auto pr-1">
-        <div v-for="m in members" :key="m.processKey" class="py-2 space-y-1">
+      <div v-else-if="members.length" class="divide-y divide-border max-h-80 overflow-y-auto pr-1">
+        <div v-for="m in members" :key="m.processKey" class="py-3 space-y-2">
           <div class="flex items-center justify-between gap-2">
             <span class="font-mono text-xs truncate" :title="m.processKey">{{ m.processKey }}</span>
             <button class="text-xs text-red-500 hover:underline shrink-0" @click="removeMember(m.processKey)">{{ t('remove') }}</button>
           </div>
-          <select
-            class="w-full text-xs border border-input rounded px-1 py-0.5 bg-background"
-            :value="m.role"
-            @change="changeRole(m.processKey, ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="OWNER">{{ t('ownerRole') }}</option>
-            <option value="DESIGNER">{{ t('designerRole') }}</option>
-          </select>
-          <div v-if="apiKey && !apiKey.revokedAt" class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
-              <input type="checkbox" class="rounded" :checked="isFullAccess(m.processKey)" @change="toggleFull(m.processKey)" />
-              {{ t('full') }}
-            </label>
-            <template v-if="!isFullAccess(m.processKey)">
-              <label v-for="perm in PERMISSIONS" :key="perm" class="inline-flex items-center gap-1 text-xs cursor-pointer">
-                <input type="checkbox" class="rounded" :checked="hasPermission(m.processKey, perm)" @change="togglePermission(m.processKey, perm)" />
-                {{ perm }}
+          <div class="space-y-1">
+            <div class="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{{ t('role') }}</div>
+            <select
+              class="w-full text-xs border border-input rounded px-1 py-0.5 bg-background"
+              :value="m.role"
+              @change="changeRole(m.processKey, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="OWNER">{{ t('ownerRole') }}</option>
+              <option value="DESIGNER">{{ t('designerRole') }}</option>
+            </select>
+          </div>
+          <div v-if="apiKey && !apiKey.revokedAt" class="space-y-1">
+            <div class="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{{ t('apiKeyPermissions') }}</div>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
+                <input type="checkbox" class="rounded" :checked="isFullAccess(m.processKey)" @change="toggleFull(m.processKey)" />
+                {{ t('full') }}
               </label>
-            </template>
+              <template v-if="!isFullAccess(m.processKey)">
+                <label v-for="perm in PERMISSIONS" :key="perm" class="inline-flex items-center gap-1 text-xs cursor-pointer">
+                  <input type="checkbox" class="rounded" :checked="hasPermission(m.processKey, perm)" @change="togglePermission(m.processKey, perm)" />
+                  {{ perm }}
+                </label>
+              </template>
+            </div>
           </div>
         </div>
       </div>
