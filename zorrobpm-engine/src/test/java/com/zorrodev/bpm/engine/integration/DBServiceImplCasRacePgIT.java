@@ -75,7 +75,8 @@ class DBServiceImplCasRacePgIT {
         e.setMessageName("race-msg");
         e.setConsumed(false);
         e.setCreatedAt(Instant.now());
-        messageSubscriptionRepository.save(e);
+        messageSubscriptionRepository.saveAndFlush(e);
+        assertThat(messageSubscriptionRepository.findById(id).orElseThrow().isConsumed()).isFalse();
 
         AtomicBoolean r0 = new AtomicBoolean();
         AtomicBoolean r1 = new AtomicBoolean();
@@ -96,7 +97,8 @@ class DBServiceImplCasRacePgIT {
         e.setSignalName("race-signal");
         e.setConsumed(false);
         e.setCreatedAt(Instant.now());
-        signalSubscriptionRepository.save(e);
+        signalSubscriptionRepository.saveAndFlush(e);
+        assertThat(signalSubscriptionRepository.findById(id).orElseThrow().isConsumed()).isFalse();
 
         AtomicBoolean r0 = new AtomicBoolean();
         AtomicBoolean r1 = new AtomicBoolean();
@@ -116,7 +118,7 @@ class DBServiceImplCasRacePgIT {
         e.setDueAt(Instant.now().minusSeconds(60));
         e.setFired(false);
         e.setCreatedAt(Instant.now());
-        timerJobRepository.save(e);
+        timerJobRepository.saveAndFlush(e);
 
         AtomicBoolean r0 = new AtomicBoolean();
         AtomicBoolean r1 = new AtomicBoolean();
@@ -138,7 +140,7 @@ class DBServiceImplCasRacePgIT {
         e.setDueAt(Instant.now().minusSeconds(60));
         e.setFired(false);
         e.setCreatedAt(Instant.now());
-        timerStartJobRepository.save(e);
+        timerStartJobRepository.saveAndFlush(e);
 
         AtomicBoolean r0 = new AtomicBoolean();
         AtomicBoolean r1 = new AtomicBoolean();
