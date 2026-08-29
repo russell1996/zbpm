@@ -505,6 +505,7 @@
   "resetPasswordSent": "Ссылка для сброса пароля отправлена.",
   "resetPasswordHint": "Отправляет пользователю одноразовую ссылку для задания нового пароля по email.",
   "account": "Учётная запись",
+  "basicData": "Основные данные",
   "systemAccountNoReset": "Системные учётные записи нельзя сбросить по email.",
   "forgotPasswordTitle": "Забыли пароль",
   "forgotPasswordHint": "Введите email, и мы отправим ссылку для сброса пароля.",

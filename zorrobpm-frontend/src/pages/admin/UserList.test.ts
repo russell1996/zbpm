@@ -44,14 +44,26 @@ describe('UserList render', () => {
     expect(wrapper.text()).toContain('apiKey')
   })
 
-  it('WO-ACL-11 criterion 8: clicking Edit does NOT expand the panel', async () => {
+  it('WO-ACL-11 criterion 8: no per-row edit button; the Drawer holds the edit action (no separate modal)', async () => {
     const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
     await vi.waitFor(() => { expect(wrapper.text()).toContain('alice') }, { timeout: 2000 })
 
-    const editBtn = wrapper.findAll('button').find((b) => b.text() === 'edit')!
-    await editBtn.trigger('click')
+    // Row has no standalone 'edit' button — actions live inside the Drawer
+    const rowEdit = wrapper.findAll('tbody tr').flatMap((tr) => tr.findAll('button')).find((b) => b.text() === 'edit')
+    expect(rowEdit).toBeUndefined()
+
+    // Clicking the row opens the Drawer (panel)
+    await wrapper.findAll('tbody tr')[0].trigger('click')
     await wrapper.vm.$nextTick()
-    expect(wrapper.text()).not.toContain('apiKey')
+    expect(wrapper.text()).toContain('apiKey')
+
+    // The Drawer footer offers an inline 'edit' action (no separate modal opens)
+    const drawerEdit = wrapper.findAll('button').find((b) => b.text() === 'edit')
+    expect(drawerEdit).toBeDefined()
+    await drawerEdit!.trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="drawer-save-user"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="drawer-cancel-user"]').exists()).toBe(true)
   })
 
   it('WO-ACL-11 criterion 9: Enter on the focused row expands the user detail panel', async () => {
@@ -143,15 +155,17 @@ describe('WO-UI-10 Phase 2: SYSTEM account creation', () => {
     expect(createUser).not.toHaveBeenCalled()
   })
 
-  it('editing a SYSTEM user shows userType disabled (immutable)', async () => {
+  it('editing a SYSTEM user shows userType immutable (read-only inside the Drawer edit mode)', async () => {
     const wrapper = mount(UserList, { global: { stubs: { teleport: true } } })
     await vi.waitFor(() => expect(wrapper.text()).toContain('bob'), { timeout: 2000 })
     const bobRow = wrapper.findAll('tbody tr').find((r) => r.text().includes('bob'))!
-    await bobRow.findAll('button').find((b) => b.text() === 'edit')!.trigger('click')
+    await bobRow.trigger('click')
     await wrapper.vm.$nextTick()
-    const sel = wrapper.find('[data-testid="userType"]')
-    expect(sel.exists()).toBe(true)
-    expect((sel.element as HTMLSelectElement).disabled).toBe(true)
-    expect((sel.element as HTMLSelectElement).value).toBe('SYSTEM')
+    const drawerEdit = wrapper.findAll('button').find((b) => b.text() === 'edit')!
+    await drawerEdit.trigger('click')
+    await wrapper.vm.$nextTick()
+    // userType is shown read-only as SYSTEM; no editable userType select
+    expect(wrapper.text()).toContain('userTypeSystem')
+    expect(wrapper.find('[data-testid="userType"]').exists()).toBe(false)
   })
 })
