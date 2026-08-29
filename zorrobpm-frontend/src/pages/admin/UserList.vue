@@ -5,6 +5,7 @@ import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const toast = useToast()
@@ -17,7 +18,7 @@ const search = ref('')
 const showForm = ref(false)
 const saving = ref(false)
 const editingUser = ref<User | null>(null)
-const expandedUserId = ref<string | null>(null)
+const selectedUser = ref<User | null>(null)
 // WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
 const typeFilter = ref<'ALL' | 'HUMAN' | 'SYSTEM'>('ALL')
 
@@ -189,8 +190,8 @@ onMounted(loadUsers)
           <tr
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
             tabindex="0"
-            @click="expandedUserId = expandedUserId === user.id ? null : user.id"
-            @keydown.enter="expandedUserId = expandedUserId === user.id ? null : user.id"
+            @click="selectedUser = user"
+            @keydown.enter="selectedUser = user"
           >
             <td class="px-4 py-3 font-mono">
               {{ user.username }}
@@ -229,11 +230,6 @@ onMounted(loadUsers)
                   {{ user.active ? t('deactivate') : t('activate') }}
                 </button>
               </div>
-            </td>
-          </tr>
-          <tr v-if="expandedUserId === user.id">
-            <td colspan="6" class="p-0">
-              <UserDetailPanel :user="user" @close="expandedUserId = null" />
             </td>
           </tr>
           </template>
@@ -342,5 +338,23 @@ onMounted(loadUsers)
         </div>
       </div>
     </div>
+
+    <!-- User detail Drawer: opens from the right (~460px), overlays the work area.
+         The user list is unchanged (no row expansion, no height shift) — details show on the side. -->
+    <Sheet :open="!!selectedUser" @update:open="(v) => { if (!v) selectedUser = null }">
+      <SheetContent
+        side="right"
+        data-testid="user-detail-drawer"
+        :style="{ width: '460px', maxWidth: '90vw', padding: '0' }"
+        class="flex flex-col"
+      >
+        <div class="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+          <SheetTitle class="text-lg font-bold truncate pr-8">{{ selectedUser?.username }}</SheetTitle>
+        </div>
+        <div class="overflow-y-auto flex-1" data-testid="user-detail-body">
+          <UserDetailPanel v-if="selectedUser" :user="selectedUser" @close="selectedUser = null" />
+        </div>
+      </SheetContent>
+    </Sheet>
   </div>
 </template>
