@@ -35,7 +35,7 @@ RUN groupadd --system --gid 10001 zorrobpm \
 WORKDIR /app
 ENV TZ=Asia/Almaty
 
-COPY --from=builder /build/zorrobpm-ce/target/*.jar app.jar
+COPY --from=builder /build/zorrobpm-app/target/*.jar app.jar
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && chown zorrobpm:zorrobpm /app/app.jar
 

@@ -62,7 +62,7 @@ default:
       - "zorrobpm-engine/**/*"
       - "zorrobpm-rest/**/*"
       - "zorrobpm-rabbitmq/**/*"
-      - "zorrobpm-ce/**/*"
+      - "zorrobpm-app/**/*"
       - "zorrobpm-client/**/*"
       - "zorrobpm-job-handler-spring-boot-starter/**/*"
       - "zorrobpm-test/**/*"
