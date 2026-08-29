@@ -616,7 +616,7 @@ class DBServiceImplCharacterizationTest {
         when(processInstanceRepository.findById(id)).thenReturn(Optional.of(pi));
         dbService.cancelProcessInstance(id);
         verify(processInstanceRepository).setCancelled(id, true);
-        verify(processInstanceRepository).setCompletedAt(id, any(Instant.class));
+        verify(processInstanceRepository).setCompletedAt(eq(id), any(Instant.class));
         verify(domainEventEmitter).emitProcessInstanceCancelled(id, pd);
     }
 
