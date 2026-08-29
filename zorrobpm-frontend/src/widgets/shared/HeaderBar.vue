@@ -75,7 +75,7 @@ const { t } = useI18n()
               {{ t('myProfile') }}
             </RouterLink>
           </DropdownMenuItem>
-          <DropdownMenuItem class="text-red-600 focus:text-red-600 hover:bg-accent hover:text-red-600" @select="auth.logout()">
+          <DropdownMenuItem class="text-destructive focus:text-destructive hover:bg-accent hover:text-destructive" @select="auth.logout()">
             <LogOut class="h-4 w-4" />
             {{ t('logout') }}
           </DropdownMenuItem>
