@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
@@ -7,6 +6,12 @@ import { LogOut, User, Sun, Moon, Menu, FileCode, ChevronDown, PanelLeft } from 
 import SearchCommand from './SearchCommand.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 defineProps<{
   showMenuButton?: boolean
@@ -19,32 +24,6 @@ const emit = defineEmits<{
 const auth = useAuthStore()
 const ui = useUiStore()
 const { t } = useI18n()
-
-const userMenuOpen = ref(false)
-const rootEl = ref<HTMLElement | null>(null)
-
-// WO-UI-5 (dropdown): same pattern as LanguageSwitcher.vue:1-46 — close on outside click and Escape
-function onDocumentClick(e: MouseEvent) {
-  if (!rootEl.value || !rootEl.value.contains(e.target as Node)) {
-    userMenuOpen.value = false
-  }
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    userMenuOpen.value = false
-  }
-}
-
-onMounted(() => {
-  document.addEventListener('click', onDocumentClick)
-  document.addEventListener('keydown', onKeydown)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', onDocumentClick)
-  document.removeEventListener('keydown', onKeydown)
-})
 </script>
 
 <template>
@@ -79,41 +58,29 @@ onUnmounted(() => {
       >
         <FileCode class="h-4 w-4" />
       </a>
-      <div v-if="auth.user" ref="rootEl" class="relative">
-        <button
-          class="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
-          aria-haspopup="menu"
-          :aria-expanded="userMenuOpen"
-          @click="userMenuOpen = !userMenuOpen"
-        >
-          <User class="h-4 w-4" />
-          <span class="hidden md:inline">{{ auth.user.fullName || auth.user.username }}</span>
-          <ChevronDown class="h-3 w-3 hidden md:inline" />
-        </button>
-        <div
-          v-if="userMenuOpen"
-          class="absolute right-0 mt-2 w-56 rounded-md border border-border bg-card shadow-lg z-50 py-1"
-        >
-          <div class="px-4 py-2 text-sm text-muted-foreground border-b border-border md:hidden">
-            {{ auth.user.fullName || auth.user.username }}
-          </div>
-          <RouterLink
-            :to="{ name: 'my-profile' }"
-            class="flex items-center gap-2 px-4 py-2 text-sm hover:bg-muted"
-            @click="userMenuOpen = false"
+      <DropdownMenu v-if="auth.user">
+        <DropdownMenuTrigger as-child>
+          <button
+            class="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors outline-none"
           >
             <User class="h-4 w-4" />
-            {{ t('myProfile') }}
-          </RouterLink>
-          <button
-            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-muted"
-            @click="auth.logout()"
-          >
+            <span class="hidden md:inline">{{ auth.user.fullName || auth.user.username }}</span>
+            <ChevronDown class="h-3 w-3 hidden md:inline" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" class="w-56">
+          <DropdownMenuItem as-child class="hover:bg-accent hover:text-accent-foreground">
+            <RouterLink :to="{ name: 'my-profile' }" class="flex items-center gap-2">
+              <User class="h-4 w-4" />
+              {{ t('myProfile') }}
+            </RouterLink>
+          </DropdownMenuItem>
+          <DropdownMenuItem class="text-destructive focus:text-destructive hover:bg-accent hover:text-destructive" @select="auth.logout()">
             <LogOut class="h-4 w-4" />
             {{ t('logout') }}
-          </button>
-        </div>
-      </div>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   </header>
 </template>

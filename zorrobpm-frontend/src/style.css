@@ -38,7 +38,9 @@
   --color-destructive: #ef4444;
   --color-popover: #ffffff;
   --color-popover-foreground: #363636;
-  /* shadcn Select/DropdownMenu item hover (focus:bg-accent) — same as --color-muted in light. */
+  /* shadcn-ui accent tokens (used by DropdownMenu/Select/etc. base classes, focus:bg-accent).
+     Mapped to the muted gray so the stock components render a visible highlight — same as
+     --color-muted in light. */
   --color-accent: #f5f6f8;
   --color-accent-foreground: #363636;
   --radius: 0.5rem;
