@@ -10,7 +10,7 @@
     </parent>
 
     <groupId>com.zorrodev.bpm</groupId>
-    <artifactId>zorrobpm-ce</artifactId>
+    <artifactId>zorrobpm-app</artifactId>
     <version>0.7.17-SNAPSHOT</version>
 
     <properties>

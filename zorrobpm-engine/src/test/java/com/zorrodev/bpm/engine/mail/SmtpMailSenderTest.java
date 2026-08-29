@@ -162,22 +162,22 @@ class SmtpMailSenderTest {
 
     /**
      * Builds an ApplicationContextRunner containing the real {@link MailSenderAutoConfiguration}
-     * and every non-blank spring.mail.* property from the CE application.properties (the file
-     * the production app actually starts with). Dummy host/credentials make the auto-configuration
+     * and every non-blank spring.mail.* property from the zorrobpm-app application.properties (the
+     * file the production app actually starts with). Dummy host/credentials make the auto-configuration
      * create its bean (it is @ConditionalOnProperty(spring.mail.host)); no connection is attempted.
      */
     private ApplicationContextRunner javaMailSenderFromProductionConfig() {
         java.util.Properties props = new java.util.Properties();
-        // CE application.properties lives one level up from the engine module
-        java.nio.file.Path ceProps = java.nio.file.Path.of(
-            System.getProperty("user.dir")).resolve("../zorrobpm-ce/src/main/resources/application.properties");
-        assertThat(ceProps)
-            .as("CE application.properties must exist at %s", ceProps.toAbsolutePath())
+        // zorrobpm-app application.properties lives one level up from the engine module
+        java.nio.file.Path appProps = java.nio.file.Path.of(
+            System.getProperty("user.dir")).resolve("../zorrobpm-app/src/main/resources/application.properties");
+        assertThat(appProps)
+            .as("zorrobpm-app application.properties must exist at %s", appProps.toAbsolutePath())
             .exists();
-        try (var is = java.nio.file.Files.newInputStream(ceProps)) {
+        try (var is = java.nio.file.Files.newInputStream(appProps)) {
             props.load(is);
         } catch (java.io.IOException e) {
-            throw new IllegalStateException("Failed to read " + ceProps, e);
+            throw new IllegalStateException("Failed to read " + appProps, e);
         }
         ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(MailSenderAutoConfiguration.class))
