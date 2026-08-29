@@ -209,7 +209,8 @@ async function changePassword() {
     closePasswordDialog()
     await auth.refreshUser()
   } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    const err = e as { response?: { data?: { message?: string } } }
+    const msg = err?.response?.data?.message
     passwordError.value = msg || t('failedToChangePassword')
   } finally {
     busy.value = false
