@@ -23,8 +23,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = res.user
       return true
     } catch (e: unknown) {
-      const err = e as { response?: { status?: number } }
-      const status = err?.response?.status
+      const status = (e as { response?: { status?: number } })?.response?.status
       error.value = status === 401 ? 'Invalid username or password' : 'Login failed'
       user.value = null
       return false
