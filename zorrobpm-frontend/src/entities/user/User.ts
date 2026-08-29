@@ -27,6 +27,8 @@ export interface CreateUserDTO {
   active: boolean
   /** WO-ACL-18: 'INVITE' (default — one-time link) or 'PASSWORD' (admin sets it directly). */
   creationMode?: CreationMode
+  /** WO-UI-10 Phase 2: 'HUMAN' (default) or 'SYSTEM'. */
+  userType?: 'HUMAN' | 'SYSTEM'
 }
 
 export interface UpdateUserDTO {

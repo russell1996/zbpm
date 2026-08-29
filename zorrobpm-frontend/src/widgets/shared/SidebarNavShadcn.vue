@@ -15,6 +15,7 @@ import {
   Mail,
   Table2,
   Inbox,
+  Settings,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -82,10 +83,9 @@ const navGroups = computed<NavGroup[]>(() => [
   },
 ])
 
+// WO-UI-10: consolidated admin hub with tabs (mail-settings / users / submissions).
 const adminItems: NavItem[] = [
-  { labelKey: 'users', icon: Users, to: '/admin/users' },
-  { labelKey: 'submissionQueue', icon: Inbox, to: '/admin/submissions' },
-  { labelKey: 'mailSettings', icon: Mail, to: '/admin/mail-settings' },
+  { labelKey: 'adminSettings', icon: Settings, to: '/admin/settings' },
 ]
 
 // WO-ACL-8 criteria 1-2: adminOnly filtering preserved.
