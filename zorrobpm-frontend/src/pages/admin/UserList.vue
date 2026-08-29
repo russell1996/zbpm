@@ -116,7 +116,8 @@ async function save() {
     await loadUsers()
     toast.success(t('saved'))
   } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } }>)?.response?.data?.message
+    const err = e as { response?: { data?: { message?: string } } }
+    const msg = err?.response?.data?.message
     toast.error(msg || t('failedToSaveUser'))
   } finally {
     saving.value = false

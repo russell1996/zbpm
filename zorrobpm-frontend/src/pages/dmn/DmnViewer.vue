@@ -52,7 +52,8 @@ async function runTest() {
       .map((input) => inferVariable(input.expression, testInputs.value[input.expression]))
     testResult.value = await evaluateDecision(decision.value.id, variables)
   } catch (e: unknown) {
-    testError.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || t('evaluationFailed')
+    const err = e as { response?: { data?: { message?: string } } }
+    testError.value = err?.response?.data?.message || t('evaluationFailed')
   } finally {
     evaluating.value = false
   }
