@@ -73,6 +73,10 @@ function openEdit(user: User) {
   showForm.value = true
 }
 
+function editSelected() {
+  if (selectedUser.value) openEdit(selectedUser.value)
+}
+
 async function save() {
   if (!formUsername.value) {
     toast.warning(t('fillRequired'))
@@ -339,20 +343,29 @@ onMounted(loadUsers)
       </div>
     </div>
 
-    <!-- User detail Drawer: opens from the right (~460px), overlays the work area.
+    <!-- User detail Drawer: opens from the right (~520px), overlays the work area.
          The user list is unchanged (no row expansion, no height shift) — details show on the side. -->
     <Sheet :open="!!selectedUser" @update:open="(v) => { if (!v) selectedUser = null }">
       <SheetContent
         side="right"
         data-testid="user-detail-drawer"
-        :style="{ width: '460px', maxWidth: '90vw', padding: '0' }"
+        :style="{ width: '520px', maxWidth: '90vw', padding: '0' }"
         class="flex flex-col"
       >
         <div class="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <SheetTitle class="text-lg font-bold truncate pr-8">{{ selectedUser?.username }}</SheetTitle>
         </div>
-        <div class="overflow-y-auto flex-1" data-testid="user-detail-body">
+        <div class="overflow-y-auto flex-1 p-4" data-testid="user-detail-body">
           <UserDetailPanel v-if="selectedUser" :user="selectedUser" @close="selectedUser = null" />
+        </div>
+        <div class="shrink-0 border-t border-border p-4">
+          <button
+            class="w-full px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
+            data-testid="drawer-edit-user"
+            @click="editSelected()"
+          >
+            {{ t('edit') }}
+          </button>
         </div>
       </SheetContent>
     </Sheet>

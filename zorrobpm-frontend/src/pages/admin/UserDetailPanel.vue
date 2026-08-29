@@ -5,6 +5,7 @@ import * as admin from '@/services/adminService'
 import { adminResetPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
+import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const props = defineProps<{ user: User }>()
 const emit = defineEmits<{ close: [] }>()
@@ -243,15 +244,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="border-t border-border bg-muted/30 p-4 space-y-6">
-    <div class="flex items-center justify-between">
-      <h3 class="font-bold text-lg">{{ user.username }}</h3>
-      <button class="text-sm text-muted-foreground hover:text-foreground" @click="emit('close')">{{ t('close') }}</button>
+  <div class="space-y-6">
+    <!-- Compact identity: the Drawer header already shows the username, so no duplicate heading here -->
+    <div class="space-y-0.5">
+      <div class="text-sm font-semibold leading-tight">{{ user.fullName || '—' }}</div>
+      <div class="text-sm text-muted-foreground truncate">{{ user.email || '—' }}</div>
+      <div class="flex items-center gap-2 pt-1">
+        <StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" />
+        <span class="text-xs text-muted-foreground">{{ user.role }}</span>
+      </div>
     </div>
 
     <!-- === Account Section (WO-ACL-18) === -->
-    <div class="space-y-3">
-      <h4 class="font-semibold text-sm uppercase text-muted-foreground">{{ t('account') }}</h4>
+    <section class="space-y-2">
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('account') }}</h4>
       <div v-if="user.userType === 'SYSTEM'" class="text-sm text-muted-foreground">{{ t('systemAccountNoReset') }}</div>
       <button
         v-else
@@ -263,28 +269,25 @@ onUnmounted(() => {
         {{ t('resetPassword') }}
       </button>
       <p class="text-xs text-muted-foreground">{{ t('resetPasswordHint') }}</p>
-    </div>
+    </section>
 
     <!-- === API Key Section === -->
-    <div class="space-y-3">
-      <h4 class="font-semibold text-sm uppercase text-muted-foreground">{{ t('apiKey') }}</h4>
+    <section class="space-y-2">
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('apiKey') }}</h4>
       <div v-if="apiKeyLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
-      <div v-else-if="apiKey" class="bg-card border border-border rounded-lg p-3 space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="font-mono text-sm">{{ apiKey.prefix }}…</span>
-          <span v-if="apiKey.revokedAt" class="text-xs text-red-500">{{ t('revoked') }}</span>
-          <span v-else class="text-xs text-green-600">{{ t('active') }}</span>
+      <div v-else-if="apiKey" class="space-y-2">
+        <div class="flex items-center justify-between gap-2 border rounded-md bg-muted/40 px-3 py-2">
+          <span class="font-mono text-sm truncate">{{ apiKey.prefix }}…</span>
+          <span v-if="apiKey.revokedAt" class="text-xs text-red-500 shrink-0">{{ t('revoked') }}</span>
+          <span v-else class="text-xs text-green-600 shrink-0">{{ t('active') }}</span>
         </div>
-        <div class="flex gap-2">
+        <div class="flex gap-3">
           <button v-if="!apiKey.revokedAt" class="text-xs text-primary hover:underline" @click="rotateKey">{{ t('rotate') }}</button>
           <button v-if="!apiKey.revokedAt" class="text-xs text-red-500 hover:underline" @click="showRevokeConfirm = true">{{ t('revoke') }}</button>
         </div>
-        <!-- Grants -->
-        <div v-if="apiKey.grants.length" class="mt-2">
-          <p class="text-xs text-muted-foreground mb-1">{{ t('grants') }}:</p>
-          <div v-for="g in apiKey.grants" :key="g.processId" class="text-xs font-mono">
-            {{ g.processKey }}: {{ g.full ? 'FULL' : g.permissions }}
-          </div>
+        <div v-if="apiKey.grants.length" class="text-xs text-muted-foreground">
+          {{ t('grants') }}:
+          <div v-for="g in apiKey.grants" :key="g.processId" class="font-mono mt-0.5">{{ g.processKey }}: {{ g.full ? 'FULL' : g.permissions }}</div>
         </div>
       </div>
       <div v-else-if="!apiKey && !apiKeyLoading" class="text-sm text-muted-foreground">
@@ -303,27 +306,26 @@ onUnmounted(() => {
       </p>
 
       <!-- Create key -->
-      <div v-if="showCreateKey" class="bg-card border border-border rounded-lg p-3">
-        <p class="text-sm mb-2">{{ t('createApiKeyConfirm') }}</p>
+      <div v-if="showCreateKey" class="rounded-md border border-border bg-muted/40 p-3 space-y-2">
+        <p class="text-sm">{{ t('createApiKeyConfirm') }}</p>
         <div class="flex gap-2">
           <button class="px-3 py-1 text-sm bg-primary text-primary-foreground rounded" @click="createApiKey">{{ t('add') }}</button>
           <button class="px-3 py-1 text-sm border border-border rounded" @click="showCreateKey = false">{{ t('cancel') }}</button>
         </div>
       </div>
-
-    </div>
+    </section>
 
     <!-- === Memberships Section === -->
-    <div class="space-y-3">
+    <section class="space-y-2">
       <div class="flex items-center justify-between">
-        <h4 class="font-semibold text-sm uppercase text-muted-foreground">{{ t('processMemberships') }}</h4>
+        <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('processMemberships') }}</h4>
         <button class="text-xs text-primary hover:underline" @click="showAddMember = !showAddMember">
           {{ showAddMember ? t('cancel') : '+ ' + t('add') }}
         </button>
       </div>
 
       <!-- Add membership form -->
-      <div v-if="showAddMember" class="bg-card border border-border rounded-lg p-3 space-y-2">
+      <div v-if="showAddMember" class="rounded-md border border-border bg-muted/40 p-3 space-y-2">
         <select v-model="addMemberProcessKey" class="w-full px-2 py-1 border border-input rounded text-sm">
           <option value="">{{ t('selectProcess') }}</option>
           <option v-for="p in availableProcesses" :key="p.id" :value="p.key">{{ p.key }} — {{ p.name }}</option>
@@ -335,52 +337,38 @@ onUnmounted(() => {
         <button class="px-3 py-1 text-sm bg-primary text-primary-foreground rounded" @click="addMember">{{ t('add') }}</button>
       </div>
 
-      <!-- Memberships list -->
+      <!-- Memberships list (vertical, adapted to narrow drawer width, no horizontal overflow) -->
       <div v-if="membersLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
-      <div v-else-if="members.length" class="bg-card border border-border rounded-lg overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-muted">
-            <tr>
-              <th class="px-3 py-2 text-left font-medium">{{ t('process') }}</th>
-              <th class="px-3 py-2 text-left font-medium">{{ t('role') }}</th>
-              <th v-if="apiKey && !apiKey.revokedAt" class="px-3 py-2 text-left font-medium">{{ t('apiKeyPermissions') }}</th>
-              <th class="px-3 py-2 text-right font-medium"></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="m in members" :key="m.processKey" class="border-t border-border">
-              <td class="px-3 py-2 font-mono text-xs">{{ m.processKey }}</td>
-              <td class="px-3 py-2">
-                <select class="text-xs border border-input rounded px-1 py-0.5 bg-card"
-                  :value="m.role"
-                  @change="changeRole(m.processKey, ($event.target as HTMLSelectElement).value)">
-                  <option value="OWNER">{{ t('ownerRole') }}</option>
-                  <option value="DESIGNER">{{ t('designerRole') }}</option>
-                </select>
-              </td>
-              <td v-if="apiKey && !apiKey.revokedAt" class="px-3 py-2">
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
-                    <input type="checkbox" class="rounded" :checked="isFullAccess(m.processKey)" @change="toggleFull(m.processKey)" />
-                    {{ t('full') }}
-                  </label>
-                  <template v-if="!isFullAccess(m.processKey)">
-                    <label v-for="perm in PERMISSIONS" :key="perm" class="inline-flex items-center gap-1 text-xs cursor-pointer">
-                      <input type="checkbox" class="rounded" :checked="hasPermission(m.processKey, perm)" @change="togglePermission(m.processKey, perm)" />
-                      {{ perm }}
-                    </label>
-                  </template>
-                </div>
-              </td>
-              <td class="px-3 py-2 text-right">
-                <button class="text-xs text-red-500 hover:underline" @click="removeMember(m.processKey)">{{ t('remove') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div v-else-if="members.length" class="divide-y divide-border">
+        <div v-for="m in members" :key="m.processKey" class="py-2 space-y-1">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-mono text-xs truncate" :title="m.processKey">{{ m.processKey }}</span>
+            <button class="text-xs text-red-500 hover:underline shrink-0" @click="removeMember(m.processKey)">{{ t('remove') }}</button>
+          </div>
+          <select
+            class="w-full text-xs border border-input rounded px-1 py-0.5 bg-background"
+            :value="m.role"
+            @change="changeRole(m.processKey, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="OWNER">{{ t('ownerRole') }}</option>
+            <option value="DESIGNER">{{ t('designerRole') }}</option>
+          </select>
+          <div v-if="apiKey && !apiKey.revokedAt" class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
+              <input type="checkbox" class="rounded" :checked="isFullAccess(m.processKey)" @change="toggleFull(m.processKey)" />
+              {{ t('full') }}
+            </label>
+            <template v-if="!isFullAccess(m.processKey)">
+              <label v-for="perm in PERMISSIONS" :key="perm" class="inline-flex items-center gap-1 text-xs cursor-pointer">
+                <input type="checkbox" class="rounded" :checked="hasPermission(m.processKey, perm)" @change="togglePermission(m.processKey, perm)" />
+                {{ perm }}
+              </label>
+            </template>
+          </div>
+        </div>
       </div>
       <p v-else class="text-sm text-muted-foreground">{{ t('noProcessMemberships') }}</p>
-    </div>
+    </section>
 
     <!-- Key modal — key lives ONLY here (ADR §3) -->
     <div v-if="showKeyModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeKeyModal">
