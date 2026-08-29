@@ -6,6 +6,7 @@ import { adminResetPassword } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import { Plus } from 'lucide-vue-next'
 
 const props = defineProps<{
   user: User
@@ -32,6 +33,10 @@ const displayedKey = ref('')  // ADR §3: key only in local ref, never in store
 const keyCopied = ref(false)
 const rotating = ref(false)
 const showRevokeConfirm = ref(false)
+
+// View wrapper so the API-key section renders as a list of compact cards and
+// scales to multiple keys if the backend ever returns more than one.
+const apiKeyList = computed<admin.ApiKeyInfo[]>(() => (apiKey.value ? [apiKey.value] : []))
 
 const PERMISSIONS = ['START', 'FETCH_LOCK', 'COMPLETE_SERVICE_TASK', 'COMPLETE_USER_TASK', 'CORRELATE_MESSAGE'] as const
 
@@ -267,14 +272,6 @@ onUnmounted(() => {
           <dt class="text-xs text-muted-foreground">{{ t('email') }}</dt>
           <dd class="text-sm break-all">{{ user.email || '—' }}</dd>
         </div>
-        <div>
-          <dt class="text-xs text-muted-foreground">{{ t('role') }}</dt>
-          <dd class="text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ user.role }}</span></dd>
-        </div>
-        <div>
-          <dt class="text-xs text-muted-foreground">{{ t('status') }}</dt>
-          <dd class="text-sm"><StatusBadge :status="user.active ? 'ACTIVE' : 'INACTIVE'" /></dd>
-        </div>
       </dl>
     </section>
 
@@ -305,22 +302,24 @@ onUnmounted(() => {
     <section class="space-y-2">
       <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('apiKeys') }}</h4>
       <div v-if="apiKeyLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
-      <div v-else-if="apiKey" class="space-y-2">
-        <div class="flex items-center justify-between gap-2 border rounded-md bg-muted/40 px-3 py-2">
-          <span class="font-mono text-sm truncate">{{ apiKey.prefix }}…</span>
-          <span v-if="apiKey.revokedAt" class="text-xs text-red-500 shrink-0">{{ t('revoked') }}</span>
-          <span v-else class="text-xs text-green-600 shrink-0">{{ t('active') }}</span>
-        </div>
-        <div class="flex gap-3">
-          <button v-if="!apiKey.revokedAt" class="text-xs text-primary hover:underline" @click="rotateKey">{{ t('rotate') }}</button>
-          <button v-if="!apiKey.revokedAt" class="text-xs text-red-500 hover:underline" @click="showRevokeConfirm = true">{{ t('revoke') }}</button>
-        </div>
-        <div v-if="apiKey.grants.length" class="text-xs text-muted-foreground">
-          {{ t('grants') }}:
-          <div v-for="g in apiKey.grants" :key="g.processId" class="font-mono mt-0.5">{{ g.processKey }}: {{ g.full ? 'FULL' : g.permissions }}</div>
+      <div v-else-if="apiKeyList.length" class="space-y-2">
+        <div v-for="key in apiKeyList" :key="key.id" class="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-mono text-sm truncate">{{ key.prefix }}…</span>
+            <span v-if="key.revokedAt" class="text-xs text-red-500 shrink-0">{{ t('revoked') }}</span>
+            <span v-else class="text-xs text-green-600 shrink-0">{{ t('active') }}</span>
+          </div>
+          <div class="flex gap-3">
+            <button v-if="!key.revokedAt" class="text-xs text-primary hover:underline" @click="rotateKey">{{ t('rotate') }}</button>
+            <button v-if="!key.revokedAt" class="text-xs text-red-500 hover:underline" @click="showRevokeConfirm = true">{{ t('revoke') }}</button>
+          </div>
+          <div v-if="key.grants.length" class="space-y-1">
+            <div class="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{{ t('grants') }}</div>
+            <div class="text-xs text-muted-foreground font-mono break-all">{{ key.grants.map(g => `${g.processKey}: ${g.full ? 'FULL' : g.permissions}`).join(' · ') }}</div>
+          </div>
         </div>
       </div>
-      <div v-else-if="!apiKey && !apiKeyLoading" class="text-sm text-muted-foreground">
+      <div v-else class="text-sm text-muted-foreground">
         {{ t('noApiKey') }}
         <button class="text-primary hover:underline ml-1" @click="showCreateKey = true">{{ t('createOne') }}</button>
       </div>
@@ -349,8 +348,9 @@ onUnmounted(() => {
     <section class="space-y-2">
       <div class="flex items-center justify-between">
         <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('processAccess') }}</h4>
-        <button class="text-xs text-primary hover:underline" @click="showAddMember = !showAddMember">
-          {{ showAddMember ? t('cancel') : '+ ' + t('add') }}
+        <button class="inline-flex items-center gap-1 text-xs text-primary hover:underline" @click="showAddMember = !showAddMember">
+          <Plus class="h-3.5 w-3.5" />
+          {{ showAddMember ? t('cancel') : t('add') }}
         </button>
       </div>
 
@@ -367,11 +367,12 @@ onUnmounted(() => {
         <button class="px-3 py-1 text-sm bg-primary text-primary-foreground rounded" @click="addMember">{{ t('add') }}</button>
       </div>
 
-      <!-- Memberships list — each process is a compact block; role and key permissions are
-           visually separated; permissions wrap instead of forming one long row. -->
+      <!-- Memberships list — each process is a compact card (clearly separated); role and
+           key permissions are visually separated sub-blocks; permissions wrap. The whole
+           Drawer body scrolls; this list has no inner scroll so the header stays put. -->
       <div v-if="membersLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
-      <div v-else-if="members.length" class="divide-y divide-border max-h-80 overflow-y-auto pr-1">
-        <div v-for="m in members" :key="m.processKey" class="py-3 space-y-2">
+      <div v-else-if="members.length" class="space-y-2">
+        <div v-for="m in members" :key="m.processKey" class="rounded-md border border-border p-3 space-y-2">
           <div class="flex items-center justify-between gap-2">
             <span class="font-mono text-xs truncate" :title="m.processKey">{{ m.processKey }}</span>
             <button class="text-xs text-red-500 hover:underline shrink-0" @click="removeMember(m.processKey)">{{ t('remove') }}</button>
