@@ -335,11 +335,10 @@ onMounted(loadUsers)
         class="flex flex-col"
       >
         <!-- Fixed header: compact identity hero, visually separated from the body -->
-        <div class="shrink-0 border-b border-border px-5 py-4 pr-12">
+        <div class="shrink-0 border-b border-border px-4 py-3 pr-12">
           <SheetTitle class="text-lg font-bold truncate text-foreground">{{ selectedUser?.username }}</SheetTitle>
-          <div class="mt-0.5 text-sm text-muted-foreground truncate">{{ selectedUser?.fullName || '—' }}</div>
-          <div class="text-sm text-muted-foreground truncate">{{ selectedUser?.email || '—' }}</div>
-          <div class="mt-2 flex items-center gap-2">
+          <div class="mt-0.5 text-sm text-muted-foreground truncate">{{ selectedUser?.fullName || '—' }} · {{ selectedUser?.email || '—' }}</div>
+          <div class="mt-1.5 flex items-center gap-2">
             <StatusBadge :status="selectedUser?.active ? 'ACTIVE' : 'INACTIVE'" />
             <span class="text-xs font-medium inline-flex items-center px-2 py-0.5 rounded bg-muted">{{ selectedUser?.role }}</span>
           </div>
