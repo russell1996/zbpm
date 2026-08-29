@@ -42,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
 @Tag("pg")
-class DBServiceImplCasRaceTest {
+class DBServiceImplCasRacePgIT {
 
     @Autowired private DBService dbService;
     @Autowired private MessageSubscriptionRepository messageSubscriptionRepository;
