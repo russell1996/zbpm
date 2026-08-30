@@ -32,7 +32,6 @@ import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
-import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
@@ -83,7 +82,6 @@ class DBServiceImplCharacterizationTest {
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private VariableRepository variableRepository;
-    @Mock private TokenRepository tokenRepository;
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
