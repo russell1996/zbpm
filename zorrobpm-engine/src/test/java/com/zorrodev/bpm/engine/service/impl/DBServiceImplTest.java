@@ -61,6 +61,7 @@ import static org.mockito.Mockito.when;
 class DBServiceImplTest {
 
     @Mock private ProcessDefinitionRepository processDefinitionRepository;
+    @Mock private com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations processDefinitionDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -527,26 +528,21 @@ class DBServiceImplTest {
 
     @Test
     void getProcessDefinition_returnsMapped() {
-        ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setKey("k");
-        entity.setName("n");
-        entity.setVersion(2);
-        entity.setSha256("s");
-        entity.setCreatedAt(Instant.now());
-
-        when(processDefinitionRepository.findByKeyAndVersion("k", 2)).thenReturn(Optional.of(entity));
+        ProcessDefinition expected = new ProcessDefinition();
+        expected.setId(UUID.randomUUID());
+        expected.setKey("k");
+        expected.setVersion(2);
+        when(processDefinitionDbOperations.getProcessDefinition("k", 2)).thenReturn(expected);
 
         ProcessDefinition result = dbService.getProcessDefinition("k", 2);
 
-        assertThat(result.getId()).isEqualTo(entity.getId());
-        assertThat(result.getKey()).isEqualTo("k");
-        assertThat(result.getVersion()).isEqualTo(2);
+        assertThat(result).isEqualTo(expected);
+        verify(processDefinitionDbOperations).getProcessDefinition("k", 2);
     }
 
     @Test
     void getProcessDefinition_throwsWhenMissing() {
-        when(processDefinitionRepository.findByKeyAndVersion("k", 2)).thenReturn(Optional.empty());
+        when(processDefinitionDbOperations.getProcessDefinition("k", 2)).thenThrow(new NoSuchElementException());
         assertThatThrownBy(() -> dbService.getProcessDefinition("k", 2)).isInstanceOf(NoSuchElementException.class);
     }
 
@@ -586,11 +582,13 @@ class DBServiceImplTest {
 
     @Test
     void getMaxProcessDefinitionVersionByKey_returnsValueOrZero() {
-        when(processDefinitionRepository.findMaxByKey("present")).thenReturn(Optional.of(7));
-        when(processDefinitionRepository.findMaxByKey("absent")).thenReturn(Optional.empty());
+        when(processDefinitionDbOperations.getMaxProcessDefinitionVersionByKey("present")).thenReturn(7);
+        when(processDefinitionDbOperations.getMaxProcessDefinitionVersionByKey("absent")).thenReturn(0);
 
         assertThat(dbService.getMaxProcessDefinitionVersionByKey("present")).isEqualTo(7);
         assertThat(dbService.getMaxProcessDefinitionVersionByKey("absent")).isEqualTo(0);
+        verify(processDefinitionDbOperations).getMaxProcessDefinitionVersionByKey("present");
+        verify(processDefinitionDbOperations).getMaxProcessDefinitionVersionByKey("absent");
     }
 
     @Test
