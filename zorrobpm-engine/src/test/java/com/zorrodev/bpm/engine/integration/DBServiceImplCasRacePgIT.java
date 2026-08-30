@@ -13,9 +13,8 @@ import com.zorrodev.bpm.engine.service.DBService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import com.zorrodev.bpm.engine.PostgresIT;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -39,10 +38,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @Tag("pg") — requires a real PostgreSQL (row locks / SKIP LOCKED behave differently on H2).
  * Collected by the ci/test:pg job (zorrobpm-engine -am). Excluded from the default H2 build.
  */
-@SpringBootTest(classes = TestMain.class)
-@ActiveProfiles("test")
 @Tag("pg")
-class DBServiceImplCasRacePgIT {
+class DBServiceImplCasRacePgIT extends PostgresIT {
 
     @Autowired private DBService dbService;
     @Autowired private MessageSubscriptionRepository messageSubscriptionRepository;
