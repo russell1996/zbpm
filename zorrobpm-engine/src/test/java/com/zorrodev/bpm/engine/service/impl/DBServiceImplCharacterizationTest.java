@@ -77,6 +77,7 @@ class DBServiceImplCharacterizationTest {
 
     @Mock private ProcessDefinitionDbOperations processDefinitionDbOperations;
     @Mock private ParallelGatewayDbOperations parallelGatewayDbOperations;
+    @Mock private com.zorrodev.bpm.engine.service.db.TokenDbOperations tokenDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -200,17 +201,18 @@ class DBServiceImplCharacterizationTest {
     void deleteToken_deletesById() {
         UUID id = UUID.randomUUID();
         dbService.deleteToken(id);
-        verify(tokenRepository).deleteById(id);
+        verify(tokenDbOperations).deleteToken(id);
     }
 
     @Test
     void createToken_withScope_persistsScopeActivityId() {
         UUID parent = UUID.randomUUID(); UUID scope = UUID.randomUUID();
-        dbService.createToken(parent, scope);
-        ArgumentCaptor<TokenEntity> captor = ArgumentCaptor.forClass(TokenEntity.class);
-        verify(tokenRepository).save(captor.capture());
-        assertThat(captor.getValue().getParentId()).isEqualTo(parent);
-        assertThat(captor.getValue().getScopeActivityId()).isEqualTo(scope);
+        com.zorrodev.bpm.engine.dto.Token expected = new com.zorrodev.bpm.engine.dto.Token();
+        expected.setId(UUID.randomUUID());
+        when(tokenDbOperations.createToken(parent, scope)).thenReturn(expected);
+        com.zorrodev.bpm.engine.dto.Token result = dbService.createToken(parent, scope);
+        assertThat(result).isEqualTo(expected);
+        verify(tokenDbOperations).createToken(parent, scope);
     }
 
     // WO-DEBT-1d: setPendingBranches/decrementPendingBranches moved to ParallelGatewayDbOperationsImpl
