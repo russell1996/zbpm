@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,6 +35,14 @@ class ParallelGatewayDbOperationsImplTest {
         when(parallelGatewayRepository.existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(pi, "g", "f")).thenReturn(false);
         db.recordParallelGatewayArrival(pi, "g", "f");
         verify(parallelGatewayRepository).save(any(ParallelGatewayEntity.class));
+    }
+
+    @Test
+    void recordParallelGatewayArrival_skipsWhenExists() {
+        UUID pi = UUID.randomUUID();
+        when(parallelGatewayRepository.existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(pi, "g", "f")).thenReturn(true);
+        db.recordParallelGatewayArrival(pi, "g", "f");
+        verify(parallelGatewayRepository, never()).save(any(ParallelGatewayEntity.class));
     }
 
     @Test
@@ -93,6 +102,6 @@ class ParallelGatewayDbOperationsImplTest {
         TokenEntity e = new TokenEntity(); e.setId(tokenId); e.setPendingBranches(null);
         when(tokenRepository.findById(tokenId)).thenReturn(Optional.of(e));
         assertThat(db.decrementPendingBranches(tokenId)).isEqualTo(-1);
-        verify(tokenRepository, org.mockito.Mockito.never()).save(any(TokenEntity.class));
+        verify(tokenRepository, never()).save(any(TokenEntity.class));
     }
 }
