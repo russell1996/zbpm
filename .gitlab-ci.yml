@@ -86,6 +86,10 @@ default:
 test:gate:
   stage: test
   tags: [zbpm]
+  # Safe to cancel mid-flight: its rules run unconditionally (no `changes:` filter, see the
+  # comment on .rules-code-changes above), so a newer pipeline on this ref ALWAYS re-runs it
+  # regardless of what changed. The jobs below (rules: *rules-code-changes) are NOT safe to mark
+  # interruptible — see the note above `build:`.
   interruptible: true
   script:
     - bash ci/test-gate-selftest.sh HEAD
@@ -101,7 +105,6 @@ test:gate:
 test:backend:
   stage: test
   tags: [zbpm]
-  interruptible: true
   coverage: '/Total.*?([0-9]{1,3})%/'
   artifacts:
     # WO-OPS-2: surefire/failsafe reports — 3 days
@@ -137,7 +140,6 @@ test:backend:
 test:pg:
   stage: test
   tags: [zbpm]
-  interruptible: true
   artifacts:
     # WO-OPS-2: PG-IT reports — 3 days
     paths:
@@ -155,7 +157,6 @@ test:pg:
 test:frontend:
   stage: test
   tags: [zbpm]
-  interruptible: true
   script:
     # WO-OPS-4a (C-01): builder stage now runs `npm ci && npm run build && npm test -- --run`
     # (tsc typecheck + Vite build + vitest); a failing frontend test fails the build.
@@ -176,7 +177,6 @@ test:frontend:
 cve:scan:
   stage: security
   tags: [zbpm]
-  interruptible: true
   allow_failure: true
   cache:
     # WO-SEC-32 FIX: fixed key so NVD DB persists across pipelines.
@@ -221,11 +221,31 @@ cve:scan:
 # ---------------------------------------------------------------------------
 # Build — versioned runtime images (commit SHA + latest)
 # ---------------------------------------------------------------------------
+#
+# 2026-08-30 incident: test:backend/test:pg/test:frontend/cve:scan/build (and, by extension,
+# deploy — it depends on build) used to carry `interruptible: true`. That is safe ONLY when every
+# pipeline on a ref tests the same thing regardless of which commit triggered it — these jobs
+# don't: they're all gated by `rules: *rules-code-changes`, which SKIPS them entirely when the
+# triggering push is docs/governance-only (by design, see the comment on .rules-code-changes
+# above — that's most of this repo's push volume). A real code push (WO-DEBT-1d merge, `568eb3fd`)
+# had test:backend already RUNNING when a docs-only follow-up commit was pushed seconds later
+# (`f323385e`, a routine "close out the WO" commit) — GitLab killed the running job mid-flight
+# because it was interruptible, and the new pipeline's own rules then skipped test:backend/build/
+# deploy entirely, because ITS diff was docs-only. Net effect: the actual code pipeline never
+# finished and the docs-only pipeline that superseded it never covered that code either — real
+# changes silently never reached a deploy-eligible state. Confirmed via the GitLab API
+# (pipeline 166326 vs 166327).
+#
+# Fix: removed `interruptible: true` from all `rules: *rules-code-changes`-gated jobs. The
+# project-level "auto-cancel pending pipelines" setting still cancels an OLDER pipeline's jobs
+# that haven't started yet when a newer push arrives (the actual queue-pileup problem this was
+# originally added for) — it just no longer kills a job that's already running mid-test. Only
+# test:gate keeps interruptible (see its own comment) because its rules have no `changes:`
+# filter, so cancelling it mid-flight loses nothing: the next pipeline runs it unconditionally too.
 
 build:
   stage: build
   tags: [zbpm]
-  interruptible: true
   artifacts:
     paths:
       - build-manifest.txt
