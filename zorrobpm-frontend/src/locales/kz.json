@@ -50,6 +50,7 @@
   "mailTestSend": "Тест хатын жіберу",
   "mailTestSentToSelf": "Тест хаты сіздің поштаңызға жіберілді",
   "mailTestSendFailed": "Тест хатын жіберу сәтсіз аяқталды",
+  "mailTestSendDisabledHint": "Тест хатын жіберу үшін конфигурацияны сақтаңыз — бұл түйме тек сақталған параметрлерді пайдаланады",
   "mailPasswordSet": "Құпия сөз орнатылған",
   "mailPasswordNotSet": "Құпия сөз орнатылмаған",
   "mailPasswordLeaveBlank": "Өзгертпеу үшін бос қалдырыңыз",

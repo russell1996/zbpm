@@ -151,11 +151,11 @@ public class MailSettingsService {
         requireSuperAdmin(principal);
 
         UUID selfId = principalUserId(principal);
-        if (!rateLimiter.tryAcquire(selfId)) {
-            throw new ResponseStatusException(TOO_MANY_REQUESTS,
-                "Too many mail check/test requests, try again later");
-        }
 
+        // Validate BEFORE consuming a rate-limit token (same order as checkConnection) — a caller
+        // with no email or an unsaved config would otherwise burn their hourly budget on every
+        // retry without ever reaching the SMTP server, and lock themselves out of the action that
+        // WOULD have worked once they fixed the real problem.
         UiUserEntity self = uiUserRepository.findById(selfId).orElse(null);
         if (self == null || self.getEmail() == null || self.getEmail().isBlank()) {
             throw new ResponseStatusException(BAD_REQUEST,
@@ -166,6 +166,11 @@ public class MailSettingsService {
         ResolvedMailConfig cfg = configResolver.getEffectiveConfig();
         if (cfg == null || cfg.host() == null || cfg.host().isBlank()) {
             throw new ResponseStatusException(BAD_REQUEST, "Mail settings are not saved yet");
+        }
+
+        if (!rateLimiter.tryAcquire(selfId)) {
+            throw new ResponseStatusException(TOO_MANY_REQUESTS,
+                "Too many mail check/test requests, try again later");
         }
 
         JavaMailSender sender = transportFactory.build(cfg);

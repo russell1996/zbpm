@@ -80,10 +80,13 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
     expect(typeof arg).toBe('string')
   })
 
-  it('onCheck: error toast shows .message, not raw JSON', async () => {
-    const backendMessage = 'Host is required to check the connection'
+  it('WO-INT-8 criterion 4: onCheck error toast is ALWAYS the localized key, never the raw backend message', async () => {
+    // A real production message (English, e.g. a 429 rate-limit reason) must never leak through —
+    // regression test for the exact leak an independent review caught: e.response.data.message was
+    // shown verbatim, in English, in all three locales.
+    const backendMessage = 'Too many mail check/test requests, try again later'
     mockCheckMailSettings.mockRejectedValueOnce({
-      response: { data: { code: 'VALIDATION_ERROR', message: backendMessage } },
+      response: { data: { code: 'TOO_MANY_REQUESTS', message: backendMessage } },
     })
     const wrapper = mount(MailSettings)
     await flushPromises()
@@ -91,9 +94,10 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
     await flushPromises()
     await wrapper.find('[data-testid="check"]').trigger('click')
     await flushPromises()
-    expect(mockToastError).toHaveBeenCalledWith(backendMessage)
+    expect(mockToastError).toHaveBeenCalledWith('mailCheckFailed')
     const arg = mockToastError.mock.calls[0][0] as string
-    expect(arg).not.toContain('VALIDATION_ERROR')
+    expect(arg).not.toContain(backendMessage)
+    expect(arg).not.toContain('TOO_MANY_REQUESTS')
     expect(arg).not.toContain('{')
   })
 

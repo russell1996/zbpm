@@ -50,6 +50,7 @@
   "mailTestSend": "Send test email",
   "mailTestSentToSelf": "Test email sent to your address",
   "mailTestSendFailed": "Failed to send the test email",
+  "mailTestSendDisabledHint": "Save the configuration to send a test email — this button only uses the saved settings",
   "mailPasswordSet": "Password is set",
   "mailPasswordNotSet": "Password is not set",
   "mailPasswordLeaveBlank": "Leave blank to keep unchanged",
