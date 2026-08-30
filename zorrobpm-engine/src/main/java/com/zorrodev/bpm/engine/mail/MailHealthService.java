@@ -39,16 +39,36 @@ public class MailHealthService {
     }
 
     /**
-     * Live reachability probe: opens an SMTP transport to the configured host.
-     * null when there is nothing to probe (no host configured).
-     * A bad-credentials rejection still means the server is reachable → true.
+     * Live reachability probe against the SAVED config: opens an SMTP transport to the
+     * configured host. null when there is nothing to probe (no host configured).
      */
     Boolean probeReachable(ResolvedMailConfig cfg) {
         if (cfg == null || cfg.host() == null || cfg.host().isBlank()) {
             return null;
         }
+        return probeReachableRaw(cfg.host(), cfg.port(), cfg.username(), cfg.password());
+    }
+
+    /**
+     * WO-INT-8: generalized probe for arbitrary host/port/username/password — the "Проверить"
+     * action needs this on the CURRENT form values, which may not be saved yet, so it cannot go
+     * through {@link com.zorrodev.bpm.engine.mail.MailConfigResolver}. Same probing logic as the
+     * saved-config overload (not rewritten, only the source of the values changed).
+     * null when host is blank (nothing to probe).
+     */
+    public Boolean probeReachable(String host, Integer port, String username, String password) {
+        if (host == null || host.isBlank()) {
+            return null;
+        }
+        return probeReachableRaw(host, port, username, password);
+    }
+
+    /**
+     * A bad-credentials rejection still means the server is reachable → true.
+     */
+    private Boolean probeReachableRaw(String host, Integer port, String username, String password) {
         try {
-            JavaMailSenderImpl impl = transportFactory.build(cfg.host(), cfg.port(), cfg.username(), cfg.password());
+            JavaMailSenderImpl impl = transportFactory.build(host, port, username, password);
             Transport transport = impl.getSession().getTransport("smtp");
             transport.connect(impl.getHost(), impl.getPort(), impl.getUsername(), impl.getPassword());
             transport.close();
@@ -57,7 +77,7 @@ public class MailHealthService {
             log.info("Mail reachability probe: server reachable, authentication rejected");
             return true;
         } catch (Exception e) {
-            log.warn("Mail reachability probe failed for {}:{}: {}", cfg.host(), cfg.port(), e.getMessage());
+            log.warn("Mail reachability probe failed for {}:{}: {}", host, port, e.getMessage());
             return false;
         }
     }

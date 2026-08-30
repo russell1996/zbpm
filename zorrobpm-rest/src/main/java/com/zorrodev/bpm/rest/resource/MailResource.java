@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.MailContract;
+import com.zorrodev.bpm.contract.dto.MailCheckResultDTO;
 import com.zorrodev.bpm.contract.dto.MailHealthDTO;
 import com.zorrodev.bpm.contract.dto.MailSettingsDTO;
 import com.zorrodev.bpm.engine.mail.MailHealthService;
@@ -47,9 +48,15 @@ public class MailResource implements MailContract {
     }
 
     @Override
-    public String testMailSettingsToSelf(@RequestBody MailSettingsDTO dto) {
+    public MailCheckResultDTO checkMailSettings(@RequestBody MailSettingsDTO dto) {
         requireSuperAdmin();
-        return mailSettingsService.testSendToSelf(dto, getPrincipal());
+        return mailSettingsService.checkConnection(dto, getPrincipal());
+    }
+
+    @Override
+    public void testMailSettingsToSelf() {
+        requireSuperAdmin();
+        mailSettingsService.testSendToSelf(getPrincipal());
     }
 
     private Principal getPrincipal() {

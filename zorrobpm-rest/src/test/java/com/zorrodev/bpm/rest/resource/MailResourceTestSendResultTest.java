@@ -42,26 +42,31 @@ class MailResourceTestSendResultTest {
     }
 
     @Test
-    void criterion6_success_returnedVerbatim() {
-        MailSettingsDTO in = new MailSettingsDTO();
-        when(mailSettingsService.testSendToSelf(any(MailSettingsDTO.class), any(Principal.class)))
-            .thenReturn("Test email sent successfully to admin@corp.kz");
-        String body = resource.testMailSettingsToSelf(in);
-        assertThat(body).contains("sent successfully").contains("admin@corp.kz");
+    void criterion2_success_delegatesToServiceNoBody() {
+        resource.testMailSettingsToSelf();
+        org.mockito.Mockito.verify(mailSettingsService).testSendToSelf(any(Principal.class));
     }
 
     @Test
-    void criterion6_smtpFailure_propagatedAs502_withCause() {
-        MailSettingsDTO in = new MailSettingsDTO();
-        when(mailSettingsService.testSendToSelf(any(MailSettingsDTO.class), any(Principal.class)))
-            .thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "SMTP error: 550 relay access denied"));
-        assertThatThrownBy(() -> resource.testMailSettingsToSelf(in))
+    void criterion2_smtpFailure_propagatedAs502_withCause() {
+        org.mockito.Mockito.doThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "SMTP error: 550 relay access denied"))
+            .when(mailSettingsService).testSendToSelf(any(Principal.class));
+        assertThatThrownBy(() -> resource.testMailSettingsToSelf())
             .isInstanceOf(ResponseStatusException.class)
             .satisfies(e -> {
                 ResponseStatusException r = (ResponseStatusException) e;
                 assertThat(r.getStatusCode().value()).isEqualTo(502);
                 assertThat(r.getReason()).contains("550 relay access denied");
             });
+    }
+
+    @Test
+    void criterion1_check_delegatesAndReturnsServiceResult() {
+        MailSettingsDTO in = new MailSettingsDTO();
+        com.zorrodev.bpm.contract.dto.MailCheckResultDTO out = new com.zorrodev.bpm.contract.dto.MailCheckResultDTO();
+        out.setReachable(true);
+        when(mailSettingsService.checkConnection(any(MailSettingsDTO.class), any(Principal.class))).thenReturn(out);
+        assertThat(resource.checkMailSettings(in)).isSameAs(out);
     }
 
     @Test

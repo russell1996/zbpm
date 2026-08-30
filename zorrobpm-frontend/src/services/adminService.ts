@@ -151,6 +151,13 @@ export interface MailSettingsUpdate {
   allowedRecipients?: string | null
 }
 
+// WO-INT-8: result of the pre-save connectivity check. No ready-made message from the backend —
+// the frontend localizes based on `reachable`/`errorCode` (G18: en/ru/kz).
+export interface MailCheckResult {
+  reachable: boolean
+  errorCode: string | null
+}
+
 export async function getMailHealth(): Promise<MailHealth> {
   const { data } = await api.get<MailHealth>('/admin/mail/health')
   return data
@@ -166,7 +173,13 @@ export async function saveMailSettings(dto: MailSettingsUpdate): Promise<MailSet
   return data
 }
 
-export async function testMailSettingsToSelf(dto: MailSettingsUpdate): Promise<string> {
-  const { data } = await api.post<string>('/admin/mail/test-self', dto)
+// WO-INT-8: pre-save check — current (possibly unsaved) form values, sends no email.
+export async function checkMailSettings(dto: MailSettingsUpdate): Promise<MailCheckResult> {
+  const { data } = await api.post<MailCheckResult>('/admin/mail/check', dto)
   return data
+}
+
+// WO-INT-8: post-save real send — no body: uses the saved config, no password leaves the browser.
+export async function testMailSettingsToSelf(): Promise<void> {
+  await api.post('/admin/mail/test-self')
 }

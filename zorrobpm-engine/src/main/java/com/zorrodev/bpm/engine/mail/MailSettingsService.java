@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.mail;
 
+import com.zorrodev.bpm.contract.dto.MailCheckResultDTO;
 import com.zorrodev.bpm.contract.dto.MailSettingsDTO;
 import com.zorrodev.bpm.engine.entity.MailSettingsEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
@@ -27,15 +28,18 @@ import static org.springframework.http.HttpStatus.BAD_GATEWAY;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
 import static org.springframework.http.HttpStatus.FORBIDDEN;
 import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
+import static org.springframework.http.HttpStatus.TOO_MANY_REQUESTS;
 
 /**
  * WO-INT-6: super-admin mail settings management.
  * <ul>
  *   <li>GET returns settings with the password NEVER included (only a passwordSet flag).</li>
  *   <li>PUT saves (encrypting the password) and writes an audit entry WITHOUT the password value.</li>
- *   <li>testSendToSelf sends a test email to the CALLER's own address using the entered values,
- *       BEFORE saving (criterion 6). The recipient is the operator themselves, so it does not route
- *       through MailRecipientPolicy (P-66 resolution: the recipient is always the principal).</li>
+ *   <li>WO-INT-8: {@code checkConnection} probes the CURRENT (possibly unsaved) form values, sends
+ *       no email. {@code testSendToSelf} sends a real test email but only from the SAVED config
+ *       ({@link MailConfigResolver}) — no password (or any other value) travels from the frontend.
+ *       Both recipients are always the caller themselves, so neither routes through
+ *       MailRecipientPolicy (P-66 resolution: the recipient is always the principal).</li>
  * </ul>
  */
 @Slf4j
@@ -48,6 +52,9 @@ public class MailSettingsService {
     private final UiUserRepository uiUserRepository;
     private final AuditLogService auditLogService;
     private final MailTransportFactory transportFactory;
+    private final MailHealthService mailHealthService;
+    private final MailConfigResolver configResolver;
+    private final MailActionRateLimiter rateLimiter;
 
     public MailSettingsDTO getSettings() {
         MailSettingsDTO dto = new MailSettingsDTO();
@@ -106,15 +113,49 @@ public class MailSettingsService {
         return getSettings();
     }
 
-    public String testSendToSelf(MailSettingsDTO dto, Principal principal) {
+    /**
+     * WO-INT-8 criterion 1: "Проверить" — probes the CURRENT form values (may be unsaved),
+     * sends no email. Reuses {@link MailHealthService}'s probing logic, only the source of the
+     * host/port/username/password changed (not saved config, the raw form values).
+     */
+    public MailCheckResultDTO checkConnection(MailSettingsDTO dto, Principal principal) {
         requireSuperAdmin(principal);
 
-        if (dto == null || dto.getHost() == null || dto.getHost().isBlank()
-            || dto.getFrom() == null || dto.getFrom().isBlank()) {
-            throw new ResponseStatusException(BAD_REQUEST, "Host and sender are required to send a test email");
+        if (dto == null || dto.getHost() == null || dto.getHost().isBlank()) {
+            throw new ResponseStatusException(BAD_REQUEST, "Host is required to check the connection");
         }
 
+        UUID callerId = principalUserId(principal);
+        if (!rateLimiter.tryAcquire(callerId)) {
+            throw new ResponseStatusException(TOO_MANY_REQUESTS,
+                "Too many mail check/test requests, try again later");
+        }
+
+        Boolean reachable = mailHealthService.probeReachable(
+            dto.getHost(), dto.getPort(), dto.getUsername(), dto.getPassword());
+        boolean ok = Boolean.TRUE.equals(reachable);
+
+        MailCheckResultDTO result = new MailCheckResultDTO();
+        result.setReachable(ok);
+        result.setErrorCode(ok ? null : "UNREACHABLE");
+        return result;
+    }
+
+    /**
+     * WO-INT-8 criterion 2: "Отправить тестовое письмо" — a REAL send, but only from the SAVED
+     * config ({@link MailConfigResolver#getEffectiveConfig()}), never from the request body — the
+     * frontend no longer sends a DTO here at all, so there is no password (or any other value) to
+     * smuggle in. Available only once a config is actually saved (400 otherwise).
+     */
+    public void testSendToSelf(Principal principal) {
+        requireSuperAdmin(principal);
+
         UUID selfId = principalUserId(principal);
+        if (!rateLimiter.tryAcquire(selfId)) {
+            throw new ResponseStatusException(TOO_MANY_REQUESTS,
+                "Too many mail check/test requests, try again later");
+        }
+
         UiUserEntity self = uiUserRepository.findById(selfId).orElse(null);
         if (self == null || self.getEmail() == null || self.getEmail().isBlank()) {
             throw new ResponseStatusException(BAD_REQUEST,
@@ -122,19 +163,22 @@ public class MailSettingsService {
         }
         String selfEmail = self.getEmail();
 
-        JavaMailSender sender = transportFactory.build(
-            dto.getHost(), dto.getPort(), dto.getUsername(), dto.getPassword());
+        ResolvedMailConfig cfg = configResolver.getEffectiveConfig();
+        if (cfg == null || cfg.host() == null || cfg.host().isBlank()) {
+            throw new ResponseStatusException(BAD_REQUEST, "Mail settings are not saved yet");
+        }
+
+        JavaMailSender sender = transportFactory.build(cfg);
 
         try {
             MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false);
-            helper.setFrom(dto.getFrom());
+            helper.setFrom(cfg.from());
             helper.setTo(selfEmail);
-            helper.setSubject("ZorroBPM — Test Email");
+            helper.setSubject("ZBPM — Test Email");
             helper.setText(renderTestEmailBody(selfEmail), false);
 
             sender.send(message);
-            return "Test email sent successfully to " + selfEmail;
         } catch (Exception e) {
             String cause = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             log.warn("Test email to self {} failed: {}", selfEmail, cause);

@@ -98,7 +98,8 @@ vi.mock('@/services/adminService', () => ({
   getMailHealth: mockGetMailHealth,
   getMailSettings: mockGetMailSettings,
   saveMailSettings: vi.fn().mockResolvedValue({ passwordSet: true }),
-  testMailSettingsToSelf: vi.fn().mockResolvedValue('ok'),
+  checkMailSettings: vi.fn().mockResolvedValue({ reachable: true, errorCode: null }),
+  testMailSettingsToSelf: vi.fn().mockResolvedValue(undefined),
 }))
 
 const mockGetTimers = vi.hoisted(() => vi.fn())

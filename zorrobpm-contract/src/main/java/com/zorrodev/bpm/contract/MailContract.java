@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.contract;
 
+import com.zorrodev.bpm.contract.dto.MailCheckResultDTO;
 import com.zorrodev.bpm.contract.dto.MailHealthDTO;
 import com.zorrodev.bpm.contract.dto.MailSettingsDTO;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,6 +22,18 @@ public interface MailContract {
     @PutExchange("/admin/mail/settings")
     MailSettingsDTO saveMailSettings(@RequestBody MailSettingsDTO settings);
 
+    /**
+     * WO-INT-8: pre-save check — connects/authenticates against the CURRENT form values
+     * (possibly unsaved), sends no email. Replaces the old test-self-with-arbitrary-values flow.
+     */
+    @PostExchange("/admin/mail/check")
+    MailCheckResultDTO checkMailSettings(@RequestBody MailSettingsDTO settings);
+
+    /**
+     * WO-INT-8: post-save real send — uses the SAVED config only ({@code MailConfigResolver}),
+     * no password (or any other value) travels from the frontend. Available only once a config
+     * is actually saved.
+     */
     @PostExchange("/admin/mail/test-self")
-    String testMailSettingsToSelf(@RequestBody MailSettingsDTO settings);
+    void testMailSettingsToSelf();
 }
