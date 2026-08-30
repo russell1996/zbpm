@@ -25,6 +25,7 @@ public class ProcessInstanceQueryParameterArgumentResolver implements HttpServic
             if (search.getParentProcessInstanceId() != null) {
                 requestValues.addRequestParameter("parentProcessInstanceId", search.getParentProcessInstanceId().toString());
             }
+            BaseQueryParameters.addSort(requestValues, search);
             return true;
         }
         return false;

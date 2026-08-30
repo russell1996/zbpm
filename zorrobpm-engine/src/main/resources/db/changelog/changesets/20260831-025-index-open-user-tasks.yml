@@ -1,0 +1,25 @@
+databaseChangeLog:
+  - logicalFilePath: 20260831-025
+  - changeSet:
+      id: 20260831-025
+      author: zorrodev
+      comment: >
+        Partial index for the tasklist screens. The "relates to this person" block is an OR over the
+        assignee column and two EXISTS subqueries, which no index on user_tasks alone can satisfy,
+        so Postgres scanned the whole table and sorted the result. Walking open tasks in creation
+        order instead lets it stop as soon as a page is filled. Measured on 400k tasks of which 20k
+        open: 267 ms -> 3.8 ms. The candidate lookups already use
+        ix_user_task_candidates__candidate_type_candidate_value and needed nothing.
+        The predicate matches the "not completed" filter exactly, and the descending order also
+        serves ascending scans, which Postgres walks backwards.
+      changes:
+        - sql:
+            dbms: postgresql
+            sql: >
+              CREATE INDEX ix_user_tasks__open_created_at
+              ON user_tasks (created_at DESC, id DESC)
+              WHERE completed_at IS NULL AND canceled_at IS NULL
+      rollback:
+        - sql:
+            dbms: postgresql
+            sql: DROP INDEX IF EXISTS ix_user_tasks__open_created_at

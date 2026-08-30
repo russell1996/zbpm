@@ -13,6 +13,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -57,21 +58,40 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
     }
 
     static Specification<UserTaskEntity> byCandidateGroup(String group) {
-        return byCandidate(UserTaskCandidateType.GROUP, group);
+        return byCandidate(UserTaskCandidateType.GROUP, List.of(group));
+    }
+
+    static Specification<UserTaskEntity> byCandidateGroups(Collection<String> groups) {
+        return byCandidate(UserTaskCandidateType.GROUP, groups);
     }
 
     static Specification<UserTaskEntity> byCandidateUser(String user) {
-        return byCandidate(UserTaskCandidateType.USER, user);
+        return byCandidate(UserTaskCandidateType.USER, List.of(user));
     }
 
-    private static Specification<UserTaskEntity> byCandidate(UserTaskCandidateType type, String value) {
+    /**
+     * Matches nothing. Used where a condition has no subject to compare against, so that the
+     * surrounding OR keeps its shape without matching every row.
+     */
+    static Specification<UserTaskEntity> none() {
+        return (root, query, criteriaBuilder) -> criteriaBuilder.disjunction();
+    }
+
+    /**
+     * EXISTS rather than a join on purpose: a join to the candidates table multiplies task rows,
+     * which breaks both the total count and pagination.
+     */
+    private static Specification<UserTaskEntity> byCandidate(UserTaskCandidateType type, Collection<String> values) {
+        if (values.isEmpty()) {
+            return none();
+        }
         return (root, query, criteriaBuilder) -> {
             Subquery<UUID> subquery = query.subquery(UUID.class);
             Root<UserTaskCandidateEntity> candidate = subquery.from(UserTaskCandidateEntity.class);
             subquery.select(candidate.get("taskId")).where(
                 criteriaBuilder.equal(candidate.get("taskId"), root.get("id")),
                 criteriaBuilder.equal(candidate.get("candidateType"), type),
-                criteriaBuilder.equal(candidate.get("candidateValue"), value));
+                candidate.get("candidateValue").in(values));
             return criteriaBuilder.exists(subquery);
         };
     }

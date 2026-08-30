@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.Incident;
+import com.zorrodev.bpm.contract.exception.InvalidQueryException;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
@@ -16,10 +17,12 @@ import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.ServiceTaskMapper;
 import com.zorrodev.bpm.engine.mapper.UserTaskMapper;
 import com.zorrodev.bpm.engine.mapper.VariableMapper;
+import com.zorrodev.bpm.engine.query.QuerySort;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
 import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
+import com.zorrodev.bpm.contract.dto.query.UserTaskRelation;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
@@ -37,12 +40,21 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
 @Service
 @RequiredArgsConstructor
 public class QueryServiceImpl implements QueryService {
+
+    private static final Set<String> USER_TASK_SORTABLE_FIELDS = Set.of("createdAt", "completedAt");
+    /**
+     * Query types that expose sort parameters but whose sortable fields are not declared yet:
+     * any sort is rejected. VariableQuery is absent on purpose - it does not extend BaseQuery and
+     * therefore has no sort parameter at all.
+     */
+    private static final Set<String> NOT_SORTABLE_YET = Set.of();
 
     private final DBService dbService;
 
@@ -74,7 +86,7 @@ public class QueryServiceImpl implements QueryService {
             specifications.add(ServiceTaskRepository.byCompleted(query.getCompleted()));
         }
         Specification<ServiceTaskEntity> all = Specification.allOf(specifications);
-        return toDTO(serviceTaskRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), serviceTaskMapper::toDTO);
+        return toDTO(serviceTaskRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize(), QuerySort.resolve(query, NOT_SORTABLE_YET))), serviceTaskMapper::toDTO);
     }
 
     @Override
@@ -112,8 +124,55 @@ public class QueryServiceImpl implements QueryService {
         if (query.getCandidateUser() != null) {
             specifications.add(UserTaskRepository.byCandidateUser(query.getCandidateUser()));
         }
+        Specification<UserTaskEntity> relatedTo = relatedTo(query);
+        if (relatedTo != null) {
+            specifications.add(relatedTo);
+        }
         Specification<UserTaskEntity> all = Specification.allOf(specifications);
-        return toDTO(userTaskRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), userTaskMapper::toDTO);
+        return toDTO(userTaskRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize(), QuerySort.resolve(query, USER_TASK_SORTABLE_FIELDS))), userTaskMapper::toDTO);
+    }
+
+    /**
+     * Builds the "task relates to this person" block. Conditions inside it are combined with OR;
+     * the caller adds the result to the other filters, which stay combined with AND.
+     *
+     * @return the specification, or {@code null} when the block is not requested at all
+     */
+    private Specification<UserTaskEntity> relatedTo(UserTaskQuery query) {
+        String user = blankToNull(query.getRelatedToUser());
+        List<String> groups = query.getRelatedToGroups() == null
+            ? List.of()
+            : query.getRelatedToGroups().stream().filter(group -> blankToNull(group) != null).toList();
+
+        if (user == null && groups.isEmpty()) {
+            if (query.getRelation() != null) {
+                throw new InvalidQueryException(
+                    "relation requires relatedToUser or a non-empty relatedToGroups");
+            }
+            return null;
+        }
+
+        UserTaskRelation relation = query.getRelation() == null ? UserTaskRelation.ANY : query.getRelation();
+        List<Specification<UserTaskEntity>> alternatives = new LinkedList<>();
+        if (user != null && relation != UserTaskRelation.CANDIDATE) {
+            alternatives.add(UserTaskRepository.byAssignee(user));
+        }
+        if (relation != UserTaskRelation.ASSIGNEE) {
+            if (user != null) {
+                alternatives.add(UserTaskRepository.byCandidateUser(user));
+            }
+            if (!groups.isEmpty()) {
+                alternatives.add(UserTaskRepository.byCandidateGroups(groups));
+            }
+        }
+        // Only reachable when the requested relation has no subject to compare against, e.g.
+        // relation=ASSIGNEE with groups but no relatedToUser. Matching nothing is the honest
+        // answer; matching everything would leak other people's tasks.
+        return alternatives.isEmpty() ? UserTaskRepository.none() : Specification.anyOf(alternatives);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     @Override
@@ -136,7 +195,7 @@ public class QueryServiceImpl implements QueryService {
             specifications.add(ProcessInstanceRepository.byParentProcessInstanceId(query.getParentProcessInstanceId()));
         }
         Specification<ProcessInstanceEntity> all = Specification.allOf(specifications);
-        return toDTO(processInstanceRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), processInstanceMapper::toDTO);
+        return toDTO(processInstanceRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize(), QuerySort.resolve(query, NOT_SORTABLE_YET))), processInstanceMapper::toDTO);
     }
 
     @Override
@@ -148,7 +207,7 @@ public class QueryServiceImpl implements QueryService {
     public PagedDataDTO<Incident> findIncidents(IncidentQuery query) {
         List<Specification<IncidentEntity>> specifications = new LinkedList<>();
         Specification<IncidentEntity> all = Specification.allOf(specifications);
-        return toDTO(incidentRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize())), incidentMapper::toDTO);
+        return toDTO(incidentRepository.findAll(all, PageRequest.of(query.getPageIndex(), query.getPageSize(), QuerySort.resolve(query, NOT_SORTABLE_YET))), incidentMapper::toDTO);
     }
 
     @Override
