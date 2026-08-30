@@ -163,4 +163,15 @@ describe('MailSettings', () => {
     expect(wrapper.find('[data-testid="healthLoading"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('mailConfigured')
   })
+
+  it('test-send disabled button in edit mode shows hint', async () => {
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="testSendDisabledInEdit"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toBe('mailTestSendDisabledHint')
+  })
 })
