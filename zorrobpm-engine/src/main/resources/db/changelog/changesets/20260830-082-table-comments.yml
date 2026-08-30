@@ -1,0 +1,102 @@
+databaseChangeLog:
+  - logicalFilePath: 20260830-082
+  - changeSet:
+      id: 20260830-082
+      author: zorrodev
+      changes:
+        - setTableRemarks:
+            tableName: activities
+            remarks: 'Активности процесса — экземпляры BPMN-элементов (задачи, шлюзы, события) в рамках process_instances'
+        - setTableRemarks:
+            tableName: api_key
+            remarks: 'API-ключи для внешних интеграций — хранит хеш ключа, владельца и срок действия'
+        - setTableRemarks:
+            tableName: api_key_grant
+            remarks: 'Гранты API-ключей на доступ к конкретным процессам и операциям'
+        - setTableRemarks:
+            tableName: audit_log
+            remarks: 'Журнал аудита действий пользователей — кто, когда и что изменил'
+        - setTableRemarks:
+            tableName: bpmn
+            remarks: 'Сырые BPMN-модели — XML-определения процессов до парсинга'
+        - setTableRemarks:
+            tableName: dmn_definitions
+            remarks: 'DMN-определения — таблицы решений для бизнес-правил'
+        - setTableRemarks:
+            tableName: element_artifact_binding
+            remarks: 'Связи элементов BPMN с артефактами — привязка форм и документов к задачам'
+        - setTableRemarks:
+            tableName: events
+            remarks: 'Доменные события процесса — факты о переходах и действиях для аудита и интеграций'
+        - setTableRemarks:
+            tableName: form
+            remarks: 'Формы — JSON-схемы для отображения и ввода данных в user_tasks'
+        - setTableRemarks:
+            tableName: incidents
+            remarks: 'Инциденты — ошибки выполнения активностей (неудачные service_task, таймауты)'
+        - setTableRemarks:
+            tableName: mail_settings
+            remarks: 'Настройки SMTP-почты — хост, порт, учётка и политика получателей'
+        - setTableRemarks:
+            tableName: message_start_subscriptions
+            remarks: 'Подписки на старт процесса по сообщению — ждут корреляцию по имени сообщения'
+        - setTableRemarks:
+            tableName: message_subscriptions
+            remarks: 'Подписки на сообщения — токены, ожидающие корреляции по имени и ключу'
+        - setTableRemarks:
+            tableName: outbox
+            remarks: 'Транзакционный outbox для service-task/domain-event/email доставки — строка помечается опубликованной только после ACK брокера, WO-REL-12'
+        - setTableRemarks:
+            tableName: parallel_gateways
+            remarks: 'Состояние параллельных шлюзов — учёт пришедших веток для join'
+        - setTableRemarks:
+            tableName: password_tokens
+            remarks: 'Токены сброса пароля — одноразовые хеши с истечением и флагом использования'
+        - setTableRemarks:
+            tableName: process
+            remarks: 'Процессы — реестр развёрнутых BPMN-процессов (устаревшая таблица, используется process_definitions)'
+        - setTableRemarks:
+            tableName: process_definitions
+            remarks: 'Версии определений процессов — хранит BPMN, версию и состояние деплоя'
+        - setTableRemarks:
+            tableName: process_instances
+            remarks: 'Экземпляры процессов — запущенные процессы с родителем и временем старта/завершения'
+        - setTableRemarks:
+            tableName: process_member
+            remarks: 'Участники процессов — пользователи, имеющие доступ к экземпляру'
+        - setTableRemarks:
+            tableName: process_submission
+            remarks: 'Заявки — черновики и поданные экземпляры с данными формы'
+        - setTableRemarks:
+            tableName: refresh_tokens
+            remarks: 'Refresh-токены — долгоживущие токены для обновления access-токенов'
+        - setTableRemarks:
+            tableName: service_tasks
+            remarks: 'Сервисные задачи — задания для внешних воркеров с ретраями и статусом'
+        - setTableRemarks:
+            tableName: signal_start_subscriptions
+            remarks: 'Подписки на старт процесса по сигналу — широковещательный старт по имени сигнала'
+        - setTableRemarks:
+            tableName: signal_subscriptions
+            remarks: 'Подписки на сигналы — токены, ожидающие широковещательный сигнал'
+        - setTableRemarks:
+            tableName: timer_jobs
+            remarks: 'Таймер-задачи — отложенные задания для catch-событий и boundary-таймеров'
+        - setTableRemarks:
+            tableName: timer_start_jobs
+            remarks: 'Таймер-старты — отложенные старты процессов по расписанию'
+        - setTableRemarks:
+            tableName: tokens
+            remarks: 'Токены выполнения — указатели на текущие позиции в процессе (ветки)'
+        - setTableRemarks:
+            tableName: ui_users
+            remarks: 'Пользователи UI — учётные записи с ролями и настройками'
+        - setTableRemarks:
+            tableName: user_group
+            remarks: 'Группы пользователей — объединения для candidate groups'
+        - setTableRemarks:
+            tableName: user_tasks
+            remarks: 'Пользовательские задачи — задания для людей с assignee и формой'
+        - setTableRemarks:
+            tableName: variables
+            remarks: 'Переменные процесса — типизированные значения в скоупах инстанса'
