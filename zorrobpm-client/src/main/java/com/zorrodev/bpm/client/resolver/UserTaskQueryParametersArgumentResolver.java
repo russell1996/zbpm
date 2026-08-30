@@ -39,6 +39,20 @@ public class UserTaskQueryParametersArgumentResolver implements HttpServiceArgum
             if (parameters.getFormKey() != null) {
                 requestValues.addRequestParameter("formKey", parameters.getFormKey());
             }
+            if (parameters.getRelatedToUser() != null) {
+                requestValues.addRequestParameter("relatedToUser", parameters.getRelatedToUser());
+            }
+            if (parameters.getRelatedToGroups() != null) {
+                // One parameter per group: a repeated query parameter binds without any escaping
+                // rules of our own and stays readable in logs.
+                for (String group : parameters.getRelatedToGroups()) {
+                    requestValues.addRequestParameter("relatedToGroups", group);
+                }
+            }
+            if (parameters.getRelation() != null) {
+                requestValues.addRequestParameter("relation", parameters.getRelation().name());
+            }
+            BaseQueryParameters.addSort(requestValues, parameters);
             return true;
         }
         return false;

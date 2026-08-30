@@ -24,6 +24,7 @@ public class ServiceTaskQueryParametersArgumentResolver implements HttpServiceAr
             if (parameters.getProcessInstanceId() != null) {
                 requestValues.addRequestParameter("processInstanceId", parameters.getProcessInstanceId().toString());
             }
+            BaseQueryParameters.addSort(requestValues, parameters);
             return true;
         }
         return false;
