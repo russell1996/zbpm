@@ -293,4 +293,32 @@ class MailSettingsServiceTest {
             .isInstanceOf(ResponseStatusException.class)
             .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(429));
     }
+
+    @Test
+    void criterion5_testSendToSelf_validationDoesNotConsumeRateLimitToken() throws Exception {
+        UUID selfId = UUID.randomUUID();
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
+        rateLimiter.setCapacity(1);
+
+        // First call: invalid (no email) -> 400, should NOT consume the token
+        UiUserEntity noEmail = new UiUserEntity();
+        noEmail.setEmail("");
+        when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(noEmail));
+
+        assertThatThrownBy(() -> service().testSendToSelf(admin))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
+
+        // Second call: valid -> should succeed, not 429, proving first call didn't burn the token
+        UiUserEntity validUser = new UiUserEntity();
+        validUser.setEmail("admin@corp.kz");
+        when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(validUser));
+        ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.x", 587, "u", "p", "f@x", "");
+        when(configResolver.getEffectiveConfig()).thenReturn(cfg);
+        when(transportFactory.build(cfg)).thenReturn(javaMailSender);
+        when(javaMailSender.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+        // send succeeds
+        service().testSendToSelf(admin);
+        verify(javaMailSender).send(any(MimeMessage.class));
+    }
 }
