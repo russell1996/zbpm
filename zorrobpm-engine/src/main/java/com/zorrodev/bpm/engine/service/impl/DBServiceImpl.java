@@ -42,6 +42,7 @@ import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
@@ -64,6 +65,7 @@ import java.util.UUID;
 public class DBServiceImpl implements DBService {
 
     private final ProcessDefinitionDbOperations processDefinitionDbOperations;
+    private final ParallelGatewayDbOperations parallelGatewayDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
@@ -456,22 +458,12 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void setPendingBranches(UUID tokenId, int count) {
-        TokenEntity entity = tokenRepository.findById(tokenId).orElseThrow();
-        entity.setPendingBranches(count);
-        tokenRepository.save(entity);
+        parallelGatewayDbOperations.setPendingBranches(tokenId, count);
     }
 
     @Override
     public int decrementPendingBranches(UUID tokenId) {
-        TokenEntity entity = tokenRepository.findById(tokenId).orElseThrow();
-        Integer current = entity.getPendingBranches();
-        if (current == null) {
-            return -1; // linear process — caller decides
-        }
-        int next = current - 1;
-        entity.setPendingBranches(next);
-        tokenRepository.save(entity);
-        return next;
+        return parallelGatewayDbOperations.decrementPendingBranches(tokenId);
     }
 
     @Override
@@ -930,47 +922,27 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void recordParallelGatewayArrival(UUID processInstanceId, String gatewayElementId, String enteredFlowId) {
-        if (parallelGatewayRepository.existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(
-                processInstanceId, gatewayElementId, enteredFlowId)) {
-            return;
-        }
-        ParallelGatewayEntity entity = new ParallelGatewayEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setGatewayElementId(gatewayElementId);
-        entity.setEnteredFlowId(enteredFlowId);
-        entity.setCreatedAt(Instant.now());
-        parallelGatewayRepository.save(entity);
+        parallelGatewayDbOperations.recordParallelGatewayArrival(processInstanceId, gatewayElementId, enteredFlowId);
     }
 
     @Override
     public Set<String> getParallelGatewayArrivedFlows(UUID processInstanceId, String gatewayElementId) {
-        return new HashSet<>(parallelGatewayRepository.findEnteredFlows(processInstanceId, gatewayElementId));
+        return parallelGatewayDbOperations.getParallelGatewayArrivedFlows(processInstanceId, gatewayElementId);
     }
 
     @Override
     public void clearParallelGatewayArrivals(UUID processInstanceId, String gatewayElementId) {
-        parallelGatewayRepository.deleteByProcessInstanceIdAndGatewayElementId(processInstanceId, gatewayElementId);
+        parallelGatewayDbOperations.clearParallelGatewayArrivals(processInstanceId, gatewayElementId);
     }
 
     @Override
     public void recordInclusiveExpected(UUID processInstanceId, String gatewayElementId, int expectedCount) {
-        ParallelGatewayEntity entity = new ParallelGatewayEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setGatewayElementId(gatewayElementId);
-        // marker row (holds the expected count, not an arrival); entered_flow_id is NOT NULL in the
-        // schema, so reuse the gateway id and distinguish marker rows by expected_count being set.
-        entity.setEnteredFlowId(gatewayElementId);
-        entity.setExpectedCount(expectedCount);
-        entity.setCreatedAt(Instant.now());
-        parallelGatewayRepository.save(entity);
+        parallelGatewayDbOperations.recordInclusiveExpected(processInstanceId, gatewayElementId, expectedCount);
     }
 
     @Override
     public Integer getInclusiveExpected(UUID processInstanceId, String gatewayElementId) {
-        return parallelGatewayRepository.findExpectedCounts(processInstanceId, gatewayElementId)
-            .stream().findFirst().orElse(null);
+        return parallelGatewayDbOperations.getInclusiveExpected(processInstanceId, gatewayElementId);
     }
 
     private Activity getActivity(ActivityEntity activityEntity) {
