@@ -50,6 +50,7 @@
   "mailTestSend": "Отправить тестовое письмо",
   "mailTestSentToSelf": "Тестовое письмо отправлено на вашу почту",
   "mailTestSendFailed": "Не удалось отправить тестовое письмо",
+  "mailTestSendDisabledHint": "Сохраните конфигурацию, чтобы отправить тестовое письмо — эта кнопка использует только сохранённые настройки",
   "mailPasswordSet": "Пароль задан",
   "mailPasswordNotSet": "Пароль не задан",
   "mailPasswordLeaveBlank": "Оставьте пустым, чтобы не менять",

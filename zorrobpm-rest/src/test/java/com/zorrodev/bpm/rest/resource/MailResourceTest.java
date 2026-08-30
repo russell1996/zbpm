@@ -63,7 +63,9 @@ class MailResourceTest {
 
     private static final String SETTINGS_BODY =
         "{\"host\":\"smtp.x\",\"port\":587,\"username\":\"u\",\"from\":\"f@x\",\"allowedRecipients\":\"\"}";
-    private static final String TESTSELF_BODY =
+    // WO-INT-8: test-self no longer accepts a body at all (real send from the SAVED config only).
+    // WO-INT-8: /admin/mail/check is the pre-save probe — it still takes the same shape check() used to.
+    private static final String CHECK_BODY =
         "{\"host\":\"smtp.x\",\"port\":587,\"username\":\"u\",\"password\":\"p\",\"from\":\"f@x\"}";
 
     // ==================== Criterion 7: Health ====================
@@ -142,13 +144,12 @@ class MailResourceTest {
             .andExpect(status().isForbidden());
     }
 
-    // ==================== Criterion 6: test-self requires SUPER_ADMIN ====================
+    // ==================== Criterion 2: test-self requires SUPER_ADMIN (no body — saved config only) ====================
 
     @Test
-    void criterion6_testSelf_superAdmin_reachesService_notAuthBlocked() throws Exception {
+    void criterion2_testSelf_superAdmin_reachesService_notAuthBlocked() throws Exception {
         mockMvc.perform(post("/admin/mail/test-self")
-                .header("Authorization", "Bearer " + superAdminToken)
-                .contentType(MediaType.APPLICATION_JSON).content(TESTSELF_BODY))
+                .header("Authorization", "Bearer " + superAdminToken))
             .andExpect(result -> {
                 int s = result.getResponse().getStatus();
                 assertTrue(s != 401 && s != 403,
@@ -157,18 +158,53 @@ class MailResourceTest {
     }
 
     @Test
-    void criterion6_testSelf_nonSuperAdmin_gets403() throws Exception {
+    void criterion2_testSelf_nonSuperAdmin_gets403() throws Exception {
         mockMvc.perform(post("/admin/mail/test-self")
-                .header("Authorization", "Bearer " + regularUserToken)
-                .contentType(MediaType.APPLICATION_JSON).content(TESTSELF_BODY))
+                .header("Authorization", "Bearer " + regularUserToken))
             .andExpect(status().isForbidden());
     }
 
     @Test
-    void criterion6_testSelf_noAuth_gets401() throws Exception {
-        mockMvc.perform(post("/admin/mail/test-self")
-                .contentType(MediaType.APPLICATION_JSON).content(TESTSELF_BODY))
+    void criterion2_testSelf_noAuth_gets401() throws Exception {
+        mockMvc.perform(post("/admin/mail/test-self"))
             .andExpect(status().isUnauthorized());
+    }
+
+    // ==================== Criterion 1/3: /admin/mail/check requires SUPER_ADMIN, is really mapped ====================
+
+    @Test
+    void criterion1_check_superAdmin_reachesService_returnsCheckResult() throws Exception {
+        MvcResult result = mockMvc.perform(post("/admin/mail/check")
+                .header("Authorization", "Bearer " + superAdminToken)
+                .contentType(MediaType.APPLICATION_JSON).content(CHECK_BODY))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andReturn();
+        JsonNode json = mapper.readTree(result.getResponse().getContentAsString());
+        assertTrue(json.has("reachable"), "check response must have a 'reachable' field — proves POST /admin/mail/check is really mapped, not a 404");
+    }
+
+    @Test
+    void criterion3_check_nonSuperAdmin_gets403() throws Exception {
+        mockMvc.perform(post("/admin/mail/check")
+                .header("Authorization", "Bearer " + regularUserToken)
+                .contentType(MediaType.APPLICATION_JSON).content(CHECK_BODY))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void criterion3_check_noAuth_gets401() throws Exception {
+        mockMvc.perform(post("/admin/mail/check")
+                .contentType(MediaType.APPLICATION_JSON).content(CHECK_BODY))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void criterion1_check_noHost_gets400_notServerError() throws Exception {
+        mockMvc.perform(post("/admin/mail/check")
+                .header("Authorization", "Bearer " + superAdminToken)
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isBadRequest());
     }
 
     // ==================== Criterion 2/4 wiring: test profile isolation ====================

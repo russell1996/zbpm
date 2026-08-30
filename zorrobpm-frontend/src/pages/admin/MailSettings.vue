@@ -147,8 +147,12 @@ async function onCheck() {
     } else {
       toast.error(t('mailCheckFailed'))
     }
-  } catch (e: any) {
-    toast.error(e?.response?.data?.message ?? t('mailCheckFailed'))
+  } catch {
+    // WO-INT-8 criterion 4: no ready-made text from the backend, ever — including error text.
+    // A prior version showed e.response.data.message here, which meant a real production message
+    // (e.g. "Too many mail check/test requests, try again later") reached the user in raw English
+    // regardless of locale. Always localized, no exceptions.
+    toast.error(t('mailCheckFailed'))
   } finally {
     checking.value = false
   }
@@ -162,8 +166,9 @@ async function onTestSend() {
   try {
     await testMailSettingsToSelf()
     toast.success(t('mailTestSentToSelf'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.message ?? t('mailTestSendFailed'))
+  } catch {
+    // WO-INT-8 criterion 4: see onCheck — no backend .message here either.
+    toast.error(t('mailTestSendFailed'))
   } finally {
     testSending.value = false
   }
@@ -280,6 +285,14 @@ async function onTestSend() {
             </button>
             <button :disabled="checking" class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" data-testid="check" @click="onCheck">
               {{ checking ? t('loading') : t('mailCheckButton') }}
+            </button>
+            <button
+              disabled
+              :title="t('mailTestSendDisabledHint')"
+              class="px-4 py-2 text-sm border border-border rounded-md opacity-50 cursor-not-allowed"
+              data-testid="testSendDisabledInEdit"
+            >
+              {{ t('mailTestSend') }}
             </button>
           </div>
         </div>
