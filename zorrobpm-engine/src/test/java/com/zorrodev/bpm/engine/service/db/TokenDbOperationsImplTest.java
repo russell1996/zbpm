@@ -46,11 +46,25 @@ class TokenDbOperationsImplTest {
 
     @Test
     void getToken_maps() {
+        // CTO (WO-DEBT-1e review): asserts all 4 toToken fields, not just id — the previous
+        // version only checked id, so a mutation dropping parentId/scopeActivityId/pendingBranches
+        // from the mapping would not have failed any test (createToken_persistsPendingBranchesNull
+        // below can't catch this either: createToken never sets pendingBranches on the entity in
+        // the first place, so it's always null there regardless of whether toToken maps it).
         UUID id = UUID.randomUUID();
-        TokenEntity e = new TokenEntity(); e.setId(id); e.setParentId(UUID.randomUUID());
+        UUID parentId = UUID.randomUUID();
+        UUID scopeActivityId = UUID.randomUUID();
+        TokenEntity e = new TokenEntity();
+        e.setId(id);
+        e.setParentId(parentId);
+        e.setScopeActivityId(scopeActivityId);
+        e.setPendingBranches(3);
         when(tokenRepository.findById(id)).thenReturn(Optional.of(e));
         Token result = db.getToken(id);
         assertThat(result.getId()).isEqualTo(id);
+        assertThat(result.getParentId()).isEqualTo(parentId);
+        assertThat(result.getScopeActivityId()).isEqualTo(scopeActivityId);
+        assertThat(result.getPendingBranches()).isEqualTo(3);
     }
 
     @Test
