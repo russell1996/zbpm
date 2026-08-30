@@ -276,7 +276,7 @@ curl "http://localhost:8080/process-instances?id=<INSTANCE_ID>&pageIndex=0&pageS
 <dependency>
   <groupId>com.zorrodev.bpm</groupId>
   <artifactId>zorrobpm-job-handler-spring-boot-starter</artifactId>
-  <version>0.7.17-SNAPSHOT</version>
+  <version>0.8.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -547,7 +547,7 @@ BFF. Тот же authz-фильтр. Встроенный SPA используе
 <dependency>
   <groupId>com.zorrodev.bpm</groupId>
   <artifactId>zorrobpm-client</artifactId>
-  <version>0.7.17-SNAPSHOT</version>
+  <version>0.8.0-SNAPSHOT</version>
 </dependency>
 ```
 
