@@ -20,7 +20,6 @@ import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ParallelGatewayEntity;
-import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
@@ -36,7 +35,6 @@ import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
-import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
@@ -44,6 +42,7 @@ import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
@@ -64,7 +63,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DBServiceImpl implements DBService {
 
-    private final ProcessDefinitionRepository processDefinitionRepository;
+    private final ProcessDefinitionDbOperations processDefinitionDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
@@ -415,16 +414,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public ProcessDefinition getProcessDefinition(String key, Integer version) {
-        ProcessDefinitionEntity entity = processDefinitionRepository.findByKeyAndVersion(key, version).orElseThrow();
-        ProcessDefinition result = new ProcessDefinition();
-        result.setId(entity.getId());
-        result.setName(entity.getName());
-        result.setKey(entity.getKey());
-        result.setSha256(entity.getSha256());
-        result.setCreatedAt(entity.getCreatedAt());
-        result.setStartFormKey(entity.getStartFormKey());
-        result.setVersion(entity.getVersion());
-        return result;
+        return processDefinitionDbOperations.getProcessDefinition(key, version);
     }
 
     @Override
@@ -486,7 +476,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public Integer getMaxProcessDefinitionVersionByKey(String key) {
-        return processDefinitionRepository.findMaxByKey(key).orElse(0);
+        return processDefinitionDbOperations.getMaxProcessDefinitionVersionByKey(key);
     }
 
     @Override
