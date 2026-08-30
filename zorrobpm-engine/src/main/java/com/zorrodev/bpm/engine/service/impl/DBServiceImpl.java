@@ -20,7 +20,6 @@ import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ParallelGatewayEntity;
-import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
@@ -36,7 +35,6 @@ import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
-import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
@@ -65,7 +63,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DBServiceImpl implements DBService {
 
-    private final ProcessDefinitionRepository processDefinitionRepository;
     private final ProcessDefinitionDbOperations processDefinitionDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
