@@ -1,8 +1,8 @@
-# ZorroBPM CE
+# ZBPM
 
 Лёгкий движок бизнес-процессов BPMN 2.0 на Spring Boot с **высокой совместимостью с Camunda 8** (реальные C8-BPMN-модели исполняются без правок файлов). Деплой BPMN-процессов, запуск экземпляров, выполнение внешней работы через брокер сообщений и управление пользовательскими задачами — через REST API и единый **SPA** (Operate/Tasklist/Cockpit в одном приложении, `zorrobpm-frontend`).
 
-> ⚠️ **Статус — Community Edition, ранняя стадия.**
+> ⚠️ **Статус — ранняя стадия.**
 > Рабочий одноузловой движок с хорошим покрытием happy-path тестами. **Ещё не готов к промышленной эксплуатации:** рассчитан на запуск в **одном экземпляре** (таймеры и версионирование определений пока небезопасны при нескольких репликах). JWT-аутентификация для UI и Data-API встроена; обязательно смените JWT-секрет и пароль admin перед выходом в прод. См. [Ограничения](#ограничения-и-замечания-по-проду).
 
 ## Текущее состояние
@@ -11,8 +11,8 @@
 
 | | |
 |---|---|
-| **Обновлено** | 2026-08-28 |
-| **Версия** | 0.7.17-SNAPSHOT |
+| **Обновлено** | 2026-08-30 |
+| **Версия** | 0.8.0-SNAPSHOT |
 | **Стадия** | стабилизация: закрываем находки внешнего аудита от 2026-08-07 и свежего полного аудита от 2026-08-23 |
 | **Активных задач** | см. [`governance/workorders/_index.md`](governance/workorders/_index.md) (таблица ниже не обновлялась построчно с 2026-08-17, см. примечание) |
 
@@ -276,7 +276,7 @@ curl "http://localhost:8080/process-instances?id=<INSTANCE_ID>&pageIndex=0&pageS
 <dependency>
   <groupId>com.zorrodev.bpm</groupId>
   <artifactId>zorrobpm-job-handler-spring-boot-starter</artifactId>
-  <version>0.7.17-SNAPSHOT</version>
+  <version>0.8.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -547,7 +547,7 @@ BFF. Тот же authz-фильтр. Встроенный SPA используе
 <dependency>
   <groupId>com.zorrodev.bpm</groupId>
   <artifactId>zorrobpm-client</artifactId>
-  <version>0.7.17-SNAPSHOT</version>
+  <version>0.8.0-SNAPSHOT</version>
 </dependency>
 ```
 
