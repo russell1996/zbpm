@@ -12,7 +12,6 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
-import com.zorrodev.bpm.engine.entity.ParallelGatewayEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
@@ -27,8 +26,6 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
-import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
-import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
@@ -38,6 +35,8 @@ import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
+import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
+import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -76,7 +75,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class DBServiceImplCharacterizationTest {
 
-    @Mock private ProcessDefinitionRepository processDefinitionRepository;
+    @Mock private ProcessDefinitionDbOperations processDefinitionDbOperations;
+    @Mock private ParallelGatewayDbOperations parallelGatewayDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -90,7 +90,6 @@ class DBServiceImplCharacterizationTest {
     @Mock private SignalStartSubscriptionRepository signalStartSubscriptionRepository;
     @Mock private MessageStartSubscriptionRepository messageStartSubscriptionRepository;
     @Mock private TimerStartJobRepository timerStartJobRepository;
-    @Mock private ParallelGatewayRepository parallelGatewayRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private DomainEventEmitter domainEventEmitter;
     @Mock private JdbcTemplate jdbcTemplate;
@@ -214,31 +213,22 @@ class DBServiceImplCharacterizationTest {
         assertThat(captor.getValue().getScopeActivityId()).isEqualTo(scope);
     }
 
+    // WO-DEBT-1d: setPendingBranches/decrementPendingBranches moved to ParallelGatewayDbOperationsImpl
+    // (real behaviour characterized in ParallelGatewayDbOperationsImplTest) — DBServiceImpl now only
+    // delegates, so these two just check the delegation, not the pendingBranches arithmetic itself.
     @Test
-    void setPendingBranches_saves() {
+    void setPendingBranches_delegates() {
         UUID tokenId = UUID.randomUUID();
-        TokenEntity entity = new TokenEntity(); entity.setId(tokenId); entity.setPendingBranches(0);
-        when(tokenRepository.findById(tokenId)).thenReturn(Optional.of(entity));
         dbService.setPendingBranches(tokenId, 3);
-        assertThat(entity.getPendingBranches()).isEqualTo(3);
-        verify(tokenRepository).save(entity);
+        verify(parallelGatewayDbOperations).setPendingBranches(tokenId, 3);
     }
 
     @Test
-    void decrementPendingBranches_returnsNext() {
+    void decrementPendingBranches_delegates() {
         UUID tokenId = UUID.randomUUID();
-        TokenEntity entity = new TokenEntity(); entity.setId(tokenId); entity.setPendingBranches(3);
-        when(tokenRepository.findById(tokenId)).thenReturn(Optional.of(entity));
+        when(parallelGatewayDbOperations.decrementPendingBranches(tokenId)).thenReturn(2);
         assertThat(dbService.decrementPendingBranches(tokenId)).isEqualTo(2);
-        verify(tokenRepository).save(entity);
-    }
-
-    @Test
-    void decrementPendingBranches_returnsMinus1WhenNull() {
-        UUID tokenId = UUID.randomUUID();
-        TokenEntity entity = new TokenEntity(); entity.setId(tokenId); entity.setPendingBranches(null);
-        when(tokenRepository.findById(tokenId)).thenReturn(Optional.of(entity));
-        assertThat(dbService.decrementPendingBranches(tokenId)).isEqualTo(-1);
+        verify(parallelGatewayDbOperations).decrementPendingBranches(tokenId);
     }
 
     // ─── Incidents ─────────────────────────────────────────────
@@ -621,51 +611,42 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── Gateway state ────────────────────────────────────────
+    // WO-DEBT-1d: all 5 moved to ParallelGatewayDbOperationsImpl (real behaviour characterized in
+    // ParallelGatewayDbOperationsImplTest) — DBServiceImpl now only delegates.
 
     @Test
-    void recordParallelGatewayArrival_savesWhenNew() {
+    void recordParallelGatewayArrival_delegates() {
         UUID pi = UUID.randomUUID();
-        when(parallelGatewayRepository.existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(pi, "g", "f")).thenReturn(false);
         dbService.recordParallelGatewayArrival(pi, "g", "f");
-        verify(parallelGatewayRepository).save(any(ParallelGatewayEntity.class));
+        verify(parallelGatewayDbOperations).recordParallelGatewayArrival(pi, "g", "f");
     }
 
     @Test
-    void recordParallelGatewayArrival_skipsWhenExists() {
+    void getParallelGatewayArrivedFlows_delegates() {
         UUID pi = UUID.randomUUID();
-        when(parallelGatewayRepository.existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(pi, "g", "f")).thenReturn(true);
-        dbService.recordParallelGatewayArrival(pi, "g", "f");
-        verify(parallelGatewayRepository, never()).save(any(ParallelGatewayEntity.class));
-    }
-
-    @Test
-    void getParallelGatewayArrivedFlows_returnsSet() {
-        UUID pi = UUID.randomUUID();
-        when(parallelGatewayRepository.findEnteredFlows(pi, "g")).thenReturn(List.of("f1", "f2"));
+        when(parallelGatewayDbOperations.getParallelGatewayArrivedFlows(pi, "g")).thenReturn(Set.of("f1", "f2"));
         Set<String> result = dbService.getParallelGatewayArrivedFlows(pi, "g");
         assertThat(result).containsExactlyInAnyOrder("f1", "f2");
     }
 
     @Test
-    void clearParallelGatewayArrivals_callsRepo() {
+    void clearParallelGatewayArrivals_delegates() {
         UUID pi = UUID.randomUUID();
         dbService.clearParallelGatewayArrivals(pi, "g");
-        verify(parallelGatewayRepository).deleteByProcessInstanceIdAndGatewayElementId(pi, "g");
+        verify(parallelGatewayDbOperations).clearParallelGatewayArrivals(pi, "g");
     }
 
     @Test
-    void recordInclusiveExpected_savesMarker() {
+    void recordInclusiveExpected_delegates() {
         UUID pi = UUID.randomUUID();
         dbService.recordInclusiveExpected(pi, "g", 3);
-        ArgumentCaptor<ParallelGatewayEntity> captor = ArgumentCaptor.forClass(ParallelGatewayEntity.class);
-        verify(parallelGatewayRepository).save(captor.capture());
-        assertThat(captor.getValue().getExpectedCount()).isEqualTo(3);
+        verify(parallelGatewayDbOperations).recordInclusiveExpected(pi, "g", 3);
     }
 
     @Test
-    void getInclusiveExpected_returnsCount() {
+    void getInclusiveExpected_delegates() {
         UUID pi = UUID.randomUUID();
-        when(parallelGatewayRepository.findExpectedCounts(pi, "g")).thenReturn(List.of(3));
+        when(parallelGatewayDbOperations.getInclusiveExpected(pi, "g")).thenReturn(3);
         assertThat(dbService.getInclusiveExpected(pi, "g")).isEqualTo(3);
     }
 

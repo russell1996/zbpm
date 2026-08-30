@@ -86,4 +86,13 @@ class ParallelGatewayDbOperationsImplTest {
         assertThat(db.decrementPendingBranches(tokenId)).isEqualTo(2);
         verify(tokenRepository).save(e);
     }
+
+    @Test
+    void decrementPendingBranches_returnsMinus1WhenNull() {
+        UUID tokenId = UUID.randomUUID();
+        TokenEntity e = new TokenEntity(); e.setId(tokenId); e.setPendingBranches(null);
+        when(tokenRepository.findById(tokenId)).thenReturn(Optional.of(e));
+        assertThat(db.decrementPendingBranches(tokenId)).isEqualTo(-1);
+        verify(tokenRepository, org.mockito.Mockito.never()).save(any(TokenEntity.class));
+    }
 }
