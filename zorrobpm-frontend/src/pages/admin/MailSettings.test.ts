@@ -6,12 +6,14 @@ import MailSettings from './MailSettings.vue'
 const mockGetMailHealth = vi.fn()
 const mockGetMailSettings = vi.fn()
 const mockSaveMailSettings = vi.fn()
+const mockCheckMailSettings = vi.fn()
 const mockTestMailSettingsToSelf = vi.fn()
 
 vi.mock('@/services/adminService', () => ({
   getMailHealth: (...a: any[]) => mockGetMailHealth(...a),
   getMailSettings: (...a: any[]) => mockGetMailSettings(...a),
   saveMailSettings: (...a: any[]) => mockSaveMailSettings(...a),
+  checkMailSettings: (...a: any[]) => mockCheckMailSettings(...a),
   testMailSettingsToSelf: (...a: any[]) => mockTestMailSettingsToSelf(...a),
 }))
 
@@ -19,8 +21,10 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 
+const mockToastSuccess = vi.fn()
+const mockToastError = vi.fn()
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn() }),
+  useToast: () => ({ success: mockToastSuccess, error: mockToastError }),
 }))
 
 describe('MailSettings', () => {
@@ -50,7 +54,13 @@ describe('MailSettings', () => {
       allowedRecipients: '',
       passwordSet: true,
     })
-    mockTestMailSettingsToSelf.mockResolvedValue('Test email sent successfully to admin@corp.kz')
+    mockCheckMailSettings.mockResolvedValue({ reachable: true, errorCode: null })
+    mockTestMailSettingsToSelf.mockResolvedValue(undefined)
+    mockSaveMailSettings.mockClear()
+    mockCheckMailSettings.mockClear()
+    mockTestMailSettingsToSelf.mockClear()
+    mockToastSuccess.mockClear()
+    mockToastError.mockClear()
   })
 
   it('shows saved config in view mode (form hidden)', async () => {
@@ -97,15 +107,39 @@ describe('MailSettings', () => {
     expect(wrapper.text()).toContain('smtp.example.com')
   })
 
-  it('test sends to self and shows returned result', async () => {
+  it('check probes current form values without saving and toasts success', async () => {
     const wrapper = mount(MailSettings)
     await flushPromises()
     await wrapper.find('[data-testid="edit"]').trigger('click')
     await flushPromises()
-    await wrapper.find('[data-testid="test"]').trigger('click')
+    await wrapper.find('[data-testid="check"]').trigger('click')
     await flushPromises()
-    expect(mockTestMailSettingsToSelf).toHaveBeenCalled()
-    expect(wrapper.find('[data-testid="testResult"]').text()).toContain('admin@corp.kz')
+    expect(mockCheckMailSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'smtp.example.com' }),
+    )
+    expect(mockSaveMailSettings).not.toHaveBeenCalled()
+    expect(mockToastSuccess).toHaveBeenCalledWith('mailCheckOk')
+  })
+
+  it('check toasts failure when the server is unreachable', async () => {
+    mockCheckMailSettings.mockResolvedValueOnce({ reachable: false, errorCode: 'UNREACHABLE' })
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    await wrapper.find('[data-testid="edit"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="check"]').trigger('click')
+    await flushPromises()
+    expect(mockToastError).toHaveBeenCalledWith('mailCheckFailed')
+  })
+
+  it('test-send button (view mode) sends from the saved config with no body', async () => {
+    const wrapper = mount(MailSettings)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="testSend"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="testSend"]').trigger('click')
+    await flushPromises()
+    expect(mockTestMailSettingsToSelf).toHaveBeenCalledWith()
+    expect(mockToastSuccess).toHaveBeenCalledWith('mailTestSentToSelf')
   })
 
   it('password visibility toggle switches input type', async () => {

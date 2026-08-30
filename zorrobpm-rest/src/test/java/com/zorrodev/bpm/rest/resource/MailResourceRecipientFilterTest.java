@@ -72,24 +72,41 @@ class MailResourceRecipientFilterTest {
     }
 
     @Test
-    void criterion6_superAdmin_testSelf_delegatesToService() {
+    void criterion4_superAdmin_testSelf_delegatesToService_noBody() {
         asSuperAdmin();
-        MailSettingsDTO in = new MailSettingsDTO();
-        when(mailSettingsService.testSendToSelf(any(MailSettingsDTO.class), any(Principal.class)))
-            .thenReturn("Test email sent successfully to admin@corp.kz");
-        String result = resource.testMailSettingsToSelf(in);
-        assertThat(result).contains("admin@corp.kz");
-        // The DTO carries only connection params — there is no recipient field the caller could abuse.
-        verify(mailSettingsService).testSendToSelf(eq(in), org.mockito.Mockito.any(Principal.class));
+        // WO-INT-8: no DTO travels with this call any more — nothing an arbitrary caller
+        // could abuse as a recipient/credential; the recipient/config are resolved server-side.
+        resource.testMailSettingsToSelf();
+        verify(mailSettingsService).testSendToSelf(org.mockito.Mockito.any(Principal.class));
     }
 
     @Test
     void criterion4_nonSuperAdmin_testSelf_forbidden() {
         asRegular();
-        assertThatThrownBy(() -> resource.testMailSettingsToSelf(new MailSettingsDTO()))
+        assertThatThrownBy(() -> resource.testMailSettingsToSelf())
             .isInstanceOf(ResponseStatusException.class)
             .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
-        verify(mailSettingsService, never()).testSendToSelf(any(), any());
+        verify(mailSettingsService, never()).testSendToSelf(any());
+    }
+
+    @Test
+    void criterion4_superAdmin_check_delegatesToService() {
+        asSuperAdmin();
+        MailSettingsDTO in = new MailSettingsDTO();
+        com.zorrodev.bpm.contract.dto.MailCheckResultDTO out = new com.zorrodev.bpm.contract.dto.MailCheckResultDTO();
+        when(mailSettingsService.checkConnection(any(MailSettingsDTO.class), any(Principal.class))).thenReturn(out);
+        assertThat(resource.checkMailSettings(in)).isSameAs(out);
+        verify(mailSettingsService).checkConnection(eq(in), org.mockito.Mockito.any(Principal.class));
+    }
+
+    @Test
+    void criterion4_nonSuperAdmin_check_forbidden() {
+        asRegular();
+        MailSettingsDTO in = new MailSettingsDTO();
+        assertThatThrownBy(() -> resource.checkMailSettings(in))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        verify(mailSettingsService, never()).checkConnection(any(), any());
     }
 
     @Test

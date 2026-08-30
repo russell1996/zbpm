@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.mail;
 
+import com.zorrodev.bpm.contract.dto.MailCheckResultDTO;
 import com.zorrodev.bpm.contract.dto.MailSettingsDTO;
 import com.zorrodev.bpm.engine.entity.MailSettingsEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
@@ -46,11 +47,15 @@ class MailSettingsServiceTest {
     @Mock AuditLogService auditLogService;
     @Mock MailTransportFactory transportFactory;
     @Mock JavaMailSenderImpl javaMailSender;
+    @Mock MailHealthService mailHealthService;
+    @Mock MailConfigResolver configResolver;
 
     private final MailSettingsCrypto crypto = new MailSettingsCrypto(KEY_HEX);
+    private final MailActionRateLimiter rateLimiter = new MailActionRateLimiter();
 
     private MailSettingsService service() {
-        return new MailSettingsService(settingsRepository, crypto, uiUserRepository, auditLogService, transportFactory);
+        return new MailSettingsService(settingsRepository, crypto, uiUserRepository, auditLogService,
+            transportFactory, mailHealthService, configResolver, rateLimiter);
     }
 
     private Principal.UserPrincipal superAdmin() {
@@ -118,73 +123,174 @@ class MailSettingsServiceTest {
     }
 
     @Test
-    void criterion6_testSendToSelf_noEmail_clearError_notNpe() {
+    void criterion2_testSendToSelf_noEmail_clearError_notNpe() {
         UUID selfId = UUID.randomUUID();
         Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
         UiUserEntity self = new UiUserEntity();
         self.setEmail(""); // blank email
         when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(self));
 
-        MailSettingsDTO in = new MailSettingsDTO();
-        in.setHost("h"); in.setFrom("f@x");
-
-        assertThatThrownBy(() -> service().testSendToSelf(in, admin))
+        assertThatThrownBy(() -> service().testSendToSelf(admin))
             .isInstanceOf(ResponseStatusException.class)
             .satisfies(e -> {
                 ResponseStatusException r = (ResponseStatusException) e;
                 assertThat(r.getStatusCode().value()).isEqualTo(400);
                 assertThat(r.getReason()).contains("нет email");
             });
-        verify(transportFactory, never()).build(any(), any(), any(), any());
+        verify(transportFactory, never()).build(any(ResolvedMailConfig.class));
     }
 
     @Test
-    void criterion6_testSendToSelf_sendsToSelfAddress_usingEnteredValuesBeforeSave() throws Exception {
+    void criterion2_testSendToSelf_notSaved_clearError_not500() {
         UUID selfId = UUID.randomUUID();
         Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
         UiUserEntity self = new UiUserEntity();
         self.setEmail("admin@corp.kz");
         when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(self));
-        when(transportFactory.build(eq("smtp.x"), eq(587), eq("u"), eq("p"))).thenReturn(javaMailSender);
+        when(configResolver.getEffectiveConfig()).thenReturn(
+            new ResolvedMailConfig(null, null, null, null, null, null));
+
+        assertThatThrownBy(() -> service().testSendToSelf(admin))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
+        verify(transportFactory, never()).build(any(ResolvedMailConfig.class));
+    }
+
+    @Test
+    void criterion2_testSendToSelf_sendsToSelfAddress_usingSavedConfig_noBodyPassword() throws Exception {
+        UUID selfId = UUID.randomUUID();
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
+        UiUserEntity self = new UiUserEntity();
+        self.setEmail("admin@corp.kz");
+        when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(self));
+        ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.x", 587, "u", "p", "f@x", "");
+        when(configResolver.getEffectiveConfig()).thenReturn(cfg);
+        when(transportFactory.build(cfg)).thenReturn(javaMailSender);
 
         Session session = Session.getInstance(new Properties());
         when(javaMailSender.createMimeMessage()).thenReturn(new MimeMessage(session));
         AtomicReference<MimeMessage> sent = new AtomicReference<>();
         doAnswer(inv -> { sent.set(inv.getArgument(0)); return null; }).when(javaMailSender).send(any(MimeMessage.class));
 
-        MailSettingsDTO in = new MailSettingsDTO();
-        in.setHost("smtp.x"); in.setPort(587); in.setUsername("u"); in.setPassword("p"); in.setFrom("f@x");
-
-        String result = service().testSendToSelf(in, admin);
+        service().testSendToSelf(admin);
 
         verify(javaMailSender).send(any(MimeMessage.class));
-        assertThat(result).contains("admin@corp.kz");
         String recipients = java.util.Arrays.toString(sent.get().getRecipients(jakarta.mail.Message.RecipientType.TO));
         assertThat(recipients).contains("admin@corp.kz");
     }
 
     @Test
-    void criterion6_testSendToSelf_smtpError_returnedVerbatim() throws Exception {
+    void criterion2_testSendToSelf_smtpError_returnedVerbatim() throws Exception {
         UUID selfId = UUID.randomUUID();
         Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
         UiUserEntity self = new UiUserEntity();
         self.setEmail("admin@corp.kz");
         when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(self));
-        when(transportFactory.build(eq("smtp.x"), eq(587), eq("u"), eq("p"))).thenReturn(javaMailSender);
+        ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.x", 587, "u", "p", "f@x", "");
+        when(configResolver.getEffectiveConfig()).thenReturn(cfg);
+        when(transportFactory.build(cfg)).thenReturn(javaMailSender);
         when(javaMailSender.createMimeMessage()).thenReturn(
             new MimeMessage(Session.getInstance(new Properties())));
         doThrow(new MailSendException("550 relay access denied"))
             .when(javaMailSender).send(any(MimeMessage.class));
 
-        MailSettingsDTO in = new MailSettingsDTO();
-        in.setHost("smtp.x"); in.setPort(587); in.setUsername("u"); in.setPassword("p"); in.setFrom("f@x");
-
-        assertThatThrownBy(() -> service().testSendToSelf(in, admin))
+        assertThatThrownBy(() -> service().testSendToSelf(admin))
             .isInstanceOf(ResponseStatusException.class)
             .satisfies(e -> {
                 ResponseStatusException r = (ResponseStatusException) e;
                 assertThat(r.getStatusCode().value()).isEqualTo(502);
                 assertThat(r.getReason()).contains("550 relay access denied");
             });
+    }
+
+    @Test
+    void criterion2_testSendToSelf_rateLimited_429_notException() {
+        UUID selfId = UUID.randomUUID();
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
+        rateLimiter.setCapacity(1);
+        UiUserEntity self = new UiUserEntity();
+        self.setEmail("admin@corp.kz");
+        when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(self));
+        ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.x", 587, "u", "p", "f@x", "");
+        when(configResolver.getEffectiveConfig()).thenReturn(cfg);
+        when(transportFactory.build(cfg)).thenReturn(javaMailSender);
+        when(javaMailSender.createMimeMessage()).thenReturn(
+            new MimeMessage(Session.getInstance(new Properties())));
+
+        service().testSendToSelf(admin); // consumes the only token
+
+        assertThatThrownBy(() -> service().testSendToSelf(admin))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(429));
+    }
+
+    @Test
+    void criterion1_checkConnection_reachable_noSaveRequired_noEmailSent() {
+        UUID selfId = UUID.randomUUID();
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
+        MailSettingsDTO in = new MailSettingsDTO();
+        in.setHost("smtp.x"); in.setPort(587); in.setUsername("u"); in.setPassword("p");
+        when(mailHealthService.probeReachable("smtp.x", 587, "u", "p")).thenReturn(true);
+
+        MailCheckResultDTO result = service().checkConnection(in, admin);
+
+        assertThat(result.isReachable()).isTrue();
+        assertThat(result.getErrorCode()).isNull();
+        verify(settingsRepository, never()).save(any());
+        verify(transportFactory, never()).build(any(ResolvedMailConfig.class));
+        verify(javaMailSender, never()).send(any(MimeMessage.class));
+    }
+
+    @Test
+    void criterion1_checkConnection_unreachable_falseWithErrorCode() {
+        UUID selfId = UUID.randomUUID();
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
+        MailSettingsDTO in = new MailSettingsDTO();
+        in.setHost("bad.host"); in.setPort(1);
+        when(mailHealthService.probeReachable("bad.host", 1, null, null)).thenReturn(false);
+
+        MailCheckResultDTO result = service().checkConnection(in, admin);
+
+        assertThat(result.isReachable()).isFalse();
+        assertThat(result.getErrorCode()).isEqualTo("UNREACHABLE");
+    }
+
+    @Test
+    void criterion1_checkConnection_noHost_clearError_notNpe() {
+        UUID selfId = UUID.randomUUID();
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
+        MailSettingsDTO in = new MailSettingsDTO();
+
+        assertThatThrownBy(() -> service().checkConnection(in, admin))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
+        verify(mailHealthService, never()).probeReachable(any(), any(), any(), any());
+    }
+
+    @Test
+    void criterion3_checkConnection_nonSuperAdmin_forbidden() {
+        Principal.UserPrincipal user = new Principal.UserPrincipal(UUID.randomUUID(), "u", "USER");
+        MailSettingsDTO in = new MailSettingsDTO();
+        in.setHost("h");
+        assertThatThrownBy(() -> service().checkConnection(in, user))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        verify(mailHealthService, never()).probeReachable(any(), any(), any(), any());
+    }
+
+    @Test
+    void criterion5_checkConnection_rateLimited_429() {
+        UUID selfId = UUID.randomUUID();
+        Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
+        rateLimiter.setCapacity(1);
+        MailSettingsDTO in = new MailSettingsDTO();
+        in.setHost("smtp.x");
+        when(mailHealthService.probeReachable(any(), any(), any(), any())).thenReturn(true);
+
+        service().checkConnection(in, admin); // consumes the only token
+
+        assertThatThrownBy(() -> service().checkConnection(in, admin))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(429));
     }
 }

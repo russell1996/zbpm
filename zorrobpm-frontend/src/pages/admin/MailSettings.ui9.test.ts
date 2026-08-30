@@ -6,6 +6,7 @@ import MailSettings from './MailSettings.vue'
 const mockGetMailHealth = vi.fn()
 const mockGetMailSettings = vi.fn()
 const mockSaveMailSettings = vi.fn()
+const mockCheckMailSettings = vi.fn()
 const mockTestMailSettingsToSelf = vi.fn()
 const mockToastError = vi.fn()
 const mockToastSuccess = vi.fn()
@@ -14,6 +15,7 @@ vi.mock('@/services/adminService', () => ({
   getMailHealth: (...a: any[]) => mockGetMailHealth(...a),
   getMailSettings: (...a: any[]) => mockGetMailSettings(...a),
   saveMailSettings: (...a: any[]) => mockSaveMailSettings(...a),
+  checkMailSettings: (...a: any[]) => mockCheckMailSettings(...a),
   testMailSettingsToSelf: (...a: any[]) => mockTestMailSettingsToSelf(...a),
 }))
 
@@ -52,7 +54,8 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
       allowedRecipients: '',
       passwordSet: true,
     })
-    mockTestMailSettingsToSelf.mockResolvedValue('Test email sent successfully to admin@corp.kz')
+    mockCheckMailSettings.mockResolvedValue({ reachable: true, errorCode: null })
+    mockTestMailSettingsToSelf.mockResolvedValue(undefined)
     mockToastError.mockClear()
     mockToastSuccess.mockClear()
   })
@@ -77,22 +80,21 @@ describe('WO-UI-9 point 1 — MailSettings shows .message not raw JSON', () => {
     expect(typeof arg).toBe('string')
   })
 
-  it('onTest: testError shows .message, not raw JSON', async () => {
-    const backendMessage = 'У вашей учётки нет email, некуда слать тестовое письмо'
-    mockTestMailSettingsToSelf.mockRejectedValueOnce({
+  it('onCheck: error toast shows .message, not raw JSON', async () => {
+    const backendMessage = 'Host is required to check the connection'
+    mockCheckMailSettings.mockRejectedValueOnce({
       response: { data: { code: 'VALIDATION_ERROR', message: backendMessage } },
     })
     const wrapper = mount(MailSettings)
     await flushPromises()
     await wrapper.find('[data-testid="edit"]').trigger('click')
     await flushPromises()
-    await wrapper.find('[data-testid="test"]').trigger('click')
+    await wrapper.find('[data-testid="check"]').trigger('click')
     await flushPromises()
-    const errEl = wrapper.find('[data-testid="testError"]')
-    expect(errEl.exists()).toBe(true)
-    expect(errEl.text()).toBe(backendMessage)
-    expect(errEl.text()).not.toContain('VALIDATION_ERROR')
-    expect(errEl.text()).not.toContain('{')
+    expect(mockToastError).toHaveBeenCalledWith(backendMessage)
+    const arg = mockToastError.mock.calls[0][0] as string
+    expect(arg).not.toContain('VALIDATION_ERROR')
+    expect(arg).not.toContain('{')
   })
 
   it('onSave/onTest fall back to default when .message missing', async () => {

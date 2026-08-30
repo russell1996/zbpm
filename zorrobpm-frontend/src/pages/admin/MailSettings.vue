@@ -8,6 +8,7 @@ import {
   getMailHealth,
   getMailSettings,
   saveMailSettings,
+  checkMailSettings,
   testMailSettingsToSelf,
   type MailSettings,
   type MailHealth,
@@ -23,7 +24,8 @@ const lastCheck = computed(() => {
   return health.value.lastSuccess ?? health.value.lastError ?? t('mailCheckNotPerformed')
 })
 const saving = ref(false)
-const testing = ref(false)
+const checking = ref(false)
+const testSending = ref(false)
 const showPassword = ref(false)
 const editMode = ref(false)
 
@@ -48,8 +50,6 @@ const viewConfig = ref({
   passwordSet: false,
 })
 const passwordSet = ref(false)
-const testResult = ref<string | null>(null)
-const testError = ref<string | null>(null)
 
 function applySettings(s: MailSettings) {
   form.value.host = s.host ?? ''
@@ -98,8 +98,6 @@ async function loadHealth() {
 
 async function onSave() {
   saving.value = true
-  testResult.value = null
-  testError.value = null
   try {
     const saved = await saveMailSettings({
       host: form.value.host || null,
@@ -132,23 +130,42 @@ function onCancel() {
   editMode.value = false
 }
 
-async function onTest() {
-  testing.value = true
-  testResult.value = null
-  testError.value = null
+// WO-INT-8 criterion 1: "Проверить" — probes the CURRENT (possibly unsaved) form values,
+// sends no email. No ready-made text from the backend — only reachable/errorCode, localized here.
+async function onCheck() {
+  checking.value = true
   try {
-    const msg = await testMailSettingsToSelf({
+    const result = await checkMailSettings({
       host: form.value.host || null,
       port: form.value.port,
       username: form.value.username || null,
       password: form.value.password ? form.value.password : null,
       from: form.value.from || null,
     })
-    testResult.value = msg
+    if (result.reachable) {
+      toast.success(t('mailCheckOk'))
+    } else {
+      toast.error(t('mailCheckFailed'))
+    }
   } catch (e: any) {
-    testError.value = e?.response?.data?.message ?? 'SMTP error'
+    toast.error(e?.response?.data?.message ?? t('mailCheckFailed'))
   } finally {
-    testing.value = false
+    checking.value = false
+  }
+}
+
+// WO-INT-8 criterion 2: "Отправить тестовое письмо" — a real send, but only from the SAVED
+// config: no body, no password leaves the browser. Only reachable from view mode, i.e. only once
+// a config is actually saved and nothing is being edited unsaved.
+async function onTestSend() {
+  testSending.value = true
+  try {
+    await testMailSettingsToSelf()
+    toast.success(t('mailTestSentToSelf'))
+  } catch (e: any) {
+    toast.error(e?.response?.data?.message ?? t('mailTestSendFailed'))
+  } finally {
+    testSending.value = false
   }
 }
 </script>
@@ -199,6 +216,15 @@ async function onTest() {
         <div class="flex gap-3">
           <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" data-testid="edit" @click="editMode = true">
             {{ t('mailEdit') }}
+          </button>
+          <button
+            v-if="viewConfig.host"
+            :disabled="testSending"
+            class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted"
+            data-testid="testSend"
+            @click="onTestSend"
+          >
+            {{ testSending ? t('loading') : t('mailTestSend') }}
           </button>
         </div>
       </div>
@@ -252,20 +278,11 @@ async function onTest() {
             <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" data-testid="cancel" @click="onCancel">
               {{ t('mailCancel') }}
             </button>
-            <button :disabled="testing" class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" data-testid="test" @click="onTest">
-              {{ testing ? t('loading') : t('mailTest') }}
+            <button :disabled="checking" class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" data-testid="check" @click="onCheck">
+              {{ checking ? t('loading') : t('mailCheckButton') }}
             </button>
           </div>
         </div>
-      </div>
-
-      <div v-if="testResult" class="flex items-start gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2" data-testid="testResult">
-        <CheckCircle2 class="h-4 w-4 mt-0.5 shrink-0" />
-        <span>{{ testResult }}</span>
-      </div>
-      <div v-if="testError" class="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2" data-testid="testError">
-        <XCircle class="h-4 w-4 mt-0.5 shrink-0" />
-        <span>{{ testError }}</span>
       </div>
     </template>
   </div>
