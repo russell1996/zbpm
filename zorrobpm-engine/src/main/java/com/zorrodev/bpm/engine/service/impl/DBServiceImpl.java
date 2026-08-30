@@ -23,7 +23,6 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
-import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
@@ -33,15 +32,17 @@ import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
+import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
-import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
+import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
@@ -68,7 +69,7 @@ public class DBServiceImpl implements DBService {
     private final ServiceTaskRepository serviceTaskRepository;
     private final UserTaskRepository userTaskRepository;
     private final VariableRepository variableRepository;
-    private final TokenRepository tokenRepository;
+    private final TokenDbOperations tokenDbOperations;
     private final IncidentRepository incidentRepository;
     private final TimerJobRepository timerJobRepository;
     private final MessageSubscriptionRepository messageSubscriptionRepository;
@@ -417,39 +418,22 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public Token createToken(UUID parentId) {
-        return createToken(parentId, null);
+        return tokenDbOperations.createToken(parentId);
     }
 
     @Override
     public Token createToken(UUID parentId, UUID scopeActivityId) {
-        TokenEntity tokenEntity = new TokenEntity();
-        tokenEntity.setId(UUID.randomUUID());
-        tokenEntity.setParentId(parentId);
-        tokenEntity.setScopeActivityId(scopeActivityId);
-        tokenRepository.save(tokenEntity);
-
-        return toToken(tokenEntity);
+        return tokenDbOperations.createToken(parentId, scopeActivityId);
     }
 
     @Override
     public Token getToken(UUID tokenId) {
-        return tokenRepository.findById(tokenId)
-            .map(this::toToken)
-            .orElseThrow();
+        return tokenDbOperations.getToken(tokenId);
     }
 
     @Override
     public void deleteToken(UUID tokenId) {
-        tokenRepository.deleteById(tokenId);
-    }
-
-    private Token toToken(TokenEntity entity) {
-        Token token = new Token();
-        token.setId(entity.getId());
-        token.setParentId(entity.getParentId());
-        token.setScopeActivityId(entity.getScopeActivityId());
-        token.setPendingBranches(entity.getPendingBranches());
-        return token;
+        tokenDbOperations.deleteToken(tokenId);
     }
 
     @Override
