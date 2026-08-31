@@ -59,6 +59,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,6 +76,7 @@ class DBServiceImplCharacterizationTest {
 
     @Mock private ProcessDefinitionDbOperations processDefinitionDbOperations;
     @Mock private ParallelGatewayDbOperations parallelGatewayDbOperations;
+    @Mock private com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations processInstanceDbOperations;
     @Mock private com.zorrodev.bpm.engine.service.db.TokenDbOperations tokenDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
@@ -181,16 +183,14 @@ class DBServiceImplCharacterizationTest {
     @Test
     void lockProcessInstance_locksForUpdate() {
         UUID pi = UUID.randomUUID();
-        ProcessInstanceEntity entity = new ProcessInstanceEntity(); entity.setId(pi);
-        when(processInstanceRepository.findByIdForUpdate(pi)).thenReturn(Optional.of(entity));
         dbService.lockProcessInstance(pi);
-        verify(processInstanceRepository).findByIdForUpdate(pi);
+        verify(processInstanceDbOperations).lockProcessInstance(pi);
     }
 
     @Test
     void lockProcessInstance_throwsWhenMissing() {
         UUID pi = UUID.randomUUID();
-        when(processInstanceRepository.findByIdForUpdate(pi)).thenReturn(Optional.empty());
+        doThrow(new NoSuchElementException()).when(processInstanceDbOperations).lockProcessInstance(pi);
         assertThatThrownBy(() -> dbService.lockProcessInstance(pi)).isInstanceOf(NoSuchElementException.class);
     }
 
@@ -600,13 +600,9 @@ class DBServiceImplCharacterizationTest {
 
     @Test
     void cancelProcessInstance_cancelsAndEmits() {
-        UUID id = UUID.randomUUID(); UUID pd = UUID.randomUUID();
-        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(id); pi.setProcessDefinitionId(pd);
-        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(pi));
+        UUID id = UUID.randomUUID();
         dbService.cancelProcessInstance(id);
-        verify(processInstanceRepository).setCancelled(id, true);
-        verify(processInstanceRepository).setCompletedAt(eq(id), any(Instant.class));
-        verify(domainEventEmitter).emitProcessInstanceCancelled(id, pd);
+        verify(processInstanceDbOperations).cancelProcessInstance(id);
     }
 
     // ─── Gateway state ────────────────────────────────────────
