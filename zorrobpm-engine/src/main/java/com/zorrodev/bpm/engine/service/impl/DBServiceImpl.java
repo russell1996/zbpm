@@ -40,6 +40,7 @@ import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
+import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
 import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
@@ -62,6 +63,7 @@ public class DBServiceImpl implements DBService {
 
     private final ProcessDefinitionDbOperations processDefinitionDbOperations;
     private final ParallelGatewayDbOperations parallelGatewayDbOperations;
+    private final ProcessInstanceDbOperations processInstanceDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
@@ -81,26 +83,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
-        UUID id = UUID.randomUUID();
-        ProcessInstanceEntity entity = new ProcessInstanceEntity();
-        entity.setId(id);
-        entity.setProcessDefinitionId(processDefinitionId);
-        entity.setStartedAt(Instant.now());
-        entity.setParentActivityId(parentActivityId);
-        processInstanceRepository.save(entity);
-        List<ProcessVariableEntity> vs = new LinkedList<>();
-        for (ProcessVariable variable : Optional.ofNullable(variables).orElse(List.of())) {
-            ProcessVariableEntity v = new ProcessVariableEntity();
-            v.setId(UUID.randomUUID());
-            v.setProcessInstanceId(id);
-            v.setName(variable.getName());
-            v.setType(variable.getType());
-            v.setTextValue(variable.getValue() != null ? variable.getValue() : "");
-            vs.add(v);
-        }
-        variableRepository.saveAll(vs);
-        domainEventEmitter.emitProcessInstanceStarted(id, processDefinitionId);
-        return id;
+        return processInstanceDbOperations.createProcessInstance(parentActivityId, processDefinitionId, variables);
     }
 
     @Override
@@ -222,13 +205,12 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public ProcessInstance getProcessInstance(UUID processInstanceId) {
-        ProcessInstanceEntity entity = processInstanceRepository.findById(processInstanceId).orElseThrow();
-        return processInstanceMapper.toDTO(entity);
+        return processInstanceDbOperations.getProcessInstance(processInstanceId);
     }
 
     @Override
     public void lockProcessInstance(UUID processInstanceId) {
-        processInstanceRepository.findByIdForUpdate(processInstanceId).orElseThrow();
+        processInstanceDbOperations.lockProcessInstance(processInstanceId);
     }
 
     @Override
@@ -451,17 +433,12 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeProcessInstance(UUID processInstanceId) {
-        ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
-        processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
-        domainEventEmitter.emitProcessInstanceCompleted(processInstanceId, pi.getProcessDefinitionId());
+        processInstanceDbOperations.completeProcessInstance(processInstanceId);
     }
 
     @Override
     public void cancelProcessInstance(UUID processInstanceId) {
-        ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
-        processInstanceRepository.setCancelled(processInstanceId, true);
-        processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
-        domainEventEmitter.emitProcessInstanceCancelled(processInstanceId, pi.getProcessDefinitionId());
+        processInstanceDbOperations.cancelProcessInstance(processInstanceId);
     }
 
     @Override
