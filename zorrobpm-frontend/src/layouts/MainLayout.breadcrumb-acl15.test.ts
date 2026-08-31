@@ -4,6 +4,9 @@
  * human-readable leaf (the entity's name, not the static titleKey) and leaving
  * the card clears the breadcrumb store.
  *
+ * DISABLED: BreadcrumbNav removed globally (WO-UI-14 compact headers).
+ * Detail pages now have inline back-arrows with labels instead.
+ *
  * P-54: these tests run on the REAL tree — MainLayout + <router-view> + the
  * real page component — NOT on a synthetically mounted BreadcrumbNav with a
  * hand-provided value. BreadcrumbNav sits ABOVE <router-view>; a test that
@@ -122,7 +125,7 @@ function lastCrumbText(wrapper: Awaited<ReturnType<typeof mountApp>>['wrapper'])
   return items[items.length - 1].find('span').text()
 }
 
-describe('WO-ACL-15 criterion 17: every card shows a human-readable crumb leaf on the real tree', () => {
+describe.skip('WO-ACL-15 criterion 17: every card shows a human-readable crumb leaf on the real tree', () => {
   beforeAll(() => {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,
@@ -195,7 +198,7 @@ describe('WO-ACL-15 criterion 17: every card shows a human-readable crumb leaf o
   })
 })
 
-describe('WO-ACL-15 criterion 18: leaving the card clears the store — no stale name on the next page', () => {
+describe.skip('WO-ACL-15 criterion 18: leaving the card clears the store — no stale name on the next page', () => {
   beforeAll(() => {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,

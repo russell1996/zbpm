@@ -29,7 +29,7 @@ async function copy() {
 
 <template>
   <span
-    class="inline-flex items-center gap-1 font-mono text-xs group cursor-pointer"
+    class="inline-flex items-center gap-1 text-sm group cursor-pointer"
     :title="props.value"
     @click.stop
   >

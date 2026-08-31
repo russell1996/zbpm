@@ -251,7 +251,7 @@
   "minItems": "Мин. элемент",
   "maxItems": "Макс. элемент",
   "enumValues": "Enum (үтір арқылы)",
-  "downloadDiagnostic": "Диагностиканы жүктеу (JSON)",
+  "downloadDiagnostic": "Диагностика JSON",
   "downloadBpmn": "BPMN жүктеу",
   "id": "ID",
   "email": "Email",

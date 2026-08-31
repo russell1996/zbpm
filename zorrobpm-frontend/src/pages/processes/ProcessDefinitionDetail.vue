@@ -16,6 +16,10 @@ import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
 import MemberAddDialog from '@/widgets/processes/MemberAddDialog.vue'
+import { ArrowLeft, Download, Calendar } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 const route = useRoute()
 const router = useRouter()
@@ -278,56 +282,53 @@ async function downloadBpmn() {
 <template>
   <!-- WO-ACL-11 criteria 37-38: min-h-full + flex so the model tab can stretch
        to the bottom edge of the window (layout, not fixed pixels). -->
-  <div class="space-y-6 min-h-full flex flex-col">
+  <div class="space-y-2 min-h-full flex flex-col">
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
     <template v-else-if="store.currentDefinition">
-      <!-- Header: always visible -->
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold">{{ store.currentDefinition.name || store.currentDefinition.key }}</h1>
-          <p class="text-sm text-muted-foreground">
-            Key: <span class="font-mono">{{ store.currentDefinition.key }}</span>
-            <template v-if="store.currentVersions.length > 1">
-              · {{ t('version') }}:
-              <select
-                class="ml-1 px-1.5 py-0.5 border border-input rounded text-xs bg-background"
-                :value="route.params.id"
-                @change="openVersion(($event.target as HTMLSelectElement).value)"
-              >
-                <option v-for="v in store.currentVersions" :key="v.id" :value="v.id">
-                  v{{ v.version }} — {{ formatDateTime(v.createdAt) }}{{ v.id === route.params.id ? t('currentVersionMarker') : '' }}
-                </option>
-              </select>
-            </template>
-            <template v-else>
-              · {{ t('version') }}: {{ store.currentDefinition.version }}
-            </template>
-            · {{ t('created') }}: {{ formatDateTime(store.currentDefinition.createdAt) }}
-          </p>
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-            @click="downloadBpmn"
-          >
-            {{ t('downloadBpmn') }}
-          </button>
-          <button
-            v-if="canDeployVersion"
-            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-            @click="showDeployDialog = true"
-          >
-            {{ t('uploadNewVersion') }}
-          </button>
-          <button
-            v-if="canStart"
-            class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
-            @click="showStartModal = true"
-          >
-            {{ t('startProcess') }}
-          </button>
+      <!-- WO-UI-14: compact enterprise header -->
+      <div class="flex items-center gap-2">
+        <RouterLink :to="{ name: 'process-definitions' }" class="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 self-center">
+          <ArrowLeft class="h-5 w-5" />
+        </RouterLink>
+        <div class="flex flex-col gap-0.5 flex-1 min-w-0">
+          <!-- Row 1: ← Определения процессов · Key ········································ [Download BPMN] [Upload] [Start] -->
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-muted-foreground whitespace-nowrap">{{ t('processDefinitions') }}</span>
+            <span class="text-foreground/80 text-xs">·</span>
+            <span class="text-sm text-muted-foreground/80"><CopyableId :value="store.currentDefinition.key" /></span>
+            <span class="flex-1" />
+            <Button variant="outline" size="sm" class="h-8 px-3 text-xs" @click="downloadBpmn">
+              <Download class="h-4 w-4" />
+              {{ t('downloadBpmn') }}
+            </Button>
+            <Button v-if="canDeployVersion" variant="outline" size="sm" class="h-8 px-3 text-xs" @click="showDeployDialog = true">
+              {{ t('uploadNewVersion') }}
+            </Button>
+            <Button v-if="canStart" size="sm" class="h-8 px-3 text-xs" @click="showStartModal = true">
+              {{ t('startProcess') }}
+            </Button>
+          </div>
+          <!-- Row 2: Name · v23 · created — center-aligned -->
+          <div class="flex items-center gap-2 flex-wrap -mt-1">
+            <span class="text-base font-semibold truncate">{{ store.currentDefinition.name || store.currentDefinition.key }}</span>
+            <Select v-if="store.currentVersions.length > 1" :model-value="route.params.id" :display-value="() => `v${store.currentDefinition.version}`" @update:model-value="(v) => openVersion(v as string)">
+              <SelectTrigger class="h-6 px-2 py-0 text-[11px] font-bold rounded-full bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-0 ring-0 focus:ring-0 focus:ring-offset-0 [&>span]:truncate w-auto gap-1">
+                <SelectValue placeholder="v?" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="v in store.currentVersions" :key="v.id" :value="v.id">
+                  v{{ v.version }} · {{ formatDateTime(v.createdAt) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <span v-else class="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 shrink-0">v{{ store.currentDefinition.version }}</span>
+            <span class="inline-flex items-center text-[11px] px-1 py-px rounded-full bg-secondary text-muted-foreground shrink-0">
+              <Calendar class="h-3 w-3 mr-0.5" />
+              {{ formatDateTime(store.currentDefinition.createdAt) }}
+            </span>
+          </div>
         </div>
       </div>
 
