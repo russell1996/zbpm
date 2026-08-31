@@ -5,6 +5,7 @@ import com.zorrodev.bpm.client.resolver.ProcessDefinitionQueryParametersArgument
 import com.zorrodev.bpm.client.resolver.ProcessInstanceQueryParameterArgumentResolver;
 import com.zorrodev.bpm.client.resolver.ServiceTaskQueryParametersArgumentResolver;
 import com.zorrodev.bpm.client.resolver.UserTaskQueryParametersArgumentResolver;
+import com.zorrodev.bpm.client.resolver.VariableQueryParametersArgumentResolver;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -62,6 +63,7 @@ public class ClientConfiguration {
             .customArgumentResolver(new ProcessInstanceQueryParameterArgumentResolver())
             .customArgumentResolver(new ServiceTaskQueryParametersArgumentResolver())
             .customArgumentResolver(new UserTaskQueryParametersArgumentResolver())
+            .customArgumentResolver(new VariableQueryParametersArgumentResolver())
             .build();
 
         return factory.createClient(QueryClient.class);
