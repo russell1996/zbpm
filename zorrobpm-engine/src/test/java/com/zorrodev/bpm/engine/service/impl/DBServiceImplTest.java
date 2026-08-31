@@ -20,13 +20,13 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
-import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
-import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
+import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
+import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.UserTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
@@ -66,8 +66,8 @@ class DBServiceImplTest {
     @Mock private UserTaskDbOperations userTaskDbOperations;
     @Mock private IncidentDbOperations incidentDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
+    @Mock private MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     @Mock private TimerJobRepository timerJobRepository;
-    @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
     @Mock private SignalSubscriptionRepository signalSubscriptionRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
@@ -471,52 +471,36 @@ class DBServiceImplTest {
     }
 
     @Test
-    void createMessageSubscription_persistsUnconsumed() {
-        UUID processInstanceId = UUID.randomUUID();
-        UUID activityId = UUID.randomUUID();
-
-        UUID id = dbService.createMessageSubscription(processInstanceId, activityId, "msg1");
-
-        assertThat(id).isNotNull();
-        ArgumentCaptor<MessageSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageSubscriptionEntity.class);
-        verify(messageSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getMessageName()).isEqualTo("msg1");
-        assertThat(captor.getValue().getActivityId()).isEqualTo(activityId);
-        assertThat(captor.getValue().isConsumed()).isFalse();
+    void createMessageSubscription_delegates() {
+        UUID processInstanceId = UUID.randomUUID(); UUID activityId = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(messageSubscriptionDbOperations.createMessageSubscription(processInstanceId, activityId, "msg1")).thenReturn(expected);
+        assertThat(dbService.createMessageSubscription(processInstanceId, activityId, "msg1")).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).createMessageSubscription(processInstanceId, activityId, "msg1");
     }
 
     @Test
-    void findMessageSubscriptions_byNameAndInstance() {
-        UUID processInstanceId = UUID.randomUUID();
-        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setActivityId(UUID.randomUUID());
-        entity.setMessageName("msg1");
-        when(messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId("msg1", processInstanceId))
-            .thenReturn(List.of(entity));
-
+    void findMessageSubscriptions_delegates() {
+        UUID processInstanceId = UUID.randomUUID(); MessageSubscription expected = new MessageSubscription();
+        when(messageSubscriptionDbOperations.findMessageSubscriptions("msg1", processInstanceId)).thenReturn(List.of(expected));
         List<MessageSubscription> subs = dbService.findMessageSubscriptions("msg1", processInstanceId);
-
         assertThat(subs).hasSize(1);
-        assertThat(subs.get(0).getActivityId()).isEqualTo(entity.getActivityId());
+        verify(messageSubscriptionDbOperations).findMessageSubscriptions("msg1", processInstanceId);
     }
 
     @Test
-    void consumeMessageSubscription_returnsTrue_whenNotYetConsumed() {
+    void consumeMessageSubscription_delegates() {
         UUID id = UUID.randomUUID();
-        when(messageSubscriptionRepository.markConsumed(eq(id))).thenReturn(1);
-
+        when(messageSubscriptionDbOperations.consumeMessageSubscription(id)).thenReturn(true);
         assertThat(dbService.consumeMessageSubscription(id)).isTrue();
-        verify(messageSubscriptionRepository).markConsumed(eq(id));
+        verify(messageSubscriptionDbOperations).consumeMessageSubscription(id);
     }
 
     @Test
-    void consumeMessageSubscription_returnsFalse_whenAlreadyConsumed() {
+    void consumeMessageSubscription_delegatesFalse() {
         UUID id = UUID.randomUUID();
-        when(messageSubscriptionRepository.markConsumed(eq(id))).thenReturn(0);
-
+        when(messageSubscriptionDbOperations.consumeMessageSubscription(id)).thenReturn(false);
         assertThat(dbService.consumeMessageSubscription(id)).isFalse();
+        verify(messageSubscriptionDbOperations).consumeMessageSubscription(id);
     }
 
     @Test
