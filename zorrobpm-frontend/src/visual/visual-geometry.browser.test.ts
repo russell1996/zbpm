@@ -310,9 +310,10 @@ describe('WO-TEST-6 check 1 — active tab underline (ProcessInstanceDetail, Tab
     const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
     expect(active).toBeTruthy()
     const cs = getComputedStyle(active)
-    // the underline is a real 3px border, not a class with width 0 (WO-ACL-15
-    // criterion 13: noticeably thicker than the 1px container line)
-    expect(cs.borderBottomWidth).toBe('3px')
+    // the underline is a real border, not a class with width 0 (WO-ACL-15 criterion 13:
+    // noticeably thicker than the 1px container line). WO-UI-14 (compact headers) changed
+    // TabsBar from border-b-[3px] to border-b-2 — 2px, still thicker than the 1px line.
+    expect(cs.borderBottomWidth).toBe('2px')
     expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
     expect(cs.borderBottomColor).not.toBe('transparent')
     // and it reaches the strip's bottom border line (the -mb-px overlap on the
@@ -358,7 +359,7 @@ describe('WO-TEST-6 check 1b — active tab underline (ProcessDefinitionDetail, 
     const active = tabBtns.find((b) => b.getAttribute('aria-selected') === 'true')!
     expect(active).toBeTruthy()
     const cs = getComputedStyle(active)
-    expect(cs.borderBottomWidth).toBe('3px')
+    expect(cs.borderBottomWidth).toBe('2px')
     expect(cs.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)')
     expect(cs.borderBottomColor).not.toBe('transparent')
     const btnRect = active.getBoundingClientRect()
