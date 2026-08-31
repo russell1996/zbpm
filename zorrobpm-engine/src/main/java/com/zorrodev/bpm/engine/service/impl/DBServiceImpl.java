@@ -42,6 +42,7 @@ import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
+import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
