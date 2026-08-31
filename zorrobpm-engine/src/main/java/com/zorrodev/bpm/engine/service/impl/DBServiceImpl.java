@@ -324,7 +324,6 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    @Override
     public List<ProcessVariable> getVariables(@NonNull UUID processInstanceId) {
         return variableDbOperations.getVariables(processInstanceId);
     }

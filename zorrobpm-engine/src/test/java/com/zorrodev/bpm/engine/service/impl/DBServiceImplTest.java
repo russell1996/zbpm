@@ -30,7 +30,7 @@ import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
-import com.zorrodev.bpm.engine.repository.VariableRepository;
+import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -64,7 +64,7 @@ class DBServiceImplTest {
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private UserTaskRepository userTaskRepository;
-    @Mock private VariableRepository variableRepository;
+    @Mock private VariableDbOperations variableDbOperations;
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
@@ -464,40 +464,23 @@ class DBServiceImplTest {
     }
 
     @Test
-    void getVariables_mapsRepositoryEntities() {
+    void getVariables_delegates() {
         UUID processInstanceId = UUID.randomUUID();
-        ProcessVariableEntity e1 = new ProcessVariableEntity();
-        e1.setName("a");
-        e1.setTextValue("1");
-        e1.setType(ProcessVariableType.LONG);
-        ProcessVariableEntity e2 = new ProcessVariableEntity();
-        e2.setName("b");
-        e2.setTextValue("x");
-        e2.setType(ProcessVariableType.STRING);
-
-        when(variableRepository.findByProcessInstanceIdAndScopeIdIsNull(processInstanceId)).thenReturn(List.of(e1, e2));
-
-        List<ProcessVariable> result = dbService.getVariables(processInstanceId);
-
-        assertThat(result).extracting(ProcessVariable::getName).containsExactly("a", "b");
-        assertThat(result).extracting(ProcessVariable::getValue).containsExactly("1", "x");
-        assertThat(result).extracting(ProcessVariable::getType).containsExactly(ProcessVariableType.LONG, ProcessVariableType.STRING);
+        List<ProcessVariable> expected = List.of(newVar("a", "1", ProcessVariableType.LONG));
+        when(variableDbOperations.getVariables(processInstanceId)).thenReturn(expected);
+        assertThat(dbService.getVariables(processInstanceId)).isEqualTo(expected);
+        verify(variableDbOperations).getVariables(processInstanceId);
     }
 
     @Test
-    void setVariables_savesAll() {
+    void setVariables_delegates() {
         UUID processInstanceId = UUID.randomUUID();
         List<ProcessVariable> vars = List.of(
             newVar("a", "1", ProcessVariableType.LONG),
             newVar("b", "x", ProcessVariableType.STRING)
         );
-
         dbService.setVariables(processInstanceId, vars);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Collection<ProcessVariableEntity>> captor = ArgumentCaptor.forClass(Collection.class);
-        verify(variableRepository).saveAll(captor.capture());
-        assertThat(captor.getValue()).hasSize(2);
+        verify(variableDbOperations).setVariables(processInstanceId, vars);
     }
 
     @Test
