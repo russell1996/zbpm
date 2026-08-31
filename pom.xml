@@ -13,8 +13,12 @@
 
     <properties>
         <!-- WO-SEC-36: override Spring Framework 7.0.6→7.0.8 to fix CVE-2026-41855 (CVSS 9.8).
-             Spring Boot 4.0.5 BOM pins 7.0.6 by default; 7.0.8 is the patched GA per advisory. -->
-        <spring-framework.version>7.0.8</spring-framework.version>
+             Spring Boot 4.0.5 BOM pins 7.0.6 by default; 7.0.8 is the patched GA per advisory.
+             WO-SEC-62: 7.0.8→7.0.9 to fix CVE-2026-59313 (CVSS 9.8, SSE stream corruption in
+             Spring MVC functional web framework) + CVE-2026-59314 (HTTP response splitting via
+             ContentDisposition, CRLF injection). Both affect 7.0.0-7.0.8 inclusive; 7.0.9 is the
+             patched OSS GA per spring.io/security advisories. -->
+        <spring-framework.version>7.0.9</spring-framework.version>
         <!-- WO-SEC-37: override jackson-2 BOM 2.21.2→2.22.1 to fix CVE-2026-54512/54513 (CVSS 8.1).
              Spring Boot 4.0.6 BOM pins jackson-2-bom 2.21.2; 2.22.1 is the patched release.
              (2.21.3 still carried CVE-2026-54512/54513 per dependency-check scan.) -->
