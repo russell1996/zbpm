@@ -135,6 +135,9 @@ public class MessageSubscriptionDbOperationsImpl implements MessageSubscriptionD
     @Override
     @Transactional
     public boolean consumeMessageSubscription(UUID subscriptionId) {
+        // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
+        // A plain findById+save would let two concurrent callers both observe "not consumed"
+        // and both apply the signal/message (double branch on a non-interrupting boundary).
         return messageSubscriptionRepository.markConsumed(subscriptionId) == 1;
     }
 }
