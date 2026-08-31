@@ -34,3 +34,7 @@ zorrobpm-frontend/dist/
 # Ниже — только то, что привязано к конкретной машине.
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# NVD vulnerability-database cache for local `mvn org.owasp:dependency-check-maven:check` runs
+# (matches the cve:scan CI job's own -v .nvd-cache:... mount) — ~500MB, machine-local, never commit.
+.nvd-cache/
