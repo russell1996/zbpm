@@ -39,6 +39,7 @@ import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
+import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +60,7 @@ public class DBServiceImpl implements DBService {
     private final ProcessDefinitionDbOperations processDefinitionDbOperations;
     private final ParallelGatewayDbOperations parallelGatewayDbOperations;
     private final ProcessInstanceDbOperations processInstanceDbOperations;
+    private final ServiceTaskDbOperations serviceTaskDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
@@ -210,41 +212,22 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void createServiceTask(UUID activityId) {
-        createServiceTask(activityId, 3, null);
+        serviceTaskDbOperations.createServiceTask(activityId);
     }
 
     @Override
     public void createServiceTask(UUID activityId, int retriesRemaining, String job) {
-        ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
-        ServiceTaskEntity entity = new ServiceTaskEntity();
-        entity.setId(activity.getId());
-        entity.setBpmnElementId(activity.getBpmnElementId());
-        entity.setProcessInstanceId(activity.getProcessInstanceId());
-        entity.setCreatedAt(activity.getCreatedAt());
-        entity.setRetriesRemaining(retriesRemaining);
-        entity.setJob(job);
-
-        ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
-        entity.setProcessDefinitionId(pi.getProcessDefinitionId());
-
-        serviceTaskRepository.save(entity);
-        domainEventEmitter.emitServiceTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId, job);
+        serviceTaskDbOperations.createServiceTask(activityId, retriesRemaining, job);
     }
 
     @Override
     public int decrementServiceTaskRetries(UUID serviceTaskId) {
-        ServiceTaskEntity entity = serviceTaskRepository.findById(serviceTaskId).orElseThrow();
-        int remaining = (entity.getRetriesRemaining() == null ? 1 : entity.getRetriesRemaining()) - 1;
-        entity.setRetriesRemaining(remaining);
-        serviceTaskRepository.save(entity);
-        return remaining;
+        return serviceTaskDbOperations.decrementServiceTaskRetries(serviceTaskId);
     }
 
     @Override
     public void setServiceTaskRetries(UUID serviceTaskId, int retries) {
-        ServiceTaskEntity entity = serviceTaskRepository.findById(serviceTaskId).orElseThrow();
-        entity.setRetriesRemaining(retries);
-        serviceTaskRepository.save(entity);
+        serviceTaskDbOperations.setServiceTaskRetries(serviceTaskId, retries);
     }
 
     @Override
@@ -268,7 +251,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeServiceTask(UUID serviceTaskId) {
-        serviceTaskRepository.setCompletedAt(serviceTaskId, Instant.now());
+        serviceTaskDbOperations.completeServiceTask(serviceTaskId);
     }
 
     @Override
