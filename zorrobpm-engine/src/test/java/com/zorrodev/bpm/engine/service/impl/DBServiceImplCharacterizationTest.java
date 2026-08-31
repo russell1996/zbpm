@@ -19,7 +19,6 @@ import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
-import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
@@ -31,10 +30,10 @@ import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
-import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
+import com.zorrodev.bpm.engine.service.db.UserTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import org.junit.jupiter.api.Test;
@@ -83,7 +82,7 @@ class DBServiceImplCharacterizationTest {
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
-    @Mock private UserTaskRepository userTaskRepository;
+    @Mock private UserTaskDbOperations userTaskDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
@@ -528,68 +527,42 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── User tasks (claim/unclaim/assign) ─────────────────────
+    // WO-DEBT-1i: moved to UserTaskDbOperationsImpl (real behaviour characterized in
+    // UserTaskDbOperationsImplTest) — DBServiceImpl now only delegates.
 
     @Test
-    void claimUserTask_claimsWhenUnassigned() {
-        UUID id = UUID.randomUUID(); UUID pi = UUID.randomUUID(); UUID pd = UUID.randomUUID();
-        UserTaskEntity ut = new UserTaskEntity(); ut.setId(id); ut.setProcessInstanceId(pi); ut.setProcessDefinitionId(pd); ut.setBpmnElementId("ut"); ut.setAssignee(null); ut.setCompletedAt(null);
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(ut));
-        when(userTaskRepository.claimAssignee(id, "ivanov")).thenReturn(1);
+    void createUserTask_delegates() {
+        UUID activityId = UUID.randomUUID();
+        dbService.createUserTask(activityId, "ivanov", "managers", "form1");
+        verify(userTaskDbOperations).createUserTask(activityId, "ivanov", "managers", "form1");
+    }
+
+    @Test
+    void completeUserTask_delegates() {
+        UUID id = UUID.randomUUID();
+        dbService.completeUserTask(id);
+        verify(userTaskDbOperations).completeUserTask(id);
+    }
+
+    @Test
+    void claimUserTask_delegates() {
+        UUID id = UUID.randomUUID();
         dbService.claimUserTask(id, "ivanov");
-        verify(domainEventEmitter).emitUserTaskAssigned(pi, pd, "ut", id, "ivanov");
+        verify(userTaskDbOperations).claimUserTask(id, "ivanov");
     }
 
     @Test
-    void claimUserTask_throwsWhenAlreadyCompleted() {
+    void unclaimUserTask_delegates() {
         UUID id = UUID.randomUUID();
-        UserTaskEntity ut = new UserTaskEntity(); ut.setId(id); ut.setCompletedAt(Instant.now());
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(ut));
-        assertThatThrownBy(() -> dbService.claimUserTask(id, "ivanov")).isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void claimUserTask_throwsWhenAlreadyAssigned() {
-        UUID id = UUID.randomUUID(); UUID pi = UUID.randomUUID(); UUID pd = UUID.randomUUID();
-        UserTaskEntity ut = new UserTaskEntity(); ut.setId(id); ut.setProcessInstanceId(pi); ut.setProcessDefinitionId(pd); ut.setBpmnElementId("ut"); ut.setAssignee(null); ut.setCompletedAt(null);
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(ut));
-        when(userTaskRepository.claimAssignee(id, "ivanov")).thenReturn(0);
-        assertThatThrownBy(() -> dbService.claimUserTask(id, "ivanov")).isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void unclaimUserTask_clearsAssignee() {
-        UUID id = UUID.randomUUID(); UUID pi = UUID.randomUUID(); UUID pd = UUID.randomUUID();
-        UserTaskEntity ut = new UserTaskEntity(); ut.setId(id); ut.setProcessInstanceId(pi); ut.setProcessDefinitionId(pd); ut.setBpmnElementId("ut"); ut.setAssignee("x"); ut.setCompletedAt(null);
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(ut));
         dbService.unclaimUserTask(id);
-        verify(userTaskRepository).setAssignee(id, null);
-        verify(domainEventEmitter).emitUserTaskUnassigned(pi, pd, "ut", id);
+        verify(userTaskDbOperations).unclaimUserTask(id);
     }
 
     @Test
-    void unclaimUserTask_throwsWhenCompleted() {
+    void assignUserTask_delegates() {
         UUID id = UUID.randomUUID();
-        UserTaskEntity ut = new UserTaskEntity(); ut.setId(id); ut.setCompletedAt(Instant.now());
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(ut));
-        assertThatThrownBy(() -> dbService.unclaimUserTask(id)).isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void assignUserTask_setsAssignee() {
-        UUID id = UUID.randomUUID(); UUID pi = UUID.randomUUID(); UUID pd = UUID.randomUUID();
-        UserTaskEntity ut = new UserTaskEntity(); ut.setId(id); ut.setProcessInstanceId(pi); ut.setProcessDefinitionId(pd); ut.setBpmnElementId("ut"); ut.setAssignee(null); ut.setCompletedAt(null);
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(ut));
         dbService.assignUserTask(id, "ivanov");
-        verify(userTaskRepository).setAssignee(id, "ivanov");
-        verify(domainEventEmitter).emitUserTaskAssigned(pi, pd, "ut", id, "ivanov");
-    }
-
-    @Test
-    void assignUserTask_throwsWhenCompleted() {
-        UUID id = UUID.randomUUID();
-        UserTaskEntity ut = new UserTaskEntity(); ut.setId(id); ut.setCompletedAt(Instant.now());
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(ut));
-        assertThatThrownBy(() -> dbService.assignUserTask(id, "ivanov")).isInstanceOf(IllegalStateException.class);
+        verify(userTaskDbOperations).assignUserTask(id, "ivanov");
     }
 
     // ─── Process instance ──────────────────────────────────────
