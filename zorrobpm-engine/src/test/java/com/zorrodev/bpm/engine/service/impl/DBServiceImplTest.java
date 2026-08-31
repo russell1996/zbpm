@@ -58,6 +58,8 @@ class DBServiceImplTest {
 
     @Mock private com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations processDefinitionDbOperations;
     @Mock private com.zorrodev.bpm.engine.service.db.TokenDbOperations tokenDbOperations;
+    @Mock private com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations parallelGatewayDbOperations;
+    @Mock private com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations processInstanceDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -79,28 +81,23 @@ class DBServiceImplTest {
         UUID processDefinitionId = UUID.randomUUID();
         ProcessVariable v1 = newVar("a", "1", ProcessVariableType.LONG);
         ProcessVariable v2 = newVar("b", "x", ProcessVariableType.STRING);
+        UUID expected = UUID.randomUUID();
+        when(processInstanceDbOperations.createProcessInstance(parentActivityId, processDefinitionId, List.of(v1, v2))).thenReturn(expected);
 
         UUID id = dbService.createProcessInstance(parentActivityId, processDefinitionId, List.of(v1, v2));
 
-        assertThat(id).isNotNull();
-        verify(processInstanceRepository).save(any(ProcessInstanceEntity.class));
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<ProcessVariableEntity>> captor = ArgumentCaptor.forClass(List.class);
-        verify(variableRepository).saveAll(captor.capture());
-        assertThat(captor.getValue()).hasSize(2);
-        verify(domainEventEmitter).emitProcessInstanceStarted(id, processDefinitionId);
+        assertThat(id).isEqualTo(expected);
+        verify(processInstanceDbOperations).createProcessInstance(parentActivityId, processDefinitionId, List.of(v1, v2));
     }
 
     @Test
     void createProcessInstance_nullVariables_savesEmpty() {
+        UUID expected = UUID.randomUUID();
+        when(processInstanceDbOperations.createProcessInstance(any(), any(), any())).thenReturn(expected);
         UUID id = dbService.createProcessInstance(null, UUID.randomUUID(), null);
 
-        assertThat(id).isNotNull();
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Collection<ProcessVariableEntity>> captor = ArgumentCaptor.forClass(Collection.class);
-        verify(variableRepository).saveAll(captor.capture());
-        assertThat(captor.getValue()).isEmpty();
+        assertThat(id).isEqualTo(expected);
+        verify(processInstanceDbOperations).createProcessInstance(any(), any(), any());
     }
 
     @Test
@@ -165,21 +162,18 @@ class DBServiceImplTest {
     @Test
     void getProcessInstance_returnsMappedDTO() {
         UUID id = UUID.randomUUID();
-        ProcessInstanceEntity entity = new ProcessInstanceEntity();
-        entity.setId(id);
         ProcessInstance dto = new ProcessInstance();
         dto.setId(id);
-
-        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(entity));
-        when(processInstanceMapper.toDTO(entity)).thenReturn(dto);
+        when(processInstanceDbOperations.getProcessInstance(id)).thenReturn(dto);
 
         assertThat(dbService.getProcessInstance(id)).isSameAs(dto);
+        verify(processInstanceDbOperations).getProcessInstance(id);
     }
 
     @Test
     void getProcessInstance_throwsWhenMissing() {
         UUID id = UUID.randomUUID();
-        when(processInstanceRepository.findById(id)).thenReturn(Optional.empty());
+        when(processInstanceDbOperations.getProcessInstance(id)).thenThrow(new NoSuchElementException());
 
         assertThatThrownBy(() -> dbService.getProcessInstance(id)).isInstanceOf(NoSuchElementException.class);
     }
@@ -589,16 +583,8 @@ class DBServiceImplTest {
     @Test
     void completeProcessInstance_callsRepository() {
         UUID id = UUID.randomUUID();
-        UUID pdId = UUID.randomUUID();
-
-        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
-        piEntity.setId(id);
-        piEntity.setProcessDefinitionId(pdId);
-        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(piEntity));
-
         dbService.completeProcessInstance(id);
-        verify(processInstanceRepository).setCompletedAt(eq(id), any(Instant.class));
-        verify(domainEventEmitter).emitProcessInstanceCompleted(id, pdId);
+        verify(processInstanceDbOperations).completeProcessInstance(id);
     }
 
     @Test
