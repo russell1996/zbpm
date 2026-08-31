@@ -30,6 +30,7 @@ import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -63,6 +64,7 @@ class DBServiceImplTest {
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
+    @Mock private ServiceTaskDbOperations serviceTaskDbOperations;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private VariableDbOperations variableDbOperations;
     @Mock private IncidentRepository incidentRepository;
@@ -179,62 +181,20 @@ class DBServiceImplTest {
     }
 
     @Test
-    void createServiceTask_savesEntityFromActivityAndPI() {
+    void createServiceTask_delegates() {
         UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        UUID processDefinitionId = UUID.randomUUID();
-
-        ActivityEntity activity = new ActivityEntity();
-        activity.setId(activityId);
-        activity.setProcessInstanceId(processInstanceId);
-        activity.setBpmnElementId("svc1");
-        activity.setCreatedAt(Instant.now());
-
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(processInstanceId);
-        pi.setProcessDefinitionId(processDefinitionId);
-
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
-
         dbService.createServiceTask(activityId);
-
-        ArgumentCaptor<ServiceTaskEntity> captor = ArgumentCaptor.forClass(ServiceTaskEntity.class);
-        verify(serviceTaskRepository).save(captor.capture());
-        ServiceTaskEntity saved = captor.getValue();
-        assertThat(saved.getId()).isEqualTo(activityId);
-        assertThat(saved.getBpmnElementId()).isEqualTo("svc1");
-        assertThat(saved.getProcessInstanceId()).isEqualTo(processInstanceId);
-        assertThat(saved.getProcessDefinitionId()).isEqualTo(processDefinitionId);
+        verify(serviceTaskDbOperations).createServiceTask(activityId);
     }
 
     // ─── WO-EVT-9: stable job id in domain events ───────────────────────
+    // WO-DEBT-1h: createServiceTask now delegates, real behaviour characterized in ServiceTaskDbOperationsImplTest
 
     @Test
-    void evt9_createServiceTask_carriesJob_inCreatedEvent_andEntity() {
+    void createServiceTask_withJob_delegates() {
         UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-
-        ActivityEntity activity = new ActivityEntity();
-        activity.setId(activityId);
-        activity.setProcessInstanceId(processInstanceId);
-        activity.setBpmnElementId("Activity_7f3"); // deliberately != job (POF 3)
-        activity.setCreatedAt(Instant.now());
-
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(processInstanceId);
-        pi.setProcessDefinitionId(UUID.randomUUID());
-
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
-
         dbService.createServiceTask(activityId, 3, "draftCreate");
-
-        ArgumentCaptor<ServiceTaskEntity> captor = ArgumentCaptor.forClass(ServiceTaskEntity.class);
-        verify(serviceTaskRepository).save(captor.capture());
-        assertThat(captor.getValue().getJob()).isEqualTo("draftCreate");
-        // criterion 4: elementId stays the diagram id, not the job
-        verify(domainEventEmitter).emitServiceTaskCreated(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq(activityId), eq("draftCreate"));
+        verify(serviceTaskDbOperations).createServiceTask(activityId, 3, "draftCreate");
     }
 
     @Test
@@ -410,10 +370,10 @@ class DBServiceImplTest {
     }
 
     @Test
-    void completeServiceTask_callsRepository() {
+    void completeServiceTask_delegates() {
         UUID id = UUID.randomUUID();
         dbService.completeServiceTask(id);
-        verify(serviceTaskRepository).setCompletedAt(eq(id), any(Instant.class));
+        verify(serviceTaskDbOperations).completeServiceTask(id);
     }
 
     @Test
