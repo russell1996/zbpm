@@ -9,6 +9,9 @@ import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import { ArrowLeft } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
 const route = useRoute()
 const router = useRouter()
@@ -84,23 +87,42 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
     <template v-else-if="store.currentIncident">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold">{{ t('incident') }}</h1>
-          <CopyableId :value="store.currentIncident.id" />
+      <!-- WO-UI-14: compact header -->
+      <div class="flex items-center gap-2">
+        <RouterLink :to="{ name: 'incidents' }" class="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 self-center">
+          <ArrowLeft class="h-5 w-5" />
+        </RouterLink>
+        <div class="flex flex-col gap-0.5 flex-1 min-w-0">
+          <!-- Row 1: ← Инциденты · ID ········································ [Resolve] -->
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-muted-foreground whitespace-nowrap">{{ t('incidents') }}</span>
+            <span class="text-foreground/80 text-xs">·</span>
+            <span class="text-sm text-muted-foreground/80"><CopyableId :value="store.currentIncident.id" /></span>
+            <span class="flex-1" />
+            <Button v-if="!store.currentIncident.completedAt" size="sm" class="h-8 px-3 text-xs" @click="showResolveModal = true">
+              {{ t('resolveIncident') }}
+            </Button>
+          </div>
+          <!-- Row 2: Element · Status · Process — center-aligned -->
+          <div class="flex items-center gap-2 flex-wrap -mt-1">
+            <span class="text-base font-semibold truncate">{{ store.currentIncident.elementName || store.currentIncident.bpmnElementId || t('incident') }}</span>
+            <Badge
+              variant="secondary"
+              class="shrink-0 text-[11px] px-1.5 py-px rounded-full"
+              :class="store.currentIncident.completedAt
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'"
+            >
+              {{ store.currentIncident.completedAt ? t('resolved') : t('open') }}
+            </Badge>
+            <span class="text-muted-foreground/60 text-xs">{{ store.currentIncident.processName || '—' }}</span>
+          </div>
         </div>
-        <button
-          v-if="!store.currentIncident.completedAt"
-          class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
-          @click="showResolveModal = true"
-        >
-          {{ t('resolveIncident') }}
-        </button>
       </div>
 
 <div class="grid grid-cols-2 gap-4 text-sm">

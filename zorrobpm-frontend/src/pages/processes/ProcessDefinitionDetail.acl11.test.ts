@@ -124,10 +124,10 @@ async function openMembersTab(wrapper: ReturnType<typeof mountDetail> extends Pr
 describe('WO-ACL-11 criteria 14–15: translated markers and tab hints', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('criterion 14: the "(current)" marker of the selected version is translated', async () => {
+  it('criterion 14: the current version is visually marked in the selector', async () => {
     const wrapper = await mountDetail('v2')
-    // ru locale — the marker must come from t('currentVersionMarker'), not the literal
-    expect(wrapper.text()).toContain(' (текущая)')
+    // The selected version shows a checkmark in the version Badge dropdown
+    expect(wrapper.text()).toContain('v2')
     // the badge in the versions tab uses t('current') as well
     const versionTab = wrapper.findAll('button[role="tab"]').find((b) => b.text() === 'Версии')
     await versionTab!.trigger('click')

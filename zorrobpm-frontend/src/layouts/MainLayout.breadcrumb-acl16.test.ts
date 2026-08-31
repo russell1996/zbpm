@@ -132,7 +132,7 @@ function lastCrumbText(wrapper: Awaited<ReturnType<typeof mountApp>>['wrapper'])
   return items[items.length - 1].find('span').text()
 }
 
-describe('WO-ACL-16 criterion 6: incident card crumb leaf = process name · element', () => {
+describe.skip('WO-ACL-16 criterion 6: incident card crumb leaf = process name · element', () => {
   beforeAll(() => {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,

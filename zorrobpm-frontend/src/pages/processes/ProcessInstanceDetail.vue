@@ -12,10 +12,12 @@ import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import { isTaskActive } from '@/shared/lib/utils'
-import { RefreshCw, ArrowRight, Download } from 'lucide-vue-next'
+import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
 
 const route = useRoute()
@@ -352,47 +354,55 @@ watch(activeTab, onTabChange)
 <template>
   <!-- WO-ACL-11 criteria 37-38: min-h-full + flex so the bpmn tab can stretch
        to the bottom edge of the window (layout, not fixed pixels). -->
-  <div class="space-y-6 min-h-full flex flex-col">
+  <div class="space-y-2 min-h-full flex flex-col">
     <div v-if="processStore.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="processStore.error" class="text-sm text-red-500">{{ processStore.error }}</div>
 
     <template v-else-if="processStore.currentInstance">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold">
-            {{ processStore.currentInstance.processName || processStore.currentInstance.processKey || t('processInstance') }}
-            <span v-if="processStore.currentInstance.processVersion" class="text-base font-normal text-muted-foreground">v{{ processStore.currentInstance.processVersion }}</span>
-          </h1>
-          <p v-if="processStore.currentInstance.processKey" class="text-xs text-muted-foreground font-mono">{{ processStore.currentInstance.processKey }}</p>
-          <CopyableId :value="processStore.currentInstance.id" />
+      <!-- WO-UI-14: compact enterprise header -->
+      <div class="flex items-center gap-2">
+        <RouterLink :to="{ name: 'process-instances' }" class="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 self-center">
+          <ArrowLeft class="h-5 w-5" />
+        </RouterLink>
+        <div class="flex flex-col gap-0.5 flex-1 min-w-0">
+          <!-- Row 1: Экземпляры процессов · UUID -->
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-muted-foreground whitespace-nowrap">{{ t('processInstances') }}</span>
+            <span class="text-foreground/80 text-xs">·</span>
+            <span class="text-sm text-muted-foreground/80"><CopyableId :value="processStore.currentInstance.id" /></span>
+            <span class="flex-1" />
+            <Button variant="outline" size="sm" class="h-8 px-3 text-xs" @click="downloadDiagnostic">
+              <Download class="h-4 w-4" />
+              {{ t('downloadDiagnostic') }}
+            </Button>
+            <Button variant="outline" size="sm" class="h-8 px-3 text-xs" :disabled="processStore.loading || tabLoading" @click="reloadAll">
+              <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading || tabLoading }" />
+              {{ t('refresh') }}
+            </Button>
+          </div>
+          <!-- Row 2: Name · v2 · Status · date — center-aligned -->
+          <div class="flex items-center gap-2 flex-wrap -mt-1">
+            <span class="text-base font-semibold truncate">{{ processStore.currentInstance.processName || processStore.currentInstance.processKey || t('processInstance') }}</span>
+            <span class="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 shrink-0">
+              v{{ processStore.currentInstance.processVersion }}
+            </span>
+            <span class="text-foreground/80 text-xs shrink-0">·</span>
+            <Badge
+              variant="secondary"
+              class="shrink-0 text-[11px] px-1.5 py-px rounded-full"
+              :class="processStore.currentInstance.completedAt
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'"
+            >
+              {{ processStore.currentInstance.completedAt ? t('completed') : t('running') }}
+            </Badge>
+            <span class="text-foreground/80 text-xs shrink-0">·</span>
+            <span class="inline-flex items-center text-[11px] px-1 py-px rounded-full bg-secondary text-muted-foreground shrink-0">
+              <Calendar class="h-3 w-3 mr-0.5" />
+              {{ formatDateTime(processStore.currentInstance.startedAt) }}
+            </span>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          <button
-            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-            @click="downloadDiagnostic"
-          >
-            <Download class="h-4 w-4" />
-            {{ t('downloadDiagnostic') }}
-          </button>
-          <button
-            class="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
-            :disabled="processStore.loading || tabLoading"
-            @click="reloadAll"
-          >
-            <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading || tabLoading }" />
-            {{ t('refresh') }}
-          </button>
-        </div>
-      </div>
-
-      <div class="flex items-center gap-4 text-sm">
-        <StatusBadge :status="processStore.currentInstance.completedAt ? 'COMPLETED' : 'RUNNING'" />
-        <span class="text-muted-foreground">
-          {{ t('startedAt') }}: {{ formatDateTime(processStore.currentInstance.startedAt) }}
-        </span>
-        <span v-if="processStore.currentInstance.completedAt" class="text-muted-foreground">
-          {{ t('completedAtLabel') }}: {{ formatDateTime(processStore.currentInstance.completedAt) }}
-        </span>
       </div>
 
       <!-- Tabs: WO-ACL-14 — the shared TabsBar (single -mb-px on the nav, keyboard
