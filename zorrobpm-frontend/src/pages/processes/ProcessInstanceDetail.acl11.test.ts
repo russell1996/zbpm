@@ -56,6 +56,7 @@ function makeRouter() {
         path: '/',
         component: { template: '<router-view />' },
         children: [
+          { path: 'processes/instances', name: 'process-instances', component: { template: '<div />' } },
           { path: 'processes/instances/:id', name: 'process-instance-detail', component: { template: '<div />' } },
         ],
       },

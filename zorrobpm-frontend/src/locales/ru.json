@@ -251,7 +251,7 @@
   "minItems": "Мин. элементов",
   "maxItems": "Макс. элементов",
   "enumValues": "Enum (через запятую)",
-  "downloadDiagnostic": "Скачать диагностику (JSON)",
+  "downloadDiagnostic": "Диагностика JSON",
   "downloadBpmn": "Скачать BPMN",
   "id": "ID",
   "email": "Email",

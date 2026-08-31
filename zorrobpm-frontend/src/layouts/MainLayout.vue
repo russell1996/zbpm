@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRoute } from 'vue-router'
 import { useIsMobile } from '@/shared/lib/responsive'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import SidebarNavShadcn from '@/widgets/shared/SidebarNavShadcn.vue'
 import HeaderBar from '@/widgets/shared/HeaderBar.vue'
-import BreadcrumbNav from '@/widgets/shared/BreadcrumbNav.vue'
 
-const route = useRoute()
 const isMobile = useIsMobile()
 const sidebarOpen = ref(!isMobile.value)
 </script>
@@ -32,8 +29,7 @@ const sidebarOpen = ref(!isMobile.value)
     </div>
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <HeaderBar @toggle-sidebar="sidebarOpen = !sidebarOpen" :show-menu-button="isMobile" />
-      <BreadcrumbNav />
-      <main class="flex-1 overflow-auto p-4 md:p-6">
+      <main class="flex-1 overflow-auto p-2 md:p-3">
         <router-view />
       </main>
     </div>
