@@ -87,11 +87,16 @@
 
     <dependencyManagement>
         <dependencies>
-            <!-- WO-SEC-36: Force spring-framework 7.0.8 to override BOM default 7.0.6 -->
+            <!-- WO-SEC-36: Force spring-framework 7.0.8 to override BOM default 7.0.6.
+                 WO-SEC-62: 7.0.8→7.0.9 to fix CVE-2026-59313/59314 (CVSS 9.8) — this explicit
+                 spring-framework-bom import, NOT the spring-framework.version property below, is
+                 what actually controls the resolved version (confirmed via dependency:tree — the
+                 property alone evaluated to 7.0.9 but spring-core/spring-web still resolved to
+                 7.0.8 until this literal version was updated too). Keep both in sync. -->
             <dependency>
                 <groupId>org.springframework</groupId>
                 <artifactId>spring-framework-bom</artifactId>
-                <version>7.0.8</version>
+                <version>7.0.9</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
