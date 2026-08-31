@@ -36,12 +36,12 @@ import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
-import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
 import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
+import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
@@ -68,7 +68,7 @@ public class DBServiceImpl implements DBService {
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
     private final UserTaskRepository userTaskRepository;
-    private final VariableRepository variableRepository;
+    private final VariableDbOperations variableDbOperations;
     private final TokenDbOperations tokenDbOperations;
     private final IncidentRepository incidentRepository;
     private final TimerJobRepository timerJobRepository;
@@ -324,64 +324,29 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    @Override
     public List<ProcessVariable> getVariables(@NonNull UUID processInstanceId) {
-        // the process-instance root scope (scope_id IS NULL) — the instance-level view used everywhere
-        return variableRepository.findByProcessInstanceIdAndScopeIdIsNull(processInstanceId).stream()
-            .map(this::toProcessVariable)
-            .toList();
+        return variableDbOperations.getVariables(processInstanceId);
     }
 
     @Override
     public List<ProcessVariable> getVariables(@NonNull UUID processInstanceId, UUID scopeId) {
-        // merged view: root scope plus the local scope, with the local scope shadowing the root by name
-        Map<String, ProcessVariable> merged = new LinkedHashMap<>();
-        for (ProcessVariableEntity e : variableRepository.findByProcessInstanceIdAndScopeIdIsNull(processInstanceId)) {
-            merged.put(e.getName(), toProcessVariable(e));
-        }
-        for (ProcessVariableEntity e : variableRepository.findByProcessInstanceIdAndScopeId(processInstanceId, scopeId)) {
-            merged.put(e.getName(), toProcessVariable(e));
-        }
-        return new ArrayList<>(merged.values());
-    }
-
-    private ProcessVariable toProcessVariable(ProcessVariableEntity variable) {
-        ProcessVariable result = new ProcessVariable();
-        result.setName(variable.getName());
-        result.setType(variable.getType());
-        result.setValue(variable.getTextValue());
-        return result;
+        return variableDbOperations.getVariables(processInstanceId, scopeId);
     }
 
     @Override
     public void setVariables(@NonNull UUID processInstanceId, List<ProcessVariable> variables) {
-        setVariables(processInstanceId, null, variables);
+        variableDbOperations.setVariables(processInstanceId, variables);
     }
 
     @Override
     public void setVariables(@NonNull UUID processInstanceId, UUID scopeId, List<ProcessVariable> variables) {
-        List<ProcessVariableEntity> entities = new ArrayList<>();
-        for (ProcessVariable variable : variables) {
-            ProcessVariableEntity entity = (scopeId == null
-                ? variableRepository.findByNameAndProcessInstanceIdAndScopeIdIsNull(variable.getName(), processInstanceId)
-                : variableRepository.findByNameAndProcessInstanceIdAndScopeId(variable.getName(), processInstanceId, scopeId))
-                .orElseGet(() -> {
-                    ProcessVariableEntity e = new ProcessVariableEntity();
-                    e.setId(UUID.randomUUID());
-                    e.setProcessInstanceId(processInstanceId);
-                    e.setName(variable.getName());
-                    e.setScopeId(scopeId);
-                    return e;
-                });
-            entity.setType(variable.getType());
-            entity.setTextValue(variable.getValue() != null ? variable.getValue() : "");
-            entities.add(entity);
-        }
-        variableRepository.saveAll(entities);
+        variableDbOperations.setVariables(processInstanceId, scopeId, variables);
     }
 
     @Override
     public void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId) {
-        variableRepository.deleteByProcessInstanceIdAndScopeId(processInstanceId, scopeId);
+        variableDbOperations.deleteVariables(processInstanceId, scopeId);
     }
 
     @Override
