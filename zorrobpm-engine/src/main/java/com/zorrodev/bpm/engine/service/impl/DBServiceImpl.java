@@ -14,8 +14,6 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
-import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
-import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
@@ -24,9 +22,8 @@ import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
-import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
-import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
+import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
@@ -61,16 +58,15 @@ public class DBServiceImpl implements DBService {
     private final ServiceTaskDbOperations serviceTaskDbOperations;
     private final UserTaskDbOperations userTaskDbOperations;
     private final IncidentDbOperations incidentDbOperations;
+    private final MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
     private final VariableDbOperations variableDbOperations;
     private final TokenDbOperations tokenDbOperations;
     private final TimerJobRepository timerJobRepository;
-    private final MessageSubscriptionRepository messageSubscriptionRepository;
     private final SignalSubscriptionRepository signalSubscriptionRepository;
     private final SignalStartSubscriptionRepository signalStartSubscriptionRepository;
-    private final MessageStartSubscriptionRepository messageStartSubscriptionRepository;
     private final TimerStartJobRepository timerStartJobRepository;
     private final ProcessInstanceMapper processInstanceMapper;
     private final com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
@@ -338,7 +334,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void deleteMessageSubscriptionsByProcessInstanceId(UUID processInstanceId) {
-        messageSubscriptionRepository.deleteByProcessInstanceId(processInstanceId);
+        messageSubscriptionDbOperations.deleteMessageSubscriptionsByProcessInstanceId(processInstanceId);
     }
 
     @Override
@@ -457,81 +453,38 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName) {
-        return createMessageSubscription(processInstanceId, activityId, messageName, null, null);
+        return messageSubscriptionDbOperations.createMessageSubscription(processInstanceId, activityId, messageName);
     }
 
     @Override
     public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId) {
-        return createMessageSubscription(processInstanceId, activityId, messageName, boundaryElementId, null);
+        return messageSubscriptionDbOperations.createMessageSubscription(processInstanceId, activityId, messageName, boundaryElementId);
     }
 
     @Override
     public UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId, String correlationKey) {
-        UUID id = UUID.randomUUID();
-        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
-        entity.setId(id);
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setActivityId(activityId);
-        entity.setMessageName(messageName);
-        entity.setConsumed(false);
-        entity.setCreatedAt(Instant.now());
-        entity.setBoundaryElementId(boundaryElementId);
-        entity.setCorrelationKey(correlationKey);
-        messageSubscriptionRepository.save(entity);
-        return id;
+        return messageSubscriptionDbOperations.createMessageSubscription(processInstanceId, activityId, messageName, boundaryElementId, correlationKey);
     }
 
     @Override
     public UUID createEventSubprocessMessageSubscription(UUID processInstanceId, String messageName, String eventSubprocessId) {
-        UUID id = UUID.randomUUID();
-        MessageSubscriptionEntity entity = new MessageSubscriptionEntity();
-        entity.setId(id);
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setActivityId(null);
-        entity.setMessageName(messageName);
-        entity.setConsumed(false);
-        entity.setCreatedAt(Instant.now());
-        entity.setEventSubprocessId(eventSubprocessId);
-        messageSubscriptionRepository.save(entity);
-        return id;
+        return messageSubscriptionDbOperations.createEventSubprocessMessageSubscription(processInstanceId, messageName, eventSubprocessId);
     }
 
     @Override
     public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId) {
-        List<MessageSubscriptionEntity> entities = processInstanceId != null
-            ? messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId(messageName, processInstanceId)
-            : messageSubscriptionRepository.findByConsumedFalseAndMessageName(messageName);
-        return toMessageSubscriptions(entities);
+        return messageSubscriptionDbOperations.findMessageSubscriptions(messageName, processInstanceId);
     }
 
     @Override
     public List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey) {
-        return toMessageSubscriptions(
-            messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndCorrelationKey(messageName, correlationKey));
-    }
-
-    private List<MessageSubscription> toMessageSubscriptions(List<MessageSubscriptionEntity> entities) {
-        return entities.stream()
-            .map(e -> {
-                MessageSubscription sub = new MessageSubscription();
-                sub.setId(e.getId());
-                sub.setProcessInstanceId(e.getProcessInstanceId());
-                sub.setActivityId(e.getActivityId());
-                sub.setMessageName(e.getMessageName());
-                sub.setBoundaryElementId(e.getBoundaryElementId());
-                sub.setEventSubprocessId(e.getEventSubprocessId());
-                return sub;
-            })
-            .toList();
+        return messageSubscriptionDbOperations.findMessageSubscriptionsByKey(messageName, correlationKey);
     }
 
     @Override
     @Transactional
     public boolean consumeMessageSubscription(UUID subscriptionId) {
-        // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
-        // A plain findById+save would let two concurrent callers both observe "not consumed"
-        // and both apply the signal/message (double branch on a non-interrupting boundary).
-        return messageSubscriptionRepository.markConsumed(subscriptionId) == 1;
+        return messageSubscriptionDbOperations.consumeMessageSubscription(subscriptionId);
     }
 
     @Override
@@ -626,34 +579,17 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void createMessageStartSubscription(String processKey, UUID processDefinitionId, String elementId, String messageName) {
-        MessageStartSubscriptionEntity entity = new MessageStartSubscriptionEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setProcessKey(processKey);
-        entity.setProcessDefinitionId(processDefinitionId);
-        entity.setElementId(elementId);
-        entity.setMessageName(messageName);
-        entity.setCreatedAt(Instant.now());
-        messageStartSubscriptionRepository.save(entity);
+        messageSubscriptionDbOperations.createMessageStartSubscription(processKey, processDefinitionId, elementId, messageName);
     }
 
     @Override
     public void deleteMessageStartSubscriptionsByKey(String processKey) {
-        messageStartSubscriptionRepository.deleteByProcessKey(processKey);
+        messageSubscriptionDbOperations.deleteMessageStartSubscriptionsByKey(processKey);
     }
 
     @Override
     public List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> findMessageStartSubscriptions(String messageName) {
-        return messageStartSubscriptionRepository.findByMessageName(messageName).stream()
-            .map(e -> {
-                com.zorrodev.bpm.engine.dto.MessageStartSubscription sub = new com.zorrodev.bpm.engine.dto.MessageStartSubscription();
-                sub.setId(e.getId());
-                sub.setProcessKey(e.getProcessKey());
-                sub.setProcessDefinitionId(e.getProcessDefinitionId());
-                sub.setElementId(e.getElementId());
-                sub.setMessageName(e.getMessageName());
-                return sub;
-            })
-            .toList();
+        return messageSubscriptionDbOperations.findMessageStartSubscriptions(messageName);
     }
 
     @Override
