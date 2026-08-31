@@ -57,7 +57,7 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
     @Override
     public ProcessInstance getProcessInstance(UUID processInstanceId) {
         ProcessInstanceEntity entity = processInstanceRepository.findById(processInstanceId).orElseThrow();
-        return processInstanceMapper.toDto(entity);
+        return processInstanceMapper.toDTO(entity);
     }
 
     @Override
