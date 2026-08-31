@@ -19,7 +19,6 @@ import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
-import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
@@ -32,7 +31,6 @@ import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
-import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
@@ -77,12 +75,12 @@ class DBServiceImplCharacterizationTest {
 
     @Mock private ProcessDefinitionDbOperations processDefinitionDbOperations;
     @Mock private ParallelGatewayDbOperations parallelGatewayDbOperations;
+    @Mock private com.zorrodev.bpm.engine.service.db.TokenDbOperations tokenDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private VariableRepository variableRepository;
-    @Mock private TokenRepository tokenRepository;
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
@@ -200,17 +198,18 @@ class DBServiceImplCharacterizationTest {
     void deleteToken_deletesById() {
         UUID id = UUID.randomUUID();
         dbService.deleteToken(id);
-        verify(tokenRepository).deleteById(id);
+        verify(tokenDbOperations).deleteToken(id);
     }
 
     @Test
     void createToken_withScope_persistsScopeActivityId() {
         UUID parent = UUID.randomUUID(); UUID scope = UUID.randomUUID();
-        dbService.createToken(parent, scope);
-        ArgumentCaptor<TokenEntity> captor = ArgumentCaptor.forClass(TokenEntity.class);
-        verify(tokenRepository).save(captor.capture());
-        assertThat(captor.getValue().getParentId()).isEqualTo(parent);
-        assertThat(captor.getValue().getScopeActivityId()).isEqualTo(scope);
+        com.zorrodev.bpm.engine.dto.Token expected = new com.zorrodev.bpm.engine.dto.Token();
+        expected.setId(UUID.randomUUID());
+        when(tokenDbOperations.createToken(parent, scope)).thenReturn(expected);
+        com.zorrodev.bpm.engine.dto.Token result = dbService.createToken(parent, scope);
+        assertThat(result).isEqualTo(expected);
+        verify(tokenDbOperations).createToken(parent, scope);
     }
 
     // WO-DEBT-1d: setPendingBranches/decrementPendingBranches moved to ParallelGatewayDbOperationsImpl
