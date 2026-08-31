@@ -109,7 +109,7 @@ services:
       # Must NOT be "admin". Generate a strong one.
       ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}
       # Browser origins allowed for the SPA (same-origin via nginx doesn't need this, but set for safety)
-      ZORROBPM_CORS_ORIGINS: ${ZORROBPM_CORS_ORIGINS:-https://zorro.i-smet.kz}
+      ZORROBPM_CORS_ORIGINS: ${ZORROBPM_CORS_ORIGINS:-https://test-zbpm.telecom.kz}
       # WO-INT-5: mail transport — values in .env on host, never in repo
       ZORROBPM_MAIL_HOST: ${ZORROBPM_MAIL_HOST:-}
       ZORROBPM_MAIL_PORT: ${ZORROBPM_MAIL_PORT:-}
@@ -144,7 +144,7 @@ services:
       - zorrobpm
 
   # Vue SPA served by nginx; also reverse-proxies /api -> app:8080 inside the network.
-  # The external production proxy (https://zorro.i-smet.kz) forwards to this service.
+  # The external production proxy (https://test-zbpm.telecom.kz) forwards to this service.
   frontend:
     build:
       context: ./zorrobpm-frontend
