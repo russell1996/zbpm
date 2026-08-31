@@ -16,7 +16,6 @@ import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
-import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.dto.TimerJob;
@@ -29,8 +28,8 @@ import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
-import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
+import com.zorrodev.bpm.engine.service.db.UserTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,7 +64,7 @@ class DBServiceImplTest {
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private ServiceTaskDbOperations serviceTaskDbOperations;
-    @Mock private UserTaskRepository userTaskRepository;
+    @Mock private UserTaskDbOperations userTaskDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
@@ -272,101 +271,10 @@ class DBServiceImplTest {
     }
 
     @Test
-    void createUserTask_savesEntityFromActivityAndPI() {
+    void createUserTask_delegates() {
         UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        UUID processDefinitionId = UUID.randomUUID();
-
-        ActivityEntity activity = new ActivityEntity();
-        activity.setId(activityId);
-        activity.setProcessInstanceId(processInstanceId);
-        activity.setBpmnElementId("ut1");
-        activity.setCreatedAt(Instant.now());
-
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(processInstanceId);
-        pi.setProcessDefinitionId(processDefinitionId);
-
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
-
-        dbService.createUserTask(activityId, "test-assignee", null, null);
-
-        ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
-        verify(userTaskRepository).save(captor.capture());
-        UserTaskEntity saved = captor.getValue();
-        assertThat(saved.getId()).isEqualTo(activityId);
-        assertThat(saved.getBpmnElementId()).isEqualTo("ut1");
-        assertThat(saved.getProcessInstanceId()).isEqualTo(processInstanceId);
-        assertThat(saved.getProcessDefinitionId()).isEqualTo(processDefinitionId);
-        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut1", activityId, "test-assignee", null);
-    }
-
-    @Test
-    void createUserTask_withAssigneeAndCandidateGroups_passesToEmitter() {
-        UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        UUID processDefinitionId = UUID.randomUUID();
-
-        ActivityEntity activity = new ActivityEntity();
-        activity.setId(activityId);
-        activity.setProcessInstanceId(processInstanceId);
-        activity.setBpmnElementId("ut1");
-        activity.setCreatedAt(Instant.now());
-
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(processInstanceId);
-        pi.setProcessDefinitionId(processDefinitionId);
-
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
-
-        dbService.createUserTask(activityId, "ivanov", "managers,admins", null);
-
-        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut1", activityId, "ivanov", "managers,admins");
-    }
-
-    @Test
-    void createUserTask_nullAssignee_candidateGroupsOnly_passesToEmitter() {
-        UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        UUID processDefinitionId = UUID.randomUUID();
-
-        ActivityEntity activity = new ActivityEntity();
-        activity.setId(activityId);
-        activity.setProcessInstanceId(processInstanceId);
-        activity.setBpmnElementId("ut-pool");
-        activity.setCreatedAt(Instant.now());
-
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(processInstanceId);
-        pi.setProcessDefinitionId(processDefinitionId);
-
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
-
-        dbService.createUserTask(activityId, null, "managers", null);
-
-        verify(domainEventEmitter).emitUserTaskCreated(processInstanceId, processDefinitionId, "ut-pool", activityId, null, "managers");
-    }
-
-    @Test
-    void completeUserTask_withAssignee_passesAssigneeToEmitter() {
-        UUID id = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        UUID processDefinitionId = UUID.randomUUID();
-
-        UserTaskEntity utEntity = new UserTaskEntity();
-        utEntity.setId(id);
-        utEntity.setProcessInstanceId(processInstanceId);
-        utEntity.setProcessDefinitionId(processDefinitionId);
-        utEntity.setBpmnElementId("userTask1");
-        utEntity.setAssignee("petrov");
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(utEntity));
-
-        dbService.completeUserTask(id);
-        verify(userTaskRepository).setCompletedAt(eq(id), any(Instant.class));
-        verify(domainEventEmitter).emitUserTaskCompleted(processInstanceId, processDefinitionId, "userTask1", id, "petrov");
+        dbService.createUserTask(activityId, "ivanov", "managers", "form1");
+        verify(userTaskDbOperations).createUserTask(activityId, "ivanov", "managers", "form1");
     }
 
     @Test
@@ -377,21 +285,10 @@ class DBServiceImplTest {
     }
 
     @Test
-    void completeUserTask_callsRepository() {
+    void completeUserTask_delegates() {
         UUID id = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        UUID processDefinitionId = UUID.randomUUID();
-
-        UserTaskEntity utEntity = new UserTaskEntity();
-        utEntity.setId(id);
-        utEntity.setProcessInstanceId(processInstanceId);
-        utEntity.setProcessDefinitionId(processDefinitionId);
-        utEntity.setBpmnElementId("userTask1");
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(utEntity));
-
         dbService.completeUserTask(id);
-        verify(userTaskRepository).setCompletedAt(eq(id), any(Instant.class));
-        verify(domainEventEmitter).emitUserTaskCompleted(processInstanceId, processDefinitionId, "userTask1", id, null);
+        verify(userTaskDbOperations).completeUserTask(id);
     }
 
     @Test
