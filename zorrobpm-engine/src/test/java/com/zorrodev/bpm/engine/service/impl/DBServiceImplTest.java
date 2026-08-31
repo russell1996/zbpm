@@ -16,7 +16,6 @@ import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
-import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
@@ -30,7 +29,6 @@ import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
-import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import org.junit.jupiter.api.Test;
@@ -59,12 +57,12 @@ import static org.mockito.Mockito.when;
 class DBServiceImplTest {
 
     @Mock private com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations processDefinitionDbOperations;
+    @Mock private com.zorrodev.bpm.engine.service.db.TokenDbOperations tokenDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private VariableRepository variableRepository;
-    @Mock private TokenRepository tokenRepository;
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
@@ -544,36 +542,36 @@ class DBServiceImplTest {
     }
 
     @Test
-    void createToken_savesAndReturnsDTO() {
+    void createToken_delegates() {
         UUID parentId = UUID.randomUUID();
+        Token expected = new Token();
+        expected.setId(UUID.randomUUID());
+        expected.setParentId(parentId);
+        when(tokenDbOperations.createToken(parentId)).thenReturn(expected);
 
         Token token = dbService.createToken(parentId);
 
-        assertThat(token.getId()).isNotNull();
-        assertThat(token.getParentId()).isEqualTo(parentId);
-        verify(tokenRepository).save(any(TokenEntity.class));
+        assertThat(token).isEqualTo(expected);
+        verify(tokenDbOperations).createToken(parentId);
     }
 
     @Test
-    void getToken_returnsMapped() {
+    void getToken_delegates() {
         UUID id = UUID.randomUUID();
-        UUID parentId = UUID.randomUUID();
-        TokenEntity entity = new TokenEntity();
-        entity.setId(id);
-        entity.setParentId(parentId);
-
-        when(tokenRepository.findById(id)).thenReturn(Optional.of(entity));
+        Token expected = new Token();
+        expected.setId(id);
+        when(tokenDbOperations.getToken(id)).thenReturn(expected);
 
         Token result = dbService.getToken(id);
 
-        assertThat(result.getId()).isEqualTo(id);
-        assertThat(result.getParentId()).isEqualTo(parentId);
+        assertThat(result).isEqualTo(expected);
+        verify(tokenDbOperations).getToken(id);
     }
 
     @Test
     void getToken_throwsWhenMissing() {
         UUID id = UUID.randomUUID();
-        when(tokenRepository.findById(id)).thenReturn(Optional.empty());
+        when(tokenDbOperations.getToken(id)).thenThrow(new NoSuchElementException());
         assertThatThrownBy(() -> dbService.getToken(id)).isInstanceOf(NoSuchElementException.class);
     }
 
