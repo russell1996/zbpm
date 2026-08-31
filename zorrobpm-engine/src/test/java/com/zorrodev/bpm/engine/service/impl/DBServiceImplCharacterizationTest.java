@@ -34,6 +34,7 @@ import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
+import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,7 @@ class DBServiceImplCharacterizationTest {
     @Mock private ProcessDefinitionDbOperations processDefinitionDbOperations;
     @Mock private ParallelGatewayDbOperations parallelGatewayDbOperations;
     @Mock private com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations processInstanceDbOperations;
+    @Mock private ServiceTaskDbOperations serviceTaskDbOperations;
     @Mock private com.zorrodev.bpm.engine.service.db.TokenDbOperations tokenDbOperations;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ActivityRepository activityRepository;
@@ -507,24 +509,22 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── Service tasks (retries) ───────────────────────────────
+    // WO-DEBT-1h: moved to ServiceTaskDbOperationsImpl (real behaviour characterized in
+    // ServiceTaskDbOperationsImplTest) — DBServiceImpl now only delegates.
 
     @Test
-    void decrementServiceTaskRetries_returnsDecremented() {
+    void decrementServiceTaskRetries_delegates() {
         UUID id = UUID.randomUUID();
-        ServiceTaskEntity e = new ServiceTaskEntity(); e.setId(id); e.setRetriesRemaining(3);
-        when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(e));
+        when(serviceTaskDbOperations.decrementServiceTaskRetries(id)).thenReturn(2);
         assertThat(dbService.decrementServiceTaskRetries(id)).isEqualTo(2);
-        verify(serviceTaskRepository).save(e);
+        verify(serviceTaskDbOperations).decrementServiceTaskRetries(id);
     }
 
     @Test
-    void setServiceTaskRetries_saves() {
+    void setServiceTaskRetries_delegates() {
         UUID id = UUID.randomUUID();
-        ServiceTaskEntity e = new ServiceTaskEntity(); e.setId(id); e.setRetriesRemaining(1);
-        when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(e));
         dbService.setServiceTaskRetries(id, 5);
-        assertThat(e.getRetriesRemaining()).isEqualTo(5);
-        verify(serviceTaskRepository).save(e);
+        verify(serviceTaskDbOperations).setServiceTaskRetries(id, 5);
     }
 
     // ─── User tasks (claim/unclaim/assign) ─────────────────────
