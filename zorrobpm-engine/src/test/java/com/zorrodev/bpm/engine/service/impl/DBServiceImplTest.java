@@ -12,7 +12,6 @@ import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
-import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
@@ -22,12 +21,12 @@ import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
-import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
+import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.UserTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
@@ -65,8 +64,8 @@ class DBServiceImplTest {
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private ServiceTaskDbOperations serviceTaskDbOperations;
     @Mock private UserTaskDbOperations userTaskDbOperations;
+    @Mock private IncidentDbOperations incidentDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
-    @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
     @Mock private SignalSubscriptionRepository signalSubscriptionRepository;
@@ -235,39 +234,14 @@ class DBServiceImplTest {
     }
 
     @Test
-    void evt9_incidentRaised_serviceTaskCarriesJob() {
+    void incident_delegates() {
         UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-
-        ActivityEntity activityEntity = new ActivityEntity();
-        activityEntity.setId(activityId);
-        activityEntity.setProcessInstanceId(processInstanceId);
-        activityEntity.setBpmnElementId("Activity_7f3");
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activityEntity));
-
-        ServiceTaskEntity st = new ServiceTaskEntity();
-        st.setId(activityId);
-        st.setJob("draftCreate");
-        when(serviceTaskRepository.findById(activityId)).thenReturn(Optional.of(st));
-
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(processInstanceId);
-        pi.setProcessDefinitionId(UUID.randomUUID());
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
-
-        UUID id = dbService.createIncident(activityId, "boom");
-        // criterion 3: job next to incidentId/message; elementId unchanged (criterion 4)
-        verify(domainEventEmitter).emitIncidentRaised(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq(id), eq("boom"), eq("draftCreate"));
-
-        // resolved carries job too
-        IncidentEntity incident = new IncidentEntity();
-        incident.setId(id);
-        incident.setActivityId(activityId);
-        incident.setMessage("boom");
-        when(incidentRepository.findById(id)).thenReturn(Optional.of(incident));
-
+        UUID id = UUID.randomUUID();
+        when(incidentDbOperations.createIncident(activityId, "boom")).thenReturn(id);
+        assertThat(dbService.createIncident(activityId, "boom")).isEqualTo(id);
+        verify(incidentDbOperations).createIncident(activityId, "boom");
         dbService.completeIncident(id);
-        verify(domainEventEmitter).emitIncidentResolved(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq(id), eq("draftCreate"));
+        verify(incidentDbOperations).completeIncident(id);
     }
 
     @Test
@@ -428,75 +402,28 @@ class DBServiceImplTest {
     }
 
     @Test
-    void createIncident_savesAndReturnsId() {
+    void createIncident_delegates() {
         UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        ActivityEntity activity = new ActivityEntity();
-        activity.setId(activityId);
-        activity.setProcessInstanceId(processInstanceId);
-        activity.setBpmnElementId("element1");
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
-
-        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
-        piEntity.setId(processInstanceId);
-        piEntity.setProcessDefinitionId(UUID.randomUUID());
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(piEntity));
-
-        UUID id = dbService.createIncident(activityId, "boom");
-
-        assertThat(id).isNotNull();
-        ArgumentCaptor<IncidentEntity> captor = ArgumentCaptor.forClass(IncidentEntity.class);
-        verify(incidentRepository).save(captor.capture());
-        assertThat(captor.getValue().getActivityId()).isEqualTo(activityId);
-        assertThat(captor.getValue().getMessage()).isEqualTo("boom");
-        verify(domainEventEmitter).emitIncidentRaised(eq(processInstanceId), any(UUID.class), eq("element1"), eq(id), eq("boom"), isNull());
+        UUID expected = UUID.randomUUID();
+        when(incidentDbOperations.createIncident(activityId, "boom")).thenReturn(expected);
+        assertThat(dbService.createIncident(activityId, "boom")).isEqualTo(expected);
+        verify(incidentDbOperations).createIncident(activityId, "boom");
     }
 
     @Test
-    void getIncident_mapsEntity() {
+    void getIncident_delegates() {
         UUID incidentId = UUID.randomUUID();
-        UUID activityId = UUID.randomUUID();
-        IncidentEntity entity = new IncidentEntity();
-        entity.setId(incidentId);
-        entity.setActivityId(activityId);
-        entity.setMessage("boom");
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(entity));
-
-        Incident result = dbService.getIncident(incidentId);
-
-        assertThat(result.getId()).isEqualTo(incidentId);
-        assertThat(result.getActivityId()).isEqualTo(activityId);
-        assertThat(result.getMessage()).isEqualTo("boom");
+        Incident expected = new Incident(); expected.setId(incidentId);
+        when(incidentDbOperations.getIncident(incidentId)).thenReturn(expected);
+        assertThat(dbService.getIncident(incidentId)).isEqualTo(expected);
+        verify(incidentDbOperations).getIncident(incidentId);
     }
 
     @Test
-    void completeIncident_setsCompletedAt() {
+    void completeIncident_delegates() {
         UUID incidentId = UUID.randomUUID();
-        UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-
-        IncidentEntity entity = new IncidentEntity();
-        entity.setId(incidentId);
-        entity.setActivityId(activityId);
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(entity));
-
-        ActivityEntity activityEntity = new ActivityEntity();
-        activityEntity.setId(activityId);
-        activityEntity.setProcessInstanceId(processInstanceId);
-        activityEntity.setBpmnElementId("element1");
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activityEntity));
-
-        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
-        piEntity.setId(processInstanceId);
-        piEntity.setProcessDefinitionId(UUID.randomUUID());
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(piEntity));
-
         dbService.completeIncident(incidentId);
-
-        ArgumentCaptor<IncidentEntity> captor = ArgumentCaptor.forClass(IncidentEntity.class);
-        verify(incidentRepository).save(captor.capture());
-        assertThat(captor.getValue().getCompletedAt()).isNotNull();
-        verify(domainEventEmitter).emitIncidentResolved(eq(processInstanceId), any(UUID.class), eq("element1"), eq(incidentId), isNull());
+        verify(incidentDbOperations).completeIncident(incidentId);
     }
 
     @Test

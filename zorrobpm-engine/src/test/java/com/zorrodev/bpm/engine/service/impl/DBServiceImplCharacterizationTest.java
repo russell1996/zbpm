@@ -9,7 +9,6 @@ import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
-import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
@@ -21,7 +20,6 @@ import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
@@ -30,6 +28,7 @@ import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
+import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
@@ -83,8 +82,8 @@ class DBServiceImplCharacterizationTest {
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private UserTaskDbOperations userTaskDbOperations;
+    @Mock private IncidentDbOperations incidentDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
-    @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
     @Mock private SignalSubscriptionRepository signalSubscriptionRepository;
@@ -232,25 +231,23 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── Incidents ─────────────────────────────────────────────
+    // WO-DEBT-1j: moved to IncidentDbOperationsImpl — DBServiceImpl now only delegates.
 
     @Test
-    void findOpenIncidentsByActivityIds_maps() {
+    void findOpenIncidentsByActivityIds_delegates() {
         UUID aId = UUID.randomUUID();
-        IncidentEntity e = new IncidentEntity(); e.setId(UUID.randomUUID()); e.setActivityId(aId); e.setMessage("m");
-        when(incidentRepository.findByActivityIdInAndCompletedAtIsNull(anyCollection())).thenReturn(List.of(e));
+        Incident expected = new Incident(); expected.setId(UUID.randomUUID()); expected.setActivityId(aId);
+        when(incidentDbOperations.findOpenIncidentsByActivityIds(List.of(aId))).thenReturn(List.of(expected));
         List<Incident> result = dbService.findOpenIncidentsByActivityIds(List.of(aId));
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getActivityId()).isEqualTo(aId);
+        verify(incidentDbOperations).findOpenIncidentsByActivityIds(List.of(aId));
     }
 
     @Test
-    void completeIncidentsByActivityIds_marksCompleted() {
+    void completeIncidentsByActivityIds_delegates() {
         UUID aId = UUID.randomUUID();
-        IncidentEntity e = new IncidentEntity(); e.setId(UUID.randomUUID()); e.setActivityId(aId);
-        when(incidentRepository.findByActivityIdInAndCompletedAtIsNull(anyCollection())).thenReturn(List.of(e));
         dbService.completeIncidentsByActivityIds(List.of(aId));
-        assertThat(e.getCompletedAt()).isNotNull();
-        verify(incidentRepository).saveAll(anyCollection());
+        verify(incidentDbOperations).completeIncidentsByActivityIds(List.of(aId));
     }
 
     // ─── Variables (scope overloads + delete) ──────────────────
