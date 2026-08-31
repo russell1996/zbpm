@@ -71,7 +71,7 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
                     return ne;
                 });
             entity.setType(variable.getType());
-            entity.setTextValue(variable.getValue());
+            entity.setTextValue(variable.getValue() != null ? variable.getValue() : "");
             entities.add(entity);
         }
         variableRepository.saveAll(entities);
