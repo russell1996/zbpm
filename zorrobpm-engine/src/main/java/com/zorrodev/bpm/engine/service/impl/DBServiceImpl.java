@@ -13,7 +13,6 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
-import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
@@ -24,7 +23,6 @@ import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
@@ -34,6 +32,7 @@ import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
@@ -61,12 +60,12 @@ public class DBServiceImpl implements DBService {
     private final ProcessInstanceDbOperations processInstanceDbOperations;
     private final ServiceTaskDbOperations serviceTaskDbOperations;
     private final UserTaskDbOperations userTaskDbOperations;
+    private final IncidentDbOperations incidentDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
     private final VariableDbOperations variableDbOperations;
     private final TokenDbOperations tokenDbOperations;
-    private final IncidentRepository incidentRepository;
     private final TimerJobRepository timerJobRepository;
     private final MessageSubscriptionRepository messageSubscriptionRepository;
     private final SignalSubscriptionRepository signalSubscriptionRepository;
@@ -168,27 +167,12 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public List<Incident> findOpenIncidentsByActivityIds(List<UUID> activityIds) {
-        return incidentRepository.findByActivityIdInAndCompletedAtIsNull(activityIds).stream()
-            .map(entity -> {
-                Incident i = new Incident();
-                i.setId(entity.getId());
-                i.setActivityId(entity.getActivityId());
-                i.setMessage(entity.getMessage());
-                i.setCreatedAt(entity.getCreatedAt());
-                i.setCompletedAt(entity.getCompletedAt());
-                return i;
-            })
-            .toList();
+        return incidentDbOperations.findOpenIncidentsByActivityIds(activityIds);
     }
 
     @Override
     public void completeIncidentsByActivityIds(List<UUID> activityIds) {
-        List<IncidentEntity> open = incidentRepository.findByActivityIdInAndCompletedAtIsNull(activityIds);
-        Instant now = Instant.now();
-        for (IncidentEntity entity : open) {
-            entity.setCompletedAt(now);
-        }
-        incidentRepository.saveAll(open);
+        incidentDbOperations.completeIncidentsByActivityIds(activityIds);
     }
 
     @Override
@@ -359,47 +343,17 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createIncident(UUID activityId, String message) {
-        ActivityEntity activityEntity = activityRepository.findById(activityId).orElseThrow();
-        UUID id = UUID.randomUUID();
-
-        IncidentEntity entity = new IncidentEntity();
-        entity.setId(id);
-        entity.setActivityId(activityId);
-        entity.setCreatedAt(Instant.now());
-        entity.setMessage(message);
-        incidentRepository.save(entity);
-
-        ProcessInstanceEntity pi = processInstanceRepository.findById(activityEntity.getProcessInstanceId()).orElseThrow();
-        // WO-EVT-9: service tasks carry their stable job id in the event data.
-        String job = serviceTaskRepository.findById(activityId).map(ServiceTaskEntity::getJob).orElse(null);
-        domainEventEmitter.emitIncidentRaised(activityEntity.getProcessInstanceId(), pi.getProcessDefinitionId(), activityEntity.getBpmnElementId(), id, message, job);
-
-        return id;
+        return incidentDbOperations.createIncident(activityId, message);
     }
 
     @Override
     public Incident getIncident(UUID incidentId) {
-        IncidentEntity entity = incidentRepository.findById(incidentId).orElseThrow();
-        Incident incident = new Incident();
-        incident.setId(entity.getId());
-        incident.setActivityId(entity.getActivityId());
-        incident.setMessage(entity.getMessage());
-        incident.setCreatedAt(entity.getCreatedAt());
-        incident.setCompletedAt(entity.getCompletedAt());
-        return incident;
+        return incidentDbOperations.getIncident(incidentId);
     }
 
     @Override
     public void completeIncident(UUID incidentId) {
-        IncidentEntity entity = incidentRepository.findById(incidentId).orElseThrow();
-        entity.setCompletedAt(Instant.now());
-        incidentRepository.save(entity);
-
-        ActivityEntity activity = activityRepository.findById(entity.getActivityId()).orElseThrow();
-        ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
-        // WO-EVT-9: service tasks carry their stable job id in the event data.
-        String job = serviceTaskRepository.findById(activity.getId()).map(ServiceTaskEntity::getJob).orElse(null);
-        domainEventEmitter.emitIncidentResolved(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), incidentId, job);
+        incidentDbOperations.completeIncident(incidentId);
     }
 
     @Override
