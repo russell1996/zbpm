@@ -5,6 +5,8 @@ import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.SortDirection;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.UserTaskRelation;
+import com.zorrodev.bpm.contract.dto.query.VariableQuery;
+import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.util.LinkedMultiValueMap;
@@ -78,6 +80,22 @@ class QueryParametersArgumentResolverTest {
         assertThat(params.get("direction")).containsExactly("ASC");
     }
 
+    @Test
+    void variableResolver_sendsItsFilters() {
+        VariableQuery query = new VariableQuery();
+        query.setProcessInstanceId(java.util.UUID.fromString("11111111-2222-3333-4444-555555555555"));
+        query.setName("approver");
+        query.setType(ProcessVariableType.STRING);
+
+        MultiValueMap<String, String> params = resolve(
+            new VariableQueryParametersArgumentResolver(), query, "variables", VariableQuery.class);
+
+        assertThat(params.get("processInstanceId")).containsExactly("11111111-2222-3333-4444-555555555555");
+        assertThat(params.get("name")).containsExactly("approver");
+        assertThat(params.get("type")).containsExactly("STRING");
+        assertThat(params).containsKeys("pageIndex", "pageSize");
+    }
+
     private MultiValueMap<String, String> resolve(Object resolver, Object query,
                                                   String methodName, Class<?> parameterType) {
         HttpRequestValues.Builder builder = HttpRequestValues.builder();
@@ -106,5 +124,7 @@ class QueryParametersArgumentResolverTest {
         void serviceTasks(ServiceTaskQuery query) { }
 
         void processInstances(ProcessInstanceQuery query) { }
+
+        void variables(VariableQuery query) { }
     }
 }
