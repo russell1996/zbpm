@@ -16,10 +16,10 @@
 4. Задача согласования уйдёт пользователю из `managerId`; он откроет её и увидит ту же форму.
 
 ## Вариант B — через API (curl)
-Прод отдаёт бэкенд в корне (`https://zorro.i-smet.kz/...`). Ниже — базовый хост `$H`.
+Прод отдаёт бэкенд в корне (`https://test-zbpm.telecom.kz/...`). Ниже — базовый хост `$H`.
 
 ```bash
-H=https://zorro.i-smet.kz
+H=https://test-zbpm.telecom.kz
 
 # 1) Логин SUPER_ADMIN → JWT
 TOKEN=$(curl -s -X POST $H/auth/login -H 'Content-Type: application/json' \

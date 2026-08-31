@@ -581,7 +581,7 @@ test  →  package  →  deploy  →  rollback
 - **deploy** — **ручной запуск** (`when: manual`, в т.ч. на ветке по умолчанию — WO-AUD-6, чтобы неудачная сборка не уезжала в прод автоматически): `docker compose up -d` с версионными тегами; предыдущий тег сохраняется в `.previous_tag`. Отдельный job `test:pg` гоняет `@Tag("pg")`-тесты против реального `postgres:16`.
 - **rollback** — ручная стадия: переразвёртывание предыдущего тега.
 
-Прод за внешним nginx reverse proxy: `https://zorro.i-smet.kz` → `frontend` (nginx) → `/api` → `app:8080`.
+Прод за внешним nginx reverse proxy: `https://test-zbpm.telecom.kz` → `frontend` (nginx) → `/api` → `app:8080`.
 
 ## Лицензия
 

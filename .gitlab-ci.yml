@@ -6,7 +6,7 @@
 # through `docker build` / `docker compose` (the proven primitive) — no host Maven/Node and no workspace
 # bind mounts, so there are no file-ownership/cleanup issues on the runner. Images are built and tagged with
 # the commit SHA on the deploy host (no external registry); the previous tag is recorded for rollback. The
-# external nginx proxy (https://zorro.i-smet.kz) forwards to the frontend container, which serves the SPA
+# external nginx proxy (https://test-zbpm.telecom.kz) forwards to the frontend container, which serves the SPA
 # and proxies /api -> app:8080 inside the Docker network.
 
 stages:
@@ -308,7 +308,7 @@ deploy:
     - docker image prune -f
   environment:
     name: production
-    url: https://zorro.i-smet.kz
+    url: https://test-zbpm.telecom.kz
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: *code-changes-paths
@@ -337,7 +337,7 @@ rollback:
     - cp .previous_tag .current_tag
   environment:
     name: production
-    url: https://zorro.i-smet.kz
+    url: https://test-zbpm.telecom.kz
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: manual
