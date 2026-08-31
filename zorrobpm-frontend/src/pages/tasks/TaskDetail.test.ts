@@ -44,14 +44,16 @@ const i18n = createI18n({
     variables: 'Variables', noVariables: 'No variables',
     completeTask: 'Complete Task', submitForm: 'Submit Form',
     form: 'Form', externalForm: 'External Form',
+    myTasks: 'My Tasks', userTask: 'User Task',
   }},
 })
 
 const router = createRouter({
   history: createMemoryHistory('/ui/'),
   routes: [
+    { path: '/ui/processes/instances', name: 'process-instances', component: { template: '<div/>' } },
     { path: '/ui/tasks/:id', name: 'task-detail', component: TaskDetail },
-    { path: '/ui/tasks', name: 'tasks', component: { template: '<div/>' } },
+    { path: '/ui/tasks', name: 'my-tasks', component: { template: '<div/>' } },
   ],
 })
 router.push({ name: 'task-detail', params: { id: 'task-1' } })

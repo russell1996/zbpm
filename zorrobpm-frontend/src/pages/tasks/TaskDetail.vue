@@ -12,6 +12,8 @@ import { dataToVariables } from '@/shared/lib/formMapping'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import FormRenderer from '@/widgets/forms/FormRenderer.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import { ArrowLeft } from 'lucide-vue-next'
+import { Badge } from '@/components/ui/badge'
 
 const route = useRoute()
 const router = useRouter()
@@ -94,18 +96,37 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="store.error" class="text-sm text-red-500">{{ store.error }}</div>
 
     <template v-else-if="store.currentTask">
-      <div>
-        <h1 class="text-2xl font-bold">{{ t('userTask') }}</h1>
-        <CopyableId :value="store.currentTask.id" />
-      </div>
-
-      <div class="flex items-center gap-4 text-sm">
-        <StatusBadge :status="store.currentTask.completedAt ? 'COMPLETED' : 'CREATED'" />
+      <!-- WO-UI-14: compact header -->
+      <div class="flex items-center gap-2">
+        <RouterLink :to="{ name: 'my-tasks' }" class="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 self-center">
+          <ArrowLeft class="h-5 w-5" />
+        </RouterLink>
+        <div class="flex flex-col gap-0.5 flex-1 min-w-0">
+          <!-- Row 1: ← Мои задачи · ID -->
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-muted-foreground whitespace-nowrap">{{ t('myTasks') }}</span>
+            <span class="text-foreground/80 text-xs">·</span>
+            <span class="text-sm text-muted-foreground/80"><CopyableId :value="store.currentTask.id" /></span>
+          </div>
+          <!-- Row 2: Name · Status — center-aligned -->
+          <div class="flex items-center gap-2 flex-wrap -mt-1">
+            <span class="text-base font-semibold truncate">{{ store.currentTask.name || store.currentTask.code || t('userTask') }}</span>
+            <Badge
+              variant="secondary"
+              class="shrink-0 text-[11px] px-1.5 py-px rounded-full"
+              :class="store.currentTask.completedAt
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'"
+            >
+              {{ store.currentTask.completedAt ? t('completed') : t('created') }}
+            </Badge>
+          </div>
+        </div>
       </div>
 
       <div class="grid grid-cols-2 gap-4 text-sm">
