@@ -22,7 +22,6 @@ import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
-import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
@@ -34,13 +33,13 @@ import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
-import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
 import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
+import com.zorrodev.bpm.engine.service.db.UserTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
@@ -61,10 +60,10 @@ public class DBServiceImpl implements DBService {
     private final ParallelGatewayDbOperations parallelGatewayDbOperations;
     private final ProcessInstanceDbOperations processInstanceDbOperations;
     private final ServiceTaskDbOperations serviceTaskDbOperations;
+    private final UserTaskDbOperations userTaskDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
-    private final UserTaskRepository userTaskRepository;
     private final VariableDbOperations variableDbOperations;
     private final TokenDbOperations tokenDbOperations;
     private final IncidentRepository incidentRepository;
@@ -232,21 +231,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey) {
-        ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
-        UserTaskEntity entity = new UserTaskEntity();
-        entity.setId(activity.getId());
-        entity.setBpmnElementId(activity.getBpmnElementId());
-        entity.setProcessInstanceId(activity.getProcessInstanceId());
-        entity.setCreatedAt(activity.getCreatedAt());
-        entity.setAssignee(assignee);
-        entity.setCandidateGroups(candidateGroups);
-        entity.setFormKey(formKey);
-
-        ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
-        entity.setProcessDefinitionId(pi.getProcessDefinitionId());
-
-        userTaskRepository.save(entity);
-        domainEventEmitter.emitUserTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId, assignee, candidateGroups);
+        userTaskDbOperations.createUserTask(activityId, assignee, candidateGroups, formKey);
     }
 
     @Override
@@ -256,43 +241,22 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeUserTask(UUID userTaskId) {
-        UserTaskEntity ut = userTaskRepository.findById(userTaskId).orElseThrow();
-        userTaskRepository.setCompletedAt(userTaskId, Instant.now());
-        domainEventEmitter.emitUserTaskCompleted(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), userTaskId, ut.getAssignee());
+        userTaskDbOperations.completeUserTask(userTaskId);
     }
 
     @Override
     public void claimUserTask(UUID taskId, String assignee) {
-        UserTaskEntity ut = userTaskRepository.findById(taskId).orElseThrow();
-        if (ut.getCompletedAt() != null) {
-            throw new IllegalStateException("User task is already completed");
-        }
-        // Atomic claim: only one concurrent claimant wins (WHERE assignee IS NULL).
-        int updated = userTaskRepository.claimAssignee(taskId, assignee);
-        if (updated == 0) {
-            throw new IllegalStateException("User task is already assigned");
-        }
-        domainEventEmitter.emitUserTaskAssigned(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), taskId, assignee);
+        userTaskDbOperations.claimUserTask(taskId, assignee);
     }
 
     @Override
     public void unclaimUserTask(UUID taskId) {
-        UserTaskEntity ut = userTaskRepository.findById(taskId).orElseThrow();
-        if (ut.getCompletedAt() != null) {
-            throw new IllegalStateException("User task is already completed");
-        }
-        userTaskRepository.setAssignee(taskId, null);
-        domainEventEmitter.emitUserTaskUnassigned(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), taskId);
+        userTaskDbOperations.unclaimUserTask(taskId);
     }
 
     @Override
     public void assignUserTask(UUID taskId, String assignee) {
-        UserTaskEntity ut = userTaskRepository.findById(taskId).orElseThrow();
-        if (ut.getCompletedAt() != null) {
-            throw new IllegalStateException("User task is already completed");
-        }
-        userTaskRepository.setAssignee(taskId, assignee);
-        domainEventEmitter.emitUserTaskAssigned(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), taskId, assignee);
+        userTaskDbOperations.assignUserTask(taskId, assignee);
     }
 
     @Override
