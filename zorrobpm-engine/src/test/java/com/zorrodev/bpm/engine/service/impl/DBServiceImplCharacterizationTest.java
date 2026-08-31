@@ -32,9 +32,9 @@ import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
-import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
+import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -82,7 +82,7 @@ class DBServiceImplCharacterizationTest {
     @Mock private ActivityRepository activityRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private UserTaskRepository userTaskRepository;
-    @Mock private VariableRepository variableRepository;
+    @Mock private VariableDbOperations variableDbOperations;
     @Mock private IncidentRepository incidentRepository;
     @Mock private TimerJobRepository timerJobRepository;
     @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
@@ -253,35 +253,31 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── Variables (scope overloads + delete) ──────────────────
+    // WO-DEBT-1g: moved to VariableDbOperationsImpl (real behaviour characterized in
+    // VariableDbOperationsImplTest) — DBServiceImpl now only delegates.
 
     @Test
-    void getVariables_withScopeId_mergesRootAndLocal() {
+    void getVariables_withScopeId_delegates() {
         UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
-        ProcessVariableEntity root = new ProcessVariableEntity(); root.setName("a"); root.setTextValue("root"); root.setType(ProcessVariableType.STRING);
-        ProcessVariableEntity local = new ProcessVariableEntity(); local.setName("a"); local.setTextValue("local"); local.setType(ProcessVariableType.STRING);
-        when(variableRepository.findByProcessInstanceIdAndScopeIdIsNull(pi)).thenReturn(List.of(root));
-        when(variableRepository.findByProcessInstanceIdAndScopeId(pi, scope)).thenReturn(List.of(local));
-        List<ProcessVariable> result = dbService.getVariables(pi, scope);
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getValue()).isEqualTo("local"); // local shadows root
+        List<ProcessVariable> expected = List.of(newVar("a", "1", ProcessVariableType.STRING));
+        when(variableDbOperations.getVariables(pi, scope)).thenReturn(expected);
+        assertThat(dbService.getVariables(pi, scope)).isEqualTo(expected);
+        verify(variableDbOperations).getVariables(pi, scope);
     }
 
     @Test
-    void setVariables_withScopeId_savesOrUpdates() {
+    void setVariables_withScopeId_delegates() {
         UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
-        when(variableRepository.findByNameAndProcessInstanceIdAndScopeId("a", pi, scope)).thenReturn(Optional.empty());
-        dbService.setVariables(pi, scope, List.of(newVar("a", "1", ProcessVariableType.LONG)));
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<ProcessVariableEntity>> captor = ArgumentCaptor.forClass(List.class);
-        verify(variableRepository).saveAll(captor.capture());
-        assertThat(captor.getValue().get(0).getScopeId()).isEqualTo(scope);
+        List<ProcessVariable> vars = List.of(newVar("a", "1", ProcessVariableType.LONG));
+        dbService.setVariables(pi, scope, vars);
+        verify(variableDbOperations).setVariables(pi, scope, vars);
     }
 
     @Test
-    void deleteVariables_callsRepo() {
+    void deleteVariables_delegates() {
         UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
         dbService.deleteVariables(pi, scope);
-        verify(variableRepository).deleteByProcessInstanceIdAndScopeId(pi, scope);
+        verify(variableDbOperations).deleteVariables(pi, scope);
     }
 
     // ─── Message subscriptions (overloads + event subprocess + byKey) ─
