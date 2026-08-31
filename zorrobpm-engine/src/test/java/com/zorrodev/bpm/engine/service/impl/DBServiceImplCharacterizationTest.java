@@ -9,8 +9,6 @@ import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
-import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
-import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
@@ -20,8 +18,6 @@ import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
-import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
@@ -29,6 +25,7 @@ import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
+import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
@@ -83,12 +80,11 @@ class DBServiceImplCharacterizationTest {
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private UserTaskDbOperations userTaskDbOperations;
     @Mock private IncidentDbOperations incidentDbOperations;
+    @Mock private MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
     @Mock private TimerJobRepository timerJobRepository;
-    @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
     @Mock private SignalSubscriptionRepository signalSubscriptionRepository;
     @Mock private SignalStartSubscriptionRepository signalStartSubscriptionRepository;
-    @Mock private MessageStartSubscriptionRepository messageStartSubscriptionRepository;
     @Mock private TimerStartJobRepository timerStartJobRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private DomainEventEmitter domainEventEmitter;
@@ -279,77 +275,92 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── Message subscriptions (overloads + event subprocess + byKey) ─
+    // WO-DEBT-1k: moved to MessageSubscriptionDbOperationsImpl — DBServiceImpl now only delegates.
 
     @Test
-    void createMessageSubscription_withBoundary_persists() {
-        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID();
-        UUID id = dbService.createMessageSubscription(pi, act, "m", "boundary");
-        assertThat(id).isNotNull();
-        ArgumentCaptor<MessageSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageSubscriptionEntity.class);
-        verify(messageSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getBoundaryElementId()).isEqualTo("boundary");
-        assertThat(captor.getValue().isConsumed()).isFalse();
+    void createMessageSubscription_withBoundary_delegates() {
+        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(messageSubscriptionDbOperations.createMessageSubscription(pi, act, "m", "boundary")).thenReturn(expected);
+        assertThat(dbService.createMessageSubscription(pi, act, "m", "boundary")).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).createMessageSubscription(pi, act, "m", "boundary");
     }
 
     @Test
-    void createMessageSubscription_withCorrelationKey_persists() {
-        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID();
-        UUID id = dbService.createMessageSubscription(pi, act, "m", "boundary", "ck");
-        assertThat(id).isNotNull();
-        ArgumentCaptor<MessageSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageSubscriptionEntity.class);
-        verify(messageSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getCorrelationKey()).isEqualTo("ck");
+    void createMessageSubscription_withCorrelationKey_delegates() {
+        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(messageSubscriptionDbOperations.createMessageSubscription(pi, act, "m", "boundary", "ck")).thenReturn(expected);
+        assertThat(dbService.createMessageSubscription(pi, act, "m", "boundary", "ck")).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).createMessageSubscription(pi, act, "m", "boundary", "ck");
     }
 
     @Test
-    void createEventSubprocessMessageSubscription_persistsWithNullActivity() {
-        UUID pi = UUID.randomUUID();
-        UUID id = dbService.createEventSubprocessMessageSubscription(pi, "m", "esp");
-        assertThat(id).isNotNull();
-        ArgumentCaptor<MessageSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageSubscriptionEntity.class);
-        verify(messageSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getActivityId()).isNull();
-        assertThat(captor.getValue().getEventSubprocessId()).isEqualTo("esp");
+    void createEventSubprocessMessageSubscription_delegates() {
+        UUID pi = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(messageSubscriptionDbOperations.createEventSubprocessMessageSubscription(pi, "m", "esp")).thenReturn(expected);
+        assertThat(dbService.createEventSubprocessMessageSubscription(pi, "m", "esp")).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).createEventSubprocessMessageSubscription(pi, "m", "esp");
     }
 
     @Test
-    void findMessageSubscriptionsByKey_returnsMapped() {
-        MessageSubscriptionEntity e = new MessageSubscriptionEntity(); e.setId(UUID.randomUUID()); e.setProcessInstanceId(UUID.randomUUID()); e.setActivityId(UUID.randomUUID()); e.setMessageName("m");
-        when(messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndCorrelationKey("m", "ck")).thenReturn(List.of(e));
+    void findMessageSubscriptionsByKey_delegates() {
+        MessageSubscription e = new MessageSubscription(); e.setId(UUID.randomUUID());
+        when(messageSubscriptionDbOperations.findMessageSubscriptionsByKey("m", "ck")).thenReturn(List.of(e));
         List<MessageSubscription> result = dbService.findMessageSubscriptionsByKey("m", "ck");
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getId()).isEqualTo(e.getId());
+        verify(messageSubscriptionDbOperations).findMessageSubscriptionsByKey("m", "ck");
     }
 
     @Test
-    void createMessageStartSubscription_persists() {
+    void createMessageStartSubscription_delegates() {
         UUID pd = UUID.randomUUID();
         dbService.createMessageStartSubscription("key", pd, "el", "m");
-        ArgumentCaptor<MessageStartSubscriptionEntity> captor = ArgumentCaptor.forClass(MessageStartSubscriptionEntity.class);
-        verify(messageStartSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getProcessKey()).isEqualTo("key");
-        assertThat(captor.getValue().getMessageName()).isEqualTo("m");
+        verify(messageSubscriptionDbOperations).createMessageStartSubscription("key", pd, "el", "m");
     }
 
     @Test
-    void deleteMessageStartSubscriptionsByKey_callsRepo() {
+    void deleteMessageStartSubscriptionsByKey_delegates() {
         dbService.deleteMessageStartSubscriptionsByKey("key");
-        verify(messageStartSubscriptionRepository).deleteByProcessKey("key");
+        verify(messageSubscriptionDbOperations).deleteMessageStartSubscriptionsByKey("key");
     }
 
     @Test
-    void findMessageStartSubscriptions_returnsMapped() {
-        MessageStartSubscriptionEntity e = new MessageStartSubscriptionEntity(); e.setId(UUID.randomUUID()); e.setProcessKey("key"); e.setProcessDefinitionId(UUID.randomUUID()); e.setElementId("el"); e.setMessageName("m");
-        when(messageStartSubscriptionRepository.findByMessageName("m")).thenReturn(List.of(e));
-        List<?> result = dbService.findMessageStartSubscriptions("m");
-        assertThat(result).hasSize(1);
+    void findMessageStartSubscriptions_delegates() {
+        List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> expected = List.of(new com.zorrodev.bpm.engine.dto.MessageStartSubscription());
+        when(messageSubscriptionDbOperations.findMessageStartSubscriptions("m")).thenReturn(expected);
+        assertThat(dbService.findMessageStartSubscriptions("m")).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).findMessageStartSubscriptions("m");
     }
 
     @Test
-    void deleteMessageSubscriptionsByProcessInstanceId_callsRepo() {
+    void deleteMessageSubscriptionsByProcessInstanceId_delegates() {
         UUID pi = UUID.randomUUID();
         dbService.deleteMessageSubscriptionsByProcessInstanceId(pi);
-        verify(messageSubscriptionRepository).deleteByProcessInstanceId(pi);
+        verify(messageSubscriptionDbOperations).deleteMessageSubscriptionsByProcessInstanceId(pi);
+    }
+
+    @Test
+    void findMessageSubscriptions_delegates() {
+        List<MessageSubscription> expected = List.of(new MessageSubscription());
+        UUID pi = UUID.randomUUID();
+        when(messageSubscriptionDbOperations.findMessageSubscriptions("m", pi)).thenReturn(expected);
+        assertThat(dbService.findMessageSubscriptions("m", pi)).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).findMessageSubscriptions("m", pi);
+    }
+
+    @Test
+    void createMessageSubscription_delegates() {
+        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(messageSubscriptionDbOperations.createMessageSubscription(pi, act, "m")).thenReturn(expected);
+        assertThat(dbService.createMessageSubscription(pi, act, "m")).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).createMessageSubscription(pi, act, "m");
+    }
+
+    @Test
+    void consumeMessageSubscription_delegates() {
+        UUID id = UUID.randomUUID();
+        when(messageSubscriptionDbOperations.consumeMessageSubscription(id)).thenReturn(true);
+        assertThat(dbService.consumeMessageSubscription(id)).isTrue();
+        verify(messageSubscriptionDbOperations).consumeMessageSubscription(id);
     }
 
     // ─── Signal subscriptions ──────────────────────────────────
