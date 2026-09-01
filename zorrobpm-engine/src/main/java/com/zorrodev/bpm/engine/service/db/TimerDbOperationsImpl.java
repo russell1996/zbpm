@@ -163,6 +163,11 @@ public class TimerDbOperationsImpl implements TimerDbOperations {
     @Override
     @Transactional
     public boolean claimTimerJob(UUID timerJobId) {
+        // WO-REL-13: NON-BLOCKING claim. The SKIP LOCKED row lock from findDueTimerJobsLocked is
+        // released as soon as the selection transaction commits, so two pollers (multinode) can
+        // select the SAME due row. A plain UPDATE here would then block on the other poller's
+        // uncommitted row lock → cross-poller deadlock. FOR UPDATE SKIP LOCKED makes the claim
+        // either win instantly or lose instantly (row already locked → skipped → 0 rows).
         List<UUID> locked = jdbcTemplate.queryForList(
             "SELECT id FROM timer_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED",
             UUID.class, timerJobId);
@@ -175,6 +180,7 @@ public class TimerDbOperationsImpl implements TimerDbOperations {
     @Override
     @Transactional
     public boolean claimTimerStartJob(UUID timerStartJobId) {
+        // WO-REL-13: NON-BLOCKING claim — see claimTimerJob.
         List<UUID> locked = jdbcTemplate.queryForList(
             "SELECT id FROM timer_start_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED",
             UUID.class, timerStartJobId);

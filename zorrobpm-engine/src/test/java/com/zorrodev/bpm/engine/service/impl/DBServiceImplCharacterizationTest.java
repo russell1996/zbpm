@@ -19,7 +19,6 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
-import com.zorrodev.bpm.engine.service.db.TimerDbOperations;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
