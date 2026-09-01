@@ -68,7 +68,9 @@ class QueryServiceImplCharacterizationTest {
         when(timerJobRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
         when(timerJobMapper.toDTO(any(TimerJobEntity.class))).thenReturn(new TimerJob());
         PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, null);
-        assertThat(result.getPageSize()).isEqualTo(200);
+        org.mockito.ArgumentCaptor<PageRequest> captor = org.mockito.ArgumentCaptor.forClass(PageRequest.class);
+        verify(timerJobRepository).findAll(any(Specification.class), captor.capture());
+        assertThat(captor.getValue().getPageSize()).isEqualTo(200);
         assertThat(result.getData()).hasSize(1);
     }
 
