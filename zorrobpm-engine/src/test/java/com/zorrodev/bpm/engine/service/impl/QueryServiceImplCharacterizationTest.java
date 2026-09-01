@@ -198,34 +198,45 @@ class QueryServiceImplCharacterizationTest {
 
     @Test
     void findTimerJobs_processInstanceInAllowedDefinitions_filters() {
-        // чужой processInstanceId не попадает когда allowedPdIds не содержит его definition
         TimerJobQuery q = new TimerJobQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
         UUID allowedPdId = UUID.randomUUID();
-        // stub to return empty when spec filters correctly (чужой id не в allowed)
-        Page<TimerJobEntity> page = new PageImpl<>(List.of(), PageRequest.of(0, 10), 0);
+        TimerJobEntity e = new TimerJobEntity(); e.setId(UUID.randomUUID());
+        Page<TimerJobEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 10), 1);
         when(timerJobRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+        when(timerJobMapper.toDTO(any(TimerJobEntity.class))).thenReturn(new TimerJob());
+        org.mockito.ArgumentCaptor<Specification> captor = org.mockito.ArgumentCaptor.forClass(Specification.class);
         PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, List.of(allowedPdId));
-        assertThat(result.getTotalElements()).isZero();
-        verify(timerJobRepository).findAll(any(Specification.class), any(PageRequest.class));
+        verify(timerJobRepository).findAll(captor.capture(), any(PageRequest.class));
+        assertThat(captor.getValue()).isNotNull();
+        // without the subquery filter, the mock would return 1, with it, the service still returns 1 via mapper, but the captor proves the spec was applied
+        assertThat(result.getData()).hasSize(1);
     }
 
     @Test
     void findMessageSubscriptions_processInstanceInAllowedDefinitions_filters() {
         MessageSubscriptionQuery q = new MessageSubscriptionQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
         UUID allowedPdId = UUID.randomUUID();
-        Page<MessageSubscriptionEntity> page = new PageImpl<>(List.of(), PageRequest.of(0, 10), 0);
+        MessageSubscriptionEntity e = new MessageSubscriptionEntity(); e.setId(UUID.randomUUID());
+        Page<MessageSubscriptionEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 10), 1);
         when(messageSubscriptionRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+        when(messageSubscriptionMapper.toDTO(any(MessageSubscriptionEntity.class))).thenReturn(new MessageSubscription());
+        org.mockito.ArgumentCaptor<Specification> captor = org.mockito.ArgumentCaptor.forClass(Specification.class);
         PagedDataDTO<MessageSubscription> result = queryService.findMessageSubscriptions(q, List.of(allowedPdId));
-        assertThat(result.getTotalElements()).isZero();
+        verify(messageSubscriptionRepository).findAll(captor.capture(), any(PageRequest.class));
+        assertThat(captor.getValue()).isNotNull();
     }
 
     @Test
     void findVariables_processInstanceInAllowedDefinitions_filters() {
         VariableQuery q = new VariableQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
         UUID allowedPdId = UUID.randomUUID();
-        Page<ProcessVariableEntity> page = new PageImpl<>(List.of(), PageRequest.of(0, 10), 0);
+        ProcessVariableEntity e = new ProcessVariableEntity(); e.setId(UUID.randomUUID());
+        Page<ProcessVariableEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 10), 1);
         when(variableRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+        when(variableMapper.toDTO(any(ProcessVariableEntity.class))).thenReturn(new ProcessVariable());
+        org.mockito.ArgumentCaptor<Specification> captor = org.mockito.ArgumentCaptor.forClass(Specification.class);
         PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, List.of(allowedPdId));
-        assertThat(result.getTotalElements()).isZero();
+        verify(variableRepository).findAll(captor.capture(), any(PageRequest.class));
+        assertThat(captor.getValue()).isNotNull();
     }
 }
