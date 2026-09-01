@@ -67,12 +67,14 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
+        // WO-EVT-9: service tasks carry their stable job id in the event data; other element types keep data empty.
         String job = serviceTaskRepository.findById(activityId).map(ServiceTaskEntity::getJob).orElse(null);
         domainEventEmitter.emitActivityCompleted(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), job);
     }
 
     @Override
     public void errorActivity(UUID activityId) {
+        // ERROR is a parked state, not a completion: leave completedAt unset
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.ERROR, null);
     }
 
