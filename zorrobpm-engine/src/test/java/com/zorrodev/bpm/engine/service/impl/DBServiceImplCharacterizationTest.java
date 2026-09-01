@@ -13,15 +13,12 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
-import com.zorrodev.bpm.engine.entity.TimerJobEntity;
-import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
+import com.zorrodev.bpm.engine.service.db.TimerDbOperations;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
-import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
-import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
@@ -80,9 +77,8 @@ class DBServiceImplCharacterizationTest {
     @Mock private IncidentDbOperations incidentDbOperations;
     @Mock private MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
-    @Mock private TimerJobRepository timerJobRepository;
+    @Mock private TimerDbOperations timerDbOperations;
     @Mock private SignalSubscriptionDbOperations signalSubscriptionDbOperations;
-    @Mock private TimerStartJobRepository timerStartJobRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private DomainEventEmitter domainEventEmitter;
     @Mock private JdbcTemplate jdbcTemplate;
@@ -427,90 +423,98 @@ class DBServiceImplCharacterizationTest {
 
     // ─── Timers (uncovered) ─────────────────────────────────────
 
+    // WO-DEBT-1m: moved to TimerDbOperationsImpl — DBServiceImpl now only delegates.
     @Test
-    void createEventSubprocessTimerJob_persistsWithNullActivity() {
-        UUID pi = UUID.randomUUID(); Instant due = Instant.now().plusSeconds(60);
-        UUID id = dbService.createEventSubprocessTimerJob(pi, due, "esp");
-        assertThat(id).isNotNull();
-        ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);
-        verify(timerJobRepository).save(captor.capture());
-        assertThat(captor.getValue().getActivityId()).isNull();
-        assertThat(captor.getValue().getEventSubprocessId()).isEqualTo("esp");
-        assertThat(captor.getValue().isFired()).isFalse();
+    void createEventSubprocessTimerJob_delegates() {
+        UUID pi = UUID.randomUUID(); Instant due = Instant.now().plusSeconds(60); UUID expected = UUID.randomUUID();
+        when(timerDbOperations.createEventSubprocessTimerJob(pi, due, "esp")).thenReturn(expected);
+        assertThat(dbService.createEventSubprocessTimerJob(pi, due, "esp")).isEqualTo(expected);
+        verify(timerDbOperations).createEventSubprocessTimerJob(pi, due, "esp");
     }
 
     @Test
-    void findDueTimerJobsLocked_returnsMapped() {
+    void createTimerJob_delegates() {
+        UUID act = UUID.randomUUID(); Instant due = Instant.now().plusSeconds(60); UUID expected = UUID.randomUUID();
+        when(timerDbOperations.createTimerJob(eq(act), any(Instant.class), any(), any(), any(), any())).thenReturn(expected);
+        assertThat(dbService.createTimerJob(act, due, null, null, null, null)).isEqualTo(expected);
+        verify(timerDbOperations).createTimerJob(eq(act), any(Instant.class), any(), any(), any(), any());
+    }
+
+    @Test
+    void findDueTimerJobs_delegates() {
         Instant now = Instant.now();
-        TimerJobEntity e = new TimerJobEntity(); e.setId(UUID.randomUUID()); e.setActivityId(UUID.randomUUID()); e.setDueAt(now);
-        when(timerJobRepository.findDueLocked(now, 10)).thenReturn(List.of(e));
-        List<TimerJob> result = dbService.findDueTimerJobsLocked(now, 10);
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getActivityId()).isEqualTo(e.getActivityId());
+        List<TimerJob> expected = List.of(new TimerJob());
+        when(timerDbOperations.findDueTimerJobs(now)).thenReturn(expected);
+        assertThat(dbService.findDueTimerJobs(now)).isEqualTo(expected);
+        verify(timerDbOperations).findDueTimerJobs(now);
     }
 
     @Test
-    void recordTimerJobError_callsRepo() {
+    void findDueTimerJobsLocked_delegates() {
+        Instant now = Instant.now();
+        List<TimerJob> expected = List.of(new TimerJob());
+        when(timerDbOperations.findDueTimerJobsLocked(now, 10)).thenReturn(expected);
+        assertThat(dbService.findDueTimerJobsLocked(now, 10)).isEqualTo(expected);
+        verify(timerDbOperations).findDueTimerJobsLocked(now, 10);
+    }
+
+    @Test
+    void recordTimerJobError_delegates() {
         UUID id = UUID.randomUUID();
         dbService.recordTimerJobError(id, "boom");
-        verify(timerJobRepository).recordTimerJobError(id, "boom");
+        verify(timerDbOperations).recordTimerJobError(id, "boom");
     }
 
     @Test
-    void recordTimerStartJobError_callsRepo() {
+    void recordTimerStartJobError_delegates() {
         UUID id = UUID.randomUUID();
         dbService.recordTimerStartJobError(id, "boom");
-        verify(timerStartJobRepository).recordTimerStartJobError(id, "boom");
+        verify(timerDbOperations).recordTimerStartJobError(id, "boom");
     }
 
     @Test
-    void deleteTimerJobsByProcessInstanceId_callsRepo() {
+    void deleteTimerJobsByProcessInstanceId_delegates() {
         UUID pi = UUID.randomUUID();
         dbService.deleteTimerJobsByProcessInstanceId(pi);
-        verify(timerJobRepository).deleteByProcessInstanceId(pi);
+        verify(timerDbOperations).deleteTimerJobsByProcessInstanceId(pi);
     }
 
     @Test
-    void createTimerStartJob_4arg_persists() {
+    void createTimerStartJob_4arg_delegates() {
         UUID pd = UUID.randomUUID(); Instant due = Instant.now().plusSeconds(60);
         dbService.createTimerStartJob("key", pd, "el", due);
-        ArgumentCaptor<TimerStartJobEntity> captor = ArgumentCaptor.forClass(TimerStartJobEntity.class);
-        verify(timerStartJobRepository).save(captor.capture());
-        assertThat(captor.getValue().getProcessKey()).isEqualTo("key");
-        assertThat(captor.getValue().isFired()).isFalse();
+        verify(timerDbOperations).createTimerStartJob("key", pd, "el", due);
     }
 
     @Test
-    void createTimerStartJob_5arg_persistsRemainingCount() {
+    void createTimerStartJob_5arg_delegates() {
         UUID pd = UUID.randomUUID(); Instant due = Instant.now().plusSeconds(60);
         dbService.createTimerStartJob("key", pd, "el", due, 5);
-        ArgumentCaptor<TimerStartJobEntity> captor = ArgumentCaptor.forClass(TimerStartJobEntity.class);
-        verify(timerStartJobRepository).save(captor.capture());
-        assertThat(captor.getValue().getRemainingCount()).isEqualTo(5);
+        verify(timerDbOperations).createTimerStartJob("key", pd, "el", due, 5);
     }
 
     @Test
-    void deleteTimerStartJobsByKey_callsRepo() {
+    void deleteTimerStartJobsByKey_delegates() {
         dbService.deleteTimerStartJobsByKey("key");
-        verify(timerStartJobRepository).deleteByProcessKey("key");
+        verify(timerDbOperations).deleteTimerStartJobsByKey("key");
     }
 
     @Test
-    void findDueTimerStartJobs_returnsMapped() {
+    void findDueTimerStartJobs_delegates() {
         Instant now = Instant.now();
-        TimerStartJobEntity e = new TimerStartJobEntity(); e.setId(UUID.randomUUID()); e.setProcessKey("key"); e.setElementId("el"); e.setDueAt(now);
-        when(timerStartJobRepository.findByFiredFalseAndDueAtLessThanEqual(now)).thenReturn(List.of(e));
-        List<?> result = dbService.findDueTimerStartJobs(now);
-        assertThat(result).hasSize(1);
+        List<com.zorrodev.bpm.engine.dto.TimerStartJob> expected = List.of(new com.zorrodev.bpm.engine.dto.TimerStartJob());
+        when(timerDbOperations.findDueTimerStartJobs(now)).thenReturn(expected);
+        assertThat(dbService.findDueTimerStartJobs(now)).isEqualTo(expected);
+        verify(timerDbOperations).findDueTimerStartJobs(now);
     }
 
     @Test
-    void findDueTimerStartJobsLocked_returnsMapped() {
+    void findDueTimerStartJobsLocked_delegates() {
         Instant now = Instant.now();
-        TimerStartJobEntity e = new TimerStartJobEntity(); e.setId(UUID.randomUUID()); e.setProcessKey("key"); e.setElementId("el"); e.setDueAt(now);
-        when(timerStartJobRepository.findDueLocked(now, 10)).thenReturn(List.of(e));
-        List<?> result = dbService.findDueTimerStartJobsLocked(now, 10);
-        assertThat(result).hasSize(1);
+        List<com.zorrodev.bpm.engine.dto.TimerStartJob> expected = List.of(new com.zorrodev.bpm.engine.dto.TimerStartJob());
+        when(timerDbOperations.findDueTimerStartJobsLocked(now, 10)).thenReturn(expected);
+        assertThat(dbService.findDueTimerStartJobsLocked(now, 10)).isEqualTo(expected);
+        verify(timerDbOperations).findDueTimerStartJobsLocked(now, 10);
     }
 
     // ─── Service tasks (retries) ───────────────────────────────
@@ -621,41 +625,38 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── CAS: claim* single-call characterization (race is PG IT) ──
+    // WO-DEBT-1m: moved to TimerDbOperationsImpl — DBServiceImpl now only delegates.
 
     @Test
-    void claimTimerJob_returnsTrueWhenRowUnlocked() {
+    void claimTimerJob_delegates() {
         UUID id = UUID.randomUUID();
-        when(jdbcTemplate.queryForList(
-                eq("SELECT id FROM timer_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED"),
-                eq(UUID.class), eq(id))).thenReturn(List.of(id));
-        when(timerJobRepository.claimTimerJob(id)).thenReturn(1);
+        when(timerDbOperations.claimTimerJob(id)).thenReturn(true);
         assertThat(dbService.claimTimerJob(id)).isTrue();
+        verify(timerDbOperations).claimTimerJob(id);
     }
 
     @Test
-    void claimTimerJob_returnsFalseWhenRowLockedOrFired() {
+    void claimTimerJob_delegatesFalse() {
         UUID id = UUID.randomUUID();
-        when(jdbcTemplate.queryForList(anyString(), eq(UUID.class), eq(id))).thenReturn(List.of());
+        when(timerDbOperations.claimTimerJob(id)).thenReturn(false);
         assertThat(dbService.claimTimerJob(id)).isFalse();
-        verify(timerJobRepository, never()).claimTimerJob(any());
+        verify(timerDbOperations).claimTimerJob(id);
     }
 
     @Test
-    void claimTimerStartJob_returnsTrueWhenRowUnlocked() {
+    void claimTimerStartJob_delegates() {
         UUID id = UUID.randomUUID();
-        when(jdbcTemplate.queryForList(
-                eq("SELECT id FROM timer_start_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED"),
-                eq(UUID.class), eq(id))).thenReturn(List.of(id));
-        when(timerStartJobRepository.claimTimerStartJob(id)).thenReturn(1);
+        when(timerDbOperations.claimTimerStartJob(id)).thenReturn(true);
         assertThat(dbService.claimTimerStartJob(id)).isTrue();
+        verify(timerDbOperations).claimTimerStartJob(id);
     }
 
     @Test
-    void claimTimerStartJob_returnsFalseWhenRowLockedOrFired() {
+    void claimTimerStartJob_delegatesFalse() {
         UUID id = UUID.randomUUID();
-        when(jdbcTemplate.queryForList(anyString(), eq(UUID.class), eq(id))).thenReturn(List.of());
+        when(timerDbOperations.claimTimerStartJob(id)).thenReturn(false);
         assertThat(dbService.claimTimerStartJob(id)).isFalse();
-        verify(timerStartJobRepository, never()).claimTimerStartJob(any());
+        verify(timerDbOperations).claimTimerStartJob(id);
     }
 
     private static ProcessVariable newVar(String name, String value, ProcessVariableType type) {
