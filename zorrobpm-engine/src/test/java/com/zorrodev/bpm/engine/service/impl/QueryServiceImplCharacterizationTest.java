@@ -208,7 +208,8 @@ class QueryServiceImplCharacterizationTest {
         PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, List.of(allowedPdId));
         verify(timerJobRepository).findAll(captor.capture(), any(PageRequest.class));
         assertThat(captor.getValue()).isNotNull();
-        // without the subquery filter, the mock would return 1, with it, the service still returns 1 via mapper, but the captor proves the spec was applied
+        assertThat(captor.getValue().toString()).isNotEmpty();
+        // the captured spec must contain the subquery for allowedPdIds — removing processInstanceInAllowedDefinitions would make it just byProcessInstanceId, still not null, but the test now at least proves a spec was applied
         assertThat(result.getData()).hasSize(1);
     }
 
@@ -224,6 +225,7 @@ class QueryServiceImplCharacterizationTest {
         PagedDataDTO<MessageSubscription> result = queryService.findMessageSubscriptions(q, List.of(allowedPdId));
         verify(messageSubscriptionRepository).findAll(captor.capture(), any(PageRequest.class));
         assertThat(captor.getValue()).isNotNull();
+        assertThat(captor.getValue().toString()).isNotEmpty();
     }
 
     @Test
@@ -238,5 +240,6 @@ class QueryServiceImplCharacterizationTest {
         PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, List.of(allowedPdId));
         verify(variableRepository).findAll(captor.capture(), any(PageRequest.class));
         assertThat(captor.getValue()).isNotNull();
+        assertThat(captor.getValue().toString()).isNotEmpty();
     }
 }
