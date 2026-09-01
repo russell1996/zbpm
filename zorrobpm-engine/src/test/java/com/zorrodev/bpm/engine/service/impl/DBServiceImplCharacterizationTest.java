@@ -12,7 +12,6 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
-import com.zorrodev.bpm.engine.entity.SignalStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
@@ -20,9 +19,8 @@ import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
-import com.zorrodev.bpm.engine.repository.SignalStartSubscriptionRepository;
-import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
@@ -83,8 +81,7 @@ class DBServiceImplCharacterizationTest {
     @Mock private MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
     @Mock private TimerJobRepository timerJobRepository;
-    @Mock private SignalSubscriptionRepository signalSubscriptionRepository;
-    @Mock private SignalStartSubscriptionRepository signalStartSubscriptionRepository;
+    @Mock private SignalSubscriptionDbOperations signalSubscriptionDbOperations;
     @Mock private TimerStartJobRepository timerStartJobRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private DomainEventEmitter domainEventEmitter;
@@ -364,67 +361,68 @@ class DBServiceImplCharacterizationTest {
     }
 
     // ─── Signal subscriptions ──────────────────────────────────
+    // WO-DEBT-1l: moved to SignalSubscriptionDbOperationsImpl — DBServiceImpl now only delegates.
 
     @Test
-    void createSignalSubscription_withBoundary_persists() {
-        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID();
-        UUID id = dbService.createSignalSubscription(pi, act, "s", "boundary");
-        assertThat(id).isNotNull();
-        ArgumentCaptor<SignalSubscriptionEntity> captor = ArgumentCaptor.forClass(SignalSubscriptionEntity.class);
-        verify(signalSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getBoundaryElementId()).isEqualTo("boundary");
+    void createSignalSubscription_withBoundary_delegates() {
+        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(signalSubscriptionDbOperations.createSignalSubscription(pi, act, "s", "boundary")).thenReturn(expected);
+        assertThat(dbService.createSignalSubscription(pi, act, "s", "boundary")).isEqualTo(expected);
+        verify(signalSubscriptionDbOperations).createSignalSubscription(pi, act, "s", "boundary");
     }
 
     @Test
-    void createSignalSubscription_3arg_persistsWithNullBoundary() {
-        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID();
-        UUID id = dbService.createSignalSubscription(pi, act, "s");
-        assertThat(id).isNotNull();
-        ArgumentCaptor<SignalSubscriptionEntity> captor = ArgumentCaptor.forClass(SignalSubscriptionEntity.class);
-        verify(signalSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getBoundaryElementId()).isNull();
+    void createSignalSubscription_3arg_delegates() {
+        UUID pi = UUID.randomUUID(); UUID act = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(signalSubscriptionDbOperations.createSignalSubscription(pi, act, "s")).thenReturn(expected);
+        assertThat(dbService.createSignalSubscription(pi, act, "s")).isEqualTo(expected);
+        verify(signalSubscriptionDbOperations).createSignalSubscription(pi, act, "s");
     }
 
     @Test
-    void createEventSubprocessSignalSubscription_persistsWithNullActivity() {
-        UUID pi = UUID.randomUUID();
-        UUID id = dbService.createEventSubprocessSignalSubscription(pi, "s", "esp");
-        assertThat(id).isNotNull();
-        ArgumentCaptor<SignalSubscriptionEntity> captor = ArgumentCaptor.forClass(SignalSubscriptionEntity.class);
-        verify(signalSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getActivityId()).isNull();
-        assertThat(captor.getValue().getEventSubprocessId()).isEqualTo("esp");
+    void createEventSubprocessSignalSubscription_delegates() {
+        UUID pi = UUID.randomUUID(); UUID expected = UUID.randomUUID();
+        when(signalSubscriptionDbOperations.createEventSubprocessSignalSubscription(pi, "s", "esp")).thenReturn(expected);
+        assertThat(dbService.createEventSubprocessSignalSubscription(pi, "s", "esp")).isEqualTo(expected);
+        verify(signalSubscriptionDbOperations).createEventSubprocessSignalSubscription(pi, "s", "esp");
     }
 
     @Test
-    void findSignalSubscriptions_returnsMapped() {
-        SignalSubscriptionEntity e = new SignalSubscriptionEntity(); e.setId(UUID.randomUUID()); e.setProcessInstanceId(UUID.randomUUID()); e.setActivityId(UUID.randomUUID()); e.setSignalName("s");
-        when(signalSubscriptionRepository.findByConsumedFalseAndSignalName("s")).thenReturn(List.of(e));
-        List<?> result = dbService.findSignalSubscriptions("s");
-        assertThat(result).hasSize(1);
+    void findSignalSubscriptions_delegates() {
+        List<com.zorrodev.bpm.engine.dto.SignalSubscription> expected = List.of(new com.zorrodev.bpm.engine.dto.SignalSubscription());
+        when(signalSubscriptionDbOperations.findSignalSubscriptions("s")).thenReturn(expected);
+        assertThat(dbService.findSignalSubscriptions("s")).isEqualTo(expected);
+        verify(signalSubscriptionDbOperations).findSignalSubscriptions("s");
     }
 
     @Test
-    void createSignalStartSubscription_persists() {
+    void createSignalStartSubscription_delegates() {
         UUID pd = UUID.randomUUID();
         dbService.createSignalStartSubscription("key", pd, "el", "s");
-        ArgumentCaptor<SignalStartSubscriptionEntity> captor = ArgumentCaptor.forClass(SignalStartSubscriptionEntity.class);
-        verify(signalStartSubscriptionRepository).save(captor.capture());
-        assertThat(captor.getValue().getSignalName()).isEqualTo("s");
+        verify(signalSubscriptionDbOperations).createSignalStartSubscription("key", pd, "el", "s");
     }
 
     @Test
-    void deleteSignalStartSubscriptionsByKey_callsRepo() {
+    void deleteSignalStartSubscriptionsByKey_delegates() {
         dbService.deleteSignalStartSubscriptionsByKey("key");
-        verify(signalStartSubscriptionRepository).deleteByProcessKey("key");
+        verify(signalSubscriptionDbOperations).deleteSignalStartSubscriptionsByKey("key");
     }
 
     @Test
-    void findSignalStartSubscriptions_returnsMapped() {
-        SignalStartSubscriptionEntity e = new SignalStartSubscriptionEntity(); e.setId(UUID.randomUUID()); e.setProcessKey("key"); e.setProcessDefinitionId(UUID.randomUUID()); e.setElementId("el"); e.setSignalName("s");
-        when(signalStartSubscriptionRepository.findBySignalName("s")).thenReturn(List.of(e));
+    void findSignalStartSubscriptions_delegates() {
+        List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> expected = List.of(new com.zorrodev.bpm.engine.dto.SignalStartSubscription());
+        when(signalSubscriptionDbOperations.findSignalStartSubscriptions("s")).thenReturn(expected);
         List<?> result = dbService.findSignalStartSubscriptions("s");
-        assertThat(result).hasSize(1);
+        assertThat(result).isEqualTo(expected);
+        verify(signalSubscriptionDbOperations).findSignalStartSubscriptions("s");
+    }
+
+    @Test
+    void consumeSignalSubscription_delegates() {
+        UUID id = UUID.randomUUID();
+        when(signalSubscriptionDbOperations.consumeSignalSubscription(id)).thenReturn(true);
+        assertThat(dbService.consumeSignalSubscription(id)).isTrue();
+        verify(signalSubscriptionDbOperations).consumeSignalSubscription(id);
     }
 
     // ─── Timers (uncovered) ─────────────────────────────────────

@@ -21,8 +21,8 @@ import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
-import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
@@ -67,7 +67,7 @@ class DBServiceImplTest {
     @Mock private VariableDbOperations variableDbOperations;
     @Mock private MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     @Mock private TimerJobRepository timerJobRepository;
-    @Mock private SignalSubscriptionRepository signalSubscriptionRepository;
+    @Mock private SignalSubscriptionDbOperations signalSubscriptionDbOperations;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
 
@@ -503,20 +503,19 @@ class DBServiceImplTest {
     }
 
     @Test
-    void consumeSignalSubscription_returnsTrue_whenNotYetConsumed() {
+    void consumeSignalSubscription_delegates() {
         UUID id = UUID.randomUUID();
-        when(signalSubscriptionRepository.markConsumed(eq(id))).thenReturn(1);
-
+        when(signalSubscriptionDbOperations.consumeSignalSubscription(id)).thenReturn(true);
         assertThat(dbService.consumeSignalSubscription(id)).isTrue();
-        verify(signalSubscriptionRepository).markConsumed(eq(id));
+        verify(signalSubscriptionDbOperations).consumeSignalSubscription(id);
     }
 
     @Test
-    void consumeSignalSubscription_returnsFalse_whenAlreadyConsumed() {
+    void consumeSignalSubscription_delegatesFalse() {
         UUID id = UUID.randomUUID();
-        when(signalSubscriptionRepository.markConsumed(eq(id))).thenReturn(0);
-
+        when(signalSubscriptionDbOperations.consumeSignalSubscription(id)).thenReturn(false);
         assertThat(dbService.consumeSignalSubscription(id)).isFalse();
+        verify(signalSubscriptionDbOperations).consumeSignalSubscription(id);
     }
 
     private static ProcessVariable newVar(String name, String value, ProcessVariableType type) {
