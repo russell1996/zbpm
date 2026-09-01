@@ -111,6 +111,7 @@ public class SignalSubscriptionDbOperationsImpl implements SignalSubscriptionDbO
     @Override
     @Transactional
     public boolean consumeSignalSubscription(UUID subscriptionId) {
+        // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
         return signalSubscriptionRepository.markConsumed(subscriptionId) == 1;
     }
 }
