@@ -170,4 +170,62 @@ class QueryServiceImplCharacterizationTest {
         assertThat(result.getPageIndex()).isZero();
         assertThat(result.getPageSize()).isEqualTo(1);
     }
+
+    @Test
+    void findServiceTasks_clampedPage_limitsSize_toDTOBulk() {
+        ServiceTaskQuery q = new ServiceTaskQuery(); q.setPageIndex(0); q.setPageSize(500);
+        ServiceTaskEntity e = new ServiceTaskEntity(); e.setId(UUID.randomUUID());
+        Page<ServiceTaskEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 200), 1);
+        when(serviceTaskRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+        when(serviceTaskMapper.toDTOs(any(List.class))).thenReturn(List.of(new ServiceTask()));
+        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(q, null);
+        org.mockito.ArgumentCaptor<PageRequest> captor = org.mockito.ArgumentCaptor.forClass(PageRequest.class);
+        verify(serviceTaskRepository).findAll(any(Specification.class), captor.capture());
+        assertThat(captor.getValue().getPageSize()).isEqualTo(200);
+    }
+
+    @Test
+    void resolveIncidentProcessDefinitionId_returnsMapped() {
+        UUID incidentId = UUID.randomUUID(); UUID activityId = UUID.randomUUID(); UUID piId = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        IncidentEntity ie = new IncidentEntity(); ie.setId(incidentId); ie.setActivityId(activityId);
+        ActivityEntity ae = new ActivityEntity(); ae.setId(activityId); ae.setProcessInstanceId(piId);
+        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(ie));
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(ae));
+        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        assertThat(queryService.resolveIncidentProcessDefinitionId(incidentId)).isEqualTo(pdId);
+    }
+
+    @Test
+    void findTimerJobs_processInstanceInAllowedDefinitions_filters() {
+        // чужой processInstanceId не попадает когда allowedPdIds не содержит его definition
+        TimerJobQuery q = new TimerJobQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
+        UUID allowedPdId = UUID.randomUUID();
+        // stub to return empty when spec filters correctly (чужой id не в allowed)
+        Page<TimerJobEntity> page = new PageImpl<>(List.of(), PageRequest.of(0, 10), 0);
+        when(timerJobRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+        PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, List.of(allowedPdId));
+        assertThat(result.getTotalElements()).isZero();
+        verify(timerJobRepository).findAll(any(Specification.class), any(PageRequest.class));
+    }
+
+    @Test
+    void findMessageSubscriptions_processInstanceInAllowedDefinitions_filters() {
+        MessageSubscriptionQuery q = new MessageSubscriptionQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
+        UUID allowedPdId = UUID.randomUUID();
+        Page<MessageSubscriptionEntity> page = new PageImpl<>(List.of(), PageRequest.of(0, 10), 0);
+        when(messageSubscriptionRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+        PagedDataDTO<MessageSubscription> result = queryService.findMessageSubscriptions(q, List.of(allowedPdId));
+        assertThat(result.getTotalElements()).isZero();
+    }
+
+    @Test
+    void findVariables_processInstanceInAllowedDefinitions_filters() {
+        VariableQuery q = new VariableQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
+        UUID allowedPdId = UUID.randomUUID();
+        Page<ProcessVariableEntity> page = new PageImpl<>(List.of(), PageRequest.of(0, 10), 0);
+        when(variableRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+        PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, List.of(allowedPdId));
+        assertThat(result.getTotalElements()).isZero();
+    }
 }
