@@ -13,18 +13,15 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
-import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
-import com.zorrodev.bpm.engine.entity.TimerStartJobEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
+import com.zorrodev.bpm.engine.service.db.TimerDbOperations;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
-import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
@@ -57,16 +54,14 @@ public class DBServiceImpl implements DBService {
     private final IncidentDbOperations incidentDbOperations;
     private final MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     private final SignalSubscriptionDbOperations signalSubscriptionDbOperations;
+    private final TimerDbOperations timerDbOperations;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ActivityRepository activityRepository;
     private final ServiceTaskRepository serviceTaskRepository;
     private final VariableDbOperations variableDbOperations;
     private final TokenDbOperations tokenDbOperations;
-    private final TimerJobRepository timerJobRepository;
-    private final TimerStartJobRepository timerStartJobRepository;
     private final ProcessInstanceMapper processInstanceMapper;
     private final com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -325,7 +320,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void deleteTimerJobsByProcessInstanceId(UUID processInstanceId) {
-        timerJobRepository.deleteByProcessInstanceId(processInstanceId);
+        timerDbOperations.deleteTimerJobsByProcessInstanceId(processInstanceId);
     }
 
     @Override
@@ -350,101 +345,35 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createTimerJob(UUID activityId, Instant dueAt, String boundaryElementId, Integer remainingCount, String expression, UUID processInstanceId) {
-        UUID id = UUID.randomUUID();
-        TimerJobEntity entity = new TimerJobEntity();
-        entity.setId(id);
-        entity.setActivityId(activityId);
-        entity.setDueAt(dueAt);
-        entity.setFired(false);
-        entity.setCreatedAt(Instant.now());
-        entity.setBoundaryElementId(boundaryElementId);
-        entity.setRemainingCount(remainingCount);
-        entity.setExpression(expression);
-        entity.setProcessInstanceId(processInstanceId);
-        timerJobRepository.save(entity);
-        return id;
+        return timerDbOperations.createTimerJob(activityId, dueAt, boundaryElementId, remainingCount, expression, processInstanceId);
     }
 
     @Override
     public UUID createEventSubprocessTimerJob(UUID processInstanceId, Instant dueAt, String eventSubprocessId) {
-        UUID id = UUID.randomUUID();
-        TimerJobEntity entity = new TimerJobEntity();
-        entity.setId(id);
-        entity.setActivityId(null);
-        entity.setDueAt(dueAt);
-        entity.setFired(false);
-        entity.setCreatedAt(Instant.now());
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setEventSubprocessId(eventSubprocessId);
-        timerJobRepository.save(entity);
-        return id;
+        return timerDbOperations.createEventSubprocessTimerJob(processInstanceId, dueAt, eventSubprocessId);
     }
 
     @Override
     public List<TimerJob> findDueTimerJobs(Instant now) {
-        return timerJobRepository.findByFiredFalseAndDueAtLessThanEqual(now).stream()
-            .map(e -> {
-                TimerJob job = new TimerJob();
-                job.setId(e.getId());
-                job.setActivityId(e.getActivityId());
-                job.setDueAt(e.getDueAt());
-                job.setCreatedAt(e.getCreatedAt());
-                job.setBoundaryElementId(e.getBoundaryElementId());
-                job.setProcessInstanceId(e.getProcessInstanceId());
-                job.setEventSubprocessId(e.getEventSubprocessId());
-                job.setRemainingCount(e.getRemainingCount());
-                job.setExpression(e.getExpression());
-                return job;
-            })
-            .toList();
+        return timerDbOperations.findDueTimerJobs(now);
     }
 
-    /**
-     * WO-REL-13: candidate selection runs in its own SHORT transaction — the SKIP LOCKED row locks
-     * are released as soon as the SELECT returns, before any job is fired. Double execution is then
-     * prevented by the atomic CAS claim inside each fire's REQUIRES_NEW transaction.
-     */
     @Override
     @Transactional
     public List<TimerJob> findDueTimerJobsLocked(Instant now, int batchSize) {
-        return timerJobRepository.findDueLocked(now, batchSize).stream()
-            .map(e -> {
-                TimerJob job = new TimerJob();
-                job.setId(e.getId());
-                job.setActivityId(e.getActivityId());
-                job.setDueAt(e.getDueAt());
-                job.setCreatedAt(e.getCreatedAt());
-                job.setBoundaryElementId(e.getBoundaryElementId());
-                job.setProcessInstanceId(e.getProcessInstanceId());
-                job.setEventSubprocessId(e.getEventSubprocessId());
-                job.setRemainingCount(e.getRemainingCount());
-                job.setExpression(e.getExpression());
-                return job;
-            })
-            .toList();
+        return timerDbOperations.findDueTimerJobsLocked(now, batchSize);
     }
 
     @Override
     @Transactional
     public boolean claimTimerJob(UUID timerJobId) {
-        // WO-REL-13: NON-BLOCKING claim. The SKIP LOCKED row lock from findDueTimerJobsLocked is
-        // released as soon as the selection transaction commits, so two pollers (multinode) can
-        // select the SAME due row. A plain UPDATE here would then block on the other poller's
-        // uncommitted row lock → cross-poller deadlock. FOR UPDATE SKIP LOCKED makes the claim
-        // either win instantly or lose instantly (row already locked → skipped → 0 rows).
-        List<UUID> locked = jdbcTemplate.queryForList(
-            "SELECT id FROM timer_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED",
-            UUID.class, timerJobId);
-        if (locked.isEmpty()) {
-            return false;
-        }
-        return timerJobRepository.claimTimerJob(timerJobId) > 0;
+        return timerDbOperations.claimTimerJob(timerJobId);
     }
 
     @Override
     @Transactional
     public void recordTimerJobError(UUID timerJobId, String errorMessage) {
-        timerJobRepository.recordTimerJobError(timerJobId, errorMessage);
+        timerDbOperations.recordTimerJobError(timerJobId, errorMessage);
     }
 
     @Override
@@ -541,81 +470,40 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, Instant dueAt) {
-        createTimerStartJob(processKey, processDefinitionId, elementId, dueAt, null);
+        timerDbOperations.createTimerStartJob(processKey, processDefinitionId, elementId, dueAt);
     }
 
     @Override
     public void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, Instant dueAt, Integer remainingCount) {
-        TimerStartJobEntity entity = new TimerStartJobEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setProcessKey(processKey);
-        entity.setProcessDefinitionId(processDefinitionId);
-        entity.setElementId(elementId);
-        entity.setDueAt(dueAt);
-        entity.setFired(false);
-        entity.setCreatedAt(Instant.now());
-        entity.setRemainingCount(remainingCount);
-        timerStartJobRepository.save(entity);
+        timerDbOperations.createTimerStartJob(processKey, processDefinitionId, elementId, dueAt, remainingCount);
     }
 
     @Override
     public void deleteTimerStartJobsByKey(String processKey) {
-        timerStartJobRepository.deleteByProcessKey(processKey);
+        timerDbOperations.deleteTimerStartJobsByKey(processKey);
     }
 
     @Override
     public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobs(Instant now) {
-        return timerStartJobRepository.findByFiredFalseAndDueAtLessThanEqual(now).stream()
-            .map(e -> {
-                com.zorrodev.bpm.engine.dto.TimerStartJob job = new com.zorrodev.bpm.engine.dto.TimerStartJob();
-                job.setId(e.getId());
-                job.setProcessKey(e.getProcessKey());
-                job.setProcessDefinitionId(e.getProcessDefinitionId());
-                job.setElementId(e.getElementId());
-                job.setDueAt(e.getDueAt());
-                job.setRemainingCount(e.getRemainingCount());
-                return job;
-            })
-            .toList();
+        return timerDbOperations.findDueTimerStartJobs(now);
     }
 
-    /**
-     * WO-REL-13: candidate selection runs in its own SHORT transaction (see findDueTimerJobsLocked).
-     */
     @Override
     @Transactional
     public List<com.zorrodev.bpm.engine.dto.TimerStartJob> findDueTimerStartJobsLocked(Instant now, int batchSize) {
-        return timerStartJobRepository.findDueLocked(now, batchSize).stream()
-            .map(e -> {
-                com.zorrodev.bpm.engine.dto.TimerStartJob job = new com.zorrodev.bpm.engine.dto.TimerStartJob();
-                job.setId(e.getId());
-                job.setProcessKey(e.getProcessKey());
-                job.setProcessDefinitionId(e.getProcessDefinitionId());
-                job.setElementId(e.getElementId());
-                job.setDueAt(e.getDueAt());
-                job.setRemainingCount(e.getRemainingCount());
-                return job;
-            })
-            .toList();
+        return timerDbOperations.findDueTimerStartJobsLocked(now, batchSize);
     }
 
     @Override
     @Transactional
     public boolean claimTimerStartJob(UUID timerStartJobId) {
-        // WO-REL-13: NON-BLOCKING claim — see claimTimerJob.
-        List<UUID> locked = jdbcTemplate.queryForList(
-            "SELECT id FROM timer_start_jobs WHERE id = ? AND fired = false FOR UPDATE SKIP LOCKED",
-            UUID.class, timerStartJobId);
-        if (locked.isEmpty()) {
-            return false;
-        }
-        return timerStartJobRepository.claimTimerStartJob(timerStartJobId) > 0;
+        return timerDbOperations.claimTimerStartJob(timerStartJobId);
     }
 
     @Override
     @Transactional
     public void recordTimerStartJobError(UUID timerStartJobId, String errorMessage) {
-        timerStartJobRepository.recordTimerStartJobError(timerStartJobId, errorMessage);
+        timerDbOperations.recordTimerStartJobError(timerStartJobId, errorMessage);
     }
 
     @Override

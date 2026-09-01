@@ -17,12 +17,11 @@ import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
-import com.zorrodev.bpm.engine.entity.TimerJobEntity;
-import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
+import com.zorrodev.bpm.engine.service.db.TimerDbOperations;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
 import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
@@ -66,8 +65,8 @@ class DBServiceImplTest {
     @Mock private IncidentDbOperations incidentDbOperations;
     @Mock private VariableDbOperations variableDbOperations;
     @Mock private MessageSubscriptionDbOperations messageSubscriptionDbOperations;
-    @Mock private TimerJobRepository timerJobRepository;
     @Mock private SignalSubscriptionDbOperations signalSubscriptionDbOperations;
+    @Mock private TimerDbOperations timerDbOperations;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
 
@@ -426,47 +425,28 @@ class DBServiceImplTest {
     }
 
     @Test
-    void createTimerJob_persistsUnfiredJob() {
-        UUID activityId = UUID.randomUUID();
-        Instant dueAt = Instant.now().plusSeconds(60);
-
-        UUID id = dbService.createTimerJob(activityId, dueAt, null, null, null, null);
-
-        assertThat(id).isNotNull();
-        ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);
-        verify(timerJobRepository).save(captor.capture());
-        assertThat(captor.getValue().getActivityId()).isEqualTo(activityId);
-        assertThat(captor.getValue().getDueAt()).isEqualTo(dueAt);
-        assertThat(captor.getValue().isFired()).isFalse();
+    void createTimerJob_delegates() {
+        UUID activityId = UUID.randomUUID(); Instant dueAt = Instant.now().plusSeconds(60); UUID expected = UUID.randomUUID();
+        when(timerDbOperations.createTimerJob(eq(activityId), any(Instant.class), any(), any(), any(), any())).thenReturn(expected);
+        assertThat(dbService.createTimerJob(activityId, dueAt, null, null, null, null)).isEqualTo(expected);
+        verify(timerDbOperations).createTimerJob(eq(activityId), any(Instant.class), any(), any(), any(), any());
     }
 
     @Test
-    void createTimerJob_withProcessInstanceId_persistsIt() {
-        UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-        Instant dueAt = Instant.now().plusSeconds(60);
-
-        UUID id = dbService.createTimerJob(activityId, dueAt, "boundary1", 1, "R/PT1M", processInstanceId);
-
-        assertThat(id).isNotNull();
-        ArgumentCaptor<TimerJobEntity> captor = ArgumentCaptor.forClass(TimerJobEntity.class);
-        verify(timerJobRepository).save(captor.capture());
-        assertThat(captor.getValue().getProcessInstanceId()).isEqualTo(processInstanceId);
+    void createTimerJob_withProcessInstanceId_delegates() {
+        UUID activityId = UUID.randomUUID(); UUID processInstanceId = UUID.randomUUID(); Instant dueAt = Instant.now().plusSeconds(60); UUID expected = UUID.randomUUID();
+        when(timerDbOperations.createTimerJob(eq(activityId), any(Instant.class), eq("boundary1"), eq(1), eq("R/PT1M"), eq(processInstanceId))).thenReturn(expected);
+        assertThat(dbService.createTimerJob(activityId, dueAt, "boundary1", 1, "R/PT1M", processInstanceId)).isEqualTo(expected);
+        verify(timerDbOperations).createTimerJob(eq(activityId), any(Instant.class), eq("boundary1"), eq(1), eq("R/PT1M"), eq(processInstanceId));
     }
 
     @Test
-    void findDueTimerJobs_mapsEntities() {
-        Instant now = Instant.now();
-        TimerJobEntity entity = new TimerJobEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setActivityId(UUID.randomUUID());
-        entity.setDueAt(now.minusSeconds(1));
-        when(timerJobRepository.findByFiredFalseAndDueAtLessThanEqual(now)).thenReturn(List.of(entity));
-
+    void findDueTimerJobs_delegates() {
+        Instant now = Instant.now(); TimerJob expected = new TimerJob();
+        when(timerDbOperations.findDueTimerJobs(now)).thenReturn(List.of(expected));
         List<TimerJob> jobs = dbService.findDueTimerJobs(now);
-
         assertThat(jobs).hasSize(1);
-        assertThat(jobs.get(0).getActivityId()).isEqualTo(entity.getActivityId());
+        verify(timerDbOperations).findDueTimerJobs(now);
     }
 
     @Test
