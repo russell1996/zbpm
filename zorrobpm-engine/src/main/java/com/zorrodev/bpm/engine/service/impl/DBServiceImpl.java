@@ -4,26 +4,18 @@ import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
-import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
-import com.zorrodev.bpm.engine.entity.ActivityEntity;
-import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
-import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
-import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
-import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
-import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.TimerDbOperations;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
-import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
+import com.zorrodev.bpm.engine.service.db.ActivityDbOperations;
 import com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessDefinitionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
@@ -55,13 +47,9 @@ public class DBServiceImpl implements DBService {
     private final MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     private final SignalSubscriptionDbOperations signalSubscriptionDbOperations;
     private final TimerDbOperations timerDbOperations;
-    private final ProcessInstanceRepository processInstanceRepository;
-    private final ActivityRepository activityRepository;
-    private final ServiceTaskRepository serviceTaskRepository;
+    private final ActivityDbOperations activityDbOperations;
     private final VariableDbOperations variableDbOperations;
     private final TokenDbOperations tokenDbOperations;
-    private final ProcessInstanceMapper processInstanceMapper;
-    private final com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -70,86 +58,47 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public UUID createActivity(UUID processInstanceId, UUID token, BpmnElementModel element) {
-        UUID id = UUID.randomUUID();
-        ActivityEntity entity = new ActivityEntity();
-        entity.setId(id);
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setCreatedAt(Instant.now());
-        entity.setStatus(ActivityStatus.CREATED);
-        entity.setType(element.getType());
-        entity.setBpmnElementId(element.getId());
-        entity.setToken(token);
-        activityRepository.saveAndFlush(entity);
-        return id;
+        return activityDbOperations.createActivity(processInstanceId, token, element);
     }
 
     @Override
     public UUID createActivity(UUID processInstanceId, UUID token, BpmnFlowModel element) {
-        UUID id = UUID.randomUUID();
-        ActivityEntity entity = new ActivityEntity();
-        entity.setId(id);
-        entity.setProcessInstanceId(processInstanceId);
-        entity.setCreatedAt(Instant.now());
-        entity.setStatus(ActivityStatus.CREATED);
-        entity.setType(BpmnElementType.SEQUENCE_FLOW);
-        entity.setBpmnElementId(element.getFlowId());
-        entity.setToken(token);
-        activityRepository.saveAndFlush(entity);
-        return id;
+        return activityDbOperations.createActivity(processInstanceId, token, element);
     }
 
     @Override
     public void completeActivity(UUID activityId) {
-        ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
-        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
-        ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
-        // WO-EVT-9: service tasks carry their stable job id in the event data; other element types keep data empty.
-        String job = serviceTaskRepository.findById(activityId).map(ServiceTaskEntity::getJob).orElse(null);
-        domainEventEmitter.emitActivityCompleted(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), job);
+        activityDbOperations.completeActivity(activityId);
     }
 
     @Override
     public void errorActivity(UUID activityId) {
-        // ERROR is a parked state, not a completion: leave completedAt unset
-        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.ERROR, null);
+        activityDbOperations.errorActivity(activityId);
     }
 
     @Override
     public void cancelActivity(UUID activityId) {
-        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.CANCELLED, Instant.now());
+        activityDbOperations.cancelActivity(activityId);
     }
 
     @Override
     public void cancelActiveActivities(UUID processInstanceId) {
-        List<ActivityEntity> active = activityRepository.findByProcessInstanceIdAndStatusIn(
-            processInstanceId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));
-        for (ActivityEntity activity : active) {
-            activityRepository.setStatusAndCompletedAt(activity.getId(), ActivityStatus.CANCELLED, Instant.now());
-        }
+        activityDbOperations.cancelActiveActivities(processInstanceId);
     }
 
     @Override
     public void cancelActiveActivitiesForToken(UUID tokenId) {
-        List<ActivityEntity> active = activityRepository.findByTokenAndStatusIn(
-            tokenId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));
-        for (ActivityEntity activity : active) {
-            activityRepository.setStatusAndCompletedAt(activity.getId(), ActivityStatus.CANCELLED, Instant.now());
-        }
+        activityDbOperations.cancelActiveActivitiesForToken(tokenId);
     }
 
     @Override
     public List<Activity> getActiveActivities(UUID processInstanceId) {
-        return activityRepository.findByProcessInstanceIdAndStatusIn(
-                processInstanceId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS)).stream()
-            .map(this::getActivity)
-            .toList();
+        return activityDbOperations.getActiveActivities(processInstanceId);
     }
 
     @Override
     public boolean hasActiveActivityOnTokenAndElement(UUID tokenId, String bpmnElementId) {
-        return !activityRepository.findByTokenAndBpmnElementIdAndStatusIn(
-                tokenId, bpmnElementId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS))
-            .isEmpty();
+        return activityDbOperations.hasActiveActivityOnTokenAndElement(tokenId, bpmnElementId);
     }
 
     @Override
@@ -164,10 +113,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public List<Activity> getCompletedActivities(UUID processInstanceId) {
-        return activityRepository.findByProcessInstanceIdAndStatusIn(
-                processInstanceId, List.of(ActivityStatus.COMPLETED)).stream()
-            .map(this::getActivity)
-            .toList();
+        return activityDbOperations.getCompletedActivities(processInstanceId);
     }
 
     @Override
@@ -232,8 +178,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public Activity getActivity(UUID activityId) {
-        ActivityEntity activityEntity = activityRepository.findById(activityId).orElseThrow();
-        return getActivity(activityEntity);
+        return activityDbOperations.getActivity(activityId);
     }
 
     @Override
@@ -263,9 +208,7 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public List<Activity> getActivitiesByTokenAndBpmnElementId(UUID token, String bpmnElementId) {
-        return activityRepository.findByTokenAndBpmnElementId(token, bpmnElementId).stream()
-            .map(this::getActivity)
-            .toList();
+        return activityDbOperations.getActivitiesByTokenAndBpmnElementId(token, bpmnElementId);
     }
 
     @Override
@@ -531,16 +474,4 @@ public class DBServiceImpl implements DBService {
         return parallelGatewayDbOperations.getInclusiveExpected(processInstanceId, gatewayElementId);
     }
 
-    private Activity getActivity(ActivityEntity activityEntity) {
-        Activity activity = new Activity();
-        activity.setId(activityEntity.getId());
-        activity.setProcessInstanceId(activityEntity.getProcessInstanceId());
-        activity.setBpmnElementId(activityEntity.getBpmnElementId());
-        activity.setCreatedAt(activityEntity.getCreatedAt());
-        activity.setCompletedAt(activityEntity.getCompletedAt());
-        activity.setStatus(activityEntity.getStatus());
-        activity.setType(activityEntity.getType());
-        activity.setToken(activityEntity.getToken());
-        return activity;
-    }
 }

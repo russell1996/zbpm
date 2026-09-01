@@ -10,15 +10,13 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
-import com.zorrodev.bpm.engine.entity.ActivityEntity;
-import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
-import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
-import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.dto.TimerJob;
+import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
+import com.zorrodev.bpm.engine.service.db.ActivityDbOperations;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.service.db.SignalSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.TimerDbOperations;
@@ -57,9 +55,6 @@ class DBServiceImplTest {
     @Mock private com.zorrodev.bpm.engine.service.db.TokenDbOperations tokenDbOperations;
     @Mock private com.zorrodev.bpm.engine.service.db.ParallelGatewayDbOperations parallelGatewayDbOperations;
     @Mock private com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations processInstanceDbOperations;
-    @Mock private ProcessInstanceRepository processInstanceRepository;
-    @Mock private ActivityRepository activityRepository;
-    @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private ServiceTaskDbOperations serviceTaskDbOperations;
     @Mock private UserTaskDbOperations userTaskDbOperations;
     @Mock private IncidentDbOperations incidentDbOperations;
@@ -67,8 +62,7 @@ class DBServiceImplTest {
     @Mock private MessageSubscriptionDbOperations messageSubscriptionDbOperations;
     @Mock private SignalSubscriptionDbOperations signalSubscriptionDbOperations;
     @Mock private TimerDbOperations timerDbOperations;
-    @Mock private ProcessInstanceMapper processInstanceMapper;
-    @Mock private com.zorrodev.bpm.engine.event.DomainEventEmitter domainEventEmitter;
+    @Mock private ActivityDbOperations activityDbOperations;
 
     @InjectMocks
     private DBServiceImpl dbService;
@@ -99,62 +93,26 @@ class DBServiceImplTest {
     }
 
     @Test
-    void createActivity_byElement_persistsEntity() {
-        UUID processInstanceId = UUID.randomUUID();
-        UUID token = UUID.randomUUID();
-        BpmnElementModel element = new BpmnElementModel();
-        element.setId("startEvent");
-        element.setType(BpmnElementType.START_EVENT);
-
-        UUID id = dbService.createActivity(processInstanceId, token, element);
-
-        assertThat(id).isNotNull();
-        ArgumentCaptor<ActivityEntity> captor = ArgumentCaptor.forClass(ActivityEntity.class);
-        verify(activityRepository).saveAndFlush(captor.capture());
-        ActivityEntity saved = captor.getValue();
-        assertThat(saved.getBpmnElementId()).isEqualTo("startEvent");
-        assertThat(saved.getType()).isEqualTo(BpmnElementType.START_EVENT);
-        assertThat(saved.getProcessInstanceId()).isEqualTo(processInstanceId);
-        assertThat(saved.getToken()).isEqualTo(token);
-        assertThat(saved.getStatus()).isEqualTo(ActivityStatus.CREATED);
+    void createActivity_delegates() {
+        UUID pi = UUID.randomUUID(); UUID token = UUID.randomUUID(); BpmnElementModel el = new BpmnElementModel(); el.setId("x"); UUID expected = UUID.randomUUID();
+        when(activityDbOperations.createActivity(eq(pi), eq(token), any(BpmnElementModel.class))).thenReturn(expected);
+        assertThat(dbService.createActivity(pi, token, el)).isEqualTo(expected);
+        verify(activityDbOperations).createActivity(eq(pi), eq(token), any(BpmnElementModel.class));
     }
 
     @Test
-    void createActivity_byFlow_persistsAsSequenceFlow() {
-        UUID processInstanceId = UUID.randomUUID();
-        UUID token = UUID.randomUUID();
-        BpmnFlowModel flow = new BpmnFlowModel();
-        flow.setFlowId("flow1");
-
-        UUID id = dbService.createActivity(processInstanceId, token, flow);
-
-        assertThat(id).isNotNull();
-        ArgumentCaptor<ActivityEntity> captor = ArgumentCaptor.forClass(ActivityEntity.class);
-        verify(activityRepository).saveAndFlush(captor.capture());
-        assertThat(captor.getValue().getType()).isEqualTo(BpmnElementType.SEQUENCE_FLOW);
-        assertThat(captor.getValue().getBpmnElementId()).isEqualTo("flow1");
+    void createActivity_byFlow_delegates() {
+        UUID pi = UUID.randomUUID(); UUID token = UUID.randomUUID(); BpmnFlowModel flow = new BpmnFlowModel(); flow.setFlowId("f1"); UUID expected = UUID.randomUUID();
+        when(activityDbOperations.createActivity(eq(pi), eq(token), any(BpmnFlowModel.class))).thenReturn(expected);
+        assertThat(dbService.createActivity(pi, token, flow)).isEqualTo(expected);
+        verify(activityDbOperations).createActivity(eq(pi), eq(token), any(BpmnFlowModel.class));
     }
 
     @Test
-    void completeActivity_marksCompleted() {
-        UUID activityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-
-        ActivityEntity activityEntity = new ActivityEntity();
-        activityEntity.setId(activityId);
-        activityEntity.setProcessInstanceId(processInstanceId);
-        activityEntity.setBpmnElementId("element1");
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activityEntity));
-
-        ProcessInstanceEntity piEntity = new ProcessInstanceEntity();
-        piEntity.setId(processInstanceId);
-        piEntity.setProcessDefinitionId(UUID.randomUUID());
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(piEntity));
-
-        dbService.completeActivity(activityId);
-
-        verify(activityRepository).setStatusAndCompletedAt(eq(activityId), eq(ActivityStatus.COMPLETED), any(Instant.class));
-        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("element1"), isNull());
+    void completeActivity_delegates() {
+        UUID id = UUID.randomUUID();
+        dbService.completeActivity(id);
+        verify(activityDbOperations).completeActivity(id);
     }
 
     @Test
@@ -194,44 +152,6 @@ class DBServiceImplTest {
     }
 
     @Test
-    void evt9_activityCompleted_serviceTaskCarriesJob_userTaskStaysEmpty() {
-        UUID serviceActivityId = UUID.randomUUID();
-        UUID processInstanceId = UUID.randomUUID();
-
-        ActivityEntity svc = new ActivityEntity();
-        svc.setId(serviceActivityId);
-        svc.setProcessInstanceId(processInstanceId);
-        svc.setBpmnElementId("Activity_7f3");
-        when(activityRepository.findById(serviceActivityId)).thenReturn(Optional.of(svc));
-
-        ServiceTaskEntity st = new ServiceTaskEntity();
-        st.setId(serviceActivityId);
-        st.setJob("draftCreate");
-        when(serviceTaskRepository.findById(serviceActivityId)).thenReturn(Optional.of(st));
-
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(processInstanceId);
-        pi.setProcessDefinitionId(UUID.randomUUID());
-        when(processInstanceRepository.findById(processInstanceId)).thenReturn(Optional.of(pi));
-
-        dbService.completeActivity(serviceActivityId);
-        // criterion 2a: service task carries data.job
-        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("Activity_7f3"), eq("draftCreate"));
-
-        // criterion 2b: non-service-task element keeps data empty (old overload, no job param)
-        UUID gatewayActivityId = UUID.randomUUID();
-        ActivityEntity gw = new ActivityEntity();
-        gw.setId(gatewayActivityId);
-        gw.setProcessInstanceId(processInstanceId);
-        gw.setBpmnElementId("Gateway_1");
-        when(activityRepository.findById(gatewayActivityId)).thenReturn(Optional.of(gw));
-        when(serviceTaskRepository.findById(gatewayActivityId)).thenReturn(Optional.empty());
-
-        dbService.completeActivity(gatewayActivityId);
-        verify(domainEventEmitter).emitActivityCompleted(eq(processInstanceId), any(UUID.class), eq("Gateway_1"), isNull());
-    }
-
-    @Test
     void incident_delegates() {
         UUID activityId = UUID.randomUUID();
         UUID id = UUID.randomUUID();
@@ -264,31 +184,17 @@ class DBServiceImplTest {
     }
 
     @Test
-    void getActivity_returnsMappedDTO() {
-        UUID id = UUID.randomUUID();
-        ActivityEntity entity = new ActivityEntity();
-        entity.setId(id);
-        entity.setBpmnElementId("e1");
-        entity.setType(BpmnElementType.SERVICE_TASK);
-        entity.setStatus(ActivityStatus.CREATED);
-        entity.setProcessInstanceId(UUID.randomUUID());
-        entity.setToken(UUID.randomUUID());
-
-        when(activityRepository.findById(id)).thenReturn(Optional.of(entity));
-
-        Activity result = dbService.getActivity(id);
-
-        assertThat(result.getId()).isEqualTo(id);
-        assertThat(result.getBpmnElementId()).isEqualTo("e1");
-        assertThat(result.getType()).isEqualTo(BpmnElementType.SERVICE_TASK);
-        assertThat(result.getProcessInstanceId()).isEqualTo(entity.getProcessInstanceId());
+    void getActivity_delegates() {
+        UUID id = UUID.randomUUID(); Activity expected = new Activity(); expected.setId(id);
+        when(activityDbOperations.getActivity(id)).thenReturn(expected);
+        assertThat(dbService.getActivity(id)).isEqualTo(expected);
+        verify(activityDbOperations).getActivity(id);
     }
 
     @Test
-    void getActivity_throwsWhenMissing() {
+    void getActivity_throwsWhenMissing_delegates() {
         UUID id = UUID.randomUUID();
-        when(activityRepository.findById(id)).thenReturn(Optional.empty());
-
+        when(activityDbOperations.getActivity(id)).thenThrow(new NoSuchElementException());
         assertThatThrownBy(() -> dbService.getActivity(id)).isInstanceOf(NoSuchElementException.class);
     }
 
@@ -313,18 +219,11 @@ class DBServiceImplTest {
     }
 
     @Test
-    void getActivitiesByTokenAndBpmnElementId_returnsMapped() {
-        UUID token = UUID.randomUUID();
-        ActivityEntity e = new ActivityEntity();
-        e.setId(UUID.randomUUID());
-        e.setBpmnElementId("x");
-
-        when(activityRepository.findByTokenAndBpmnElementId(token, "x")).thenReturn(List.of(e));
-
-        List<Activity> result = dbService.getActivitiesByTokenAndBpmnElementId(token, "x");
-
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getBpmnElementId()).isEqualTo("x");
+    void getActivitiesByTokenAndBpmnElementId_delegates() {
+        UUID token = UUID.randomUUID(); List<Activity> expected = List.of(new Activity());
+        when(activityDbOperations.getActivitiesByTokenAndBpmnElementId(token, "x")).thenReturn(expected);
+        assertThat(dbService.getActivitiesByTokenAndBpmnElementId(token, "x")).isEqualTo(expected);
+        verify(activityDbOperations).getActivitiesByTokenAndBpmnElementId(token, "x");
     }
 
     @Test
