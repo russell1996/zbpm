@@ -107,6 +107,11 @@ public class TimerDbOperationsImpl implements TimerDbOperations {
             .toList();
     }
 
+    /**
+     * WO-REL-13: candidate selection runs in its own SHORT transaction — the SKIP LOCKED row locks
+     * are released as soon as the SELECT returns, before any job is fired. Double execution is then
+     * prevented by the atomic CAS claim inside each fire's REQUIRES_NEW transaction.
+     */
     @Override
     @Transactional
     public List<TimerJob> findDueTimerJobsLocked(Instant now, int batchSize) {
@@ -143,6 +148,9 @@ public class TimerDbOperationsImpl implements TimerDbOperations {
             .toList();
     }
 
+    /**
+     * WO-REL-13: candidate selection runs in its own SHORT transaction (see findDueTimerJobsLocked).
+     */
     @Override
     @Transactional
     public List<TimerStartJob> findDueTimerStartJobsLocked(Instant now, int batchSize) {
