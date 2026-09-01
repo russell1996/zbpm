@@ -143,23 +143,14 @@ class QueryPaginationSupportTest {
         lenient().when(piRoot.get(anyString())).thenReturn((Path) piIdPath);
         lenient().when(piIdPath.in(anyCollection())).thenReturn(mock(Predicate.class));
         lenient().when(root.get(anyString())).thenReturn((Path) processInstanceIdPath);
-        // in(Subquery) is overloaded — stub via doReturn to avoid ambiguous Mockito matcher
         Predicate mockPredicate = mock(Predicate.class);
         doReturn(mockPredicate).when(processInstanceIdPath).in(any(Subquery.class));
 
-        Predicate predicate = spec.toPredicate(root, query, cb);
-        // predicate is mockPredicate if stub matched, else null — we at least verify the spec didn't throw
-        // and that subquery machinery was invoked
+        spec.toPredicate(root, query, cb);
         verify(query).subquery(UUID.class);
         verify(subquery).from(ProcessInstanceEntity.class);
         verify(subquery).select(any());
-        // If stub matched, predicate will be mockPredicate; if not, we still prove spec was invocable
-        if (predicate == null) {
-            // fallback: prove spec was created and can be combined
-            assertThat(Specification.allOf(spec)).isNotNull();
-        } else {
-            assertThat(predicate).isNotNull();
-        }
+        verify(root).get("processInstanceId");
     }
 
     @Test
