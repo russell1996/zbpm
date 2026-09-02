@@ -15,14 +15,13 @@ import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
-import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
+import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.mapper.IncidentMapper;
 import com.zorrodev.bpm.engine.mapper.MessageSubscriptionMapper;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.TimerJobMapper;
-import com.zorrodev.bpm.engine.mapper.ServiceTaskMapper;
 import com.zorrodev.bpm.engine.mapper.UserTaskMapper;
 import com.zorrodev.bpm.engine.mapper.VariableMapper;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
@@ -36,7 +35,6 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
-import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
@@ -68,8 +66,8 @@ public class QueryServiceImpl implements QueryService {
     private final DBService dbService;
     private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbc;
     private final ActivityQueryOperations activityQueryOperations;
+    private final ServiceTaskQueryOperations serviceTaskQueryOperations;
 
-    private final ServiceTaskMapper serviceTaskMapper;
     private final UserTaskMapper userTaskMapper;
     private final ProcessInstanceMapper processInstanceMapper;
     private final IncidentMapper incidentMapper;
@@ -78,7 +76,6 @@ public class QueryServiceImpl implements QueryService {
     private final MessageSubscriptionMapper messageSubscriptionMapper;
 
     private final UserTaskRepository userTaskRepository;
-    private final ServiceTaskRepository serviceTaskRepository;
     private final IncidentRepository incidentRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final VariableRepository variableRepository;
@@ -137,31 +134,12 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query, Collection<UUID> allowedPdIds) {
-        List<Specification<ServiceTaskEntity>> specifications = new LinkedList<>();
-        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
-            return emptyPage(query);
-        }
-        if (allowedPdIds != null) {
-            // ServiceTaskEntity has processDefinitionId directly
-            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
-        }
-        if (query.getProcessInstanceId() != null) {
-            specifications.add(ServiceTaskRepository.byProcessInstanceId(query.getProcessInstanceId()));
-        }
-        if (query.getId() != null) {
-            specifications.add(ServiceTaskRepository.byId(query.getId()));
-        }
-        if (query.getCompleted() != null) {
-            specifications.add(ServiceTaskRepository.byCompleted(query.getCompleted()));
-        }
-        Specification<ServiceTaskEntity> all = Specification.allOf(specifications);
-        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
-        return toDTOBulk(serviceTaskRepository.findAll(all, page), serviceTaskMapper::toDTOs);
+        return serviceTaskQueryOperations.findServiceTasks(query, allowedPdIds);
     }
 
     @Override
     public ServiceTask getServiceTask(UUID id) {
-        return serviceTaskMapper.toDTO(serviceTaskRepository.findById(id).orElseThrow());
+        return serviceTaskQueryOperations.getServiceTask(id);
     }
 
     @Override
