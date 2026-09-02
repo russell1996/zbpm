@@ -17,10 +17,10 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
+import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
 import com.zorrodev.bpm.engine.mapper.IncidentMapper;
 import com.zorrodev.bpm.engine.mapper.MessageSubscriptionMapper;
-import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.TimerJobMapper;
 import com.zorrodev.bpm.engine.mapper.VariableMapper;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
@@ -66,8 +66,8 @@ public class QueryServiceImpl implements QueryService {
     private final ActivityQueryOperations activityQueryOperations;
     private final ServiceTaskQueryOperations serviceTaskQueryOperations;
     private final UserTaskQueryOperations userTaskQueryOperations;
+    private final ProcessInstanceQueryOperations processInstanceQueryOperations;
 
-    private final ProcessInstanceMapper processInstanceMapper;
     private final IncidentMapper incidentMapper;
     private final VariableMapper variableMapper;
     private final TimerJobMapper timerJobMapper;
@@ -151,37 +151,12 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public ProcessInstance getProcessInstance(UUID id) {
-        return dbService.getProcessInstance(id);
+        return processInstanceQueryOperations.getProcessInstance(id);
     }
 
     @Override
     public PagedDataDTO<ProcessInstance> findProcessInstances(ProcessInstanceQuery query, Collection<UUID> allowedPdIds) {
-        List<Specification<ProcessInstanceEntity>> specifications = new LinkedList<>();
-        // WO-ARCH-1a: default DENY — no memberships → empty results
-        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
-            return emptyPage(query);
-        }
-        if (allowedPdIds != null) {
-            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
-        }
-        if (query.getId() != null) {
-            specifications.add(ProcessInstanceRepository.byId(query.getId()));
-        }
-        if (query.getParentProcessInstanceId() != null) {
-            specifications.add(ProcessInstanceRepository.byParentProcessInstanceId(query.getParentProcessInstanceId()));
-        }
-        if (query.getProcessDefinitionId() != null) {
-            specifications.add(ProcessInstanceRepository.byProcessDefinitionId(query.getProcessDefinitionId()));
-        }
-        if (query.getProcessDefinitionKey() != null) {
-            specifications.add(ProcessInstanceRepository.byProcessDefinitionKey(query.getProcessDefinitionKey()));
-        }
-        if (query.getProcessDefinitionVersion() != null) {
-            specifications.add(ProcessInstanceRepository.byProcessDefinitionVersion(query.getProcessDefinitionVersion()));
-        }
-        Specification<ProcessInstanceEntity> all = Specification.allOf(specifications);
-        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("startedAt").descending());
-        return toDTOBulk(processInstanceRepository.findAll(all, page), processInstanceMapper::toDTOs);
+        return processInstanceQueryOperations.findProcessInstances(query, allowedPdIds);
     }
 
     @Override

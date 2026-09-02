@@ -29,6 +29,7 @@ import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
+import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,7 @@ class QueryServiceImplTest {
     @Mock private ActivityQueryOperations activityQueryOperations;
     @Mock private ServiceTaskQueryOperations serviceTaskQueryOperations;
     @Mock private UserTaskQueryOperations userTaskQueryOperations;
+    @Mock private ProcessInstanceQueryOperations processInstanceQueryOperations;
     @Mock private ServiceTaskMapper serviceTaskMapper;
     @Mock private UserTaskMapper userTaskMapper;
     @Mock private ProcessInstanceMapper processInstanceMapper;
@@ -164,9 +166,11 @@ class QueryServiceImplTest {
     void getProcessInstance_delegatesToDbService() {
         UUID id = UUID.randomUUID();
         ProcessInstance pi = new ProcessInstance();
-        when(dbService.getProcessInstance(id)).thenReturn(pi);
+        pi.setId(id);
+        when(processInstanceQueryOperations.getProcessInstance(id)).thenReturn(pi);
 
         assertThat(queryService.getProcessInstance(id)).isSameAs(pi);
+        org.mockito.Mockito.verify(processInstanceQueryOperations).getProcessInstance(id);
     }
 
     @Test
@@ -175,15 +179,16 @@ class QueryServiceImplTest {
         query.setId(UUID.randomUUID());
         query.setParentProcessInstanceId(UUID.randomUUID());
 
-        ProcessInstanceEntity entity = new ProcessInstanceEntity();
         ProcessInstance dto = new ProcessInstance();
-        when(processInstanceRepository.findAll(any(Specification.class), any(PageRequest.class)))
-            .thenReturn(new PageImpl<>(List.of(entity)));
-        when(processInstanceMapper.toDTOs(List.of(entity))).thenReturn(List.of(dto));
+        PagedDataDTO<ProcessInstance> expected = new PagedDataDTO<>();
+        expected.setData(List.of(dto));
+        expected.setTotalElements(1L);
+        when(processInstanceQueryOperations.findProcessInstances(query, null)).thenReturn(expected);
 
         PagedDataDTO<ProcessInstance> result = queryService.findProcessInstances(query, null);
 
-        assertThat(result.getData()).containsExactly(dto);
+        assertThat(result).isEqualTo(expected);
+        org.mockito.Mockito.verify(processInstanceQueryOperations).findProcessInstances(query, null);
     }
 
     @Test

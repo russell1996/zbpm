@@ -9,6 +9,7 @@ import com.zorrodev.bpm.engine.mapper.*;
 import com.zorrodev.bpm.engine.repository.*;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
+import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,7 @@ class QueryServiceImplCharacterizationTest {
     @Mock private ActivityQueryOperations activityQueryOperations;
     @Mock private ServiceTaskQueryOperations serviceTaskQueryOperations;
     @Mock private UserTaskQueryOperations userTaskQueryOperations;
+    @Mock private ProcessInstanceQueryOperations processInstanceQueryOperations;
     @Mock private MessageSubscriptionMapper messageSubscriptionMapper;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -154,17 +156,38 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void getProcessInstance_delegatesToDbService() {
-        UUID id = UUID.randomUUID(); ProcessInstance dto = new ProcessInstance(); dto.setId(id);
-        when(dbService.getProcessInstance(id)).thenReturn(dto);
-        assertThat(queryService.getProcessInstance(id)).isEqualTo(dto);
+    void getProcessInstance_delegatesToProcessInstanceQueryOperations() {
+        UUID id = UUID.randomUUID();
+        ProcessInstance expected = new ProcessInstance(); expected.setId(id);
+        when(processInstanceQueryOperations.getProcessInstance(id)).thenReturn(expected);
+        ProcessInstance result = queryService.getProcessInstance(id);
+        assertThat(result).isEqualTo(expected);
+        verify(processInstanceQueryOperations).getProcessInstance(id);
     }
 
     @Test
-    void findProcessInstances_emptyAllowed_returnsEmptyPage() {
+    void findProcessInstances_delegatesToProcessInstanceQueryOperations() {
         ProcessInstanceQuery q = new ProcessInstanceQuery(); q.setPageIndex(0); q.setPageSize(10);
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<ProcessInstance> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new ProcessInstance()));
+        expected.setTotalElements(1L);
+        when(processInstanceQueryOperations.findProcessInstances(q, allowed)).thenReturn(expected);
+        PagedDataDTO<ProcessInstance> result = queryService.findProcessInstances(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(processInstanceQueryOperations).findProcessInstances(q, allowed);
+    }
+
+    @Test
+    void findProcessInstances_emptyAllowed_delegatesToProcessInstanceQueryOperations() {
+        ProcessInstanceQuery q = new ProcessInstanceQuery(); q.setPageIndex(0); q.setPageSize(10);
+        PagedDataDTO<ProcessInstance> expected = new PagedDataDTO<>();
+        expected.setTotalElements(0L);
+        expected.setData(List.of());
+        when(processInstanceQueryOperations.findProcessInstances(q, List.of())).thenReturn(expected);
         PagedDataDTO<ProcessInstance> result = queryService.findProcessInstances(q, List.of());
-        assertThat(result.getTotalElements()).isZero();
+        assertThat(result).isEqualTo(expected);
+        verify(processInstanceQueryOperations).findProcessInstances(q, List.of());
     }
 
     @Test
