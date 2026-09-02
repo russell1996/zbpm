@@ -9,6 +9,7 @@ import com.zorrodev.bpm.engine.mapper.*;
 import com.zorrodev.bpm.engine.repository.*;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
+import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
@@ -49,6 +50,7 @@ class QueryServiceImplCharacterizationTest {
     @Mock private ServiceTaskQueryOperations serviceTaskQueryOperations;
     @Mock private UserTaskQueryOperations userTaskQueryOperations;
     @Mock private ProcessInstanceQueryOperations processInstanceQueryOperations;
+    @Mock private IncidentQueryOperations incidentQueryOperations;
     @Mock private MessageSubscriptionMapper messageSubscriptionMapper;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -191,18 +193,38 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void getIncident_enrichesViaMapper() {
-        UUID id = UUID.randomUUID(); Incident incident = new Incident(); incident.setId(id);
-        when(dbService.getIncident(id)).thenReturn(incident);
-        when(incidentMapper.enrich(List.of(incident))).thenReturn(List.of(incident));
-        assertThat(queryService.getIncident(id)).isEqualTo(incident);
+    void getIncident_delegatesToIncidentQueryOperations() {
+        UUID id = UUID.randomUUID();
+        Incident expected = new Incident(); expected.setId(id);
+        when(incidentQueryOperations.getIncident(id)).thenReturn(expected);
+        Incident result = queryService.getIncident(id);
+        assertThat(result).isEqualTo(expected);
+        verify(incidentQueryOperations).getIncident(id);
     }
 
     @Test
-    void findIncidents_emptyAllowed_returnsEmptyPage() {
+    void findIncidents_delegatesToIncidentQueryOperations() {
         IncidentQuery q = new IncidentQuery(); q.setPageIndex(0); q.setPageSize(10);
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<Incident> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new Incident()));
+        expected.setTotalElements(1L);
+        when(incidentQueryOperations.findIncidents(q, allowed)).thenReturn(expected);
+        PagedDataDTO<Incident> result = queryService.findIncidents(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(incidentQueryOperations).findIncidents(q, allowed);
+    }
+
+    @Test
+    void findIncidents_emptyAllowed_delegatesToIncidentQueryOperations() {
+        IncidentQuery q = new IncidentQuery(); q.setPageIndex(0); q.setPageSize(10);
+        PagedDataDTO<Incident> expected = new PagedDataDTO<>();
+        expected.setTotalElements(0L);
+        expected.setData(List.of());
+        when(incidentQueryOperations.findIncidents(q, List.of())).thenReturn(expected);
         PagedDataDTO<Incident> result = queryService.findIncidents(q, List.of());
-        assertThat(result.getTotalElements()).isZero();
+        assertThat(result).isEqualTo(expected);
+        verify(incidentQueryOperations).findIncidents(q, List.of());
     }
 
     @Test
@@ -237,15 +259,13 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void resolveIncidentProcessDefinitionId_returnsMapped() {
-        UUID incidentId = UUID.randomUUID(); UUID activityId = UUID.randomUUID(); UUID piId = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
-        IncidentEntity ie = new IncidentEntity(); ie.setId(incidentId); ie.setActivityId(activityId);
-        ActivityEntity ae = new ActivityEntity(); ae.setId(activityId); ae.setProcessInstanceId(piId);
-        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(ie));
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(ae));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        assertThat(queryService.resolveIncidentProcessDefinitionId(incidentId)).isEqualTo(pdId);
+    void resolveIncidentProcessDefinitionId_delegatesToIncidentQueryOperations() {
+        UUID incidentId = UUID.randomUUID();
+        UUID expected = UUID.randomUUID();
+        when(incidentQueryOperations.resolveIncidentProcessDefinitionId(incidentId)).thenReturn(expected);
+        UUID result = queryService.resolveIncidentProcessDefinitionId(incidentId);
+        assertThat(result).isEqualTo(expected);
+        verify(incidentQueryOperations).resolveIncidentProcessDefinitionId(incidentId);
     }
 
     @Test
