@@ -15,14 +15,13 @@ import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
-import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
+import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
 import com.zorrodev.bpm.engine.mapper.IncidentMapper;
 import com.zorrodev.bpm.engine.mapper.MessageSubscriptionMapper;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.TimerJobMapper;
-import com.zorrodev.bpm.engine.mapper.UserTaskMapper;
 import com.zorrodev.bpm.engine.mapper.VariableMapper;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
 import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
@@ -36,7 +35,6 @@ import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
-import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -67,15 +65,14 @@ public class QueryServiceImpl implements QueryService {
     private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbc;
     private final ActivityQueryOperations activityQueryOperations;
     private final ServiceTaskQueryOperations serviceTaskQueryOperations;
+    private final UserTaskQueryOperations userTaskQueryOperations;
 
-    private final UserTaskMapper userTaskMapper;
     private final ProcessInstanceMapper processInstanceMapper;
     private final IncidentMapper incidentMapper;
     private final VariableMapper variableMapper;
     private final TimerJobMapper timerJobMapper;
     private final MessageSubscriptionMapper messageSubscriptionMapper;
 
-    private final UserTaskRepository userTaskRepository;
     private final IncidentRepository incidentRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final VariableRepository variableRepository;
@@ -144,37 +141,12 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public PagedDataDTO<UserTask> findUserTasks(UserTaskQuery query, Collection<UUID> allowedPdIds) {
-        List<Specification<UserTaskEntity>> specifications = new LinkedList<>();
-        // WO-ARCH-1a: default DENY — no memberships → empty results
-        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
-            return emptyPage(query);
-        }
-        if (allowedPdIds != null) {
-            specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
-        }
-        if (query.getProcessInstanceId() != null) {
-            specifications.add(UserTaskRepository.byProcessInstanceId(query.getProcessInstanceId()));
-        }
-        if (query.getId() != null) {
-            specifications.add(UserTaskRepository.byId(query.getId()));
-        }
-        if (query.getCompleted() != null) {
-            specifications.add(UserTaskRepository.byCompleted(query.getCompleted()));
-        }
-        if (query.getAssigned() != null) {
-            specifications.add(UserTaskRepository.byAssigned(query.getAssigned()));
-        }
-        if (query.getAssignee() != null) {
-            specifications.add(UserTaskRepository.byAssignee(query.getAssignee()));
-        }
-        Specification<UserTaskEntity> all = Specification.allOf(specifications);
-        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
-        return toDTOBulk(userTaskRepository.findAll(all, page), userTaskMapper::toDTOs);
+        return userTaskQueryOperations.findUserTasks(query, allowedPdIds);
     }
 
     @Override
     public UserTask getUserTask(UUID id) {
-        return userTaskMapper.toDTO(userTaskRepository.findById(id).orElseThrow());
+        return userTaskQueryOperations.getUserTask(id);
     }
 
     @Override
