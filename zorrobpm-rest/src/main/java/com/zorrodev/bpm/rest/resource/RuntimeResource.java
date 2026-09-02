@@ -8,8 +8,6 @@ import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.exception.FormValidationException;
-import com.zorrodev.bpm.engine.entity.ActivityEntity;
-import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
@@ -18,8 +16,6 @@ import com.zorrodev.bpm.engine.entity.ProcessMemberId;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
-import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
@@ -63,8 +59,6 @@ public class RuntimeResource implements RuntimeContract {
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final ProcessRepository processRepository;
-    private final IncidentRepository incidentRepository;
-    private final ActivityRepository activityRepository;
     private final AuthorizationService authorizationService;
     private final DBService dbService;
     private final AuditLogService auditLogService;
@@ -73,6 +67,7 @@ public class RuntimeResource implements RuntimeContract {
     private final ProcessMemberRepository processMemberRepository;
     private final UiUserRepository uiUserRepository;
     private final HttpServletRequest request;
+    private final IncidentRuntimeOperations incidentRuntimeOperations;
 
     private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
@@ -205,14 +200,6 @@ public class RuntimeResource implements RuntimeContract {
         ServiceTaskEntity st = serviceTaskRepository.findById(serviceTaskId).orElse(null);
         if (st == null) return null;
         return resolveDefinitionKeyByInstance(st.getProcessInstanceId());
-    }
-
-    private String resolveDefinitionKeyByIncident(UUID incidentId) {
-        IncidentEntity incident = incidentRepository.findById(incidentId).orElse(null);
-        if (incident == null) return null;
-        ActivityEntity activity = activityRepository.findById(incident.getActivityId()).orElse(null);
-        if (activity == null) return null;
-        return resolveDefinitionKeyByInstance(activity.getProcessInstanceId());
     }
 
     @Transactional
@@ -447,15 +434,9 @@ public class RuntimeResource implements RuntimeContract {
         return principal.toString();
     }
 
-    @Transactional
     @Override
     public IdDTO resolveIncident(@PathVariable UUID id, @RequestBody ResolveIncidentDTO dto) {
-        // B3: enforce authorization — resolve incident → activity → process → definition_key
-        String key = resolveDefinitionKeyByIncident(id);
-        requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
-        IdDTO result = Optional.ofNullable(runtimeService.resolveIncident(id, dto.getVariables())).map(this::toDTO).orElseThrow();
-        auditLogService.record(getPrincipal(), "RESOLVE_INCIDENT", key, id.toString());
-        return result;
+        return incidentRuntimeOperations.resolveIncident(id, dto);
     }
 
     @Transactional
