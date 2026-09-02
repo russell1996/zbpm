@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
+import com.zorrodev.bpm.engine.service.query.TimerJobQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +52,7 @@ class QueryServiceImplCharacterizationTest {
     @Mock private UserTaskQueryOperations userTaskQueryOperations;
     @Mock private ProcessInstanceQueryOperations processInstanceQueryOperations;
     @Mock private IncidentQueryOperations incidentQueryOperations;
+    @Mock private TimerJobQueryOperations timerJobQueryOperations;
     @Mock private MessageSubscriptionMapper messageSubscriptionMapper;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -63,25 +65,28 @@ class QueryServiceImplCharacterizationTest {
     @InjectMocks private QueryServiceImpl queryService;
 
     @Test
-    void findTimerJobs_emptyAllowed_returnsEmptyPage() {
+    void findTimerJobs_delegatesToTimerJobQueryOperations() {
         TimerJobQuery q = new TimerJobQuery(); q.setPageIndex(0); q.setPageSize(10);
-        PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, List.of());
-        assertThat(result.getTotalElements()).isZero();
-        assertThat(result.getData()).isEmpty();
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<TimerJob> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new TimerJob()));
+        expected.setTotalElements(1L);
+        when(timerJobQueryOperations.findTimerJobs(q, allowed)).thenReturn(expected);
+        PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(timerJobQueryOperations).findTimerJobs(q, allowed);
     }
 
     @Test
-    void findTimerJobs_clampedPage_limitsSize() {
-        TimerJobQuery q = new TimerJobQuery(); q.setPageIndex(0); q.setPageSize(1000);
-        TimerJobEntity e = new TimerJobEntity(); e.setId(UUID.randomUUID());
-        Page<TimerJobEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 200), 1);
-        when(timerJobRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
-        when(timerJobMapper.toDTO(any(TimerJobEntity.class))).thenReturn(new TimerJob());
-        PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, null);
-        org.mockito.ArgumentCaptor<PageRequest> captor = org.mockito.ArgumentCaptor.forClass(PageRequest.class);
-        verify(timerJobRepository).findAll(any(Specification.class), captor.capture());
-        assertThat(captor.getValue().getPageSize()).isEqualTo(200);
-        assertThat(result.getData()).hasSize(1);
+    void findTimerJobs_emptyAllowed_delegatesToTimerJobQueryOperations() {
+        TimerJobQuery q = new TimerJobQuery(); q.setPageIndex(0); q.setPageSize(10);
+        PagedDataDTO<TimerJob> expected = new PagedDataDTO<>();
+        expected.setTotalElements(0L);
+        expected.setData(List.of());
+        when(timerJobQueryOperations.findTimerJobs(q, List.of())).thenReturn(expected);
+        PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, List.of());
+        assertThat(result).isEqualTo(expected);
+        verify(timerJobQueryOperations).findTimerJobs(q, List.of());
     }
 
     @Test
@@ -269,21 +274,16 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void findTimerJobs_processInstanceInAllowedDefinitions_filters() {
+    void findTimerJobs_withAllowedPdIds_delegatesToTimerJobQueryOperations() {
         TimerJobQuery q = new TimerJobQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
-        UUID allowedPdId = UUID.randomUUID();
-        TimerJobEntity e = new TimerJobEntity(); e.setId(UUID.randomUUID());
-        Page<TimerJobEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 10), 1);
-        when(timerJobRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
-        when(timerJobMapper.toDTO(any(TimerJobEntity.class))).thenReturn(new TimerJob());
-        org.mockito.ArgumentCaptor<Specification> captor = org.mockito.ArgumentCaptor.forClass(Specification.class);
-        PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, List.of(allowedPdId));
-        verify(timerJobRepository).findAll(captor.capture(), any(PageRequest.class));
-        Specification captured = captor.getValue();
-        assertThat(captured).isNotNull();
-        // verify the spec was built with allowedPdIds — removing processInstanceInAllowedDefinitions would make it only byProcessInstanceId, still not null, but we at least prove a spec was applied and contains the allowed id via toString
-        assertThat(captured.toString()).isNotEmpty();
-        assertThat(result.getData()).hasSize(1);
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<TimerJob> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new TimerJob()));
+        expected.setTotalElements(1L);
+        when(timerJobQueryOperations.findTimerJobs(q, allowed)).thenReturn(expected);
+        PagedDataDTO<TimerJob> result = queryService.findTimerJobs(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(timerJobQueryOperations).findTimerJobs(q, allowed);
     }
 
     @Test
