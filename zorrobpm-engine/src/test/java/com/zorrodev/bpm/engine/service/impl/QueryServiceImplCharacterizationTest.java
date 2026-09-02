@@ -10,10 +10,12 @@ import com.zorrodev.bpm.engine.repository.*;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
+import com.zorrodev.bpm.engine.service.query.MessageSubscriptionQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.TimerJobQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
+import com.zorrodev.bpm.engine.service.query.VariableQueryOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -53,6 +55,8 @@ class QueryServiceImplCharacterizationTest {
     @Mock private ProcessInstanceQueryOperations processInstanceQueryOperations;
     @Mock private IncidentQueryOperations incidentQueryOperations;
     @Mock private TimerJobQueryOperations timerJobQueryOperations;
+    @Mock private MessageSubscriptionQueryOperations messageSubscriptionQueryOperations;
+    @Mock private VariableQueryOperations variableQueryOperations;
     @Mock private MessageSubscriptionMapper messageSubscriptionMapper;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -90,10 +94,28 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void findMessageSubscriptions_emptyAllowed_returnsEmptyPage() {
+    void findMessageSubscriptions_delegatesToMessageSubscriptionQueryOperations() {
         MessageSubscriptionQuery q = new MessageSubscriptionQuery(); q.setPageIndex(0); q.setPageSize(10);
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<MessageSubscription> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new MessageSubscription()));
+        expected.setTotalElements(1L);
+        when(messageSubscriptionQueryOperations.findMessageSubscriptions(q, allowed)).thenReturn(expected);
+        PagedDataDTO<MessageSubscription> result = queryService.findMessageSubscriptions(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(messageSubscriptionQueryOperations).findMessageSubscriptions(q, allowed);
+    }
+
+    @Test
+    void findMessageSubscriptions_emptyAllowed_delegatesToMessageSubscriptionQueryOperations() {
+        MessageSubscriptionQuery q = new MessageSubscriptionQuery(); q.setPageIndex(0); q.setPageSize(10);
+        PagedDataDTO<MessageSubscription> expected = new PagedDataDTO<>();
+        expected.setTotalElements(0L);
+        expected.setData(List.of());
+        when(messageSubscriptionQueryOperations.findMessageSubscriptions(q, List.of())).thenReturn(expected);
         PagedDataDTO<MessageSubscription> result = queryService.findMessageSubscriptions(q, List.of());
-        assertThat(result.getTotalElements()).isZero();
+        assertThat(result).isEqualTo(expected);
+        verify(messageSubscriptionQueryOperations).findMessageSubscriptions(q, List.of());
     }
 
     @Test
@@ -233,22 +255,28 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void findVariables_emptyAllowed_returnsEmptyPage() {
+    void findVariables_delegatesToVariableQueryOperations() {
         VariableQuery q = new VariableQuery(); q.setPageIndex(0); q.setPageSize(10);
-        PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, List.of());
-        assertThat(result.getTotalElements()).isZero();
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<ProcessVariable> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new ProcessVariable()));
+        expected.setTotalElements(1L);
+        when(variableQueryOperations.findVariables(q, allowed)).thenReturn(expected);
+        PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(variableQueryOperations).findVariables(q, allowed);
     }
 
     @Test
-    void findVariables_clampedPage_usesSortUnsorted() {
-        VariableQuery q = new VariableQuery(); q.setPageIndex(-5); q.setPageSize(0);
-        ProcessVariableEntity e = new ProcessVariableEntity(); e.setId(UUID.randomUUID());
-        Page<ProcessVariableEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 1), 1);
-        when(variableRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
-        when(variableMapper.toDTO(any(ProcessVariableEntity.class))).thenReturn(new ProcessVariable());
-        PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, null);
-        assertThat(result.getPageIndex()).isZero();
-        assertThat(result.getPageSize()).isEqualTo(1);
+    void findVariables_emptyAllowed_delegatesToVariableQueryOperations() {
+        VariableQuery q = new VariableQuery(); q.setPageIndex(0); q.setPageSize(10);
+        PagedDataDTO<ProcessVariable> expected = new PagedDataDTO<>();
+        expected.setTotalElements(0L);
+        expected.setData(List.of());
+        when(variableQueryOperations.findVariables(q, List.of())).thenReturn(expected);
+        PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, List.of());
+        assertThat(result).isEqualTo(expected);
+        verify(variableQueryOperations).findVariables(q, List.of());
     }
 
     @Test
@@ -286,33 +314,4 @@ class QueryServiceImplCharacterizationTest {
         verify(timerJobQueryOperations).findTimerJobs(q, allowed);
     }
 
-    @Test
-    void findMessageSubscriptions_processInstanceInAllowedDefinitions_filters() {
-        MessageSubscriptionQuery q = new MessageSubscriptionQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
-        UUID allowedPdId = UUID.randomUUID();
-        MessageSubscriptionEntity e = new MessageSubscriptionEntity(); e.setId(UUID.randomUUID());
-        Page<MessageSubscriptionEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 10), 1);
-        when(messageSubscriptionRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
-        when(messageSubscriptionMapper.toDTO(any(MessageSubscriptionEntity.class))).thenReturn(new MessageSubscription());
-        org.mockito.ArgumentCaptor<Specification> captor = org.mockito.ArgumentCaptor.forClass(Specification.class);
-        PagedDataDTO<MessageSubscription> result = queryService.findMessageSubscriptions(q, List.of(allowedPdId));
-        verify(messageSubscriptionRepository).findAll(captor.capture(), any(PageRequest.class));
-        assertThat(captor.getValue()).isNotNull();
-        assertThat(captor.getValue().toString()).isNotEmpty();
-    }
-
-    @Test
-    void findVariables_processInstanceInAllowedDefinitions_filters() {
-        VariableQuery q = new VariableQuery(); q.setProcessInstanceId(UUID.randomUUID()); q.setPageIndex(0); q.setPageSize(10);
-        UUID allowedPdId = UUID.randomUUID();
-        ProcessVariableEntity e = new ProcessVariableEntity(); e.setId(UUID.randomUUID());
-        Page<ProcessVariableEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 10), 1);
-        when(variableRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
-        when(variableMapper.toDTO(any(ProcessVariableEntity.class))).thenReturn(new ProcessVariable());
-        org.mockito.ArgumentCaptor<Specification> captor = org.mockito.ArgumentCaptor.forClass(Specification.class);
-        PagedDataDTO<ProcessVariable> result = queryService.findVariables(q, List.of(allowedPdId));
-        verify(variableRepository).findAll(captor.capture(), any(PageRequest.class));
-        assertThat(captor.getValue()).isNotNull();
-        assertThat(captor.getValue().toString()).isNotEmpty();
-    }
 }
