@@ -17,7 +17,7 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
-import com.zorrodev.bpm.engine.mapper.ActivityInstanceMapper;
+import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.mapper.IncidentMapper;
 import com.zorrodev.bpm.engine.mapper.MessageSubscriptionMapper;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
@@ -67,13 +67,13 @@ public class QueryServiceImpl implements QueryService {
 
     private final DBService dbService;
     private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbc;
+    private final ActivityQueryOperations activityQueryOperations;
 
     private final ServiceTaskMapper serviceTaskMapper;
     private final UserTaskMapper userTaskMapper;
     private final ProcessInstanceMapper processInstanceMapper;
     private final IncidentMapper incidentMapper;
     private final VariableMapper variableMapper;
-    private final ActivityInstanceMapper activityInstanceMapper;
     private final TimerJobMapper timerJobMapper;
     private final MessageSubscriptionMapper messageSubscriptionMapper;
 
@@ -132,9 +132,7 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public List<ActivityInstance> getActivities(UUID processInstanceId) {
-        return activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(processInstanceId).stream()
-            .map(activityInstanceMapper::toDTO)
-            .toList();
+        return activityQueryOperations.getActivities(processInstanceId);
     }
 
     @Override
