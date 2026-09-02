@@ -9,17 +9,15 @@ import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.Incident;
-import com.zorrodev.bpm.engine.entity.IncidentEntity;
-import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
-import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
+import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
+import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
-import com.zorrodev.bpm.engine.mapper.IncidentMapper;
 import com.zorrodev.bpm.engine.mapper.MessageSubscriptionMapper;
 import com.zorrodev.bpm.engine.mapper.TimerJobMapper;
 import com.zorrodev.bpm.engine.mapper.VariableMapper;
@@ -31,7 +29,6 @@ import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
 import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
@@ -67,13 +64,12 @@ public class QueryServiceImpl implements QueryService {
     private final ServiceTaskQueryOperations serviceTaskQueryOperations;
     private final UserTaskQueryOperations userTaskQueryOperations;
     private final ProcessInstanceQueryOperations processInstanceQueryOperations;
+    private final IncidentQueryOperations incidentQueryOperations;
 
-    private final IncidentMapper incidentMapper;
     private final VariableMapper variableMapper;
     private final TimerJobMapper timerJobMapper;
     private final MessageSubscriptionMapper messageSubscriptionMapper;
 
-    private final IncidentRepository incidentRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final VariableRepository variableRepository;
     private final ActivityRepository activityRepository;
@@ -161,66 +157,17 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public Incident getIncident(UUID id) {
-        Incident incident = dbService.getIncident(id);
-        return incidentMapper.enrich(List.of(incident)).get(0);
+        return incidentQueryOperations.getIncident(id);
     }
 
     @Override
     public UUID resolveIncidentProcessDefinitionId(UUID incidentId) {
-        return incidentRepository.findById(incidentId)
-            .map(IncidentEntity::getActivityId)
-            .flatMap(activityRepository::findById)
-            .map(ActivityEntity::getProcessInstanceId)
-            .flatMap(processInstanceRepository::findById)
-            .map(ProcessInstanceEntity::getProcessDefinitionId)
-            .orElse(null);
+        return incidentQueryOperations.resolveIncidentProcessDefinitionId(incidentId);
     }
 
     @Override
     public PagedDataDTO<Incident> findIncidents(IncidentQuery query, Collection<UUID> allowedPdIds) {
-        List<Specification<IncidentEntity>> specifications = new LinkedList<>();
-        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
-            return emptyPage(query);
-        }
-        if (allowedPdIds != null) {
-            // IncidentEntity: activityId → activities.processInstanceId → process_instances.process_definition_id
-            specifications.add((root, q, cb) -> {
-                var piSub = q.subquery(UUID.class);
-                var piRoot = piSub.from(com.zorrodev.bpm.engine.entity.ProcessInstanceEntity.class);
-                piSub.select(piRoot.get("id"))
-                    .where(piRoot.get("processDefinitionId").in(allowedPdIds));
-                var actSub = q.subquery(UUID.class);
-                var actRoot = actSub.from(com.zorrodev.bpm.engine.entity.ActivityEntity.class);
-                actSub.select(actRoot.get("id"))
-                    .where(actRoot.get("processInstanceId").in(piSub));
-                return root.get("activityId").in(actSub);
-            });
-        }
-        if (query.getId() != null) {
-            specifications.add(IncidentRepository.byId(query.getId()));
-        }
-        if (query.getProcessInstanceId() != null) {
-            specifications.add(IncidentRepository.byProcessInstanceId(query.getProcessInstanceId()));
-        }
-        if (query.getBpmnElementId() != null) {
-            specifications.add(IncidentRepository.byBpmnElementId(query.getBpmnElementId()));
-        }
-        if (query.getProcessDefinitionId() != null) {
-            specifications.add(IncidentRepository.byProcessDefinitionId(query.getProcessDefinitionId()));
-        }
-        if (query.getProcessDefinitionKey() != null) {
-            specifications.add(IncidentRepository.byProcessDefinitionKey(query.getProcessDefinitionKey()));
-        }
-        if (query.getProcessDefinitionVersion() != null) {
-            specifications.add(IncidentRepository.byProcessDefinitionVersion(query.getProcessDefinitionVersion()));
-        }
-        if (query.getResolved() != null) {
-            specifications.add(IncidentRepository.byResolved(query.getResolved()));
-        }
-        Specification<IncidentEntity> all = Specification.allOf(specifications);
-        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
-        return toDTOBulk(incidentRepository.findAll(all, page),
-            entities -> incidentMapper.enrich(entities.stream().map(incidentMapper::toDTO).toList()));
+        return incidentQueryOperations.findIncidents(query, allowedPdIds);
     }
 
     @Override
