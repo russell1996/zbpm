@@ -28,12 +28,9 @@ import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
 import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
-import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
-import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
@@ -58,7 +55,6 @@ public class QueryServiceImpl implements QueryService {
     /** WO-A-05: maximum allowed page size — prevents DoS via huge queries */
     private static final int MAX_PAGE_SIZE = 200;
 
-    private final DBService dbService;
     private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbc;
     private final ActivityQueryOperations activityQueryOperations;
     private final ServiceTaskQueryOperations serviceTaskQueryOperations;
@@ -70,9 +66,7 @@ public class QueryServiceImpl implements QueryService {
     private final TimerJobMapper timerJobMapper;
     private final MessageSubscriptionMapper messageSubscriptionMapper;
 
-    private final ProcessInstanceRepository processInstanceRepository;
     private final VariableRepository variableRepository;
-    private final ActivityRepository activityRepository;
     private final TimerJobRepository timerJobRepository;
     private final MessageSubscriptionRepository messageSubscriptionRepository;
 
