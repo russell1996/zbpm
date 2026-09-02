@@ -24,6 +24,7 @@ import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import com.zorrodev.bpm.rest.resource.IncidentRuntimeOperations;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,6 +56,7 @@ class RuntimeResourceTest {
     @Mock private DBService dbService;
     @Mock private AuditLogService auditLogService;
     @Mock private FormArtifactService formArtifactService;
+    @Mock private IncidentRuntimeOperations incidentRuntimeOperations;
     @Mock private HttpServletRequest request;
 
     @InjectMocks
@@ -137,27 +139,14 @@ class RuntimeResourceTest {
     @Test
     void resolveIncident_delegatesToService() {
         UUID id = UUID.randomUUID();
-        List<ProcessVariable> vars = List.of();
         ResolveIncidentDTO dto = new ResolveIncidentDTO();
-        dto.setVariables(vars);
+        dto.setVariables(List.of());
         IdDTO expected = new IdDTO(id);
-        when(runtimeService.resolveIncident(id, vars)).thenReturn(toEngineDTO(expected));
-
-        when(request.getAttribute("principal")).thenReturn(
-            new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN"));
-        when(authorizationService.canOperate(any(), any(), any())).thenReturn(true);
-
-        // Mock incident → activity → processInstance → processDefinition resolution
-        IncidentEntity incident = new IncidentEntity();
-        incident.setId(id);
-        incident.setActivityId(UUID.randomUUID());
-        when(incidentRepository.findById(id)).thenReturn(Optional.of(incident));
-        when(activityRepository.findById(any())).thenReturn(Optional.of(new ActivityEntity()));
-        mockResolveChain();
+        when(incidentRuntimeOperations.resolveIncident(id, dto)).thenReturn(expected);
 
         IdDTO result = resource.resolveIncident(id, dto);
 
         assertThat(result.getId()).isSameAs(expected.getId());
-        verify(runtimeService).resolveIncident(id, vars);
+        verify(incidentRuntimeOperations).resolveIncident(id, dto);
     }
 }
