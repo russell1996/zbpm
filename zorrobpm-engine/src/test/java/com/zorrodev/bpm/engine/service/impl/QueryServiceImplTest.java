@@ -29,6 +29,7 @@ import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
+import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
@@ -60,6 +61,7 @@ class QueryServiceImplTest {
     @Mock private ServiceTaskQueryOperations serviceTaskQueryOperations;
     @Mock private UserTaskQueryOperations userTaskQueryOperations;
     @Mock private ProcessInstanceQueryOperations processInstanceQueryOperations;
+    @Mock private IncidentQueryOperations incidentQueryOperations;
     @Mock private ServiceTaskMapper serviceTaskMapper;
     @Mock private UserTaskMapper userTaskMapper;
     @Mock private ProcessInstanceMapper processInstanceMapper;
@@ -195,26 +197,26 @@ class QueryServiceImplTest {
     void getIncident_delegatesToDbService() {
         UUID id = UUID.randomUUID();
         Incident inc = new Incident();
-        when(dbService.getIncident(id)).thenReturn(inc);
-        when(incidentMapper.enrich(anyList())).thenReturn(List.of(inc));
+        inc.setId(id);
+        when(incidentQueryOperations.getIncident(id)).thenReturn(inc);
 
         assertThat(queryService.getIncident(id)).isSameAs(inc);
+        org.mockito.Mockito.verify(incidentQueryOperations).getIncident(id);
     }
 
     @Test
     void findIncidents_returnsPagedDTO() {
         IncidentQuery query = new IncidentQuery();
-        IncidentEntity entity = new IncidentEntity();
         Incident dto = new Incident();
-
-        when(incidentRepository.findAll(any(Specification.class), any(PageRequest.class)))
-            .thenReturn(new PageImpl<>(List.of(entity)));
-        when(incidentMapper.toDTO(entity)).thenReturn(dto);
-        when(incidentMapper.enrich(anyList())).thenReturn(List.of(dto));
+        PagedDataDTO<Incident> expected = new PagedDataDTO<>();
+        expected.setData(List.of(dto));
+        expected.setTotalElements(1L);
+        when(incidentQueryOperations.findIncidents(query, null)).thenReturn(expected);
 
         PagedDataDTO<Incident> result = queryService.findIncidents(query, null);
 
-        assertThat(result.getData()).containsExactly(dto);
+        assertThat(result).isEqualTo(expected);
+        org.mockito.Mockito.verify(incidentQueryOperations).findIncidents(query, null);
     }
 
     @Test
