@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.entity.*;
 import com.zorrodev.bpm.engine.mapper.*;
 import com.zorrodev.bpm.engine.repository.*;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -41,6 +42,7 @@ class QueryServiceImplCharacterizationTest {
     @Mock private VariableMapper variableMapper;
     @Mock private ActivityInstanceMapper activityInstanceMapper;
     @Mock private TimerJobMapper timerJobMapper;
+    @Mock private ActivityQueryOperations activityQueryOperations;
     @Mock private MessageSubscriptionMapper messageSubscriptionMapper;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -82,13 +84,13 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void getActivities_returnsMapped() {
+    void getActivities_delegatesToActivityQueryOperations() {
         UUID pi = UUID.randomUUID();
-        ActivityEntity e = new ActivityEntity(); e.setId(UUID.randomUUID()); e.setProcessInstanceId(pi);
-        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(pi)).thenReturn(List.of(e));
-        when(activityInstanceMapper.toDTO(e)).thenReturn(new com.zorrodev.bpm.contract.model.ActivityInstance());
-        List<com.zorrodev.bpm.contract.model.ActivityInstance> result = queryService.getActivities(pi);
-        assertThat(result).hasSize(1);
+        List<ActivityInstance> expected = List.of(new ActivityInstance());
+        when(activityQueryOperations.getActivities(pi)).thenReturn(expected);
+        List<ActivityInstance> result = queryService.getActivities(pi);
+        assertThat(result).isEqualTo(expected);
+        verify(activityQueryOperations).getActivities(pi);
     }
 
     @Test
