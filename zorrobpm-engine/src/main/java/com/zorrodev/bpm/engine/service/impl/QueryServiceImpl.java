@@ -9,17 +9,15 @@ import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.Incident;
-import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
-import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
+import com.zorrodev.bpm.engine.service.query.MessageSubscriptionQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.TimerJobQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
-import com.zorrodev.bpm.engine.mapper.MessageSubscriptionMapper;
-import com.zorrodev.bpm.engine.mapper.VariableMapper;
+import com.zorrodev.bpm.engine.service.query.VariableQueryOperations;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
 import com.zorrodev.bpm.contract.dto.query.ProcessInstanceQuery;
 import com.zorrodev.bpm.contract.dto.query.ServiceTaskQuery;
@@ -27,8 +25,6 @@ import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.dto.query.VariableQuery;
 import com.zorrodev.bpm.contract.dto.query.TimerJobQuery;
 import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
-import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
-import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.QueryService;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
@@ -60,12 +56,8 @@ public class QueryServiceImpl implements QueryService {
     private final ProcessInstanceQueryOperations processInstanceQueryOperations;
     private final IncidentQueryOperations incidentQueryOperations;
     private final TimerJobQueryOperations timerJobQueryOperations;
-
-    private final VariableMapper variableMapper;
-    private final MessageSubscriptionMapper messageSubscriptionMapper;
-
-    private final VariableRepository variableRepository;
-    private final MessageSubscriptionRepository messageSubscriptionRepository;
+    private final MessageSubscriptionQueryOperations messageSubscriptionQueryOperations;
+    private final VariableQueryOperations variableQueryOperations;
 
     @Override
     public PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query, Collection<UUID> allowedPdIds) {
@@ -74,24 +66,7 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public PagedDataDTO<MessageSubscription> findMessageSubscriptions(MessageSubscriptionQuery query, Collection<UUID> allowedPdIds) {
-        List<Specification<MessageSubscriptionEntity>> specifications = new LinkedList<>();
-        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
-            return emptyPage(query);
-        }
-        if (allowedPdIds != null) {
-            specifications.add(processInstanceInAllowedDefinitions(allowedPdIds));
-        }
-        if (query.getId() != null) {
-            specifications.add((root, q, cb) -> cb.equal(root.get("id"), query.getId()));
-        }
-        if (query.getProcessInstanceId() != null) {
-            specifications.add(MessageSubscriptionRepository.byProcessInstanceId(query.getProcessInstanceId()));
-        }
-        if (query.getConsumed() != null) {
-            specifications.add(MessageSubscriptionRepository.byConsumed(query.getConsumed()));
-        }
-        PageRequest page = clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
-        return toDTO(messageSubscriptionRepository.findAll(Specification.allOf(specifications), page), messageSubscriptionMapper::toDTO);
+        return messageSubscriptionQueryOperations.findMessageSubscriptions(query, allowedPdIds);
     }
 
     @Override
@@ -146,27 +121,7 @@ public class QueryServiceImpl implements QueryService {
 
     @Override
     public PagedDataDTO<ProcessVariable> findVariables(VariableQuery query, Collection<UUID> allowedPdIds) {
-        List<Specification<ProcessVariableEntity>> specifications = new LinkedList<>();
-        if (allowedPdIds != null && allowedPdIds.isEmpty()) {
-            return emptyPage(query);
-        }
-        if (allowedPdIds != null) {
-            specifications.add(processInstanceInAllowedDefinitions(allowedPdIds));
-        }
-        if (query.getProcessInstanceId() != null) {
-            specifications.add(VariableRepository.byProcessInstanceId(query.getProcessInstanceId()));
-        }
-        if (query.getName() != null) {
-            specifications.add(VariableRepository.byName(query.getName()));
-        }
-        if (query.getType() != null) {
-            specifications.add(VariableRepository.byType(query.getType()));
-        }
-        if (query.getValue() != null) {
-            specifications.add(VariableRepository.byValue(query.getValue()));
-        }
-        Specification<ProcessVariableEntity> all = Specification.allOf(specifications);
-        return toDTO(variableRepository.findAll(all, clampedPage(query.getPageIndex(), query.getPageSize(), Sort.unsorted())), variableMapper::toDTO);
+        return variableQueryOperations.findVariables(query, allowedPdIds);
     }
 
     private <T, S> PagedDataDTO<T> toDTO(Page<S> page, Function<S, T> converter) {

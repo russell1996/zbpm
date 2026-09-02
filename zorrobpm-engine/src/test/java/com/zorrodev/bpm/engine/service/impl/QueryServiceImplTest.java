@@ -30,9 +30,11 @@ import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
+import com.zorrodev.bpm.engine.service.query.MessageSubscriptionQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ProcessInstanceQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
+import com.zorrodev.bpm.engine.service.query.VariableQueryOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -62,6 +64,8 @@ class QueryServiceImplTest {
     @Mock private UserTaskQueryOperations userTaskQueryOperations;
     @Mock private ProcessInstanceQueryOperations processInstanceQueryOperations;
     @Mock private IncidentQueryOperations incidentQueryOperations;
+    @Mock private MessageSubscriptionQueryOperations messageSubscriptionQueryOperations;
+    @Mock private VariableQueryOperations variableQueryOperations;
     @Mock private ServiceTaskMapper serviceTaskMapper;
     @Mock private UserTaskMapper userTaskMapper;
     @Mock private ProcessInstanceMapper processInstanceMapper;
@@ -227,14 +231,15 @@ class QueryServiceImplTest {
         query.setType(ProcessVariableType.LONG);
         query.setValue("1");
 
-        ProcessVariableEntity entity = new ProcessVariableEntity();
         ProcessVariable dto = new ProcessVariable();
-        when(variableRepository.findAll(any(Specification.class), any(PageRequest.class)))
-            .thenReturn(new PageImpl<>(List.of(entity)));
-        when(variableMapper.toDTO(entity)).thenReturn(dto);
+        PagedDataDTO<ProcessVariable> expected = new PagedDataDTO<>();
+        expected.setData(List.of(dto));
+        expected.setTotalElements(1L);
+        when(variableQueryOperations.findVariables(query, null)).thenReturn(expected);
 
         PagedDataDTO<ProcessVariable> result = queryService.findVariables(query, null);
 
-        assertThat(result.getData()).containsExactly(dto);
+        assertThat(result).isEqualTo(expected);
+        org.mockito.Mockito.verify(variableQueryOperations).findVariables(query, null);
     }
 }
