@@ -9,6 +9,7 @@ import com.zorrodev.bpm.engine.mapper.*;
 import com.zorrodev.bpm.engine.repository.*;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
+import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -43,6 +44,7 @@ class QueryServiceImplCharacterizationTest {
     @Mock private ActivityInstanceMapper activityInstanceMapper;
     @Mock private TimerJobMapper timerJobMapper;
     @Mock private ActivityQueryOperations activityQueryOperations;
+    @Mock private ServiceTaskQueryOperations serviceTaskQueryOperations;
     @Mock private MessageSubscriptionMapper messageSubscriptionMapper;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -94,19 +96,25 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void findServiceTasks_emptyAllowed_returnsEmptyPage() {
+    void findServiceTasks_delegatesToServiceTaskQueryOperations() {
         ServiceTaskQuery q = new ServiceTaskQuery(); q.setPageIndex(0); q.setPageSize(10);
-        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(q, List.of());
-        assertThat(result.getTotalElements()).isZero();
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<ServiceTask> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new ServiceTask()));
+        expected.setTotalElements(1L);
+        when(serviceTaskQueryOperations.findServiceTasks(q, allowed)).thenReturn(expected);
+        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(serviceTaskQueryOperations).findServiceTasks(q, allowed);
     }
 
     @Test
-    void getServiceTask_returnsMapped() {
-        UUID id = UUID.randomUUID(); ServiceTaskEntity e = new ServiceTaskEntity(); e.setId(id);
-        when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(e));
-        ServiceTask dto = new ServiceTask(); dto.setId(id);
-        when(serviceTaskMapper.toDTO(e)).thenReturn(dto);
-        assertThat(queryService.getServiceTask(id)).isEqualTo(dto);
+    void getServiceTask_delegatesToServiceTaskQueryOperations() {
+        UUID id = UUID.randomUUID();
+        ServiceTask expected = new ServiceTask(); expected.setId(id);
+        when(serviceTaskQueryOperations.getServiceTask(id)).thenReturn(expected);
+        assertThat(queryService.getServiceTask(id)).isEqualTo(expected);
+        verify(serviceTaskQueryOperations).getServiceTask(id);
     }
 
     @Test
@@ -174,16 +182,15 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void findServiceTasks_clampedPage_limitsSize_toDTOBulk() {
-        ServiceTaskQuery q = new ServiceTaskQuery(); q.setPageIndex(0); q.setPageSize(500);
-        ServiceTaskEntity e = new ServiceTaskEntity(); e.setId(UUID.randomUUID());
-        Page<ServiceTaskEntity> page = new PageImpl<>(List.of(e), PageRequest.of(0, 200), 1);
-        when(serviceTaskRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
-        when(serviceTaskMapper.toDTOs(any(List.class))).thenReturn(List.of(new ServiceTask()));
-        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(q, null);
-        org.mockito.ArgumentCaptor<PageRequest> captor = org.mockito.ArgumentCaptor.forClass(PageRequest.class);
-        verify(serviceTaskRepository).findAll(any(Specification.class), captor.capture());
-        assertThat(captor.getValue().getPageSize()).isEqualTo(200);
+    void findServiceTasks_emptyAllowed_delegatesToServiceTaskQueryOperations() {
+        ServiceTaskQuery q = new ServiceTaskQuery(); q.setPageIndex(0); q.setPageSize(10);
+        PagedDataDTO<ServiceTask> expected = new PagedDataDTO<>();
+        expected.setTotalElements(0L);
+        expected.setData(List.of());
+        when(serviceTaskQueryOperations.findServiceTasks(q, List.of())).thenReturn(expected);
+        PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(q, List.of());
+        assertThat(result).isEqualTo(expected);
+        verify(serviceTaskQueryOperations).findServiceTasks(q, List.of());
     }
 
     @Test

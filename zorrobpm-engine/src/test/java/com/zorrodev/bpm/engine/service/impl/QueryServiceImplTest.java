@@ -28,6 +28,8 @@ import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
+import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -52,6 +54,8 @@ import static org.mockito.Mockito.when;
 class QueryServiceImplTest {
 
     @Mock private DBService dbService;
+    @Mock private ActivityQueryOperations activityQueryOperations;
+    @Mock private ServiceTaskQueryOperations serviceTaskQueryOperations;
     @Mock private ServiceTaskMapper serviceTaskMapper;
     @Mock private UserTaskMapper userTaskMapper;
     @Mock private ProcessInstanceMapper processInstanceMapper;
@@ -72,45 +76,49 @@ class QueryServiceImplTest {
         query.setProcessInstanceId(UUID.randomUUID());
         query.setId(UUID.randomUUID());
 
-        ServiceTaskEntity entity = new ServiceTaskEntity();
         ServiceTask dto = new ServiceTask();
-        when(serviceTaskRepository.findAll(any(Specification.class), any(PageRequest.class)))
-            .thenReturn(new PageImpl<>(List.of(entity)));
-        when(serviceTaskMapper.toDTOs(List.of(entity))).thenReturn(List.of(dto));
+        PagedDataDTO<ServiceTask> expected = new PagedDataDTO<>();
+        expected.setData(List.of(dto));
+        expected.setTotalElements(1L);
+        when(serviceTaskQueryOperations.findServiceTasks(query, null)).thenReturn(expected);
 
         PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(query, null);
 
-        assertThat(result.getTotalElements()).isEqualTo(1);
-        assertThat(result.getData()).containsExactly(dto);
+        assertThat(result).isEqualTo(expected);
+        org.mockito.Mockito.verify(serviceTaskQueryOperations).findServiceTasks(query, null);
     }
 
     @Test
     void findServiceTasks_noFilters_stillWorks() {
         ServiceTaskQuery query = new ServiceTaskQuery();
-        when(serviceTaskRepository.findAll(any(Specification.class), any(PageRequest.class)))
-            .thenReturn(new PageImpl<>(List.of()));
+        PagedDataDTO<ServiceTask> expected = new PagedDataDTO<>();
+        expected.setData(List.of());
+        expected.setTotalElements(0L);
+        when(serviceTaskQueryOperations.findServiceTasks(query, null)).thenReturn(expected);
 
         PagedDataDTO<ServiceTask> result = queryService.findServiceTasks(query, null);
 
-        assertThat(result.getData()).isEmpty();
+        assertThat(result).isEqualTo(expected);
+        org.mockito.Mockito.verify(serviceTaskQueryOperations).findServiceTasks(query, null);
     }
 
     @Test
     void getServiceTask_returnsMapped() {
         UUID id = UUID.randomUUID();
-        ServiceTaskEntity entity = new ServiceTaskEntity();
         ServiceTask dto = new ServiceTask();
-        when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(entity));
-        when(serviceTaskMapper.toDTO(entity)).thenReturn(dto);
+        dto.setId(id);
+        when(serviceTaskQueryOperations.getServiceTask(id)).thenReturn(dto);
 
         assertThat(queryService.getServiceTask(id)).isSameAs(dto);
+        org.mockito.Mockito.verify(serviceTaskQueryOperations).getServiceTask(id);
     }
 
     @Test
     void getServiceTask_throwsWhenMissing() {
         UUID id = UUID.randomUUID();
-        when(serviceTaskRepository.findById(id)).thenReturn(Optional.empty());
+        when(serviceTaskQueryOperations.getServiceTask(id)).thenThrow(new NoSuchElementException());
         assertThatThrownBy(() -> queryService.getServiceTask(id)).isInstanceOf(NoSuchElementException.class);
+        org.mockito.Mockito.verify(serviceTaskQueryOperations).getServiceTask(id);
     }
 
     @Test
