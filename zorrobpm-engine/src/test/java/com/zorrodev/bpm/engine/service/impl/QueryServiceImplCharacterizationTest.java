@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.repository.*;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.ServiceTaskQueryOperations;
+import com.zorrodev.bpm.engine.service.query.UserTaskQueryOperations;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -45,6 +46,7 @@ class QueryServiceImplCharacterizationTest {
     @Mock private TimerJobMapper timerJobMapper;
     @Mock private ActivityQueryOperations activityQueryOperations;
     @Mock private ServiceTaskQueryOperations serviceTaskQueryOperations;
+    @Mock private UserTaskQueryOperations userTaskQueryOperations;
     @Mock private MessageSubscriptionMapper messageSubscriptionMapper;
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
@@ -118,19 +120,37 @@ class QueryServiceImplCharacterizationTest {
     }
 
     @Test
-    void findUserTasks_emptyAllowed_returnsEmptyPage() {
+    void findUserTasks_delegatesToUserTaskQueryOperations() {
         UserTaskQuery q = new UserTaskQuery(); q.setPageIndex(0); q.setPageSize(10);
-        PagedDataDTO<UserTask> result = queryService.findUserTasks(q, List.of());
-        assertThat(result.getTotalElements()).isZero();
+        List<UUID> allowed = List.of(UUID.randomUUID());
+        PagedDataDTO<UserTask> expected = new PagedDataDTO<>();
+        expected.setData(List.of(new UserTask()));
+        expected.setTotalElements(1L);
+        when(userTaskQueryOperations.findUserTasks(q, allowed)).thenReturn(expected);
+        PagedDataDTO<UserTask> result = queryService.findUserTasks(q, allowed);
+        assertThat(result).isEqualTo(expected);
+        verify(userTaskQueryOperations).findUserTasks(q, allowed);
     }
 
     @Test
-    void getUserTask_returnsMapped() {
-        UUID id = UUID.randomUUID(); UserTaskEntity e = new UserTaskEntity(); e.setId(id);
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(e));
-        UserTask dto = new UserTask(); dto.setId(id);
-        when(userTaskMapper.toDTO(e)).thenReturn(dto);
-        assertThat(queryService.getUserTask(id)).isEqualTo(dto);
+    void getUserTask_delegatesToUserTaskQueryOperations() {
+        UUID id = UUID.randomUUID();
+        UserTask expected = new UserTask(); expected.setId(id);
+        when(userTaskQueryOperations.getUserTask(id)).thenReturn(expected);
+        assertThat(queryService.getUserTask(id)).isEqualTo(expected);
+        verify(userTaskQueryOperations).getUserTask(id);
+    }
+
+    @Test
+    void findUserTasks_emptyAllowed_delegatesToUserTaskQueryOperations() {
+        UserTaskQuery q = new UserTaskQuery(); q.setPageIndex(0); q.setPageSize(10);
+        PagedDataDTO<UserTask> expected = new PagedDataDTO<>();
+        expected.setTotalElements(0L);
+        expected.setData(List.of());
+        when(userTaskQueryOperations.findUserTasks(q, List.of())).thenReturn(expected);
+        PagedDataDTO<UserTask> result = queryService.findUserTasks(q, List.of());
+        assertThat(result).isEqualTo(expected);
+        verify(userTaskQueryOperations).findUserTasks(q, List.of());
     }
 
     @Test
