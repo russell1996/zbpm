@@ -57,6 +57,8 @@ class RuntimeResourceTest {
     @Mock private AuditLogService auditLogService;
     @Mock private FormArtifactService formArtifactService;
     @Mock private IncidentRuntimeOperations incidentRuntimeOperations;
+    @Mock private ProcessInstanceRuntimeOperations processInstanceRuntimeOperations;
+    @Mock private ServiceTaskRuntimeOperations serviceTaskRuntimeOperations;
     @Mock private HttpServletRequest request;
 
     @InjectMocks
@@ -79,37 +81,26 @@ class RuntimeResourceTest {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionKey("test-process");
         IdDTO expected = new IdDTO(UUID.randomUUID());
-        when(runtimeService.startProcessInstance(dto)).thenReturn(toEngineDTO(expected));
-
-        when(request.getAttribute("principal")).thenReturn(
-            new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN"));
-        when(authorizationService.canOperate(any(), any(), any())).thenReturn(true);
+        when(processInstanceRuntimeOperations.startProcessInstance(dto)).thenReturn(expected);
 
         IdDTO result = resource.startProcessInstance(dto);
 
         assertThat(result.getId()).isSameAs(expected.getId());
+        verify(processInstanceRuntimeOperations).startProcessInstance(dto);
     }
 
     @Test
     void completeServiceTask_delegatesToService() {
         UUID id = UUID.randomUUID();
-        List<ProcessVariable> vars = List.of();
         CompleteTaskDTO dto = new CompleteTaskDTO();
-        dto.setVariables(vars);
+        dto.setVariables(List.of());
         IdDTO expected = new IdDTO(id);
-        when(runtimeService.completeServiceTask(id, vars)).thenReturn(toEngineDTO(expected));
-
-        when(request.getAttribute("principal")).thenReturn(
-            new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN"));
-        when(authorizationService.canOperate(any(), any(), any())).thenReturn(true);
-
-        when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(new ServiceTaskEntity()));
-        mockResolveChain();
+        when(serviceTaskRuntimeOperations.completeServiceTask(id, dto)).thenReturn(expected);
 
         IdDTO result = resource.completeServiceTask(id, dto);
 
         assertThat(result.getId()).isSameAs(expected.getId());
-        verify(runtimeService).completeServiceTask(id, vars);
+        verify(serviceTaskRuntimeOperations).completeServiceTask(id, dto);
     }
 
     @Test

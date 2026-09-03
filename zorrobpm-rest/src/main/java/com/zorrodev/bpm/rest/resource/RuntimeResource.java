@@ -13,14 +13,12 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberId;
-import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
-import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
@@ -55,7 +53,6 @@ public class RuntimeResource implements RuntimeContract {
 
     private final RuntimeService runtimeService;
     private final UserTaskRepository userTaskRepository;
-    private final ServiceTaskRepository serviceTaskRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final ProcessRepository processRepository;
@@ -68,6 +65,8 @@ public class RuntimeResource implements RuntimeContract {
     private final UiUserRepository uiUserRepository;
     private final HttpServletRequest request;
     private final IncidentRuntimeOperations incidentRuntimeOperations;
+    private final ProcessInstanceRuntimeOperations processInstanceRuntimeOperations;
+    private final ServiceTaskRuntimeOperations serviceTaskRuntimeOperations;
 
     private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
@@ -150,45 +149,6 @@ public class RuntimeResource implements RuntimeContract {
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
     }
 
-    private void requireOperate(String definitionKey, AuthorizationService.Action action) {
-        Principal principal = getPrincipal();
-        if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
-        }
-        if (definitionKey == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Resource not found");
-        }
-        if (!authorizationService.canOperate(principal, definitionKey, action)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
-        }
-    }
-
-    /**
-     * WO-ENG-10: resolves the EXACT {@link ProcessDefinitionEntity} that
-     * {@code RuntimeServiceImpl.startProcessInstance} will actually start — same order:
-     * explicit {@code processDefinitionId} wins; else {@code processDefinitionKey} +
-     * {@code processDefinitionVersion} (or max version by key if version is unset). Returns
-     * null only if the DTO fails validation elsewhere (id/key both absent) or the resolved
-     * definition genuinely doesn't exist (startProcessInstance will itself throw in that case).
-     */
-    private ProcessDefinitionEntity resolveTargetDefinition(StartProcessInstanceDTO dto) {
-        if (dto.getProcessDefinitionId() != null) {
-            return processDefinitionRepository.findById(dto.getProcessDefinitionId()).orElse(null);
-        }
-        String key = dto.getProcessDefinitionKey();
-        if (key == null) {
-            return null;
-        }
-        Integer version = dto.getProcessDefinitionVersion();
-        if (version == null) {
-            version = processDefinitionRepository.findMaxByKey(key).orElse(null);
-        }
-        if (version == null) {
-            return null;
-        }
-        return processDefinitionRepository.findByKeyAndVersion(key, version).orElse(null);
-    }
-
     private String resolveDefinitionKeyByInstance(UUID instanceId) {
         ProcessInstanceEntity pi = processInstanceRepository.findById(instanceId).orElse(null);
         if (pi == null) return null;
@@ -196,77 +156,19 @@ public class RuntimeResource implements RuntimeContract {
         return pd != null ? pd.getKey() : null;
     }
 
-    private String resolveDefinitionKeyByServiceTask(UUID serviceTaskId) {
-        ServiceTaskEntity st = serviceTaskRepository.findById(serviceTaskId).orElse(null);
-        if (st == null) return null;
-        return resolveDefinitionKeyByInstance(st.getProcessInstanceId());
-    }
-
-    @Transactional
     @Override
     public IdDTO startProcessInstance(@Valid @RequestBody StartProcessInstanceDTO dto) {
-        // Resolve definitionKey from DTO
-        String definitionKey = dto.getProcessDefinitionKey();
-        if (definitionKey == null && dto.getProcessDefinitionId() != null) {
-            ProcessDefinitionEntity pd = processDefinitionRepository.findById(dto.getProcessDefinitionId()).orElse(null);
-            if (pd != null) definitionKey = pd.getKey();
-        }
-        requireOperate(definitionKey, AuthorizationService.Action.START);
-
-        // WO-ENG-10: validate against the EXACT definition that will actually be started, not
-        // always "latest by key" — mirrors RuntimeServiceImpl.startProcessInstance's own
-        // resolution order (id > key+version > key+maxVersion), so a start pinned to an older
-        // version is validated against that version's form/schema, not a newer one's.
-        ProcessDefinitionEntity targetDefinition = resolveTargetDefinition(dto);
-
-        // ADR-6 §D9: form validation via FormArtifactService facade
-        if (targetDefinition != null && targetDefinition.getStartFormKey() != null) {
-            List<FormValidator.ValidationError> errors = formArtifactService.validateFormIfApplicable(
-                targetDefinition.getStartFormKey(), dto.getVariables());
-            if (!errors.isEmpty()) {
-                String errorDetails = errors.stream()
-                    .map(e -> e.field() + ": " + e.message())
-                    .reduce((a, b) -> a + "; " + b).orElse("Validation failed");
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, errorDetails);
-            }
-        }
-
-        String onBehalfOf = checkedOnBehalfOf();
-        IdDTO result = Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(this::toDTO).orElseThrow();
-
-        // WO-INT-2: persist initiator on process instance
-        if (onBehalfOf != null) {
-            // WO-SEC-28: the initiator is a claimed, unverified attribution — keep the marker.
-            String claimed = "[claimed] " + onBehalfOf;
-            processInstanceRepository.findById(result.getId()).ifPresent(pi -> {
-                pi.setInitiator(claimed);
-                processInstanceRepository.save(pi);
-            });
-            auditLogService.record(getPrincipal(), "START", definitionKey, result.getId().toString(), claimed);
-        } else {
-            auditLogService.record(getPrincipal(), "START", definitionKey, result.getId().toString(), null);
-        }
-        return result;
+        return processInstanceRuntimeOperations.startProcessInstance(dto);
     }
 
-    @Transactional
     @Override
     public IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
-        String key = resolveDefinitionKeyByServiceTask(id);
-        requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
-        IdDTO result = Optional.ofNullable(runtimeService.completeServiceTask(id, dto.getVariables())).map(this::toDTO).orElseThrow();
-        auditLogService.record(getPrincipal(), "COMPLETE_SERVICE_TASK", key, id.toString());
-        return result;
+        return serviceTaskRuntimeOperations.completeServiceTask(id, dto);
     }
 
-    @Transactional
     @Override
     public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody FailServiceTaskDTO dto) {
-        String key = resolveDefinitionKeyByServiceTask(id);
-        requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
-        IdDTO result = Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage(), dto.getRetries())).map(this::toDTO).orElseThrow();
-        auditLogService.record(getPrincipal(), "FAIL_SERVICE_TASK", key, id.toString());
-        return result;
+        return serviceTaskRuntimeOperations.failServiceTask(id, dto);
     }
 
     @Transactional
@@ -439,25 +341,9 @@ public class RuntimeResource implements RuntimeContract {
         return incidentRuntimeOperations.resolveIncident(id, dto);
     }
 
-    @Transactional
     @Override
     public IdDTO cancelProcessInstance(@PathVariable UUID id) {
-        var pi = dbService.getProcessInstance(id);
-        if (pi.getCompletedAt() != null || pi.isCancelled()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Process instance already completed or cancelled");
-        }
-
-        String key = resolveDefinitionKeyByInstance(id);
-        requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
-
-        dbService.cancelActiveActivities(id);
-        dbService.deleteTimerJobsByProcessInstanceId(id);
-        dbService.deleteMessageSubscriptionsByProcessInstanceId(id);
-        dbService.cancelProcessInstance(id);
-        auditLogService.record(getPrincipal(), "CANCEL", key, id.toString());
-        IdDTO result = new IdDTO();
-        result.setId(id);
-        return result;
+        return processInstanceRuntimeOperations.cancelProcessInstance(id);
     }
 
     private void checkAssignee(Principal principal, UserTaskEntity task) {
