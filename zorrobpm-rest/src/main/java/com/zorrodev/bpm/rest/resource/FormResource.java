@@ -66,6 +66,7 @@ public class FormResource implements FormContract {
     private final EventAuthzResolver eventAuthzResolver;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessRepository processRepository;
+    private final ElementBindingOperations elementBindingOperations;
 
     /**
      * WO-ACL-1: form artifacts (list/get/start-form/bindings/schema-map) are DEFINITION
@@ -252,99 +253,18 @@ public class FormResource implements FormContract {
     }
 
     @Override
-    @Transactional
     public ElementBindingDTO createElementBinding(String key, CreateElementBindingDTO dto) {
-        // SUPER_ADMIN only
-        Principal principal = getPrincipal();
-        if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
-        }
-        if (!principal.isSuperAdmin()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only SUPER_ADMIN can create element bindings");
-        }
-
-        if (dto.getElementId() == null || dto.getElementId().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "elementId is required");
-        }
-        if (dto.getArtifactKey() == null || dto.getArtifactKey().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "artifactKey is required");
-        }
-
-        // Resolve latest version of process definition
-        Integer maxPdVersion = processDefinitionRepository.findMaxByKey(key)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxPdVersion)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-
-        // Resolve latest version of artifact (pin to this version)
-        FormEntity artifact = formRepository.findTopByFormKeyOrderByVersionDesc(dto.getArtifactKey())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact not found: " + dto.getArtifactKey()));
-
-        // Upsert: delete existing binding for same PD + elementId
-        bindingRepository.findByProcessDefinitionIdAndElementId(pd.getId(), dto.getElementId())
-            .ifPresent(bindingRepository::delete);
-
-        ElementArtifactBindingEntity binding = new ElementArtifactBindingEntity();
-        binding.setId(UUID.randomUUID());
-        binding.setProcessDefinitionId(pd.getId());
-        binding.setProcessDefinitionVersion(pd.getVersion());
-        binding.setElementId(dto.getElementId());
-        binding.setArtifactKey(dto.getArtifactKey());
-        binding.setArtifactVersion(artifact.getVersion());
-        binding.setCreatedAt(Instant.now());
-        bindingRepository.save(binding);
-
-        ElementBindingDTO result = new ElementBindingDTO();
-        result.setId(binding.getId());
-        result.setElementId(binding.getElementId());
-        result.setArtifactKey(binding.getArtifactKey());
-        result.setArtifactVersion(binding.getArtifactVersion());
-        result.setProcessDefinitionId(binding.getProcessDefinitionId());
-        result.setProcessDefinitionVersion(binding.getProcessDefinitionVersion());
-        return result;
+        return elementBindingOperations.createElementBinding(key, dto);
     }
 
     @Override
     public List<ElementBindingDTO> listElementBindings(String key) {
-        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-
-        // Authz: deny if principal lacks access to this process definition (G-L)
-        requirePdAccess(pd.getId());
-
-        return bindingRepository.findByProcessDefinitionId(pd.getId()).stream()
-            .map(b -> {
-                ElementBindingDTO dto = new ElementBindingDTO();
-                dto.setId(b.getId());
-                dto.setElementId(b.getElementId());
-                dto.setArtifactKey(b.getArtifactKey());
-                dto.setArtifactVersion(b.getArtifactVersion());
-                dto.setProcessDefinitionId(b.getProcessDefinitionId());
-                dto.setProcessDefinitionVersion(b.getProcessDefinitionVersion());
-                return dto;
-            })
-            .toList();
+        return elementBindingOperations.listElementBindings(key);
     }
 
     @Override
-    @Transactional
     public void deleteElementBinding(String key, String elementId) {
-        Principal principal = getPrincipal();
-        if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
-        }
-        if (!principal.isSuperAdmin()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only SUPER_ADMIN can delete element bindings");
-        }
-
-        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-
-        bindingRepository.deleteByProcessDefinitionIdAndElementId(pd.getId(), elementId);
+        elementBindingOperations.deleteElementBinding(key, elementId);
     }
 
     // --- WO-VM-9a: schema-map + save ---
