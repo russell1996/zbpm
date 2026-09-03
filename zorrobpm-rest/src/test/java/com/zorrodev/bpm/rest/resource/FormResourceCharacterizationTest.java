@@ -1006,15 +1006,16 @@ class FormResourceCharacterizationTest {
 
     @Test
     void transactionalBoundary_writeMethodsAreTransactional() throws Exception {
-        // Fact about current prod code: the 4 write endpoints own their tx boundary.
-        // WO-DEBT-4c MOVED the ElementBinding boundary (not dropped it): create/delete
-        // are @Transactional on ElementBindingOperationsImpl now, FormResource delegates
-        // carry none. deployForm/saveElementSchema still own theirs until their slices.
-        // (Pre-move RED of this test on the 4c branch is kept in governance/reports/WO-DEBT-4c.md
-        // as the move-proof; the pin's intent — boundary never silently lost — is preserved.)
+        // Fact about current prod code: write endpoints own their tx boundary on the
+        // domain impl, never on the FormResource delegates.
+        // WO-DEBT-4c MOVED the ElementBinding boundary, WO-DEBT-4e MOVED the Forms and
+        // SchemaMap boundaries (none dropped): deployForm/saveElementSchema are @Transactional
+        // on FormOperationsImpl/SchemaMapOperationsImpl now, FormResource delegates carry none.
+        // (Pre-move REDs are kept in governance/reports/WO-DEBT-4c.md and WO-DEBT-4e.md
+        // as move-proofs; the pin's intent — boundary never silently lost — is preserved.)
         assertThat(FormResource.class
             .getMethod("deployForm", com.zorrodev.bpm.contract.dto.DeployFormDTO.class)
-            .isAnnotationPresent(Transactional.class)).isTrue();
+            .isAnnotationPresent(Transactional.class)).isFalse();
         assertThat(FormResource.class
             .getMethod("createElementBinding", String.class, CreateElementBindingDTO.class)
             .isAnnotationPresent(Transactional.class)).isFalse();
@@ -1023,7 +1024,7 @@ class FormResourceCharacterizationTest {
             .isAnnotationPresent(Transactional.class)).isFalse();
         assertThat(FormResource.class
             .getMethod("saveElementSchema", String.class, String.class, SaveElementSchemaDTO.class)
-            .isAnnotationPresent(Transactional.class)).isTrue();
+            .isAnnotationPresent(Transactional.class)).isFalse();
         assertThat(ElementBindingOperationsImpl.class
             .getMethod("createElementBinding", String.class, CreateElementBindingDTO.class)
             .isAnnotationPresent(Transactional.class)).isTrue();
@@ -1032,6 +1033,21 @@ class FormResourceCharacterizationTest {
             .isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(ElementBindingOperationsImpl.class
             .getMethod("listElementBindings", String.class)
+            .isAnnotationPresent(Transactional.class)).isFalse();
+        assertThat(FormOperationsImpl.class
+            .getMethod("deployForm", com.zorrodev.bpm.contract.dto.DeployFormDTO.class)
+            .isAnnotationPresent(Transactional.class)).isTrue();
+        assertThat(FormOperationsImpl.class
+            .getMethod("listForms")
+            .isAnnotationPresent(Transactional.class)).isFalse();
+        assertThat(FormOperationsImpl.class
+            .getMethod("getForm", String.class)
+            .isAnnotationPresent(Transactional.class)).isFalse();
+        assertThat(SchemaMapOperationsImpl.class
+            .getMethod("saveElementSchema", String.class, String.class, SaveElementSchemaDTO.class)
+            .isAnnotationPresent(Transactional.class)).isTrue();
+        assertThat(SchemaMapOperationsImpl.class
+            .getMethod("getSchemaMap", String.class)
             .isAnnotationPresent(Transactional.class)).isFalse();
     }
 }

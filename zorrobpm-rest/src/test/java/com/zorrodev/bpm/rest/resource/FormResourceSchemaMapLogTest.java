@@ -6,10 +6,9 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
+import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnService;
-import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -17,13 +16,17 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+/**
+ * WO-DEBT-4e note: this test used to target {@code FormResource.getSchemaMap} directly.
+ * The logic moved 1:1 to {@link SchemaMapOperationsImpl} (FormResource is now a delegate),
+ * so the test was retargeted at the impl — same intent (log-and-continue on unparsable PD),
+ * same assertions. File/class name kept to preserve history (G20).
+ */
 @ExtendWith(MockitoExtension.class)
 class FormResourceSchemaMapLogTest {
 
@@ -34,12 +37,12 @@ class FormResourceSchemaMapLogTest {
     @Mock
     private BpmnService bpmnService;
     @Mock
-    private HttpServletRequest request;
+    private FormRepository formRepository;
     @Mock
-    private EventAuthzResolver eventAuthzResolver;
+    private FormAccessSupport formAccessSupport;
 
     @InjectMocks
-    private FormResource formResource;
+    private SchemaMapOperationsImpl schemaMapOperations;
 
     @Test
     void getSchemaMap_continuesWhenOneProcessDefinitionFailsToParse() {
@@ -77,14 +80,9 @@ class FormResourceSchemaMapLogTest {
         when(bpmnService.getProcessDefinitionModelById(brokenId))
             .thenThrow(new RuntimeException("Invalid BPMN XML"));
 
-        // The caller is an authenticated principal that is allowed to read the valid PD
-        // (WO-SEC-59 #7 added an authz gate to getSchemaMap).
-        Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "tester", "USER");
-        when(request.getAttribute("principal")).thenReturn(principal);
-        when(eventAuthzResolver.visibleDefinitionIds(any(), any())).thenReturn(Set.of(validId));
-
+        // The caller is allowed to read the valid PD (WO-SEC-59 #7 gate passes by default mock)
         // When: getSchemaMap is called
-        SchemaMapDTO result = formResource.getSchemaMap("test-form");
+        SchemaMapDTO result = schemaMapOperations.getSchemaMap("test-form");
 
         // Then: method completes without exception, returns result for valid PD
         assertThat(result).isNotNull();
