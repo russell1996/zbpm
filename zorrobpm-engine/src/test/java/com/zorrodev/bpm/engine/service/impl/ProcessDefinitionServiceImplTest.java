@@ -5,13 +5,10 @@ import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.service.BpmnService;
-import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.service.FileService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -36,8 +33,17 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+/**
+ * WO-DEBT-5c: orchestration tests. The service now delegates every deployment step to
+ * {@link ProcessDefinitionVersioning}/{@link DeploymentArtifactRegistrar}/
+ * {@link DeploymentPostCommitActions} — these tests pin THAT the right delegate is called
+ * with the right arguments in the right order, not the delegate's inner behavior (owned by
+ * {@code ProcessDefinitionVersioningTest}/{@code DeploymentArtifactRegistrarTest}/
+ * {@code DeploymentPostCommitActionsTest}, not duplicated here).
+ */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class ProcessDefinitionServiceImplTest {
@@ -46,34 +52,22 @@ class ProcessDefinitionServiceImplTest {
     private ProcessDefinitionRepository processDefinitionRepository;
 
     @Mock
-    private BpmnService bpmnService;
-
-    @Mock
     private FileService fileService;
-
-    @Mock
-    private com.zorrodev.bpm.engine.service.DBService dbService;
 
     @Mock
     private com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository bindingRepository;
 
     @Mock
-    private com.zorrodev.bpm.engine.repository.FormRepository formRepository;
-
-    @Mock
-    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
-
-    @Mock
     private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @Mock
-    private javax.sql.DataSource dataSource;
+    private ProcessDefinitionVersioning versioning;
 
     @Mock
-    private ElementSupport elementSupport;
+    private DeploymentArtifactRegistrar artifactRegistrar;
 
     @Mock
-    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private DeploymentPostCommitActions postCommitActions;
 
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
@@ -88,18 +82,34 @@ class ProcessDefinitionServiceImplTest {
         });
         service = new ProcessDefinitionServiceImpl(
             processDefinitionRepository,
-            bpmnService,
             bpmnParseService,
             fileService,
-            dbService,
             bindingRepository,
-            formRepository,
-            jdbcTemplate,
             transactionTemplate,
-            dataSource,
-            elementSupport,
-            eventPublisher
+            versioning,
+            artifactRegistrar,
+            postCommitActions
         );
+    }
+
+    /**
+     * Stubs the versioning delegate to build a real (unsaved) entity from the invocation
+     * arguments, pinned to the given version. The +1 arithmetic itself is owned by
+     * {@code ProcessDefinitionVersioningTest} — here the delegate is a boundary.
+     */
+    private void stubVersioning(String key, int version) {
+        when(versioning.createNewVersionEntity(eq(key), anyString(), anyString(), any(), any()))
+            .thenAnswer(inv -> {
+                ProcessDefinitionEntity e = new ProcessDefinitionEntity();
+                e.setId(inv.getArgument(3));
+                e.setKey(inv.getArgument(0));
+                e.setName(inv.getArgument(1));
+                e.setVersion(version);
+                e.setSha256(inv.getArgument(2));
+                e.setCreatedAt(Instant.now());
+                e.setStartFormKey(inv.getArgument(4));
+                return e;
+            });
     }
 
     @Test
@@ -129,7 +139,7 @@ class ProcessDefinitionServiceImplTest {
         String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"));
 
         when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
-        when(processDefinitionRepository.findMaxByKey("test1")).thenReturn(Optional.of(2));
+        stubVersioning("test1", 3);
         // Snapshot each save's arguments AT CALL TIME (Mockito keeps references, so a plain
         // captor/matcher would see the entity already flipped to ACTIVE).
         List<ProcessDefinitionEntity> saved = new ArrayList<>();
@@ -150,76 +160,57 @@ class ProcessDefinitionServiceImplTest {
         assertThat(saved.get(1).getKey()).isEqualTo("test1");
         assertThat(saved.get(1).getVersion()).isEqualTo(3);
 
-        verify(bpmnService).addProcessDefinition(eq(saved.get(1).getId()), any());
+        // Orchestration: version built by the delegate, file by fileService, everything else
+        // by the two other delegates — in the WO-REL-15 order (version → file → starts →
+        // carry-forward → ACTIVE-save → post-commit).
+        verify(versioning).createNewVersionEntity(eq("test1"), anyString(), anyString(), any(), any());
         verify(fileService).saveFile(eq(saved.get(1).getId()), eq(bpmn));
+        verify(artifactRegistrar).registerMessageStartSubscriptions(eq("test1"), eq(saved.get(1).getId()), any());
+        verify(artifactRegistrar).registerTimerStartJobs(eq("test1"), eq(saved.get(1).getId()), any());
+        verify(artifactRegistrar).registerSignalStartSubscriptions(eq("test1"), eq(saved.get(1).getId()), any());
+        verify(artifactRegistrar).carryForwardBindings(eq("test1"), eq(2), any());
+        verify(postCommitActions).cacheModelAfterCommit(eq(saved.get(1).getId()), any());
+        verify(postCommitActions).requestJobQueuesAfterCommit(any());
 
         assertThat(result.getKey()).isEqualTo("test1");
         assertThat(result.getVersion()).isEqualTo(3);
     }
 
     /**
-     * WO-REL-16 criterion #2: deploying a definition must announce its job types right away, so the
-     * queue exists without waiting for a process instance to reach the service task. Before the fix
-     * nothing was published here at all — the queue was only created on the first message sent.
+     * WO-REL-16 criterion #2 at orchestration level: deploying a definition must hand its
+     * model to the post-commit delegate so the queue can be announced without waiting for
+     * a process instance to reach the service task. WHAT is announced (the job1 payload)
+     * is owned by {@code DeploymentPostCommitActionsTest.announcedJobTypesMatchModel},
+     * not duplicated here.
      */
     @Test
     void addProcessDefinition_announcesJobQueuesForDeployedDefinition() throws IOException {
         String bpmn = Files.readString(Path.of("src/test/files/process2.bpmn"));
 
         when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
-        when(processDefinitionRepository.findMaxByKey("process2")).thenReturn(Optional.of(0));
+        stubVersioning("process2", 1);
         when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
-
-        service.addProcessDefinition(bpmn);
-
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        verify(eventPublisher, org.mockito.Mockito.atLeastOnce()).publishEvent(captor.capture());
-
-        List<com.zorrodev.bpm.exchange.JobQueuesRequested> announcements = captor.getAllValues().stream()
-            .filter(com.zorrodev.bpm.exchange.JobQueuesRequested.class::isInstance)
-            .map(com.zorrodev.bpm.exchange.JobQueuesRequested.class::cast)
-            .toList();
-        assertThat(announcements)
-            .as("deployment must announce the definition's job types")
-            .hasSize(1);
-        assertThat(announcements.get(0).getJobTypes()).contains("job1");
-    }
-
-    /** WO-REL-16: a definition with no job workers must not publish an empty announcement. */
-    @Test
-    void addProcessDefinition_withoutServiceTasks_announcesNothing() throws IOException {
-        String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"));
-
-        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
-        when(processDefinitionRepository.findMaxByKey("test1")).thenReturn(Optional.of(0));
-        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
-            .thenAnswer(inv -> inv.getArgument(0));
-
-        service.addProcessDefinition(bpmn);
-
-        verify(eventPublisher, never()).publishEvent(any(com.zorrodev.bpm.exchange.JobQueuesRequested.class));
-    }
-
-    /**
-     * WO-REL-16 criterion #5: a listener blowing up (broker unreachable) must not fail a deployment
-     * that has already committed.
-     */
-    @Test
-    void addProcessDefinition_announcementFailure_doesNotFailDeployment() throws IOException {
-        String bpmn = Files.readString(Path.of("src/test/files/process2.bpmn"));
-
-        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
-        when(processDefinitionRepository.findMaxByKey("process2")).thenReturn(Optional.of(0));
-        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
-            .thenAnswer(inv -> inv.getArgument(0));
-        org.mockito.Mockito.doThrow(new RuntimeException("broker down"))
-            .when(eventPublisher).publishEvent(any(com.zorrodev.bpm.exchange.JobQueuesRequested.class));
 
         ProcessDefinition result = service.addProcessDefinition(bpmn);
 
+        verify(postCommitActions).requestJobQueuesAfterCommit(any());
+        verify(postCommitActions).cacheModelAfterCommit(any(), any());
+
         assertThat(result.getKey()).isEqualTo("process2");
     }
+
+    // NOTE (WO-DEBT-5c): two pre-5c tests were deleted here, not moved —
+    // - addProcessDefinition_withoutServiceTasks_announcesNothing: the "empty jobTypes →
+    //   no publish" rule now lives inside DeploymentPostCommitActions.requestJobQueuesAfterCommit
+    //   (early return) and is owned by
+    //   DeploymentPostCommitActionsTest.requestJobQueuesAfterCommit_emptyJobTypes_publishesNothing.
+    //   At orchestration level the service ALWAYS delegates (even for empty models), so a
+    //   never()-assert here would pin the wrong layer.
+    // - addProcessDefinition_announcementFailure_doesNotFailDeployment: the best-effort swallow
+    //   now lives inside DeploymentPostCommitActions.publishJobQueuesRequested (try/catch) and is
+    //   owned by DeploymentPostCommitActionsTest.requestJobQueuesAfterCommit_publisherThrows_swallowed.
+    //   Stubbing the mock to throw would misrepresent prod (the mock bypasses the bean's catch).
 
     @Test
     void addProcessDefinition_existingSha_doesNotResaveAndDoesNotPublish() throws IOException {
@@ -233,8 +224,9 @@ class ProcessDefinitionServiceImplTest {
         ProcessDefinition result = service.addProcessDefinition(bpmn);
 
         verify(processDefinitionRepository, never()).save(any());
-        verify(bpmnService, never()).addProcessDefinition(any(), any());
         verify(fileService, never()).saveFile(any(), any());
+        // ACTIVE fast path: none of the 3 collaborators is touched.
+        verifyNoInteractions(versioning, artifactRegistrar, postCommitActions);
 
         assertThat(result.getId()).isEqualTo(existingId);
         assertThat(result.getVersion()).isEqualTo(5);
@@ -260,9 +252,15 @@ class ProcessDefinitionServiceImplTest {
         ProcessDefinition result = service.addProcessDefinition(bpmn);
 
         // WO-REL-15: redeploy of the same sha256 REPAIRS the incomplete deployment instead of
-        // bailing out with "already exists": model re-saved, state flipped to ACTIVE.
+        // bailing out with "already exists": model re-saved, state flipped to ACTIVE, artifacts
+        // re-registered via the delegates, cache/queues re-announced post-commit.
         verify(fileService).saveFile(eq(existingId), eq(bpmn));
-        verify(bpmnService).addProcessDefinition(eq(existingId), any());
+        verify(artifactRegistrar).registerMessageStartSubscriptions(eq("test1"), eq(existingId), any());
+        verify(artifactRegistrar).registerTimerStartJobs(eq("test1"), eq(existingId), any());
+        verify(artifactRegistrar).registerSignalStartSubscriptions(eq("test1"), eq(existingId), any());
+        verify(artifactRegistrar).carryForwardBindings(eq("test1"), eq(4), any());
+        verify(postCommitActions).cacheModelAfterCommit(eq(existingId), any());
+        verify(postCommitActions).requestJobQueuesAfterCommit(any());
         assertThat(saveStates).containsExactly(ProcessDefinitionEntity.STATE_ACTIVE);
 
         assertThat(result.getId()).isEqualTo(existingId);
