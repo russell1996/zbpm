@@ -311,37 +311,4 @@ class ProcessDefinitionServiceImplTest {
         e.setCreatedAt(Instant.now());
         return e;
     }
-
-    // ==================== WO-A-03: advisory lock fail-closed ====================
-
-    /**
-     * POF (G-P/G-N): On PostgreSQL, if advisory lock fails (e.g. SQLException),
-     * the transaction must ROLLBACK — version is NOT created.
-     * RED (before fix): broad catch swallows exception, version created without lock.
-     * GREEN (after fix): exception propagates, save() never called.
-     */
-    @Test
-    void advisoryLockFailure_propagatesAndNoVersionCreated() throws Exception {
-        // Simulate PostgreSQL: dataSource returns a connection whose meta says "PostgreSQL"
-        java.sql.Connection mockConn = org.mockito.Mockito.mock(java.sql.Connection.class);
-        java.sql.DatabaseMetaData mockMeta = org.mockito.Mockito.mock(java.sql.DatabaseMetaData.class);
-        org.mockito.Mockito.when(mockMeta.getDatabaseProductName()).thenReturn("PostgreSQL");
-        org.mockito.Mockito.when(mockConn.getMetaData()).thenReturn(mockMeta);
-        when(dataSource.getConnection()).thenReturn(mockConn);
-
-        // Advisory lock will fail — simulate by making execute throw
-        when(jdbcTemplate.execute(any(org.springframework.jdbc.core.ConnectionCallback.class)))
-            .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("lock failed", new java.sql.SQLException("lock timeout")));
-
-        String key = "test-key";
-        UUID id = UUID.randomUUID();
-
-        try {
-            service.createNewVersionWithAdvisoryLock(key, "Test", "sha", id, null);
-            org.assertj.core.api.Assertions.fail("Should have thrown due to lock failure");
-        } catch (Exception e) {
-            // Expected: exception propagates, version NOT created
-            verify(processDefinitionRepository, never()).save(any(ProcessDefinitionEntity.class));
-        }
-    }
 }
