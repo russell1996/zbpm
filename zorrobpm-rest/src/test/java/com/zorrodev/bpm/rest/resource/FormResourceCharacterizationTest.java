@@ -1007,18 +1007,31 @@ class FormResourceCharacterizationTest {
     @Test
     void transactionalBoundary_writeMethodsAreTransactional() throws Exception {
         // Fact about current prod code: the 4 write endpoints own their tx boundary.
-        // The later slice must move (not drop) it — this test pins the starting point.
+        // WO-DEBT-4c MOVED the ElementBinding boundary (not dropped it): create/delete
+        // are @Transactional on ElementBindingOperationsImpl now, FormResource delegates
+        // carry none. deployForm/saveElementSchema still own theirs until their slices.
+        // (Pre-move RED of this test on the 4c branch is kept in governance/reports/WO-DEBT-4c.md
+        // as the move-proof; the pin's intent — boundary never silently lost — is preserved.)
         assertThat(FormResource.class
             .getMethod("deployForm", com.zorrodev.bpm.contract.dto.DeployFormDTO.class)
             .isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(FormResource.class
             .getMethod("createElementBinding", String.class, CreateElementBindingDTO.class)
-            .isAnnotationPresent(Transactional.class)).isTrue();
+            .isAnnotationPresent(Transactional.class)).isFalse();
         assertThat(FormResource.class
             .getMethod("deleteElementBinding", String.class, String.class)
-            .isAnnotationPresent(Transactional.class)).isTrue();
+            .isAnnotationPresent(Transactional.class)).isFalse();
         assertThat(FormResource.class
             .getMethod("saveElementSchema", String.class, String.class, SaveElementSchemaDTO.class)
             .isAnnotationPresent(Transactional.class)).isTrue();
+        assertThat(ElementBindingOperationsImpl.class
+            .getMethod("createElementBinding", String.class, CreateElementBindingDTO.class)
+            .isAnnotationPresent(Transactional.class)).isTrue();
+        assertThat(ElementBindingOperationsImpl.class
+            .getMethod("deleteElementBinding", String.class, String.class)
+            .isAnnotationPresent(Transactional.class)).isTrue();
+        assertThat(ElementBindingOperationsImpl.class
+            .getMethod("listElementBindings", String.class)
+            .isAnnotationPresent(Transactional.class)).isFalse();
     }
 }
