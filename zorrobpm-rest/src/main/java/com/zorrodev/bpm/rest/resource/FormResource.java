@@ -9,24 +9,17 @@ import com.zorrodev.bpm.contract.dto.SchemaMapDTO;
 import com.zorrodev.bpm.contract.dto.SchemaMapElementDTO;
 import com.zorrodev.bpm.contract.dto.SaveElementSchemaDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
-import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.ElementArtifactBindingEntity;
 import com.zorrodev.bpm.engine.entity.FormArtifactKind;
 import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
-import com.zorrodev.bpm.engine.entity.UserTaskEntity;
-import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
-import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.BpmnService;
-import com.zorrodev.bpm.engine.service.DBService;
-import com.zorrodev.bpm.engine.service.FormResolver;
 import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +33,6 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -53,20 +45,17 @@ import java.util.stream.Collectors;
 public class FormResource implements FormContract {
 
     private final FormRepository formRepository;
-    private final UserTaskRepository userTaskRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final ElementArtifactBindingRepository bindingRepository;
-    private final DBService dbService;
     private final BpmnParseService bpmnParseService;
     private final BpmnService bpmnService;
-    private final FormResolver formResolver;
     private final JsonSchemaValidator jsonSchemaValidator;
     private final HttpServletRequest request;
     private final ObjectMapper objectMapper;
     private final EventAuthzResolver eventAuthzResolver;
-    private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessRepository processRepository;
     private final ElementBindingOperations elementBindingOperations;
+    private final TaskFormOperations taskFormOperations;
 
     /**
      * WO-ACL-1: form artifacts (list/get/start-form/bindings/schema-map) are DEFINITION
@@ -222,34 +211,12 @@ public class FormResource implements FormContract {
 
     @Override
     public TaskFormDTO getUserTaskForm(UUID id) {
-        UserTaskEntity task = userTaskRepository.findById(id)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found"));
-        ProcessInstanceEntity pi = processInstanceRepository.findById(task.getProcessInstanceId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"));
-        // WO-ACL-1: task form of a concrete instance = runtime read (variables prefill)
-        requireRuntimePdAccess(pi.getProcessDefinitionId());
-        return resolveForm(task.getFormKey(), task.getProcessInstanceId());
+        return taskFormOperations.getUserTaskForm(id);
     }
 
     @Override
     public TaskFormDTO getStartForm(String key) {
-        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-
-        requirePdAccess(pd.getId());
-
-        // ADR-6 §D7: try element-artifact binding first (per elementId)
-        List<ElementArtifactBindingEntity> bindings = bindingRepository.findByProcessDefinitionId(pd.getId());
-        if (!bindings.isEmpty()) {
-            // For now, return the first binding's artifact (start event binding)
-            ElementArtifactBindingEntity binding = bindings.get(0);
-            return resolveByBinding(binding);
-        }
-
-        // Fallback to scalar startFormKey (back-compat)
-        return resolveStartForm(pd.getStartFormKey());
+        return taskFormOperations.getStartForm(key);
     }
 
     @Override
@@ -468,43 +435,6 @@ public class FormResource implements FormContract {
                 && element.getExtensions().getUserTaskExtension() != null
                 && element.getExtensions().getUserTaskExtension().getExternalReference() != null);
         return result;
-    }
-
-    // --- WO-FORM-2: resolve logic ---
-
-    private TaskFormDTO resolveForm(String formKey, UUID processInstanceId) {
-        return formResolver.resolveTaskForm(formKey, prefillData(processInstanceId));
-    }
-
-    private TaskFormDTO resolveStartForm(String startFormKey) {
-        return formResolver.resolveTaskForm(startFormKey, null);
-    }
-
-    private TaskFormDTO resolveByBinding(ElementArtifactBindingEntity binding) {
-        // ADR-6 §D8: pin to artifact_version from binding
-        FormEntity form = formRepository.findByFormKeyAndVersion(binding.getArtifactKey(), binding.getArtifactVersion())
-            .orElse(null);
-        if (form == null) {
-            // Fallback: try latest version
-            return resolveStartForm(binding.getArtifactKey());
-        }
-        TaskFormDTO dto = new TaskFormDTO();
-        dto.setType("embedded");
-        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
-        dto.setSchema(form.getSchemaJson());
-        return dto;
-    }
-
-    private Map<String, String> prefillData(UUID processInstanceId) {
-        Map<String, String> data = new LinkedHashMap<>();
-        if (processInstanceId == null) return data;
-        java.util.List<ProcessVariable> vars = dbService.getVariables(processInstanceId);
-        for (ProcessVariable v : vars) {
-            if (v.getName() != null && v.getValue() != null) {
-                data.put(v.getName(), v.getValue());
-            }
-        }
-        return data;
     }
 
     private Principal getPrincipal() {
