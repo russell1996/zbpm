@@ -59,6 +59,7 @@ class RuntimeResourceTest {
     @Mock private IncidentRuntimeOperations incidentRuntimeOperations;
     @Mock private ProcessInstanceRuntimeOperations processInstanceRuntimeOperations;
     @Mock private ServiceTaskRuntimeOperations serviceTaskRuntimeOperations;
+    @Mock private UserTaskRuntimeOperations userTaskRuntimeOperations;
     @Mock private HttpServletRequest request;
 
     @InjectMocks
@@ -106,25 +107,15 @@ class RuntimeResourceTest {
     @Test
     void completeUserTask_delegatesToService() {
         UUID id = UUID.randomUUID();
-        List<ProcessVariable> vars = List.of();
         CompleteTaskDTO dto = new CompleteTaskDTO();
-        dto.setVariables(vars);
+        dto.setVariables(List.of());
         IdDTO expected = new IdDTO(id);
-        when(runtimeService.completeUserTask(id, vars)).thenReturn(toEngineDTO(expected));
-
-        Principal.UserPrincipal admin = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
-        when(request.getAttribute("principal")).thenReturn(admin);
-        when(authorizationService.canCompleteUserTask(any(), any(), any())).thenReturn(true);
-
-        UserTaskEntity task = new UserTaskEntity();
-        task.setId(id);
-        task.setProcessInstanceId(UUID.randomUUID());
-        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+        when(userTaskRuntimeOperations.completeUserTask(id, dto)).thenReturn(expected);
 
         IdDTO result = resource.completeUserTask(id, dto);
 
         assertThat(result.getId()).isSameAs(expected.getId());
-        verify(runtimeService).completeUserTask(id, vars);
+        verify(userTaskRuntimeOperations).completeUserTask(id, dto);
     }
 
     @Test
