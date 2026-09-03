@@ -37,6 +37,7 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
     @Transactional
     @Override
     public IdDTO startProcessInstance(StartProcessInstanceDTO dto) {
+        // Resolve definitionKey from DTO
         String definitionKey = dto.getProcessDefinitionKey();
         if (definitionKey == null && dto.getProcessDefinitionId() != null) {
             ProcessDefinitionEntity pd = processDefinitionRepository.findById(dto.getProcessDefinitionId()).orElse(null);
@@ -44,8 +45,13 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
         }
         runtimeOperationSupport.requireOperate(definitionKey, AuthorizationService.Action.START);
 
+        // WO-ENG-10: validate against the EXACT definition that will actually be started, not
+        // always "latest by key" — mirrors RuntimeServiceImpl.startProcessInstance's own
+        // resolution order (id > key+version > key+maxVersion), so a start pinned to an older
+        // version is validated against that version's form/schema, not a newer one's.
         ProcessDefinitionEntity targetDefinition = runtimeOperationSupport.resolveTargetDefinition(dto);
 
+        // ADR-6 §D9: form validation via FormArtifactService facade
         if (targetDefinition != null && targetDefinition.getStartFormKey() != null) {
             List<FormValidator.ValidationError> errors = formArtifactService.validateFormIfApplicable(
                 targetDefinition.getStartFormKey(), dto.getVariables());
@@ -60,7 +66,9 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
         String onBehalfOf = runtimeOperationSupport.checkedOnBehalfOf();
         IdDTO result = Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(runtimeOperationSupport::toDTO).orElseThrow();
 
+        // WO-INT-2: persist initiator on process instance
         if (onBehalfOf != null) {
+            // WO-SEC-28: the initiator is a claimed, unverified attribution — keep the marker.
             String claimed = "[claimed] " + onBehalfOf;
             processInstanceRepository.findById(result.getId()).ifPresent(pi -> {
                 pi.setInitiator(claimed);
