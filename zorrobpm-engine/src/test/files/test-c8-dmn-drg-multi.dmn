@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_c8drgm" name="c8drg-multi" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="mbase" name="Base">
+    <decisionTable id="DecisionTable_mbase" hitPolicy="FIRST">
+      <input id="Input_mbase" label="Tier">
+        <inputExpression id="InputExpression_mbase" typeRef="string" expressionLanguage="feel">
+          <text>tier</text>
+        </inputExpression>
+      </input>
+      <output id="Output_mbase_discount" label="Discount" name="discount" typeRef="number" />
+      <output id="Output_mbase_tax" label="Tax" name="tax" typeRef="number" />
+      <rule id="Rule_mbase_gold">
+        <inputEntry id="In_mbase_gold"><text>"gold"</text></inputEntry>
+        <outputEntry id="Out_mbase_gold_discount"><text>20</text></outputEntry>
+        <outputEntry id="Out_mbase_gold_tax"><text>5</text></outputEntry>
+      </rule>
+      <rule id="Rule_mbase_default">
+        <inputEntry id="In_mbase_default"><text></text></inputEntry>
+        <outputEntry id="Out_mbase_default_discount"><text>0</text></outputEntry>
+        <outputEntry id="Out_mbase_default_tax"><text>0</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <decision id="mtop" name="Top">
+    <informationRequirement id="InfoReq_m1">
+      <requiredDecision href="#mbase" />
+    </informationRequirement>
+    <decisionTable id="DecisionTable_mtop" hitPolicy="FIRST">
+      <input id="Input_mtop" label="Total">
+        <inputExpression id="InputExpression_mtop" typeRef="number" expressionLanguage="feel">
+          <text>mbase.discount + mbase.tax</text>
+        </inputExpression>
+      </input>
+      <output id="Output_mtop" label="Total" name="total" typeRef="number" />
+      <rule id="Rule_mtop_ok">
+        <inputEntry id="In_mtop_ok"><text>25</text></inputEntry>
+        <outputEntry id="Out_mtop_ok"><text>25</text></outputEntry>
+      </rule>
+      <rule id="Rule_mtop_default">
+        <inputEntry id="In_mtop_default"><text></text></inputEntry>
+        <outputEntry id="Out_mtop_default"><text>-1</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

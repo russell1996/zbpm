@@ -14,6 +14,7 @@ import com.zorrodev.bpm.engine.dmn.xml.DmnInputModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnOutputModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnRuleModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnTextModel;
+import com.zorrodev.bpm.engine.dmn.xml.InformationRequirementModel;
 import com.zorrodev.bpm.engine.entity.DmnDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.DmnDefinitionRepository;
 import com.zorrodev.bpm.engine.service.DmnService;
@@ -84,8 +85,21 @@ public class DmnServiceImpl implements DmnService {
             .filter(d -> decisionId.equals(d.getId()))
             .findFirst()
             .orElseThrow(() -> new EngineException("DMN resource has no decision '" + decisionId + "'"));
+        return evaluateDecision(decision, model, toVariableMap(variables), new java.util.HashSet<>());
+    }
+
+    /**
+     * WO-C8-10: evaluates one decision of a decision requirements graph. First resolves all
+     * required decisions (recursively, with cycle detection) and extends {@code vars} with
+     * their results bound under each required decision's id, then runs the pre-existing
+     * table/literal logic unchanged. Decisions without {@code informationRequirement} behave
+     * exactly as before the refactor.
+     */
+    private Object evaluateDecision(DmnDecisionModel decision, DmnDefinitionsModel model,
+            Map<String, Object> vars, java.util.Set<String> resolving) {
+        String decisionId = decision.getId();
+        vars = resolveRequiredDecisions(decision, model, vars, resolving);
         DmnDecisionTableModel table = decision.getDecisionTable();
-        Map<String, Object> vars = toVariableMap(variables);
         if (table == null) {
             // WO-C8-6: a decision without a table may carry a literal FEEL expression instead.
             DmnTextModel literalExpression = decision.getLiteralExpression();
@@ -139,6 +153,30 @@ public class DmnServiceImpl implements DmnService {
             }
             default -> evaluateSingleRule(matchedRules.get(0), table, vars, decisionId); // FIRST, ANY
         };
+    }
+
+    private Map<String, Object> resolveRequiredDecisions(DmnDecisionModel decision,
+            DmnDefinitionsModel model, Map<String, Object> vars, java.util.Set<String> resolving) {
+        if (decision.getInformationRequirements() == null || decision.getInformationRequirements().isEmpty()) {
+            return vars;
+        }
+        if (!resolving.add(decision.getId())) {
+            throw new EngineException("DMN decision requirements graph has a cycle involving '" + decision.getId() + "'");
+        }
+        Map<String, Object> extended = new LinkedHashMap<>(vars);
+        for (InformationRequirementModel req : decision.getInformationRequirements()) {
+            if (req.getRequiredDecision() == null) continue;
+            String requiredId = req.getRequiredDecision().getId();
+            DmnDecisionModel required = model.getDecisions().stream()
+                .filter(d -> requiredId.equals(d.getId()))
+                .findFirst()
+                .orElseThrow(() -> new EngineException("DMN decision '" + decision.getId()
+                    + "' requires undeployed decision '" + requiredId + "'"));
+            Object result = evaluateDecision(required, model, extended, resolving);
+            extended.put(requiredId, result);
+        }
+        resolving.remove(decision.getId());
+        return extended;
     }
 
     private Object evaluateSingleRule(DmnRuleModel rule, DmnDecisionTableModel table, Map<String, Object> vars, String decisionId) {
