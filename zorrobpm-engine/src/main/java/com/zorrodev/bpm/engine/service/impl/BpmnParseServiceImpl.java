@@ -98,6 +98,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 .map(ExtensionElements::getVersionTag)
                 .map(VersionTagModel::getValue)
                 .orElse(null));
+            // WO-C8-12: process-level zeebe:userTaskForm list (embedded form JSON, id+body).
+            pd.setUserTaskForms(Optional.ofNullable(process.getExtensionElements())
+                .map(ExtensionElements::getUserTaskForms)
+                .orElse(List.of()));
 
             for (BpmnStartEventModel startEvent : process.getStartEvents()) {
                 BpmnElementModel element = toElementModel(startEvent);
