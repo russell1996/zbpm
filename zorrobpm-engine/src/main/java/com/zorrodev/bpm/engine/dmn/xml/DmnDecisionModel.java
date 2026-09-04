@@ -18,4 +18,6 @@ public class DmnDecisionModel {
     private String name;
     @XmlElement(name = "decisionTable", namespace = DmnDefinitionsModel.NS)
     private DmnDecisionTableModel decisionTable;
+    @XmlElement(name = "literalExpression", namespace = DmnDefinitionsModel.NS)
+    private DmnTextModel literalExpression;
 }

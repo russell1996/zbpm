@@ -34,7 +34,6 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * WO-C8-1 (Фаза 0) — эмпирическая характеризация BPMN/DMN-паритета с Camunda 8.
@@ -266,7 +265,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void dmnLiteralExpression_failsWithNoDecisionTable() throws Exception {
+    void dmnLiteralExpression_evaluatesDirectly() throws Exception {
+        // WO-C8-6 GREEN (переименован из dmnLiteralExpression_failsWithNoDecisionTable):
+        // decision без таблицы вычисляет literal FEEL-выражение напрямую.
         String decision = uniq("c8lit");
         dmnService.deploy(bpmn("test-c8-dmn-literal.dmn").replace("c8lit", decision));
         String key = uniq("c8brl");
@@ -275,11 +276,39 @@ public class Camunda8ParityCharacterizationTests {
             .replace("c8lit", decision);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
-        // Decision без таблицы не вычисляется: EngineException уходит НАРУЖУ из start
-        // (не паркуется инцидентом — в Camunda 8 это был бы инцидент evaluation-ошибки).
-        assertThatThrownBy(() -> start(model.getId(), List.of()))
-            .isInstanceOf(com.zorrodev.bpm.contract.exception.EngineException.class)
-            .hasMessageContaining("has no decision table");
+        UUID piId = start(model.getId(), List.of());
+
+        ProcessInstance pi = queryService.getProcessInstance(piId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        ProcessVariableEntity greeting = variableRepository
+            .findByNameAndProcessInstanceId("greeting", piId).orElseThrow();
+        assertThat(greeting.getTextValue()).isEqualTo("hello");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void dmnLiteralExpression_seesInputVariables() throws Exception {
+        // WO-C8-6, критерий 3: выражение видит входные переменные, не только константы.
+        String decision = uniq("c8litvar");
+        dmnService.deploy(bpmn("test-c8-dmn-literal.dmn")
+            .replace("c8lit", decision)
+            .replace("\"hello\"", "amount * 2"));
+        String key = uniq("c8brl");
+        String xml = bpmn("test-c8-br-literal.bpmn")
+            .replace("c8-br-literal", key)
+            .replace("c8lit", decision);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("amount", ProcessVariableType.LONG, "21")));
+
+        ProcessInstance pi = queryService.getProcessInstance(piId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        ProcessVariableEntity greeting = variableRepository
+            .findByNameAndProcessInstanceId("greeting", piId).orElseThrow();
+        assertThat(greeting.getType()).isEqualTo(ProcessVariableType.LONG);
+        assertThat(greeting.getTextValue()).isEqualTo("42");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
     // ==================== §C.1: DMN decision requirements graph ====================
