@@ -637,23 +637,46 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void errorBoundary_specificVsCatchAll_firstMatchInIterationWins() throws Exception {
+    void errorBoundary_specificWinsRegardlessOfOrder() throws Exception {
+        // WO-C8-4 GREEN (переименован из errorBoundary_specificVsCatchAll_firstMatchInIterationWins):
+        // брошена E-1 при двух боундари на sub1 (catch-all объявлен в XML ПЕРВЫМ) —
+        // побеждает specific-ветка, как в Camunda 8 (Addendum gap-анализа: Zeebe 8.6).
         String key = uniq("c8ep");
         String xml = bpmn("test-c8-error-priority.bpmn").replace("c8-error-priority", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
 
-        // Брошена E-1 при двух боундари на sub1 (catch-all объявлен в XML ПЕРВЫМ).
-        // Camunda 8 обязана пойти по specific-ветке независимо от порядка; фиксируем факт.
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
         Set<String> completedEnds = activityRepository.findAll().stream()
             .filter(a -> a.getProcessInstanceId().equals(piId))
             .filter(a -> a.getStatus() == ActivityStatus.COMPLETED)
             .map(ActivityEntity::getBpmnElementId)
             .collect(Collectors.toSet());
-        assertThat(completedEnds).contains("endCatchAll");
-        assertThat(completedEnds).doesNotContain("endSpecific");
+        assertThat(completedEnds).contains("endSpecific");
+        assertThat(completedEnds).doesNotContain("endCatchAll");
+        assertThat(completedEnds).doesNotContain("endEvent");
+    }
+
+    @Test
+    @Transactional
+    void errorBoundary_specificWinsWhenDeclaredFirst() throws Exception {
+        // WO-C8-4, симметричный случай: specific объявлен ПЕРВЫМ, catch-all ВТОРЫМ —
+        // результат тот же (endSpecific), что доказывает приоритет, а не переворот порядка.
+        String key = uniq("c8epr");
+        String xml = bpmn("test-c8-error-priority-reversed.bpmn").replace("c8-error-priority-reversed", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        Set<String> completedEnds = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .filter(a -> a.getStatus() == ActivityStatus.COMPLETED)
+            .map(ActivityEntity::getBpmnElementId)
+            .collect(Collectors.toSet());
+        assertThat(completedEnds).contains("endSpecific");
+        assertThat(completedEnds).doesNotContain("endCatchAll");
         assertThat(completedEnds).doesNotContain("endEvent");
     }
 
@@ -661,10 +684,10 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void escalationBoundary_specificVsCatchAll_firstMatchInIterationWins() throws Exception {
-        // ESC-1 из дочернего процесса всплывает на call activity родителя с двумя
-        // escalation-боундари (catch-all объявлен в XML ПЕРВЫМ). Тот же вопрос приоритета,
-        // что и для error, но для другого метода (findEscalationBoundary).
+    void escalationBoundary_specificWinsRegardlessOfOrder() throws Exception {
+        // WO-C8-4 GREEN (переименован из escalationBoundary_specificVsCatchAll_firstMatchInIterationWins):
+        // ESC-1 из дочернего процесса всплывает на call activity с двумя боундари
+        // (catch-all первым) — побеждает specific.
         String childKey = uniq("c8escch");
         processDefinitionService.addProcessDefinition(
             bpmn("test-c8-esc-child.bpmn").replace("c8-esc-child", childKey));
@@ -682,9 +705,30 @@ public class Camunda8ParityCharacterizationTests {
             .filter(a -> a.getStatus() == ActivityStatus.COMPLETED)
             .map(ActivityEntity::getBpmnElementId)
             .collect(Collectors.toSet());
-        assertThat(completedEnds).contains("endCatchAll");
-        assertThat(completedEnds).doesNotContain("endSpecific");
+        assertThat(completedEnds).contains("endSpecific");
+        assertThat(completedEnds).doesNotContain("endCatchAll");
         assertThat(completedEnds).doesNotContain("endEvent");
+    }
+
+    @Test
+    @Transactional
+    void eventSubprocessErrorHandler_specificWinsRegardlessOfOrder() throws Exception {
+        // WO-C8-4, место 2: два error-triggered event subprocess (catch-all объявлен ПЕРВЫМ) —
+        // брошена E-1, срабатывает specific-хендлер.
+        String key = uniq("c8evsp");
+        String xml = bpmn("test-c8-event-subprocess-error-priority.bpmn").replace("c8-evsub-priority", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        Set<String> completedEnds = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .filter(a -> a.getStatus() == ActivityStatus.COMPLETED)
+            .map(ActivityEntity::getBpmnElementId)
+            .collect(Collectors.toSet());
+        assertThat(completedEnds).contains("evEndSpecific");
+        assertThat(completedEnds).doesNotContain("evEndCatchAll");
     }
 
     // ==================== НОВОЕ (не было в gap-анализе): дроп inner intermediate-throw ====================
