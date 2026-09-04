@@ -393,13 +393,13 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(picked.getTextValue()).isEqualTo("v2-val");
     }
 
-    // ==================== §C.2: processId как FEEL (база для WO-C8-2) ====================
+    // ==================== §C.2: processId как FEEL (WO-C8-2 GREEN) ====================
 
     @Test
     @Transactional
-    void feelProcessId_resolvesLiterally_baselineForWoC8_2() throws Exception {
-        // BASELINE (текущее неверное поведение) для WO-C8-2: FEEL-выражение в processId
-        // резолвится буквально, инстанс падает в инцидент с текстом выражения как ключом.
+    void feelProcessId_expressionResolvesToChild() throws Exception {
+        // WO-C8-2 GREEN (переписан из feelProcessId_resolvesLiterally_baselineForWoC8_2):
+        // FEEL-выражение в processId вычисляется против переменных инстанса.
         String childKey = uniq("c8p");
         processDefinitionService.addProcessDefinition(
             bpmn("test-c8-child.bpmn")
@@ -413,10 +413,48 @@ public class Camunda8ParityCharacterizationTests {
 
         UUID piId = start(model.getId(), List.of(var("suffix", ProcessVariableType.STRING, suffix)));
 
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void feelProcessId_nullResolve_parksInformativeIncident() throws Exception {
+        // WO-C8-2, критерий 4: выражение есть, значения нет — явный инцидент с текстом
+        // выражения, а не NPE и не "processId вообще не указан".
+        String key = uniq("c8fpid");
+        String xml = bpmn("test-c8-feel-process-id.bpmn")
+            .replace("c8-feel-process-id", key)
+            .replace("= &quot;c8p-&quot; + suffix", "= null");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
         List<IncidentEntity> incidents = incidentsOfInstance(piId);
         assertThat(incidents).hasSize(1);
-        assertThat(incidents.get(0).getMessage()).contains("= \"c8p-\" + suffix");
+        assertThat(incidents.get(0).getMessage())
+            .contains("'call'")
+            .contains("= null")
+            .contains("resolved to null/blank");
+    }
+
+    @Test
+    @Transactional
+    void feelProcessId_brokenExpression_parksInformativeIncident() throws Exception {
+        // WO-C8-2, критерий 4: синтаксически битый FEEL — тот же явный путь (warn + null).
+        String key = uniq("c8fpid");
+        String xml = bpmn("test-c8-feel-process-id.bpmn")
+            .replace("c8-feel-process-id", key)
+            .replace("= &quot;c8p-&quot; + suffix", "= 1 +");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("suffix", ProcessVariableType.STRING, "x")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage()).contains("resolved to null/blank");
     }
 
     // ==================== §C.2: bindingType=deployment (эмпирика latest) ====================
@@ -454,13 +492,12 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(childMarkers.get(0).getTextValue()).isEqualTo("v2");
     }
 
-    // ==================== §C.2: decisionId как FEEL (база для WO-C8-2) ====================
+    // ==================== §C.2: decisionId как FEEL (WO-C8-2 GREEN) ====================
 
     @Test
     @Transactional
-    void feelDecisionId_resolvesLiterally_baselineForWoC8_2() throws Exception {
-        // BASELINE (текущее неверное поведение) для WO-C8-2: FEEL-выражение в decisionId
-        // резолвится буквально.
+    void feelDecisionId_expressionResolvesToDecision() throws Exception {
+        // WO-C8-2 GREEN (переписан из feelDecisionId_resolvesLiterally_baselineForWoC8_2).
         String decision = uniq("c8d");
         dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
             .replace("c8pinned", decision)
@@ -471,11 +508,39 @@ public class Camunda8ParityCharacterizationTests {
             .replace("c8-feel-decision-id", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
-        // Текущее поведение: EngineException уходит из start наружу (не инцидент).
-        assertThatThrownBy(() -> start(model.getId(),
-                List.of(var("tier", ProcessVariableType.STRING, tier))))
-            .isInstanceOf(com.zorrodev.bpm.contract.exception.EngineException.class)
-            .hasMessageContaining("= \"c8d-\" + tier");
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, tier)));
+
+        ProcessInstance pi = queryService.getProcessInstance(piId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        ProcessVariableEntity picked = variableRepository
+            .findByNameAndProcessInstanceId("picked", piId).orElseThrow();
+        assertThat(picked.getTextValue()).isEqualTo("v1-val");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void feelDecisionId_nullResolve_parksInformativeIncident() throws Exception {
+        // WO-C8-2, критерий 4: явная ошибка с текстом выражения, не NPE внутри evaluate.
+        String decision = uniq("c8d");
+        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
+            .replace("c8pinned", decision)
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8fdid");
+        String xml = bpmn("test-c8-feel-decision-id.bpmn")
+            .replace("c8-feel-decision-id", key)
+            .replace("= &quot;c8d-&quot; + tier", "= null");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage())
+            .contains("'decide'")
+            .contains("= null")
+            .contains("resolved to null/blank");
     }
 
     // ==================== §C.3: приоритет error boundary ====================
