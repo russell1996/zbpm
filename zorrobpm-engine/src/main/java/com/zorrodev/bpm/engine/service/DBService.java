@@ -61,6 +61,15 @@ public interface DBService {
     /** Creates the service-task job with an explicit retry budget (from {@code zeebe:taskDefinition retries}) and a stable job id (from {@code zeebe:taskDefinition type}). */
     void createServiceTask(UUID activityId, int retriesRemaining, String job);
 
+    /** WO-C8-11: creates the service task with a listener in flight (index into startListeners). */
+    void createServiceTask(UUID activityId, int retriesRemaining, String job, Integer pendingListenerIndex);
+
+    /** WO-C8-11: advances (or clears, with null) the in-flight listener; null = real job path. */
+    void setPendingListenerIndex(UUID serviceTaskId, Integer pendingListenerIndex);
+
+    /** WO-C8-11: reads the in-flight listener index; null = normal path. */
+    Integer getServiceTaskPendingListenerIndex(UUID serviceTaskId);
+
     /** Decrements the service task's retry budget and returns the remaining value. */
     int decrementServiceTaskRetries(UUID serviceTaskId);
 

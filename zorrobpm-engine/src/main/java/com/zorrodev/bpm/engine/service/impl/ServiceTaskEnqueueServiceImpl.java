@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.handler.ElementSupport;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -59,6 +61,20 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             .map(ext -> ext.getServiceTaskExtension())
             .map(ext -> ext.getJob())
             .orElse(null);
+
+        // WO-C8-11: while a start listener is in flight, the dispatched job is the listener's,
+        // not the real one. The index is read ONLY for elements that declare listeners, so the
+        // common path (and all pre-existing tests with mock DBService) never touches the new read.
+        List<ListenerModel> startListeners = elementSupport.serviceTaskStartListeners(element);
+        if (!startListeners.isEmpty()) {
+            Integer pending = dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
+            if (pending != null && pending >= 0 && pending < startListeners.size()) {
+                job = startListeners.get(pending).jobType();
+            } else if (pending != null) {
+                log.warn("Service task {} has out-of-bounds pendingListenerIndex {} ({} start listeners) — dispatching real job",
+                    serviceTaskId, pending, startListeners.size());
+            }
+        }
 
         // WO-C8-7: null-safe headers extraction — headers are optional, most tasks carry none.
         Map<String, String> taskHeaders = Optional.ofNullable(element.getExtensions())
