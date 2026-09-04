@@ -10,9 +10,11 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,9 +43,19 @@ class ServiceTaskEnqueueServiceImplTest {
     @Mock private BpmnService bpmnService;
     @Mock private OutboxRepository outboxRepository;
     @Mock private tools.jackson.databind.ObjectMapper objectMapper;
+    @Mock private ElementSupport elementSupport;
 
     @InjectMocks
     private ServiceTaskEnqueueServiceImpl service;
+
+    // WO-C8-9: реальный ElementSupport поверх мокнутого DBService — резолв гоняет прод-код
+    // (литерал/blank не трогают DB вообще, стабы не нужны), а не дефолты Mockito
+    // (mock.resolvePriority вернул бы 0 для Integer — ассерт зависел бы от мока, не от кода).
+    private ElementSupport realElementSupport() {
+        return new ElementSupport(
+            dbService, mock(ScriptService.class), mock(org.camunda.feel.api.FeelEngineApi.class),
+            new tools.jackson.databind.ObjectMapper());
+    }
 
     @Test
     void enqueueAfterCommit_insertsOutboxEntry() {
@@ -223,8 +236,11 @@ class ServiceTaskEnqueueServiceImplTest {
     void enqueueAfterCommit_withHeaders_outboxPayloadCarriesThem() throws Exception {
         // WO-C8-7, strongest form: real Jackson serialization — the outbox JSON the worker
         // will consume actually contains taskHeaders (proves the exchange-DTO change end to end).
+        // WO-C8-9: SUT constructor gained ElementSupport — a permissive mock keeps this
+        // headers-only test focused (priority resolves to null, headers path untouched).
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
-            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper());
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
+            mock(ElementSupport.class));
 
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
@@ -265,5 +281,100 @@ class ServiceTaskEnqueueServiceImplTest {
         assertThat(captor.getValue().getPayload()).contains("\"taskHeaders\"");
         assertThat(captor.getValue().getPayload()).contains("\"tenant\"");
         assertThat(captor.getValue().getPayload()).contains("acme");
+    }
+
+    @Test
+    void enqueueAfterCommit_withPriority_outboxPayloadCarriesIt() throws Exception {
+        // WO-C8-9, критерий 2, strongest form (зеркало WO-C8-7 headers-теста): реальный Jackson
+        // + РЕАЛЬНЫЙ ElementSupport (литерал "75" резолвится без стабов) — резолвнутый priority
+        // реально лежит в outbox-JSON, который увидит воркер.
+        ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
+            realElementSupport());
+
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskPriorityJson";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        ext.setPriority("75");
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+
+        realMapperService.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<OutboxEntry> captor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxRepository).save(captor.capture());
+        assertThat(captor.getValue().getPayload()).contains("\"priority\":75");
+    }
+
+    @Test
+    void enqueueAfterCommit_withoutPriority_setsNullOnJobDetail() throws Exception {
+        // WO-C8-9, критерий 3 (зеркало withoutHeaders): без priorityDefinition — null, не ошибка.
+        // SUT собран напрямую с реальным ElementSupport (пустой raw коротится до DB) —
+        // null приходит из прод-кода, а не из дефолта мока.
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskNoPriority";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        // no priority on the extension (the common case)
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getPriority()).isNull();
     }
 }

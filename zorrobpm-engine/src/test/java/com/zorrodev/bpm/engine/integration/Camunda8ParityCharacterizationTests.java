@@ -18,6 +18,7 @@ import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
+import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -65,6 +66,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private QueryService queryService;
+
+    @Autowired
+    private ElementSupport elementSupport;
 
     @Autowired
     private ActivityRepository activityRepository;
@@ -191,12 +195,62 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void priorityDefinition_isSilentlyIgnored_serviceTaskParksWithoutIncident() throws Exception {
+    void priorityDefinition_parsedAndDelivered_serviceTaskParksWithoutIncident() throws Exception {
+        // WO-C8-9 GREEN (переименован из priorityDefinition_isSilentlyIgnored_serviceTaskParksWithoutIncident):
+        // priority парсится из фикстуры; доставку до JobDetailModel/outbox доказывает
+        // ServiceTaskEnqueueServiceImplTest (включая реальный JSON payload).
         String key = uniq("c8pr");
         String xml = bpmn("test-c8-priority.bpmn").replace("c8-priority", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getPriority())
+            .isEqualTo("75");
+
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void priorityDefinition_feelExpression_resolvesToInteger() throws Exception {
+        // WO-C8-9, критерий 1 (FEEL-форма): `=priorityVar` вычисляется через
+        // elementSupport.resolvePriority в Integer на реальной переменной инстанса.
+        String key = uniq("c8prf");
+        String xml = bpmn("test-c8-priority.bpmn")
+            .replace("c8-priority", key)
+            .replace("priority=\"75\"", "priority=\"=priorityVar\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("priorityVar", ProcessVariableType.LONG, "75")));
+
+        assertThat(elementSupport.resolvePriority(piId, bpmnParseService.parse(xml).getElement("svc")))
+            .isEqualTo(75);
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void priorityDefinition_brokenValue_resolvesToNullWithoutIncident() throws Exception {
+        // WO-C8-9, критерий 4: не-Integer — не исключение, не инцидент: резолвится в null,
+        // задача паркуется штатно (информационное поле, не триггер).
+        String key = uniq("c8prb");
+        String xml = bpmn("test-c8-priority.bpmn")
+            .replace("c8-priority", key)
+            .replace("priority=\"75\"", "priority=\"not-a-number\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(elementSupport.resolvePriority(piId, bpmnParseService.parse(xml).getElement("svc")))
+            .isNull();
 
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
         assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
