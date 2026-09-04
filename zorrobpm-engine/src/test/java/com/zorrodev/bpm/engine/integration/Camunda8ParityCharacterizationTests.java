@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
@@ -37,6 +38,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * WO-C8-1 (Фаза 0) — эмпирическая характеризация BPMN/DMN-паритета с Camunda 8.
@@ -444,27 +446,52 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void dmnDependencyGraph_isNotResolved_topEvaluatesAlone() throws Exception {
-        String base = uniq("c8base");
-        String top = uniq("c8top");
-        dmnService.deploy(bpmn("test-c8-dmn-drg.dmn")
-            .replace("c8base", base)
-            .replace("c8top", top));
+    void dmnDependencyGraph_isResolved_requiredDecisionFeedsIntoParent() throws Exception {
+        // WO-C8-10 GREEN (переименован из dmnDependencyGraph_isNotResolved_topEvaluatesAlone):
+        // фикстура поправлена (input `b` → `c8base` — реальная C8-семантика биндинга под
+        // decisionId); c8base реально вычисляется (10 для tier="gold"), c8top матчит
+        // Rule_top_ok → "TOP-OK" (не "TOP-MISS").
+        // DMN деплоится БЕЗ uniq-переименования id: input c8top ссылается на decisionId c8base
+        // напрямую через FEEL, а FEEL-идентификатор не может содержать "-" (разделитель
+        // uniq()) — иначе имя распарсится как вычитание. Прецедент фиксированных id —
+        // DmnEvaluationIntegrationTests.deployAll.
+        dmnService.deploy(bpmn("test-c8-dmn-drg.dmn"));
         String key = uniq("c8brd");
-        String xml = bpmn("test-c8-br-drg.bpmn")
-            .replace("c8-br-drg", key)
-            .replace("c8top", top);
+        String xml = bpmn("test-c8-br-drg.bpmn").replace("c8-br-drg", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
 
-        // c8base is never evaluated even though c8top declares it as a required decision:
-        // the top table runs alone against instance variables (b is missing).
         ProcessInstance pi = queryService.getProcessInstance(piId);
         assertThat(pi.getCompletedAt()).isNotNull();
         ProcessVariableEntity result = variableRepository
             .findByNameAndProcessInstanceId("top", piId).orElseThrow();
-        assertThat(result.getTextValue()).isEqualTo("TOP-MISS");
+        assertThat(result.getTextValue()).isEqualTo("TOP-OK");
+    }
+
+    @Test
+    @Transactional
+    void dmnDependencyGraph_multiOutputRequiredDecision_dotAccessWorks() throws Exception {
+        // WO-C8-10, критерий 3: multi-output required decision биндится Map'ом под свой
+        // decisionId — зависимая decision читает `mbase.discount` через FEEL dot-access
+        // (20 + 5 = 25 для tier="gold").
+        dmnService.deploy(bpmn("test-c8-dmn-drg-multi.dmn"));
+
+        Object result = dmnService.evaluate("mtop", List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(((Number) result).intValue()).isEqualTo(25);
+    }
+
+    @Test
+    @Transactional
+    void dmnDependencyGraph_cycle_throwsEngineExceptionNotStackOverflow() throws Exception {
+        // WO-C8-10, критерий 4: A требует B, B требует A — EngineException про цикл,
+        // не StackOverflowError.
+        dmnService.deploy(bpmn("test-c8-dmn-drg-cycle.dmn"));
+
+        assertThatThrownBy(() -> dmnService.evaluate("cycA", List.of(var("x", ProcessVariableType.LONG, "1"))))
+            .isInstanceOf(EngineException.class)
+            .hasMessageContaining("cycle");
     }
 
     // ==================== §C.1 + критерий 3: Manual Task ====================
