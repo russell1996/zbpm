@@ -109,7 +109,14 @@ public class SyncTaskHandler {
             List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
             Object result;
             if (ext.getDecisionId() != null && !ext.getDecisionId().isBlank()) {
-                result = dmnService.evaluate(ext.getDecisionId(), variables);
+                // WO-C8-2: decisionId may be a FEEL expression — resolve like processId in
+                // CallActivityHandler. Null/blank after resolve is an explicit error naming the
+                // failed expression, never a silent NPE inside dmnService.evaluate.
+                String decisionId = elementSupport.resolveExpression(ext.getDecisionId(), processInstanceId);
+                if (decisionId == null || decisionId.isBlank()) {
+                    throw new IllegalStateException("Business rule task '" + el.getId() + "' decisionId expression '" + ext.getDecisionId() + "' resolved to null/blank — check instance variables and FEEL syntax");
+                }
+                result = dmnService.evaluate(decisionId, variables);
             } else if (ext.getExpression() != null && !ext.getExpression().isBlank()) {
                 String expression = ext.getExpression().startsWith("=") ? ext.getExpression().substring(1) : ext.getExpression();
                 result = scriptService.evaluateExpression(expression, variables);
