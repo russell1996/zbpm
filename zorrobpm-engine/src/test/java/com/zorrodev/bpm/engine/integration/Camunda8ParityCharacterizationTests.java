@@ -17,6 +17,7 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DmnService;
+import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -51,6 +53,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;
+
+    @Autowired
+    private BpmnParseService bpmnParseService;
 
     @Autowired
     private DmnService dmnService;
@@ -127,9 +132,17 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void taskHeaders_areSilentlyIgnored_serviceTaskParksWithoutIncident() throws Exception {
+    void taskHeaders_parsedAndDelivered_serviceTaskParksWithoutIncident() throws Exception {
+        // WO-C8-7 GREEN (переименован из taskHeaders_areSilentlyIgnored_serviceTaskParksWithoutIncident):
+        // headers парсятся из фикстуры; доставку до JobDetailModel/outbox доказывает
+        // ServiceTaskEnqueueServiceImplTest (включая реальный JSON payload).
         String key = uniq("c8th");
         String xml = bpmn("test-c8-task-headers.bpmn").replace("c8-task-headers", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getTaskHeaders())
+            .containsExactlyInAnyOrderEntriesOf(Map.of("tenant", "acme", "priority", "high"));
+
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
