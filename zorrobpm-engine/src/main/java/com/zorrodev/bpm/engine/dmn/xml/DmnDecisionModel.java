@@ -7,6 +7,8 @@ import jakarta.xml.bind.annotation.XmlElement;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.List;
+
 /** A {@code <decision>} with its decision table. */
 @Getter
 @Setter
@@ -20,4 +22,6 @@ public class DmnDecisionModel {
     private DmnDecisionTableModel decisionTable;
     @XmlElement(name = "literalExpression", namespace = DmnDefinitionsModel.NS)
     private DmnTextModel literalExpression;
+    @XmlElement(name = "informationRequirement", namespace = DmnDefinitionsModel.NS)
+    private List<InformationRequirementModel> informationRequirements;
 }
