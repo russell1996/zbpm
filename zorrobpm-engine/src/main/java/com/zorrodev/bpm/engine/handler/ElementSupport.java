@@ -104,6 +104,30 @@ public class ElementSupport {
         return resolveExpression(raw, processInstanceId);
     }
 
+    // ─── Service task helpers ─────────────────────────────────────────
+
+    /**
+     * WO-C8-9: resolves {@code zeebe:priorityDefinition} to an Integer job priority
+     * (activation-order hint, delivered to the worker via JobDetailModel).
+     * Broken values resolve to null — never an exception or incident, same call as
+     * WO-C8-8 made for broken dates (informational construct, must not break execution).
+     */
+    public Integer resolvePriority(UUID processInstanceId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .map(ServiceTaskExtensionModel::getPriority)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        String resolved = resolveExpression(raw, processInstanceId);
+        if (resolved == null) return null;
+        try {
+            return Integer.parseInt(resolved.trim());
+        } catch (NumberFormatException e) {
+            log.warn("priorityDefinition '{}' resolved to non-integer '{}' — ignoring", raw, resolved);
+            return null;
+        }
+    }
+
     // ─── Expression resolution ──────────────────────────────────────────
 
     /**
