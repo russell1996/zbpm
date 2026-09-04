@@ -5,6 +5,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
@@ -97,6 +98,11 @@ public class CompletionService {
     /**
      * Completes a service task: applies variables, marks the activity and service task done, handles
      * IO mappings and multi-instance, then follows outgoing flows and re-evaluates conditionals.
+     *
+     * <p>WO-C8-11: if a start listener is in flight ({@code pendingListenerIndex != null}), a
+     * completion means "this listener finished" — apply its variables, advance to the next
+     * listener (or to the real job) and {@code return} WITHOUT completing the activity and
+     * WITHOUT moving the token. Only the real job's completion follows the path below.
      */
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
         Activity activity = elementSupport.lockAndReload(serviceTaskId);
@@ -111,15 +117,36 @@ public class CompletionService {
         UUID processInstanceId = activity.getProcessInstanceId();
         UUID tokenId = activity.getToken();
 
+        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
+        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
+
+        // WO-C8-11: listener-step completion — read only for elements that declare listeners,
+        // so the common path never touches the new state.
+        List<ListenerModel> startListeners = elementSupport.serviceTaskStartListeners(bpmnElement);
+        if (!startListeners.isEmpty()) {
+            Integer pending = dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
+            if (pending != null && pending >= 0 && pending < startListeners.size()) {
+                dbService.setVariables(processInstanceId, variables);
+                if (pending + 1 < startListeners.size()) {
+                    dbService.setPendingListenerIndex(serviceTaskId, pending + 1);
+                } else {
+                    dbService.setPendingListenerIndex(serviceTaskId, null);
+                }
+                serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                log.info("{}/{}: Completing start listener {} of {}: {}/{}", processInstanceId, tokenId,
+                    pending, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
+                return;
+            }
+            // Out-of-bounds/foreign index (model redeployed mid-flight): fall through to the
+            // normal path below (fail-open, completes and moves the token) rather than stranding.
+        }
+
         dbService.setVariables(processInstanceId, variables);
         dbService.completeActivity(serviceTaskId);
         dbService.completeServiceTask(serviceTaskId);
 
         log.info("{}/{}: Completing {}: {}/{}", processInstanceId, tokenId, activity.getType(), serviceTaskId, activity.getBpmnElementId());
-
-        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
-        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
-        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);

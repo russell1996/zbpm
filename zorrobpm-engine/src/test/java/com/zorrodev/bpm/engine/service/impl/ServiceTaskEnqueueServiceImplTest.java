@@ -7,6 +7,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
@@ -376,5 +377,140 @@ class ServiceTaskEnqueueServiceImplTest {
         ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
         verify(objectMapper).writeValueAsString(detailCaptor.capture());
         assertThat(detailCaptor.getValue().getPriority()).isNull();
+    }
+
+    @Test
+    void enqueueAfterCommit_withListenerInFlight_dispatchesListenerJob() throws Exception {
+        // WO-C8-11, критерий 2 (unit-уровень): pendingListenerIndex=0 → в outbox уходит
+        // listener-job, НЕ реальный job. SUT напрямую с реальным ElementSupport.
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskListener";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(0);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getJob()).isEqualTo("listener-job");
+    }
+
+    @Test
+    void enqueueAfterCommit_listenersDone_dispatchesRealJob() throws Exception {
+        // WO-C8-11: последний listener завершён (index сброшен в null) → диспетчеризуется
+        // РЕАЛЬНЫЙ job тем же кодом (без отдельной ветки).
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskAfterListeners";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(null);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getJob()).isEqualTo("real-job");
+    }
+
+    @Test
+    void enqueueAfterCommit_withoutListeners_neverReadsListenerIndex() throws Exception {
+        // WO-C8-11, критерий 5: у элементов без startListeners новый DB-read не вызывается
+        // вообще (горячий путь без лишних запросов; моки старых тестов не требуют стабов).
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskPlain";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        service.enqueueAfterCommit(serviceTaskId);
+
+        verify(dbService, never()).getServiceTaskPendingListenerIndex(any());
     }
 }

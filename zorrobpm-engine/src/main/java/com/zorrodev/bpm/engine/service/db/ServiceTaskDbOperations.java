@@ -11,6 +11,15 @@ public interface ServiceTaskDbOperations {
 
     void createServiceTask(UUID activityId, int retriesRemaining, String job);
 
+    /** WO-C8-11: creates the service task with a listener in flight (index into startListeners). */
+    void createServiceTask(UUID activityId, int retriesRemaining, String job, Integer pendingListenerIndex);
+
+    /** WO-C8-11: advances (or clears, with null) the in-flight listener; null = real job path. */
+    void setPendingListenerIndex(UUID serviceTaskId, Integer pendingListenerIndex);
+
+    /** WO-C8-11: reads the in-flight listener index; null = normal path. */
+    Integer getPendingListenerIndex(UUID serviceTaskId);
+
     void completeServiceTask(UUID serviceTaskId);
 
     void setServiceTaskRetries(UUID serviceTaskId, int retries);
