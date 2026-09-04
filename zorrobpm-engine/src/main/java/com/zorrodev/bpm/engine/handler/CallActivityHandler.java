@@ -54,11 +54,20 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
         // null-safe: a malformed call activity (no zeebe:calledElement / processId) or an undeployed target
         // becomes an informative incident (a non-EngineException is parked by execute()'s handler) instead of
         // an NPE / NoSuchElementException — the operator can fix the model / deploy the child and retry.
-        String key = Optional.ofNullable(bpmnElement.getExtensions())
+        String rawProcessId = Optional.ofNullable(bpmnElement.getExtensions())
             .map(BpmnElementExtensionModel::getCallActivityExtension)
             .map(ext -> ext.getProcessId())
             .filter(s -> !s.isBlank())
             .orElseThrow(() -> new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has no zeebe:calledElement processId"));
+
+        // WO-C8-2: processId may be a FEEL expression (="..." per Camunda 8) — resolve AFTER the
+        // structural blank-check above ("model named no processId at all") and BEFORE the version
+        // lookup. A null/blank resolve is the same incident path as "no deployed definition",
+        // with a message that names the failed expression instead of a missing attribute.
+        String key = elementSupport.resolveExpression(rawProcessId, processInstanceId);
+        if (key == null || key.isBlank()) {
+            throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' processId expression '" + rawProcessId + "' resolved to null/blank — check instance variables and FEEL syntax");
+        }
 
         Integer version = dbService.getMaxProcessDefinitionVersionByKey(key);
         if (version == null || version == 0) {

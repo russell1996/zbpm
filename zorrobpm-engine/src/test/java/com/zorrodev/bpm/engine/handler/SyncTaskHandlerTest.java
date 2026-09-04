@@ -95,6 +95,8 @@ class SyncTaskHandlerTest {
 
         when(dbService.createActivity(eq(piId), eq(tokenId), eq(el))).thenReturn(activityId);
         when(dbService.getVariables(piId)).thenReturn(List.of());
+        // WO-C8-2: handler resolves decisionId via elementSupport — a literal passes through as-is.
+        when(elementSupport.resolveExpression(eq("decision1"), eq(piId))).thenReturn("decision1");
         when(dmnService.evaluate(eq("decision1"), any())).thenReturn("approved");
         when(elementSupport.toProcessVariable(eq("output"), eq("approved"))).thenReturn(new ProcessVariable());
 
