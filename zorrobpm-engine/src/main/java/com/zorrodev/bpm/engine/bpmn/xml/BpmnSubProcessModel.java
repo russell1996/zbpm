@@ -56,6 +56,9 @@ public class BpmnSubProcessModel {
     @XmlElement(name = "userTask", namespace = NS)
     private List<BpmnUserTaskModel> userTasks;
 
+    @XmlElement(name = "manualTask", namespace = NS)
+    private List<BpmnManualTaskModel> manualTasks;
+
     @XmlElement(name = "exclusiveGateway", namespace = NS)
     private List<BpmnExclusiveGatewayModel> exclusiveGateways;
 
