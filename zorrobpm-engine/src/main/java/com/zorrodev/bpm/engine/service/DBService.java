@@ -125,6 +125,8 @@ public interface DBService {
 
     Integer getMaxProcessDefinitionVersionByKey(String key);
 
+    Integer getMaxProcessDefinitionVersionByKeyAndVersionTag(String key, String versionTag);
+
     void completeProcessInstance(UUID processInstanceId);
 
     void cancelProcessInstance(UUID processInstanceId);

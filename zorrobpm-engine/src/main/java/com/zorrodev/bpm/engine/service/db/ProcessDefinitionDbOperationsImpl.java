@@ -34,4 +34,9 @@ public class ProcessDefinitionDbOperationsImpl implements ProcessDefinitionDbOpe
     public Integer getMaxProcessDefinitionVersionByKey(String key) {
         return processDefinitionRepository.findMaxByKey(key).orElse(0);
     }
+
+    @Override
+    public Integer getMaxProcessDefinitionVersionByKeyAndVersionTag(String key, String versionTag) {
+        return processDefinitionRepository.findMaxByKeyAndVersionTag(key, versionTag).orElse(0);
+    }
 }

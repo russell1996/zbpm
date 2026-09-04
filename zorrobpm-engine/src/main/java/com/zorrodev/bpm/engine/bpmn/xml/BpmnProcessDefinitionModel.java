@@ -22,6 +22,10 @@ public class BpmnProcessDefinitionModel {
     /** Process-level BPMN &lt;documentation&gt; (e.g. a link to requirements). */
     @XmlElement(name = "documentation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private String documentation;
+    /** WO-C8-3: process-level {@code <bpmn:extensionElements>} (e.g. {@code zeebe:versionTag}) —
+     * the first process-level extension point; flow-element extensions live on the elements. */
+    @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private ExtensionElements extensionElements;
     @XmlElement(name = "startEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnStartEventModel> startEvents;
     @XmlElement(name = "endEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")

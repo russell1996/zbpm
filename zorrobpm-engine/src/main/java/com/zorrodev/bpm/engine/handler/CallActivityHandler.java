@@ -69,9 +69,28 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
             throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' processId expression '" + rawProcessId + "' resolved to null/blank — check instance variables and FEEL syntax");
         }
 
-        Integer version = dbService.getMaxProcessDefinitionVersionByKey(key);
-        if (version == null || version == 0) {
-            throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no deployed definition");
+        Integer version;
+        String bindingType = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getCallActivityExtension)
+            .map(CallActivityExtensionModel::getBindingType)
+            .orElse(null);
+        if ("versionTag".equals(bindingType)) {
+            // WO-C8-3: resolve the latest version carrying the requested tag (NOT latest overall).
+            String tag = Optional.ofNullable(bpmnElement.getExtensions())
+                .map(BpmnElementExtensionModel::getCallActivityExtension)
+                .map(CallActivityExtensionModel::getVersionTag)
+                .filter(s -> !s.isBlank())
+                .orElseThrow(() -> new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has bindingType=\"versionTag\" but no versionTag attribute"));
+            version = dbService.getMaxProcessDefinitionVersionByKeyAndVersionTag(key, tag);
+            if (version == null || version == 0) {
+                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' with versionTag '" + tag + "' which has no matching deployed version");
+            }
+        } else {
+            // "latest" (default) and "deployment" (WO-C8-3b, not yet implemented — same as latest for now)
+            version = dbService.getMaxProcessDefinitionVersionByKey(key);
+            if (version == null || version == 0) {
+                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no deployed definition");
+            }
         }
         ProcessDefinition pd = dbService.getProcessDefinition(key, version);
         UUID processDefinitionId = pd.getId();

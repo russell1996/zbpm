@@ -14,6 +14,9 @@ public class CalledElementModel {
     private String processId;
     @XmlAttribute
     private String bindingType;
+    /** WO-C8-3: tag value for bindingType="versionTag" (matched against the callee's process versionTag). */
+    @XmlAttribute
+    private String versionTag;
     /** WO-ENG-11: parent→child direction (default true). False = only Input mappings seed the child. */
     @XmlAttribute
     private Boolean propagateAllParentVariables;

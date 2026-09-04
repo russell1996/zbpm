@@ -252,6 +252,11 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public Integer getMaxProcessDefinitionVersionByKeyAndVersionTag(String key, String versionTag) {
+        return processDefinitionDbOperations.getMaxProcessDefinitionVersionByKeyAndVersionTag(key, versionTag);
+    }
+
+    @Override
     public void completeProcessInstance(UUID processInstanceId) {
         processInstanceDbOperations.completeProcessInstance(processInstanceId);
     }
