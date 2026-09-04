@@ -5,6 +5,7 @@ public enum BpmnElementType {
     SERVICE_TASK,
     SEND_TASK,
     RECEIVE_TASK,
+    MANUAL_TASK,
     SCRIPT_TASK,
     BUSINESS_RULE_TASK,
     USER_TASK,
