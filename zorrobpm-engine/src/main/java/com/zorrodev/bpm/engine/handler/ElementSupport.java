@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
@@ -108,8 +109,10 @@ public class ElementSupport {
     // ─── Service task helpers ─────────────────────────────────────────
 
     /**
-     * WO-C8-9: resolves {@code zeebe:priorityDefinition} to an Integer job priority
+     * WO-C8-9: resolves {@code zeebe:jobPriorityDefinition} to an Integer job priority
      * (activation-order hint, delivered to the worker via JobDetailModel).
+     * WO-C8-13 (A-1): the element is jobPriorityDefinition (priorityDefinition lives only on
+     * user tasks); precedence is task value, then process-level default, then null.
      * Broken values resolve to null — never an exception or incident, same call as
      * WO-C8-8 made for broken dates (informational construct, must not break execution).
      */
@@ -118,13 +121,18 @@ public class ElementSupport {
             .map(BpmnElementExtensionModel::getServiceTaskExtension)
             .map(ServiceTaskExtensionModel::getPriority)
             .orElse(null);
+        if (raw == null || raw.isBlank()) {
+            raw = Optional.ofNullable(element.getProcessDefinition())
+                .map(BpmnProcessDefinitionModel::getDefaultJobPriority)
+                .orElse(null);
+        }
         if (raw == null || raw.isBlank()) return null;
         String resolved = resolveExpression(raw, processInstanceId);
         if (resolved == null) return null;
         try {
             return Integer.parseInt(resolved.trim());
         } catch (NumberFormatException e) {
-            log.warn("priorityDefinition '{}' resolved to non-integer '{}' — ignoring", raw, resolved);
+            log.warn("jobPriorityDefinition '{}' resolved to non-integer '{}' — ignoring", raw, resolved);
             return null;
         }
     }
