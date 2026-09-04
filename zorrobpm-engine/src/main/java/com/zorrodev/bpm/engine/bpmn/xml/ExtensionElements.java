@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.SubscriptionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskScheduleModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.VersionTagModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeLoopCharacteristicsModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
@@ -45,4 +46,6 @@ public class ExtensionElements {
     private VersionTagModel versionTag;
     @XmlElement(name = "taskHeaders", namespace = "http://camunda.org/schema/zeebe/1.0")
     private TaskHeadersModel taskHeaders;
+    @XmlElement(name = "taskSchedule", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private TaskScheduleModel taskSchedule;
 }

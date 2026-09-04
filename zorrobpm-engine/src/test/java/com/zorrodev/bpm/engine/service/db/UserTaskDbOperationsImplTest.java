@@ -40,11 +40,25 @@ class UserTaskDbOperationsImplTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
         when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
         when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
-        db.createUserTask(activityId, "ivanov", "managers", "form1");
+        db.createUserTask(activityId, "ivanov", "managers", "form1", null, null);
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());
         assertThat(captor.getValue().getAssignee()).isEqualTo("ivanov");
         verify(domainEventEmitter).emitUserTaskCreated(eq(activity.getProcessInstanceId()), any(UUID.class), eq("ut1"), eq(activityId), eq("ivanov"), eq("managers"));
+    }
+
+    @Test
+    void createUserTask_persistsDueAndFollowUpDates() {
+        UUID activityId = UUID.randomUUID();
+        ActivityEntity activity = new ActivityEntity(); activity.setId(activityId); activity.setProcessInstanceId(UUID.randomUUID()); activity.setBpmnElementId("ut1"); activity.setCreatedAt(java.time.Instant.now());
+        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+        when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
+        db.createUserTask(activityId, "ivanov", "managers", "form1", "2030-01-01", "2030-01-05");
+        ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
+        verify(userTaskRepository).save(captor.capture());
+        assertThat(captor.getValue().getDueDate()).isEqualTo("2030-01-01");
+        assertThat(captor.getValue().getFollowUpDate()).isEqualTo("2030-01-05");
     }
 
     @Test

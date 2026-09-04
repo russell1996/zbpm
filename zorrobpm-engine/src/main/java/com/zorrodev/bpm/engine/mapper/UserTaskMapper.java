@@ -56,6 +56,8 @@ public class UserTaskMapper {
         dto.setCompletedAt(entity.getCompletedAt());
         dto.setCode(entity.getBpmnElementId());
         dto.setFormKey(entity.getFormKey());
+        dto.setDueDate(entity.getDueDate());
+        dto.setFollowUpDate(entity.getFollowUpDate());
         // task id == activity id: expose the authoritative lifecycle status for the UI
         if (activity != null) {
             dto.setStatus(activity.getStatus() == null ? null : activity.getStatus().name());

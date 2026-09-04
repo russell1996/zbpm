@@ -133,7 +133,9 @@ public class MultiInstanceExecutor {
             String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, element);
             String formKey = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
                 ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
-            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
+            String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, element);
+            String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, element);
+            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
         } else {
             dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(element), elementSupport.serviceTaskJob(element));
             elementSupport.applyIoMappings(processInstanceId, activityId, element, true);
