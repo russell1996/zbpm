@@ -4,6 +4,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -40,6 +41,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
     private final BpmnService bpmnService;
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final ElementSupport elementSupport;
 
     @Transactional
     @Override
@@ -63,6 +65,9 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             .map(ext -> ext.getServiceTaskExtension())
             .map(ext -> ext.getTaskHeaders())
             .orElse(null);
+
+        // WO-C8-9: null-safe priority resolution — FEEL→Integer, null when absent or broken.
+        Integer priority = elementSupport.resolvePriority(processInstanceId, element);
 
         if (job == null || job.isBlank()) {
             log.error("Service task {} (element {}) has no job definition — creating incident", serviceTaskId, bpmnElementId);
@@ -89,6 +94,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         detail.setJob(job);
         detail.setVariables(variables);
         detail.setTaskHeaders(taskHeaders);
+        detail.setPriority(priority);
 
         try {
             OutboxEntry entry = new OutboxEntry();
