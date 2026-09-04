@@ -596,6 +596,8 @@ public class ActivityServiceImplTests {
         when(dbService.createToken(isNull())).thenReturn(token1);
         when(dbService.createToken(eq(token1.getId()))).thenReturn(token2);
         when(dbService.getToken(eq(token1.getId()))).thenReturn(token1);
+        // WO-C8-2: CallActivityHandler resolves processId via elementSupport — a literal passes through as-is.
+        when(elementSupport.resolveExpression(eq("dummy-process"), eq(processInstanceId))).thenReturn("dummy-process");
 
         activityService.execute(processInstanceId, tokenId, "startEvent1");
 
