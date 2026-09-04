@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8pool" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="col1" name="col1">
+    <bpmn:participant id="pool1" name="Sales" processRef="c8-pools" />
+  </bpmn:collaboration>
+  <bpmn:process id="c8-pools" name="c8-pools" isExecutable="true">
+    <bpmn:laneSet id="ls1" name="ls1">
+      <bpmn:lane id="lane1" name="Clerks">
+        <bpmn:flowNodeRef>startEvent</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>double</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>endEvent</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="double" />
+    <bpmn:scriptTask id="double" name="double" scriptFormat="feel" resultVariable="doubled">
+      <bpmn:script>amount * 2</bpmn:script>
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="double" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

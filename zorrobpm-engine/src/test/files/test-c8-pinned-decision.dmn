@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_c8pin" name="c8pin" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="c8pinned" name="Pinned">
+    <decisionTable id="DecisionTable_pin" hitPolicy="FIRST">
+      <input id="Input_pin" label="Tier">
+        <inputExpression id="InputExpression_pin" typeRef="string" expressionLanguage="feel">
+          <text>tier</text>
+        </inputExpression>
+      </input>
+      <output id="Output_pin" label="Picked" name="picked" typeRef="string" />
+      <rule id="Rule_pin_default">
+        <inputEntry id="In_pin_default"><text></text></inputEntry>
+        <outputEntry id="Out_pin_default"><text>C8VAL</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>
