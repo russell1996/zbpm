@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
@@ -188,6 +189,19 @@ public class ElementSupport {
             .map(BpmnElementExtensionModel::getServiceTaskExtension)
             .map(ServiceTaskExtensionModel::getJob)
             .orElse(null);
+    }
+
+    /**
+     * WO-C8-11: start execution listeners of a service task, in declaration order
+     * (already filtered to {@code eventType="start"} at parse time). Empty when absent —
+     * callers must not touch listener state for such elements.
+     */
+    public List<ListenerModel> serviceTaskStartListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .map(ServiceTaskExtensionModel::getStartListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
     }
 
     // ─── IO mapping ────────────────────────────────────────────────────

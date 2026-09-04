@@ -25,4 +25,9 @@ public class ServiceTaskEntity {
     private Integer retriesRemaining;
     /** WO-EVT-9: stable job identifier (zeebe:taskDefinition type analog), set from BPMN at creation. */
     private String job;
+    /**
+     * WO-C8-11: index into the element's {@code startListeners} while a listener job is in
+     * flight. {@code null} = the normal path (no listeners, or the real job dispatched/awaited).
+     */
+    private Integer pendingListenerIndex;
 }

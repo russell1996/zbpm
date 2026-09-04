@@ -137,6 +137,21 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void createServiceTask(UUID activityId, int retriesRemaining, String job, Integer pendingListenerIndex) {
+        serviceTaskDbOperations.createServiceTask(activityId, retriesRemaining, job, pendingListenerIndex);
+    }
+
+    @Override
+    public void setPendingListenerIndex(UUID serviceTaskId, Integer pendingListenerIndex) {
+        serviceTaskDbOperations.setPendingListenerIndex(serviceTaskId, pendingListenerIndex);
+    }
+
+    @Override
+    public Integer getServiceTaskPendingListenerIndex(UUID serviceTaskId) {
+        return serviceTaskDbOperations.getPendingListenerIndex(serviceTaskId);
+    }
+
+    @Override
     public int decrementServiceTaskRetries(UUID serviceTaskId) {
         return serviceTaskDbOperations.decrementServiceTaskRetries(serviceTaskId);
     }

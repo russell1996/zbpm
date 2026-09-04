@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.bpmn.xml;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.AssignmentDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledElementModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledDecisionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenersModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.FormDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.PriorityDefinitionModel;
@@ -51,4 +52,6 @@ public class ExtensionElements {
     private TaskScheduleModel taskSchedule;
     @XmlElement(name = "priorityDefinition", namespace = "http://camunda.org/schema/zeebe/1.0")
     private PriorityDefinitionModel priorityDefinition;
+    @XmlElement(name = "executionListeners", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private ExecutionListenersModel executionListeners;
 }

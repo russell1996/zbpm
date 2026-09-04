@@ -10,14 +10,22 @@ import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.engine.TestMain;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
+import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
+import com.zorrodev.bpm.engine.service.BpmnService;
+import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.DmnService;
+import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
+import com.zorrodev.bpm.engine.service.impl.ServiceTaskEnqueueServiceImpl;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
@@ -26,6 +34,9 @@ import com.zorrodev.bpm.engine.service.RuntimeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -80,6 +91,31 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private VariableRepository variableRepository;
+
+    @Autowired
+    private OutboxRepository outboxRepository;
+
+    @Autowired
+    private DBService dbService;
+
+    /**
+     * WO-C8-11: в profile "test" штатный {@code TestServiceTaskEnqueueService} — no-op
+     * (в outbox в IT ничего не пишется вообще), поэтому listener-блокировку через настоящий
+     * порядок outbox-записей этот класс доказывает настоящим {@code ServiceTaskEnqueueServiceImpl}
+     * ({@code @Primary}, только для этого класса — стаб остальных классов сюиты не трогаем).
+     * Все коллабораторы — настоящие бины контекста; {@code OutboxPollerService} в тестах выключен,
+     * записи инертны и читаются напрямую через {@code OutboxRepository}.
+     */
+    @TestConfiguration
+    static class RealEnqueueTestConfig {
+        @Bean
+        @Primary
+        ServiceTaskEnqueueService realServiceTaskEnqueueService(DBService dbService, BpmnService bpmnService,
+                OutboxRepository outboxRepository, tools.jackson.databind.ObjectMapper objectMapper,
+                ElementSupport elementSupport) {
+            return new ServiceTaskEnqueueServiceImpl(dbService, bpmnService, outboxRepository, objectMapper, elementSupport);
+        }
+    }
 
     private static String uniq(String prefix) {
         return prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
@@ -162,16 +198,114 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void executionListeners_areSilentlyIgnored_serviceTaskParksWithoutIncident() throws Exception {
+    void executionListeners_startListenerBlocksRealJobUntilComplete() throws Exception {
+        // WO-C8-11 GREEN (переименован из executionListeners_areSilentlyIgnored_serviceTaskParksWithoutIncident):
+        // start-listener РЕАЛЬНО блокирует: в outbox уходит listener-job, job-c8 — только после
+        // завершения listener'а; токен двигается только после завершения настоящего job'а.
+        // Parse-ассерт (критерий 1): start распаршен, end из той же фикстуры молча пропущен
+        // (в списке ровно 1 — явный вынос eventType="end" за рамки, не баг).
         String key = uniq("c8el");
         String xml = bpmn("test-c8-execution-listeners.bpmn").replace("c8-exec-listeners", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("listener-job");
+
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
 
-        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        UUID activityId = activity(piId, "svc").getId();
         assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        // listener #0 in flight — real job not dispatched
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs()).containsExactly("listener-job");
+
+        // complete the listener job through the regular completion path
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // real job dispatched now; token still parked
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isNull();
+        assertThat(serviceTaskJobs()).containsExactly("listener-job", "job-c8");
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        // complete the real job — token moves, instance completes
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
         assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void executionListeners_twoStartListeners_runSequentiallyInDeclarationOrder() throws Exception {
+        // WO-C8-11, критерий 3: второй start-listener диспетчеризуется только после завершения
+        // первого (порядок outbox-записей + индекс между шагами), затем — настоящий job.
+        String key = uniq("c8el2");
+        String xml = bpmn("test-c8-execution-listeners-two-starts.bpmn").replace("c8-exec-listeners-2", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        assertThat(serviceTaskJobs()).containsExactly("listener-job-1");
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isEqualTo(0);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs()).containsExactly("listener-job-1", "listener-job-2");
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isEqualTo(1);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs()).containsExactly("listener-job-1", "listener-job-2", "job-c8");
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void executionListeners_listenerFailureWithZeroRetries_raisesIncidentOnSharedPath() throws Exception {
+        // WO-C8-11, критерий 4: failServiceTask(id, msg, 0) на припаркованном listener-job идёт
+        // тем же путём, что обычный job (явный retries=0 = семантика Camunda failJob из javadoc
+        // failServiceTask) — инцидент, токен стоит, отдельного listener-механизма нет.
+        // retries-атрибут XML парсится в ListenerModel, но в этом срезе не применяется (будущий WO).
+        String key = uniq("c8elf");
+        String xml = bpmn("test-c8-execution-listeners.bpmn").replace("c8-exec-listeners", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        assertThat(serviceTaskJobs()).containsExactly("listener-job");
+
+        runtimeService.failServiceTask(activityId, "listener boom", 0);
+
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.ERROR);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        // exhausted budget — no redispatch
+        assertThat(serviceTaskJobs()).containsExactly("listener-job");
+    }
+
+    /** WO-C8-11: job types of this test's outbox SERVICE_TASK entries, oldest first. */
+    private List<String> serviceTaskJobs() throws Exception {
+        tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
+        List<String> jobs = new java.util.ArrayList<>();
+        List<OutboxEntry> entries = outboxRepository.findAll().stream()
+            .filter(e -> e.getKind() == OutboxKind.SERVICE_TASK)
+            .sorted(java.util.Comparator.comparing(OutboxEntry::getCreatedAt).thenComparing(OutboxEntry::getId))
+            .collect(Collectors.toList());
+        for (OutboxEntry e : entries) {
+            jobs.add(om.readTree(e.getPayload()).get("job").asText());
+        }
+        return jobs;
     }
 
     // ==================== §C.1: zeebe:taskListeners ====================

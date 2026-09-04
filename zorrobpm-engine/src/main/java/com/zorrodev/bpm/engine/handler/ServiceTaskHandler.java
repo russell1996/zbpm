@@ -3,12 +3,14 @@ package com.zorrodev.bpm.engine.handler;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -49,7 +51,15 @@ public class ServiceTaskHandler implements ElementHandler, TypedElementHandler {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
-        dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement), elementSupport.serviceTaskJob(bpmnElement));
+        // WO-C8-11: elements with start listeners park a listener job first (pendingListenerIndex=0);
+        // the real job is dispatched only after the last listener completes. Elements without
+        // listeners take the pre-existing path with a null index (behaviour unchanged).
+        List<ListenerModel> startListeners = elementSupport.serviceTaskStartListeners(bpmnElement);
+        if (startListeners.isEmpty()) {
+            dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement), elementSupport.serviceTaskJob(bpmnElement));
+        } else {
+            dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement), elementSupport.serviceTaskJob(bpmnElement), 0);
+        }
         elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
