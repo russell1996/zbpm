@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8ep" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="bizErr" name="Business Error" errorCode="E-1" />
+  <bpmn:process id="c8-error-priority" name="c8-error-priority" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow1" name="subFlow1" sourceRef="subStart" targetRef="subErrEnd" />
+      <bpmn:endEvent id="subErrEnd" name="subErrEnd">
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:errorEventDefinition id="ed1" errorRef="bizErr" />
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="catchAll" name="catchAll" attachedToRef="sub1">
+      <bpmn:outgoing>flowCatch</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="edCatch" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowCatch" name="flowCatch" sourceRef="catchAll" targetRef="endCatchAll" />
+    <bpmn:endEvent id="endCatchAll" name="endCatchAll">
+      <bpmn:incoming>flowCatch</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:boundaryEvent id="specific" name="specific" attachedToRef="sub1">
+      <bpmn:outgoing>flowSpec</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="edSpec" errorRef="bizErr" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowSpec" name="flowSpec" sourceRef="specific" targetRef="endSpecific" />
+    <bpmn:endEvent id="endSpecific" name="endSpecific">
+      <bpmn:incoming>flowSpec</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
