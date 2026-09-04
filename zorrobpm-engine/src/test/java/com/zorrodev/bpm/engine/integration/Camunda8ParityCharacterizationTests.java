@@ -220,14 +220,14 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
         // listener #0 in flight — real job not dispatched
         assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isEqualTo(0);
-        assertThat(serviceTaskJobs()).containsExactly("listener-job");
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job");
 
         // complete the listener job through the regular completion path
         runtimeService.completeServiceTask(activityId, List.of());
 
         // real job dispatched now; token still parked
         assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isNull();
-        assertThat(serviceTaskJobs()).containsExactly("listener-job", "job-c8");
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job", "job-c8");
         assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
 
@@ -250,17 +250,17 @@ public class Camunda8ParityCharacterizationTests {
         UUID piId = start(model.getId(), List.of());
         UUID activityId = activity(piId, "svc").getId();
 
-        assertThat(serviceTaskJobs()).containsExactly("listener-job-1");
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-1");
         assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isEqualTo(0);
 
         runtimeService.completeServiceTask(activityId, List.of());
 
-        assertThat(serviceTaskJobs()).containsExactly("listener-job-1", "listener-job-2");
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-1", "listener-job-2");
         assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isEqualTo(1);
 
         runtimeService.completeServiceTask(activityId, List.of());
 
-        assertThat(serviceTaskJobs()).containsExactly("listener-job-1", "listener-job-2", "job-c8");
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-1", "listener-job-2", "job-c8");
         assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isNull();
 
         runtimeService.completeServiceTask(activityId, List.of());
@@ -283,7 +283,7 @@ public class Camunda8ParityCharacterizationTests {
         UUID piId = start(model.getId(), List.of());
         UUID activityId = activity(piId, "svc").getId();
 
-        assertThat(serviceTaskJobs()).containsExactly("listener-job");
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job");
 
         runtimeService.failServiceTask(activityId, "listener boom", 0);
 
@@ -291,15 +291,25 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.ERROR);
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
         // exhausted budget — no redispatch
-        assertThat(serviceTaskJobs()).containsExactly("listener-job");
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job");
     }
 
-    /** WO-C8-11: job types of this test's outbox SERVICE_TASK entries, oldest first. */
-    private List<String> serviceTaskJobs() throws Exception {
+    /** WO-C8-11: job types of THIS test's outbox SERVICE_TASK entries, oldest first. */
+    private List<String> serviceTaskJobs(UUID processInstanceId) throws Exception {
         tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
         List<String> jobs = new java.util.ArrayList<>();
+        // Filter by the payload's processInstanceId: the outbox table is global and other
+        // test classes commit rows from worker threads (no rollback across thread boundaries),
+        // so an unfiltered findAll() sees foreign jobs (e.g. "flaky" from incident-resolve tests).
         List<OutboxEntry> entries = outboxRepository.findAll().stream()
             .filter(e -> e.getKind() == OutboxKind.SERVICE_TASK)
+            .filter(e -> {
+                try {
+                    return processInstanceId.toString().equals(om.readTree(e.getPayload()).get("processInstanceId").asText());
+                } catch (Exception ex) {
+                    throw new RuntimeException(ex);
+                }
+            })
             .sorted(java.util.Comparator.comparing(OutboxEntry::getCreatedAt).thenComparing(OutboxEntry::getId))
             .collect(Collectors.toList());
         for (OutboxEntry e : entries) {
