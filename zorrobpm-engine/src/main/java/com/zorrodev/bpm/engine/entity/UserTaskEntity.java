@@ -22,6 +22,10 @@ public class UserTaskEntity {
     private Instant createdAt;
     private Instant completedAt;
     private String formKey;
+    /** Resolved zeebe:taskSchedule dueDate (WO-C8-8) — informational String, never blocks execution. */
+    private String dueDate;
+    /** Resolved zeebe:taskSchedule followUpDate (WO-C8-8). */
+    private String followUpDate;
     private String assignee;
     /** Comma-separated resolved candidate groups (WO-INT-1). */
     private String candidateGroups;

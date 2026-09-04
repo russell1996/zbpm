@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260904-084
+  - changeSet:
+      id: 20260904-084
+      author: zorrodev
+      changes:
+        # WO-C8-8: zeebe:taskSchedule на user task — resolved String, informational only.
+        # Nullable — старые задачи без расписания не матчатся ни на что (ожидаемо).
+        - addColumn:
+            tableName: user_tasks
+            columns:
+              - column:
+                  name: due_date
+                  type: varchar(255)
+              - column:
+                  name: follow_up_date
+                  type: varchar(255)

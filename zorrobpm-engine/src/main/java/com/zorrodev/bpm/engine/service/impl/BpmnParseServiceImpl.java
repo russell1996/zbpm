@@ -791,6 +791,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 element.getExtensions().getUserTaskExtension().setCandidateUsers(userTask.getExtensionElements().getAssignmentDefinition().getCandidateUsers());
                 element.getExtensions().getUserTaskExtension().setCandidateGroups(userTask.getExtensionElements().getAssignmentDefinition().getCandidateGroups());
             }
+            if (userTask.getExtensionElements().getTaskSchedule() != null) {
+                element.getExtensions().getUserTaskExtension().setDueDate(userTask.getExtensionElements().getTaskSchedule().getDueDate());
+                element.getExtensions().getUserTaskExtension().setFollowUpDate(userTask.getExtensionElements().getTaskSchedule().getFollowUpDate());
+            }
             if (userTask.getExtensionElements().getFormDefinition() != null) {
                 if (userTask.getExtensionElements().getFormDefinition().getFormKey() != null) {
                     element.getExtensions().getUserTaskExtension().setFormKey(userTask.getExtensionElements().getFormDefinition().getFormKey());

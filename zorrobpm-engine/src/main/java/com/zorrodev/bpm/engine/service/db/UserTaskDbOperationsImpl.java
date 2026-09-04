@@ -27,7 +27,7 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
     private final DomainEventEmitter domainEventEmitter;
 
     @Override
-    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey) {
+    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         UserTaskEntity entity = new UserTaskEntity();
         entity.setId(activity.getId());
@@ -37,6 +37,8 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
         entity.setAssignee(assignee);
         entity.setCandidateGroups(candidateGroups);
         entity.setFormKey(formKey);
+        entity.setDueDate(dueDate);
+        entity.setFollowUpDate(followUpDate);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
