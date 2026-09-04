@@ -96,7 +96,7 @@ class ProcessDefinitionVersioningTest {
         UUID id = UUID.randomUUID();
 
         try {
-            versioning.createNewVersionWithAdvisoryLock(key, "Test", "sha", id, null);
+            versioning.createNewVersionWithAdvisoryLock(key, "Test", "sha", id, null, null);
             org.assertj.core.api.Assertions.fail("Should have thrown due to lock failure");
         } catch (Exception e) {
             // Expected: exception propagates, version NOT created
@@ -113,7 +113,7 @@ class ProcessDefinitionVersioningTest {
             .thenAnswer(inv -> inv.getArgument(0));
 
         ProcessDefinitionEntity entity =
-            versioning.createNewVersionWithAdvisoryLock("k", "n", "sha", id, "sfk");
+            versioning.createNewVersionWithAdvisoryLock("k", "n", "sha", id, "sfk", null);
 
         assertThat(entity.getVersion()).isEqualTo(3);
         assertThat(entity.getDeploymentState()).isEqualTo(ProcessDefinitionEntity.STATE_ACTIVE);
@@ -133,7 +133,7 @@ class ProcessDefinitionVersioningTest {
             .thenAnswer(inv -> inv.getArgument(0));
 
         ProcessDefinitionEntity entity =
-            versioning.createNewVersionWithAdvisoryLock("k", "n", "sha", id, null);
+            versioning.createNewVersionWithAdvisoryLock("k", "n", "sha", id, null, null);
 
         assertThat(entity.getVersion()).isEqualTo(1);
         assertThat(entity.getDeploymentState()).isEqualTo(ProcessDefinitionEntity.STATE_ACTIVE);
@@ -148,7 +148,7 @@ class ProcessDefinitionVersioningTest {
         when(processDefinitionRepository.findMaxByKey("k")).thenReturn(Optional.of(4));
 
         ProcessDefinitionEntity entity =
-            versioning.createNewVersionEntity("k", "n", "sha", id, "sfk");
+            versioning.createNewVersionEntity("k", "n", "sha", id, "sfk", null);
 
         // Built but NOT saved — the caller persists it inside the deployment transaction
         verify(processDefinitionRepository, never()).save(any(ProcessDefinitionEntity.class));

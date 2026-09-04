@@ -24,6 +24,9 @@ public class BpmnProcessDefinitionModel {
     @Getter
     @Setter
     private String startFormKey;
+    @Getter
+    @Setter
+    private String versionTag;
     private final Map<String, BpmnElementModel> elements = new HashMap<>();
     @Getter
     @Setter

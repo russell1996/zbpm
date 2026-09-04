@@ -17,6 +17,7 @@ import com.zorrodev.bpm.engine.bpmn.model.TimerEventType;
 import com.zorrodev.bpm.engine.bpmn.xml.*;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledElementModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.VersionTagModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnConditionExpressionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
@@ -84,6 +85,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             pd.setExecutionPlatformVersion(definitions.getExecutionPlatformVersion());
             pd.setKey(process.getId());
             pd.setName(process.getName());
+            // WO-C8-3: process-level zeebe:versionTag (nullable — untagged versions never match a tag query).
+            pd.setVersionTag(Optional.ofNullable(process.getExtensionElements())
+                .map(ExtensionElements::getVersionTag)
+                .map(VersionTagModel::getValue)
+                .orElse(null));
 
             for (BpmnStartEventModel startEvent : process.getStartEvents()) {
                 BpmnElementModel element = toElementModel(startEvent);
@@ -978,6 +984,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             if (calledElement != null) {
                 element.getExtensions().getCallActivityExtension().setProcessId(calledElement.getProcessId());
                 element.getExtensions().getCallActivityExtension().setBindingType(calledElement.getBindingType());
+                element.getExtensions().getCallActivityExtension().setVersionTag(calledElement.getVersionTag());
                 // WO-ENG-11: parent→child propagation flag (previously silently dropped by JAXB)
                 element.getExtensions().getCallActivityExtension().setPropagateAllParentVariables(calledElement.getPropagateAllParentVariables());
                 element.getExtensions().getCallActivityExtension().setPropagateAllChildVariables(calledElement.getPropagateAllChildVariables());

@@ -96,7 +96,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             if (processDefinitionEntityOptional.isEmpty()) {
                 UUID id = UUID.randomUUID();
 
-                processDefinitionEntity = versioning.createNewVersionEntity(key, name, sha256, id, model.getStartFormKey());
+                processDefinitionEntity = versioning.createNewVersionEntity(key, name, sha256, id, model.getStartFormKey(), model.getVersionTag());
                 processDefinitionEntity.setDeploymentState(ProcessDefinitionEntity.STATE_PENDING);
                 processDefinitionRepository.save(processDefinitionEntity);
 

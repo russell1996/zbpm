@@ -98,7 +98,7 @@ class ProcessDefinitionServiceImplTest {
      * {@code ProcessDefinitionVersioningTest} — here the delegate is a boundary.
      */
     private void stubVersioning(String key, int version) {
-        when(versioning.createNewVersionEntity(eq(key), anyString(), anyString(), any(), any()))
+        when(versioning.createNewVersionEntity(eq(key), anyString(), anyString(), any(), any(), any()))
             .thenAnswer(inv -> {
                 ProcessDefinitionEntity e = new ProcessDefinitionEntity();
                 e.setId(inv.getArgument(3));
@@ -108,6 +108,7 @@ class ProcessDefinitionServiceImplTest {
                 e.setSha256(inv.getArgument(2));
                 e.setCreatedAt(Instant.now());
                 e.setStartFormKey(inv.getArgument(4));
+                e.setVersionTag(inv.getArgument(5));
                 return e;
             });
     }
@@ -163,7 +164,7 @@ class ProcessDefinitionServiceImplTest {
         // Orchestration: version built by the delegate, file by fileService, everything else
         // by the two other delegates — in the WO-REL-15 order (version → file → starts →
         // carry-forward → ACTIVE-save → post-commit).
-        verify(versioning).createNewVersionEntity(eq("test1"), anyString(), anyString(), any(), any());
+        verify(versioning).createNewVersionEntity(eq("test1"), anyString(), anyString(), any(), any(), any());
         verify(fileService).saveFile(eq(saved.get(1).getId()), eq(bpmn));
         verify(artifactRegistrar).registerMessageStartSubscriptions(eq("test1"), eq(saved.get(1).getId()), any());
         verify(artifactRegistrar).registerTimerStartJobs(eq("test1"), eq(saved.get(1).getId()), any());

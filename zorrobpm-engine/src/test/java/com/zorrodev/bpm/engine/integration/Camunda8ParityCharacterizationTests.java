@@ -492,6 +492,96 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(childMarkers.get(0).getTextValue()).isEqualTo("v2");
     }
 
+    // ==================== WO-C8-3: bindingType="versionTag" ====================
+
+    @Test
+    @Transactional
+    void bindingTypeVersionTag_pinsToTaggedVersion() throws Exception {
+        // v1 несёт тег v1, v2 (latest) — без тега. Вызывающий просит versionTag="v1":
+        // выполняется ИМЕННО v1, не latest.
+        String childKey = uniq("c8callee");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child-tagged.bpmn")
+                .replace("c8-child-tagged", childKey)
+                .replace("C8TAG", "v1")
+                .replace("C8MARKER", "\"v1\""));
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child-tagged.bpmn")
+                .replace("c8-child-tagged", childKey)
+                .replace("C8TAG", "v2-latest")
+                .replace("C8MARKER", "\"v2\""));
+        String key = uniq("c8btv");
+        String xml = bpmn("test-c8-binding-version-tag.bpmn")
+            .replace("c8-binding-version-tag", key)
+            .replace("c8-callee-tagged", childKey);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        List<ProcessVariableEntity> childMarkers = variableRepository.findAll().stream()
+            .filter(v -> v.getName().equals("ranVersion"))
+            .filter(v -> !v.getProcessInstanceId().equals(piId))
+            .toList();
+        assertThat(childMarkers).hasSize(1);
+        assertThat(childMarkers.get(0).getTextValue()).isEqualTo("v1");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void bindingTypeVersionTag_noMatchingVersion_parksInformativeIncident() throws Exception {
+        // Тег, которого нет ни на одной версии: явный инцидент, не NPE и не тихий latest.
+        String childKey = uniq("c8callee");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child-tagged.bpmn")
+                .replace("c8-child-tagged", childKey)
+                .replace("C8TAG", "v1")
+                .replace("C8MARKER", "\"v1\""));
+        String key = uniq("c8btv");
+        String xml = bpmn("test-c8-binding-version-tag.bpmn")
+            .replace("c8-binding-version-tag", key)
+            .replace("c8-callee-tagged", childKey)
+            .replace("versionTag=\"v1\"", "versionTag=\"nope\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage())
+            .contains("'call'")
+            .contains("versionTag 'nope'")
+            .contains("no matching deployed version");
+    }
+
+    @Test
+    @Transactional
+    void bindingTypeVersionTag_missingAttribute_parksInformativeIncident() throws Exception {
+        // bindingType="versionTag" без атрибута versionTag: структурная ошибка модели.
+        String childKey = uniq("c8callee");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child.bpmn")
+                .replace("c8-child", childKey)
+                .replace("C8MARKER", "\"v1\""));
+        String key = uniq("c8btv");
+        String xml = bpmn("test-c8-binding-version-tag.bpmn")
+            .replace("c8-binding-version-tag", key)
+            .replace("c8-callee-tagged", childKey)
+            .replace(" versionTag=\"v1\"", "");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage())
+            .contains("'call'")
+            .contains("bindingType=\"versionTag\" but no versionTag attribute");
+    }
+
     // ==================== §C.2: decisionId как FEEL (WO-C8-2 GREEN) ====================
 
     @Test

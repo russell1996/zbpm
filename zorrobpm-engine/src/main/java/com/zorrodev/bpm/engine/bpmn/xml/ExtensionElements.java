@@ -7,6 +7,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.FormDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.SubscriptionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.VersionTagModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeLoopCharacteristicsModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
 import jakarta.xml.bind.annotation.XmlAccessType;
@@ -39,4 +40,6 @@ public class ExtensionElements {
     private ZeebeScriptModel script;
     @XmlElement(name = "loopCharacteristics", namespace = "http://camunda.org/schema/zeebe/1.0")
     private ZeebeLoopCharacteristicsModel loopCharacteristics;
+    @XmlElement(name = "versionTag", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private VersionTagModel versionTag;
 }

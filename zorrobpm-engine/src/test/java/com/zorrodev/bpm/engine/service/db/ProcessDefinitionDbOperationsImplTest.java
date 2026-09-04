@@ -76,4 +76,18 @@ class ProcessDefinitionDbOperationsImplTest {
 
         assertThat(service.getMaxProcessDefinitionVersionByKey("absent")).isEqualTo(0);
     }
+
+    @Test
+    void getMaxProcessDefinitionVersionByKeyAndVersionTag_returnsValue() {
+        when(processDefinitionRepository.findMaxByKeyAndVersionTag("present", "v1")).thenReturn(Optional.of(3));
+
+        assertThat(service.getMaxProcessDefinitionVersionByKeyAndVersionTag("present", "v1")).isEqualTo(3);
+    }
+
+    @Test
+    void getMaxProcessDefinitionVersionByKeyAndVersionTag_returnsZeroWhenAbsent() {
+        when(processDefinitionRepository.findMaxByKeyAndVersionTag("absent", "v9")).thenReturn(Optional.empty());
+
+        assertThat(service.getMaxProcessDefinitionVersionByKeyAndVersionTag("absent", "v9")).isEqualTo(0);
+    }
 }

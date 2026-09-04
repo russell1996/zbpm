@@ -33,6 +33,8 @@ public class ProcessDefinitionEntity {
     private String sha256;
     private Instant createdAt;
     private String startFormKey;
+    /** WO-C8-3: zeebe:versionTag процесса (nullable) — для bindingType="versionTag" на call activity. */
+    private String versionTag;
     @Column(name = "deployment_state", nullable = false)
     private String deploymentState = STATE_ACTIVE;
 }

@@ -10,4 +10,6 @@ public interface ProcessDefinitionDbOperations {
     ProcessDefinition getProcessDefinition(String key, Integer version);
 
     Integer getMaxProcessDefinitionVersionByKey(String key);
+
+    Integer getMaxProcessDefinitionVersionByKeyAndVersionTag(String key, String versionTag);
 }

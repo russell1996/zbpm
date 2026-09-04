@@ -45,9 +45,9 @@ public class ProcessDefinitionVersioning {
      * inside its own single transaction instead (WO-REL-15).
      */
     ProcessDefinitionEntity createNewVersionWithAdvisoryLock(
-            String key, String name, String sha256, UUID id, String startFormKey) {
+            String key, String name, String sha256, UUID id, String startFormKey, String versionTag) {
         return transactionTemplate.execute(status -> {
-            ProcessDefinitionEntity entity = createNewVersionEntity(key, name, sha256, id, startFormKey);
+            ProcessDefinitionEntity entity = createNewVersionEntity(key, name, sha256, id, startFormKey, versionTag);
             entity.setDeploymentState(ProcessDefinitionEntity.STATE_ACTIVE);
             return processDefinitionRepository.save(entity);
         });
@@ -59,7 +59,7 @@ public class ProcessDefinitionVersioning {
      * is acquired on the caller's connection and released at that transaction's commit/rollback.
      */
     public ProcessDefinitionEntity createNewVersionEntity(
-            String key, String name, String sha256, UUID id, String startFormKey) {
+            String key, String name, String sha256, UUID id, String startFormKey, String versionTag) {
         // WO-A-03: acquire advisory lock based on database dialect
         acquireAdvisoryLock(key);
         Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
@@ -71,6 +71,7 @@ public class ProcessDefinitionVersioning {
         entity.setSha256(sha256);
         entity.setCreatedAt(Instant.now());
         entity.setStartFormKey(startFormKey);
+        entity.setVersionTag(versionTag);
         return entity;
     }
 
