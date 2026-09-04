@@ -408,8 +408,7 @@ public class Camunda8ParityCharacterizationTests {
         String suffix = childKey.substring(childKey.lastIndexOf('-') + 1);
         String key = uniq("c8fpid");
         String xml = bpmn("test-c8-feel-process-id.bpmn")
-            .replace("c8-feel-process-id", key)
-            .replace("c8p-", "c8p-");
+            .replace("c8-feel-process-id", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of(var("suffix", ProcessVariableType.STRING, suffix)));
@@ -469,8 +468,7 @@ public class Camunda8ParityCharacterizationTests {
         String tier = decision.substring(decision.lastIndexOf('-') + 1);
         String key = uniq("c8fdid");
         String xml = bpmn("test-c8-feel-decision-id.bpmn")
-            .replace("c8-feel-decision-id", key)
-            .replace("c8d-", "c8d-");
+            .replace("c8-feel-decision-id", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         // Текущее поведение: EngineException уходит из start наружу (не инцидент).
