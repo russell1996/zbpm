@@ -86,6 +86,24 @@ public class ElementSupport {
         return resolveExpression(raw, processInstanceId);
     }
 
+    public String resolveDueDate(UUID processInstanceId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getDueDate)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpression(raw, processInstanceId);
+    }
+
+    public String resolveFollowUpDate(UUID processInstanceId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getFollowUpDate)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpression(raw, processInstanceId);
+    }
+
     // ─── Expression resolution ──────────────────────────────────────────
 
     /**

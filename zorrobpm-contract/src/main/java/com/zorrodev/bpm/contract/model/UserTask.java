@@ -15,6 +15,10 @@ public class UserTask {
     private UUID processInstanceId;
     private UUID processDefinitionId;
     private String formKey;
+    /** Resolved zeebe:taskSchedule dueDate (WO-C8-8) — informational, for Tasklist-style UI. */
+    private String dueDate;
+    /** Resolved zeebe:taskSchedule followUpDate (WO-C8-8). */
+    private String followUpDate;
     /** Activity lifecycle status: CREATED / IN_PROGRESS / COMPLETED / CANCELLED / ERROR. */
     private String status;
     private Instant createdAt;
