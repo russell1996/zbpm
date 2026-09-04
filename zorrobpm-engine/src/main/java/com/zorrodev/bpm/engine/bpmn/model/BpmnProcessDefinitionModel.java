@@ -27,6 +27,9 @@ public class BpmnProcessDefinitionModel {
     @Getter
     @Setter
     private String versionTag;
+    @Getter
+    @Setter
+    private List<com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskFormModel> userTaskForms;
     private final Map<String, BpmnElementModel> elements = new HashMap<>();
     @Getter
     @Setter

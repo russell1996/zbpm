@@ -3,6 +3,8 @@ package com.zorrodev.bpm.engine.service.impl;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.entity.FormArtifactKind;
+import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
@@ -109,6 +111,33 @@ public class DeploymentArtifactRegistrar {
     private Integer initialRemainingCount(String cycleExpression) {
         int repeatCount = com.zorrodev.bpm.engine.scheduler.TimerExpressions.repeatCount(cycleExpression);
         return repeatCount > 0 ? repeatCount - 1 : null;
+    }
+
+    /**
+     * WO-C8-12: stores embedded {@code zeebe:userTaskForm} JSON bodies of the deployed definition
+     * in the shared forms table (same mechanism as manual REST upload — unconditional new version
+     * per deploy, consistent with {@code carryForwardBindings}, no dedup).
+     */
+    public void registerUserTaskForms(UUID processDefinitionId, BpmnProcessDefinitionModel model) {
+        var forms = model.getUserTaskForms();
+        if (forms == null || forms.isEmpty()) {
+            return;
+        }
+        for (var form : forms) {
+            if (form.getId() == null || form.getBody() == null) {
+                continue;
+            }
+            String formKey = "camunda-forms:bpmn:userTaskForm_" + form.getId();
+            int version = formRepository.findMaxVersionByFormKey(formKey) + 1;
+            FormEntity entity = new FormEntity();
+            entity.setId(UUID.randomUUID());
+            entity.setFormKey(formKey);
+            entity.setVersion(version);
+            entity.setSchemaJson(form.getBody());
+            entity.setKind(FormArtifactKind.FORM_JS);
+            entity.setCreatedAt(Instant.now());
+            formRepository.save(entity);
+        }
     }
 
     /**
