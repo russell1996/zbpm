@@ -13,11 +13,13 @@ import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
@@ -91,6 +93,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private VariableRepository variableRepository;
+
+    @Autowired
+    private FormRepository formRepository;
 
     @Autowired
     private OutboxRepository outboxRepository;
@@ -522,10 +527,20 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void inlineUserTaskForm_doesNotBreakDeployOrExecution() throws Exception {
+    void inlineUserTaskForm_storedAndResolved_deployAndExecute() throws Exception {
+        // WO-C8-12 GREEN (переименован из inlineUserTaskForm_doesNotBreakDeployOrExecution):
+        // фикстура поправлена (userTaskForm camelCase, внутри process extensionElements, formKey
+        // camunda-forms:bpmn:...); embedded-схема реально сохранена в FormEntity и резолвится
+        // по formKey — до этого по этому formKey было нечего найти.
         String key = uniq("c8utf");
         String xml = bpmn("test-c8-user-task-form.bpmn").replace("c8-user-task-form", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        FormEntity stored = formRepository
+            .findTopByFormKeyOrderByVersionDesc("camunda-forms:bpmn:userTaskForm_order-form")
+            .orElseThrow();
+        assertThat(stored.getSchemaJson()).contains("\"components\"");
+        assertThat(stored.getVersion()).isEqualTo(1);
 
         UUID piId = start(model.getId(), List.of());
 
@@ -534,6 +549,28 @@ public class Camunda8ParityCharacterizationTests {
 
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
         assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void inlineUserTaskForm_redeploy_createsNewVersion() throws Exception {
+        // WO-C8-12, критерий 3: повторный деплой той же формы создаёт version=2, не
+        // перезаписывает version=1 (та же семантика, что ручная загрузка через REST).
+        // sha256-идемпотентность деплоя требует изменить XML для новой версии процесса —
+        // меняем имя процесса, блок формы байт-в-байт тот же.
+        String key = uniq("c8utfr");
+        String xml1 = bpmn("test-c8-user-task-form.bpmn").replace("c8-user-task-form", key);
+        processDefinitionService.addProcessDefinition(xml1);
+        String xml2 = xml1.replace("name=\"" + key + "\"", "name=\"" + key + "-v2\"");
+        processDefinitionService.addProcessDefinition(xml2);
+
+        assertThat(formRepository
+            .findByFormKeyAndVersion("camunda-forms:bpmn:userTaskForm_order-form", 1))
+            .isPresent();
+        FormEntity v2 = formRepository
+            .findByFormKeyAndVersion("camunda-forms:bpmn:userTaskForm_order-form", 2)
+            .orElseThrow();
+        assertThat(v2.getSchemaJson()).contains("\"components\"");
     }
 
     // ==================== §C.1: DMN literal expression ====================
