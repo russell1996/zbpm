@@ -80,6 +80,37 @@ public class SyncTaskHandler {
         }
     }
 
+    /**
+     * Handler for MANUAL_TASK elements (WO-C8-5): pass-through flow node, like a none event.
+     * Camunda 8 runs nothing automatically for a manual task (no job worker, no engine-driven
+     * form) — enter and immediately leave, no side effects beyond the completed activity itself.
+     * Tail of {@link ScriptTask#handle} without the script evaluation in the middle.
+     */
+    @Component
+    @RequiredArgsConstructor
+    public static class ManualTask implements ElementHandler, TypedElementHandler {
+        private final DBService dbService;
+        private final FlowNavigator flowNavigator;
+        private final ActivityService activityService;
+
+        @Override
+        public BpmnElementType elementType() { return BpmnElementType.MANUAL_TASK; }
+
+        @Override
+        public ElementHandler handler() { return this; }
+
+        @Override
+        public void handle(ExecutionCtx ctx, BpmnProcessDefinitionModel bpmn, BpmnElementModel el) {
+            UUID processInstanceId = ctx.processInstanceId();
+            UUID tokenId = ctx.tokenId();
+
+            UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
+            dbService.completeActivity(activityId);
+            flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, el, ctx.executor());
+            activityService.triggerConditionalEvents(processInstanceId);
+        }
+    }
+
     @Component
     @RequiredArgsConstructor
     public static class BusinessRuleTask implements ElementHandler, TypedElementHandler {

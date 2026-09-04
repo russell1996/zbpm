@@ -167,6 +167,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     pd.addElement(element);
                 }
             }
+            if (Optional.ofNullable(process.getManualTasks()).isPresent()) {
+                for (BpmnManualTaskModel manualTask : process.getManualTasks()) {
+                    BpmnElementModel element = toElementModel(manualTask);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
             if (Optional.ofNullable(process.getScriptTasks()).isPresent()) {
                 for (BpmnScriptTaskModel scriptTask : process.getScriptTasks()) {
                     BpmnElementModel element = toElementModel(scriptTask);
@@ -526,6 +533,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 pd.addElement(child);
             }
         }
+        if (sub.getManualTasks() != null) {
+            for (BpmnManualTaskModel manualTask : sub.getManualTasks()) {
+                BpmnElementModel child = toElementModel(manualTask);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
         if (sub.getExclusiveGateways() != null) {
             for (BpmnExclusiveGatewayModel gateway : sub.getExclusiveGateways()) {
                 BpmnElementModel child = toElementModel(gateway);
@@ -737,6 +751,16 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setExtensions(new BpmnElementExtensionModel());
             element.getExtensions().setMessageEventExtension(message);
         }
+        return element;
+    }
+
+    private BpmnElementModel toElementModel(BpmnManualTaskModel manualTask) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(manualTask.getId());
+        element.setName(manualTask.getName());
+        element.setType(BpmnElementType.MANUAL_TASK);
+        element.setIncoming(manualTask.getIncoming());
+        element.setOutgoing(manualTask.getOutgoing());
         return element;
     }
 
