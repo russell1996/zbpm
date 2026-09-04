@@ -15,4 +15,6 @@ public class JobDetailModel {
     private String serviceTaskKey;
     private String job;
     private Map<String, ProcessVariable> variables;
+    /** Custom headers from {@code zeebe:taskHeaders} (WO-C8-7) — null when the task declares none. */
+    private Map<String, String> taskHeaders;
 }
