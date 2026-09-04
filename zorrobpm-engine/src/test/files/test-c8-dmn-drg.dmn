@@ -25,7 +25,7 @@
     <decisionTable id="DecisionTable_top" hitPolicy="FIRST">
       <input id="Input_top" label="B">
         <inputExpression id="InputExpression_top" typeRef="number" expressionLanguage="feel">
-          <text>b</text>
+          <text>c8base</text>
         </inputExpression>
       </input>
       <output id="Output_top" label="Top" name="top" typeRef="string" />
