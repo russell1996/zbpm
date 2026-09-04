@@ -313,18 +313,34 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void manualTask_breaksFlowWithMissingTargetIncident() throws Exception {
+    void manualTask_passesThroughAndCompletes() throws Exception {
+        // WO-C8-5 GREEN (переименован из manualTask_breaksFlowWithMissingTargetIncident):
+        // manual task — pass-through узел: инстанс проходит насквозь и завершается, 0 инцидентов.
+        // Активность manual мгновенно COMPLETED (не паркуется в ожидании, в отличие от user task).
         String key = uniq("c8man");
         String xml = bpmn("test-c8-manual-task.bpmn").replace("c8-manual-task", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
 
-        // <bpmn:manualTask> is dropped by the parser: the flow lands on a missing element.
-        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
-        List<IncidentEntity> incidents = incidentsOfInstance(piId);
-        assertThat(incidents).hasSize(1);
-        assertThat(incidents.get(0).getMessage()).contains("manual").contains("not found");
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(activity(piId, "manual").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void manualTask_insideSubprocess_passesThrough() throws Exception {
+        // WO-C8-5, п.5: manual task внутри embedded subprocess парсится и проходится так же.
+        String key = uniq("c8mansub");
+        String xml = bpmn("test-c8-manual-subprocess.bpmn").replace("c8-manual-subprocess", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(activity(piId, "manual").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
     // ==================== §C.1: processIdExpression / businessId ====================
