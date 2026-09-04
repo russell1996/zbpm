@@ -85,11 +85,22 @@ public class DmnServiceImpl implements DmnService {
             .findFirst()
             .orElseThrow(() -> new EngineException("DMN resource has no decision '" + decisionId + "'"));
         DmnDecisionTableModel table = decision.getDecisionTable();
+        Map<String, Object> vars = toVariableMap(variables);
         if (table == null) {
+            // WO-C8-6: a decision without a table may carry a literal FEEL expression instead.
+            DmnTextModel literalExpression = decision.getLiteralExpression();
+            if (literalExpression != null) {
+                String expr = text(literalExpression);
+                if (expr == null || expr.isBlank()) {
+                    throw new EngineException("DMN decision '" + decisionId + "' literal expression is empty");
+                }
+                Object result = evalExpression(expr, vars);
+                log.info("DMN decision '{}' (literal expression) evaluated to {}", decisionId, result);
+                return result;
+            }
             throw new EngineException("DMN decision '" + decisionId + "' has no decision table");
         }
 
-        Map<String, Object> vars = toVariableMap(variables);
         int inputCount = table.getInputs() == null ? 0 : table.getInputs().size();
 
         // evaluate each input expression once
