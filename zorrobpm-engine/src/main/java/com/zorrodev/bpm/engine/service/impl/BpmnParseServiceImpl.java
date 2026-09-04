@@ -11,6 +11,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.HeaderModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.MappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeLoopCharacteristicsModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.PriorityDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType;
@@ -621,6 +622,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     if (h.getKey() != null) map.put(h.getKey(), h.getValue());
                 }
                 element.getExtensions().getServiceTaskExtension().setTaskHeaders(map);
+            }
+            // WO-C8-9: raw priority rides along for FEEL→Integer resolution at enqueue time (null when absent).
+            PriorityDefinitionModel priorityDefinition = serviceTask.getExtensionElements().getPriorityDefinition();
+            if (priorityDefinition != null) {
+                element.getExtensions().getServiceTaskExtension().setPriority(priorityDefinition.getPriority());
             }
         }
         attachIoMapping(element, serviceTask.getExtensionElements());

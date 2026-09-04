@@ -13,4 +13,6 @@ public class ServiceTaskExtensionModel {
     private Integer retries;
     /** Custom headers from {@code zeebe:taskHeaders} (WO-C8-7) — delivered to the worker via JobDetailModel; null when absent. */
     private Map<String, String> taskHeaders;
+    /** Raw priority from {@code zeebe:priorityDefinition} (WO-C8-9) — literal or FEEL, resolved to Integer at enqueue time; null when absent. */
+    private String priority;
 }
