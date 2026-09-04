@@ -7,8 +7,10 @@ import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.HeaderModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.MappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeLoopCharacteristicsModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType;
@@ -30,6 +32,7 @@ import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.xml.SecureXmlParser;
 import org.springframework.stereotype.Service;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -610,6 +613,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
             element.getExtensions().getServiceTaskExtension().setJob(serviceTask.getExtensionElements().getTaskDefinition().getType());
             element.getExtensions().getServiceTaskExtension().setRetries(serviceTask.getExtensionElements().getTaskDefinition().getRetries());
+            // WO-C8-7: custom headers ride along to the worker via JobDetailModel (null when absent).
+            TaskHeadersModel headers = serviceTask.getExtensionElements().getTaskHeaders();
+            if (headers != null && headers.getHeaders() != null) {
+                Map<String, String> map = new LinkedHashMap<>();
+                for (HeaderModel h : headers.getHeaders()) {
+                    if (h.getKey() != null) map.put(h.getKey(), h.getValue());
+                }
+                element.getExtensions().getServiceTaskExtension().setTaskHeaders(map);
+            }
         }
         attachIoMapping(element, serviceTask.getExtensionElements());
         attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
