@@ -232,6 +232,68 @@ public class Camunda8ParityCharacterizationTests {
 
         // dueDate is long past — the task still parks normally and completes on demand.
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        // WO-C8-8: resolved values really landed on the task (not just parsed and dropped).
+        UserTaskQuery parkedQuery = new UserTaskQuery();
+        parkedQuery.setProcessInstanceId(piId);
+        UserTask parked = queryService.findUserTasks(parkedQuery, null).getData().stream()
+            .filter(t -> t.getCompletedAt() == null)
+            .findFirst().orElseThrow();
+        assertThat(parked.getDueDate()).isEqualTo("2020-01-01T00:00:00Z");
+        assertThat(parked.getFollowUpDate()).isEqualTo("2020-01-02T00:00:00Z");
+        completeUserTask(piId, "review");
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskSchedule_feelExpression_resolvesAgainstVariables() throws Exception {
+        // WO-C8-8: `=dueDate`-форма (как в test-mi-reenter.bpmn) вычисляется через
+        // elementSupport.resolveExpression, а не копируется буквально.
+        String key = uniq("c8tsf");
+        String xml = bpmn("test-c8-task-schedule.bpmn")
+            .replace("c8-task-schedule", key)
+            .replace("dueDate=\"2020-01-01T00:00:00Z\" followUpDate=\"2020-01-02T00:00:00Z\"",
+                "dueDate=\"= shipDate\" followUpDate=\"= shipDate\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("shipDate", ProcessVariableType.STRING, "2030-05-01")));
+
+        UserTaskQuery parkedQuery = new UserTaskQuery();
+        parkedQuery.setProcessInstanceId(piId);
+        UserTask parked = queryService.findUserTasks(parkedQuery, null).getData().stream()
+            .filter(t -> t.getCompletedAt() == null)
+            .findFirst().orElseThrow();
+        assertThat(parked.getDueDate()).isEqualTo("2030-05-01");
+        assertThat(parked.getFollowUpDate()).isEqualTo("2030-05-01");
+        completeUserTask(piId, "review");
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskSchedule_brokenExpression_storesNullWithoutIncident() throws Exception {
+        // WO-C8-8, критерий 5: битый FEEL — не исключение, не инцидент: хранится null,
+        // задача паркуется и завершается штатно (информационное поле, не триггер).
+        String key = uniq("c8tsb");
+        String xml = bpmn("test-c8-task-schedule.bpmn")
+            .replace("c8-task-schedule", key)
+            .replace("dueDate=\"2020-01-01T00:00:00Z\" followUpDate=\"2020-01-02T00:00:00Z\"",
+                "dueDate=\"= 1 +\" followUpDate=\"= 1 +\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        UserTaskQuery parkedQuery = new UserTaskQuery();
+        parkedQuery.setProcessInstanceId(piId);
+        UserTask parked = queryService.findUserTasks(parkedQuery, null).getData().stream()
+            .filter(t -> t.getCompletedAt() == null)
+            .findFirst().orElseThrow();
+        assertThat(parked.getDueDate()).isNull();
+        assertThat(parked.getFollowUpDate()).isNull();
         completeUserTask(piId, "review");
 
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();

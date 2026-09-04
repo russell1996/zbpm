@@ -42,9 +42,11 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
         String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
         String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
+        String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, bpmnElement);
+        String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
-        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey);
+        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
         elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
