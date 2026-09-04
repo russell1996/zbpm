@@ -58,6 +58,12 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             .map(ext -> ext.getJob())
             .orElse(null);
 
+        // WO-C8-7: null-safe headers extraction — headers are optional, most tasks carry none.
+        Map<String, String> taskHeaders = Optional.ofNullable(element.getExtensions())
+            .map(ext -> ext.getServiceTaskExtension())
+            .map(ext -> ext.getTaskHeaders())
+            .orElse(null);
+
         if (job == null || job.isBlank()) {
             log.error("Service task {} (element {}) has no job definition — creating incident", serviceTaskId, bpmnElementId);
             dbService.createIncident(
@@ -82,6 +88,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         detail.setServiceTaskKey(bpmnElementId);
         detail.setJob(job);
         detail.setVariables(variables);
+        detail.setTaskHeaders(taskHeaders);
 
         try {
             OutboxEntry entry = new OutboxEntry();

@@ -91,9 +91,9 @@ class ServiceTaskEnqueueServiceImplTest {
         // WO-REL-12 R-01: producer writes the explicit kind — no payload guessing downstream
         assertThat(entry.getKind()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxKind.SERVICE_TASK);
     }
-
     @Test
     void enqueueAfterCommit_nullJob_createsIncidentAndSkipsOutbox() {
+
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();
@@ -131,5 +131,139 @@ class ServiceTaskEnqueueServiceImplTest {
         verify(dbService).createIncident(eq(serviceTaskId), contains(bpmnElementId));
         // must NOT create outbox entry
         verify(outboxRepository, never()).save(any());
+    }
+
+    @Test
+    void enqueueAfterCommit_withHeaders_setsThemOnJobDetail() throws Exception {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskHeaders";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        ext.setTaskHeaders(java.util.Map.of("tenant", "acme", "priority", "high"));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        service.enqueueAfterCommit(serviceTaskId);
+
+        // WO-C8-7: headers must reach the JobDetailModel handed to serialization (not just parse).
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getTaskHeaders())
+            .containsExactlyInAnyOrderEntriesOf(java.util.Map.of("tenant", "acme", "priority", "high"));
+    }
+
+    @Test
+    void enqueueAfterCommit_withoutHeaders_setsNullOnJobDetail() throws Exception {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskNoHeaders";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        // no taskHeaders on the extension (the common case)
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        service.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getTaskHeaders()).isNull();
+    }
+
+    @Test
+    void enqueueAfterCommit_withHeaders_outboxPayloadCarriesThem() throws Exception {
+        // WO-C8-7, strongest form: real Jackson serialization — the outbox JSON the worker
+        // will consume actually contains taskHeaders (proves the exchange-DTO change end to end).
+        ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper());
+
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskHeadersJson";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        ext.setTaskHeaders(java.util.Map.of("tenant", "acme"));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+
+        realMapperService.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<OutboxEntry> captor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxRepository).save(captor.capture());
+        assertThat(captor.getValue().getPayload()).contains("\"taskHeaders\"");
+        assertThat(captor.getValue().getPayload()).contains("\"tenant\"");
+        assertThat(captor.getValue().getPayload()).contains("acme");
     }
 }
