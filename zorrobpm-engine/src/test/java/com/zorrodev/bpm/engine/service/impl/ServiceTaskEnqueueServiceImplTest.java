@@ -333,8 +333,58 @@ class ServiceTaskEnqueueServiceImplTest {
     }
 
     @Test
+    void enqueueAfterCommit_processDefaultPriority_outboxPayloadCarriesIt() throws Exception {
+        // WO-C8-13, критерий 3 (delivery-уровень): своего priority у задачи нет, process-level
+        // default "50" доезжает до outbox-JSON через тот же wiring (реальный Jackson +
+        // РЕАЛЬНЫЙ ElementSupport, литерал без стабов).
+        ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
+            realElementSupport());
+
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskProcessDefaultJson";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.setDefaultJobPriority("50");
+        element.setProcessDefinition(bpmn);
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+
+        realMapperService.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<OutboxEntry> captor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxRepository).save(captor.capture());
+        assertThat(captor.getValue().getPayload()).contains("\"priority\":50");
+    }
+
+    @Test
     void enqueueAfterCommit_withoutPriority_setsNullOnJobDetail() throws Exception {
-        // WO-C8-9, критерий 3 (зеркало withoutHeaders): без priorityDefinition — null, не ошибка.
+        // WO-C8-9, критерий 3 (зеркало withoutHeaders; имя элемента исправлено WO-C8-13):
+        // без jobPriorityDefinition — null, не ошибка.
         // SUT собран напрямую с реальным ElementSupport (пустой raw коротится до DB) —
         // null приходит из прод-кода, а не из дефолта мока.
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
