@@ -151,6 +151,30 @@ class DBServiceImplTest {
         verify(serviceTaskDbOperations).createServiceTask(activityId, 3, "draftCreate");
     }
 
+    // ─── WO-C8-11: listener index passthrough ───────────────────────────
+
+    @Test
+    void createServiceTask_withListenerIndex_delegates() {
+        UUID activityId = UUID.randomUUID();
+        dbService.createServiceTask(activityId, 3, "job-c8", 0);
+        verify(serviceTaskDbOperations).createServiceTask(activityId, 3, "job-c8", 0);
+    }
+
+    @Test
+    void setPendingListenerIndex_delegates() {
+        UUID id = UUID.randomUUID();
+        dbService.setPendingListenerIndex(id, 1);
+        verify(serviceTaskDbOperations).setPendingListenerIndex(id, 1);
+    }
+
+    @Test
+    void getServiceTaskPendingListenerIndex_delegates() {
+        UUID id = UUID.randomUUID();
+        when(serviceTaskDbOperations.getPendingListenerIndex(id)).thenReturn(0);
+        assertThat(dbService.getServiceTaskPendingListenerIndex(id)).isEqualTo(0);
+        verify(serviceTaskDbOperations).getPendingListenerIndex(id);
+    }
+
     @Test
     void incident_delegates() {
         UUID activityId = UUID.randomUUID();

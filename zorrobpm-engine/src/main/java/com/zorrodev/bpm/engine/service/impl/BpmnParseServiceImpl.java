@@ -12,6 +12,9 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.MappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeLoopCharacteristicsModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.PriorityDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenerModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenersModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionType;
@@ -33,6 +36,7 @@ import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.xml.SecureXmlParser;
 import org.springframework.stereotype.Service;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -627,6 +631,20 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             PriorityDefinitionModel priorityDefinition = serviceTask.getExtensionElements().getPriorityDefinition();
             if (priorityDefinition != null) {
                 element.getExtensions().getServiceTaskExtension().setPriority(priorityDefinition.getPriority());
+            }
+            // WO-C8-11: start execution listeners block the real job until each completes.
+            // eventType="end" is silently skipped here — separate WO-C8-11b, not a bug.
+            ExecutionListenersModel executionListeners = serviceTask.getExtensionElements().getExecutionListeners();
+            if (executionListeners != null && executionListeners.getListeners() != null) {
+                List<ListenerModel> starts = new ArrayList<>();
+                for (ExecutionListenerModel l : executionListeners.getListeners()) {
+                    if ("start".equals(l.getEventType()) && l.getType() != null) {
+                        starts.add(new ListenerModel(l.getType(), l.getRetries()));
+                    }
+                }
+                if (!starts.isEmpty()) {
+                    element.getExtensions().getServiceTaskExtension().setStartListeners(starts);
+                }
             }
         }
         attachIoMapping(element, serviceTask.getExtensionElements());

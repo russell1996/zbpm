@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260904-085
+  - changeSet:
+      id: 20260904-085
+      author: zorrodev
+      changes:
+        # WO-C8-11: zeebe:executionListeners (start) на service task — индекс ожидающего
+        # listener'а в service_tasks. Nullable: null = обычный путь (без listener'ов или уже
+        # диспетчеризован настоящий job) — все существующие задачи ведут себя как раньше.
+        - addColumn:
+            tableName: service_tasks
+            columns:
+              - column:
+                  name: pending_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего start-listener (WO-C8-11); null — обычный путь без listener-ов'

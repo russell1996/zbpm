@@ -33,6 +33,11 @@ public class ServiceTaskDbOperationsImpl implements ServiceTaskDbOperations {
 
     @Override
     public void createServiceTask(UUID activityId, int retriesRemaining, String job) {
+        createServiceTask(activityId, retriesRemaining, job, null);
+    }
+
+    @Override
+    public void createServiceTask(UUID activityId, int retriesRemaining, String job, Integer pendingListenerIndex) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         ServiceTaskEntity entity = new ServiceTaskEntity();
         entity.setId(activity.getId());
@@ -41,6 +46,7 @@ public class ServiceTaskDbOperationsImpl implements ServiceTaskDbOperations {
         entity.setCreatedAt(activity.getCreatedAt());
         entity.setRetriesRemaining(retriesRemaining);
         entity.setJob(job);
+        entity.setPendingListenerIndex(pendingListenerIndex);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
@@ -63,6 +69,18 @@ public class ServiceTaskDbOperationsImpl implements ServiceTaskDbOperations {
         ServiceTaskEntity entity = serviceTaskRepository.findById(serviceTaskId).orElseThrow();
         entity.setRetriesRemaining(retries);
         serviceTaskRepository.save(entity);
+    }
+
+    @Override
+    public void setPendingListenerIndex(UUID serviceTaskId, Integer pendingListenerIndex) {
+        ServiceTaskEntity entity = serviceTaskRepository.findById(serviceTaskId).orElseThrow();
+        entity.setPendingListenerIndex(pendingListenerIndex);
+        serviceTaskRepository.save(entity);
+    }
+
+    @Override
+    public Integer getPendingListenerIndex(UUID serviceTaskId) {
+        return serviceTaskRepository.findById(serviceTaskId).orElseThrow().getPendingListenerIndex();
     }
 
     @Override

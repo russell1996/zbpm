@@ -96,4 +96,46 @@ class ServiceTaskDbOperationsImplTest {
         db.completeServiceTask(id);
         verify(serviceTaskRepository).setCompletedAt(eq(id), any(java.time.Instant.class));
     }
+
+    @Test
+    void createServiceTask_withListenerIndex_savesIt() {
+        UUID activityId = UUID.randomUUID();
+        ActivityEntity activity = new ActivityEntity(); activity.setId(activityId); activity.setProcessInstanceId(UUID.randomUUID()); activity.setBpmnElementId("svc"); activity.setCreatedAt(java.time.Instant.now());
+        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+        when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
+        // WO-C8-11: entering an element with start listeners parks listener #0 first.
+        db.createServiceTask(activityId, 3, "job-c8", 0);
+        ArgumentCaptor<ServiceTaskEntity> captor = ArgumentCaptor.forClass(ServiceTaskEntity.class);
+        verify(serviceTaskRepository).save(captor.capture());
+        assertThat(captor.getValue().getPendingListenerIndex()).isEqualTo(0);
+    }
+
+    @Test
+    void createServiceTask_threeArg_leavesListenerIndexNull() {
+        UUID activityId = UUID.randomUUID();
+        ActivityEntity activity = new ActivityEntity(); activity.setId(activityId); activity.setProcessInstanceId(UUID.randomUUID()); activity.setBpmnElementId("svc"); activity.setCreatedAt(java.time.Instant.now());
+        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+        when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
+        // WO-C8-11, критерий 5: pre-existing overload delegates with a null index (normal path).
+        db.createServiceTask(activityId, 3, "job-c8");
+        ArgumentCaptor<ServiceTaskEntity> captor = ArgumentCaptor.forClass(ServiceTaskEntity.class);
+        verify(serviceTaskRepository).save(captor.capture());
+        assertThat(captor.getValue().getPendingListenerIndex()).isNull();
+    }
+
+    @Test
+    void setAndGetPendingListenerIndex_roundTrip() {
+        UUID id = UUID.randomUUID();
+        ServiceTaskEntity e = new ServiceTaskEntity(); e.setId(id); e.setPendingListenerIndex(null);
+        when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(e));
+        db.setPendingListenerIndex(id, 1);
+        assertThat(e.getPendingListenerIndex()).isEqualTo(1);
+        verify(serviceTaskRepository).save(e);
+        assertThat(db.getPendingListenerIndex(id)).isEqualTo(1);
+        db.setPendingListenerIndex(id, null);
+        assertThat(e.getPendingListenerIndex()).isNull();
+        assertThat(db.getPendingListenerIndex(id)).isNull();
+    }
 }
