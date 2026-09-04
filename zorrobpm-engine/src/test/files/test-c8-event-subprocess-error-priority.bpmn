@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8evp" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="err_boom" name="boom" errorCode="E-1" />
+  <bpmn:process id="c8-evsub-priority" name="c8-evsub-priority" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="errEnd" />
+    <bpmn:endEvent id="errEnd" name="errEnd">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:errorEventDefinition id="eed1" errorRef="err_boom" />
+    </bpmn:endEvent>
+
+    <bpmn:subProcess id="catchAllHandler" name="catchAllHandler" triggeredByEvent="true">
+      <bpmn:startEvent id="evStartCatchAll" name="evStartCatchAll" isInterrupting="true">
+        <bpmn:outgoing>flowCatchAll</bpmn:outgoing>
+        <bpmn:errorEventDefinition id="eedCatchAll" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowCatchAll" name="flowCatchAll" sourceRef="evStartCatchAll" targetRef="evEndCatchAll" />
+      <bpmn:endEvent id="evEndCatchAll" name="evEndCatchAll">
+        <bpmn:incoming>flowCatchAll</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+
+    <bpmn:subProcess id="specificHandler" name="specificHandler" triggeredByEvent="true">
+      <bpmn:startEvent id="evStartSpecific" name="evStartSpecific" isInterrupting="true">
+        <bpmn:outgoing>flowSpecific</bpmn:outgoing>
+        <bpmn:errorEventDefinition id="eedSpecific" errorRef="err_boom" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowSpecific" name="flowSpecific" sourceRef="evStartSpecific" targetRef="evEndSpecific" />
+      <bpmn:endEvent id="evEndSpecific" name="evEndSpecific">
+        <bpmn:incoming>flowSpecific</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>

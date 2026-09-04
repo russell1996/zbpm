@@ -99,8 +99,10 @@ public class ErrorEscalationThrower {
     /**
      * Finds an interrupting error boundary attached to {@code attachedToRef} whose error code matches
      * {@code errorCode}; a boundary with no code is a catch-all. Returns {@code null} if none.
+     * WO-C8-4: a specific code always wins over catch-all, regardless of XML order.
      */
     private BpmnElementModel findErrorBoundary(BpmnProcessDefinitionModel bpmn, String attachedToRef, String errorCode) {
+        BpmnElementModel catchAll = null;
         for (BpmnElementModel element : bpmn.getElements()) {
             if (element.getType() != BpmnElementType.ERROR_BOUNDARY_EVENT) {
                 continue;
@@ -116,15 +118,22 @@ public class ErrorEscalationThrower {
                 .map(BpmnElementExtensionModel::getEventDefinition)
                 .map(EventDefinitionExtensionModel::getCode)
                 .orElse(null);
-            if (boundaryCode == null || boundaryCode.equals(errorCode)) {
-                return element;
+            if (boundaryCode != null && boundaryCode.equals(errorCode)) {
+                return element; // WO-C8-4: specific code wins regardless of iteration order
+            }
+            if (boundaryCode == null && catchAll == null) {
+                catchAll = element; // remember the first catch-all as fallback
             }
         }
-        return null;
+        return catchAll;
     }
 
-    /** Finds a top-level error-triggered event sub-process matching {@code errorCode} (null code = catch-all). */
+    /**
+     * Finds a top-level error-triggered event sub-process matching {@code errorCode}
+     * (null code = catch-all). WO-C8-4: a specific code always wins over catch-all.
+     */
     private BpmnElementModel findEventSubprocessErrorHandler(BpmnProcessDefinitionModel bpmn, String errorCode) {
+        BpmnElementModel catchAll = null;
         for (BpmnElementModel element : bpmn.getEventSubProcesses()) {
             SubProcessExtensionModel ext = Optional.ofNullable(element.getExtensions())
                 .map(BpmnElementExtensionModel::getSubProcessExtension)
@@ -132,11 +141,14 @@ public class ErrorEscalationThrower {
             if (ext == null || !ext.isErrorTriggered()) {
                 continue;
             }
-            if (ext.getTriggerErrorCode() == null || ext.getTriggerErrorCode().equals(errorCode)) {
-                return element;
+            if (ext.getTriggerErrorCode() != null && ext.getTriggerErrorCode().equals(errorCode)) {
+                return element; // WO-C8-4: specific code wins regardless of iteration order
+            }
+            if (ext.getTriggerErrorCode() == null && catchAll == null) {
+                catchAll = element; // remember the first catch-all as fallback
             }
         }
-        return null;
+        return catchAll;
     }
 
     public String escalationCode(BpmnElementModel element) {
@@ -226,8 +238,10 @@ public class ErrorEscalationThrower {
     /**
      * Finds an escalation boundary attached to {@code attachedToRef} whose escalation code matches
      * {@code escalationCode}; a boundary with no code is a catch-all. Returns {@code null} if none.
+     * WO-C8-4: a specific code always wins over catch-all, regardless of XML order.
      */
     private BpmnElementModel findEscalationBoundary(BpmnProcessDefinitionModel bpmn, String attachedToRef, String escalationCode) {
+        BpmnElementModel catchAll = null;
         for (BpmnElementModel element : bpmn.getElements()) {
             if (element.getType() != BpmnElementType.ESCALATION_BOUNDARY_EVENT) {
                 continue;
@@ -243,10 +257,13 @@ public class ErrorEscalationThrower {
                 .map(BpmnElementExtensionModel::getEventDefinition)
                 .map(EventDefinitionExtensionModel::getCode)
                 .orElse(null);
-            if (boundaryCode == null || boundaryCode.equals(escalationCode)) {
-                return element;
+            if (boundaryCode != null && boundaryCode.equals(escalationCode)) {
+                return element; // WO-C8-4: specific code wins regardless of iteration order
+            }
+            if (boundaryCode == null && catchAll == null) {
+                catchAll = element; // remember the first catch-all as fallback
             }
         }
-        return null;
+        return catchAll;
     }
 }
