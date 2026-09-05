@@ -85,4 +85,19 @@ public class BpmnSubProcessModel {
 
     @XmlElement(name = "eventBasedGateway", namespace = NS)
     private List<BpmnEventBasedGatewayModel> eventBasedGateways;
+
+    @XmlElement(name = "callActivity", namespace = NS)
+    private List<BpmnCallActivityModel> callActivities;
+
+    @XmlElement(name = "subProcess", namespace = NS)
+    private List<BpmnSubProcessModel> subProcesses;
+
+    @XmlElement(name = "transaction", namespace = NS)
+    private List<BpmnSubProcessModel> transactions;
+
+    @XmlElement(name = "boundaryEvent", namespace = NS)
+    private List<BpmnBoundaryEventModel> boundaryEvents;
+
+    @XmlElement(name = "association", namespace = NS)
+    private List<BpmnAssociationModel> associations;
 }
