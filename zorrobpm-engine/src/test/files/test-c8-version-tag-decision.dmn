@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c8tag" name="c8tag" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="c8tagged" name="Tagged">
+    <extensionElements>
+      <zeebe:versionTag value="VTAG" />
+    </extensionElements>
+    <decisionTable id="DecisionTable_tag" hitPolicy="FIRST">
+      <input id="Input_tag" label="Tier">
+        <inputExpression id="InputExpression_tag" typeRef="string" expressionLanguage="feel">
+          <text>tier</text>
+        </inputExpression>
+      </input>
+      <output id="Output_tag" label="Picked" name="picked" typeRef="string" />
+      <rule id="Rule_tag_default">
+        <inputEntry id="In_tag_default"><text></text></inputEntry>
+        <outputEntry id="Out_tag_default"><text>C8VAL</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

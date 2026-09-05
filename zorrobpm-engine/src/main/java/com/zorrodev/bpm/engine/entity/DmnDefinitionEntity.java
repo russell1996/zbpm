@@ -28,4 +28,6 @@ public class DmnDefinitionEntity {
     private UUID processDefinitionId;
     /** WO-C8-18: деплоймент пачки (POST /deployments); null — одиночный деплой (обратная совместимость). */
     private UUID deploymentId;
+    /** WO-C8-20: тег версии решения из DMN XML (zeebe:versionTag); null — версия без тега. */
+    private String versionTag;
 }

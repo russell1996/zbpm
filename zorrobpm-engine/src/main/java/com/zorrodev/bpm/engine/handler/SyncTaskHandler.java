@@ -154,6 +154,15 @@ public class SyncTaskHandler {
                 if ("deployment".equals(ext.getBindingType())) {
                     UUID processDefinitionId = dbService.getProcessInstance(processInstanceId).getProcessDefinitionId();
                     result = dmnService.evaluate(decisionId, variables, processDefinitionId);
+                } else if ("versionTag".equals(ext.getBindingType())) {
+                    // WO-C8-20: pin to the latest deployed version annotated with the tag.
+                    // A missing tag attribute is an explicit error (mirror CallActivityHandler's
+                    // versionTag branch from WO-C8-3), not a silent null tag lookup.
+                    String tag = ext.getVersionTag();
+                    if (tag == null || tag.isBlank()) {
+                        throw new IllegalStateException("Business rule task '" + el.getId() + "' has bindingType=\"versionTag\" but no versionTag attribute");
+                    }
+                    result = dmnService.evaluateByVersionTag(decisionId, variables, tag);
                 } else {
                     result = dmnService.evaluate(decisionId, variables);
                 }
