@@ -249,18 +249,20 @@ public class CompletionService {
         // WO-C8-21: a failing creating-listener job parks the token with an incident. There is
         // no service_tasks row (and no retry budget) for a user task, so the shared budget
         // path below would orElseThrow — never reach it. ListenerModel.retries is parsed but
-        // not applied in this slice, same as WO-C8-11.
-        UUID failProcessInstanceId = activity.getProcessInstanceId();
-        ProcessInstance failPi = dbService.getProcessInstance(failProcessInstanceId);
-        BpmnProcessDefinitionModel failBpmn = bpmnService.getProcessDefinitionModelById(failPi.getProcessDefinitionId());
-        BpmnElementModel failElement = failBpmn.getElement(activity.getBpmnElementId());
-        if (!elementSupport.userTaskCreatingListeners(failElement).isEmpty()
-            && dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {
-            log.info("{}/{}: User task creating listener {} failed — raising incident: {}",
-                failProcessInstanceId, activity.getToken(), activity.getBpmnElementId(), message);
-            dbService.errorActivity(serviceTaskId);
-            dbService.createIncident(serviceTaskId, message);
-            return;
+        // not applied in this slice, same as WO-C8-11. Gated on the activity type first, so
+        // the common service-task fail path never pays for the bpmn load below.
+        if (activity.getType() == BpmnElementType.USER_TASK) {
+            ProcessInstance failPi = dbService.getProcessInstance(activity.getProcessInstanceId());
+            BpmnProcessDefinitionModel failBpmn = bpmnService.getProcessDefinitionModelById(failPi.getProcessDefinitionId());
+            BpmnElementModel failElement = failBpmn.getElement(activity.getBpmnElementId());
+            if (!elementSupport.userTaskCreatingListeners(failElement).isEmpty()
+                && dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {
+                log.info("{}/{}: User task creating listener {} failed — raising incident: {}",
+                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
+                dbService.errorActivity(serviceTaskId);
+                dbService.createIncident(serviceTaskId, message);
+                return;
+            }
         }
         // Camunda failJob semantics: an explicit retries value sets the budget (0 -> incident now); otherwise -1
         int remaining;
