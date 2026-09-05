@@ -1474,6 +1474,79 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
+    // ==================== WO-C8-16 (A-4): job-based end/throw events ====================
+
+    @Test
+    @Transactional
+    void jobEndEvent_parksAndDispatchesJobUntilWorkerCompletes() throws Exception {
+        // WO-C8-16: end event с zeebe:taskDefinition паркуется как job (outbox), а не проходит
+        // насквозь; завершение воркером заканчивает ветку. Headers/priority едут тем же кодом.
+        String key = uniq("c8je");
+        String xml = bpmn("test-c8-job-end.bpmn").replace("c8-job-end", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        // parked, not passed through: instance running, end activity CREATED, job dispatched
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        UUID activityId = activity(piId, "end").getId();
+        assertThat(activity(piId, "end").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8");
+
+        // criterion 3: taskHeaders + jobPriorityDefinition rode along to the worker
+        String payload = outboxPayload(piId);
+        assertThat(payload).contains("\"taskHeaders\"");
+        assertThat(payload).contains("acme");
+        assertThat(payload).contains("\"priority\":75");
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(activity(piId, "end").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void jobThrowEvent_parksAndContinuesAfterWorkerCompletes() throws Exception {
+        // WO-C8-16: message throw с zeebe:taskDefinition паркуется — внутренняя корреляция НЕ
+        // происходит (отправка за воркером); продолжение потока — после завершения job'а.
+        String key = uniq("c8jt");
+        String xml = bpmn("test-c8-job-throw.bpmn").replace("c8-job-throw", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        UUID activityId = activity(piId, "msgThrow").getId();
+        assertThat(activity(piId, "msgThrow").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8");
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(activity(piId, "msgThrow").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    /** WO-C8-16: payload of this instance's first outbox SERVICE_TASK entry. */
+    private String outboxPayload(UUID processInstanceId) throws Exception {
+        tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
+        List<OutboxEntry> entries = outboxRepository.findAll().stream()
+            .filter(e -> e.getKind() == OutboxKind.SERVICE_TASK)
+            .filter(e -> {
+                try {
+                    return processInstanceId.toString().equals(om.readTree(e.getPayload()).get("processInstanceId").asText());
+                } catch (Exception ex) {
+                    throw new RuntimeException(ex);
+                }
+            })
+            .sorted(java.util.Comparator.comparing(OutboxEntry::getCreatedAt).thenComparing(OutboxEntry::getId))
+            .collect(Collectors.toList());
+        assertThat(entries).as("outbox entries of this instance").isNotEmpty();
+        return entries.get(0).getPayload();
+    }
+
     // ==================== §C.2: MI на intermediate throw ====================
 
     @Test

@@ -39,4 +39,7 @@ public class BpmnIntermediateThrowEventModel {
 
     @XmlElement(name = "compensateEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private BpmnCompensateEventDefinitionModel compensateEventDefinition;
+
+    @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private ExtensionElements extensionElements;
 }

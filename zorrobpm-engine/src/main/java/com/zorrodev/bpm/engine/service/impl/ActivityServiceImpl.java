@@ -127,6 +127,13 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         try {
             BpmnElementType type = element.getType();
 
+            if (isJobBasedEvent(element)) {
+                // WO-C8-16: job-based end/throw events park as jobs via the service-task
+                // mechanism (createServiceTask + enqueueAfterCommit); the worker's completion
+                // continues the flow through CompletionService.completeServiceTask.
+                enterServiceTask(processInstanceId, tokenId, element);
+                return;
+            }
             ElementHandler handler = handlerRegistry.get(type);
             if (handler == null) {
                 // No handler for this element type: park the token as an incident instead of
@@ -160,6 +167,29 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         ((com.zorrodev.bpm.engine.handler.ServiceTaskHandler) handlerRegistry.get(BpmnElementType.SERVICE_TASK))
             .enter(processInstanceId, token, bpmnElement, this);
+    }
+
+    /**
+     * WO-C8-16: true for plain end events and intermediate throw events carrying
+     * {@code zeebe:taskDefinition} (Camunda 8 "outbound message via worker" pattern).
+     * Typed end events (terminate/error/escalation/cancel) keep their immediate semantics
+     * even with a taskDefinition present — parking them would break propagation.
+     * Explicit type list: a future new event type defaults to sync (safe direction).
+     */
+    private boolean isJobBasedEvent(BpmnElementModel element) {
+        BpmnElementType type = element.getType();
+        boolean eventKind = type == BpmnElementType.END_EVENT
+            || type == BpmnElementType.INTERMEDIATE_THROW_EVENT
+            || type == BpmnElementType.MESSAGE_THROW_EVENT
+            || type == BpmnElementType.SIGNAL_THROW_EVENT
+            || type == BpmnElementType.ESCALATION_THROW_EVENT
+            || type == BpmnElementType.LINK_THROW_EVENT
+            || type == BpmnElementType.COMPENSATION_THROW_EVENT;
+        if (!eventKind) {
+            return false;
+        }
+        String job = elementSupport.serviceTaskJob(element);
+        return job != null && !job.isBlank();
     }
 
     @Override
