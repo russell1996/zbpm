@@ -6,7 +6,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledDecisionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenersModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.FormDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
-import com.zorrodev.bpm.engine.bpmn.xml.extension.PriorityDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.JobPriorityDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.SubscriptionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
@@ -53,8 +53,8 @@ public class ExtensionElements {
     private TaskHeadersModel taskHeaders;
     @XmlElement(name = "taskSchedule", namespace = "http://camunda.org/schema/zeebe/1.0")
     private TaskScheduleModel taskSchedule;
-    @XmlElement(name = "priorityDefinition", namespace = "http://camunda.org/schema/zeebe/1.0")
-    private PriorityDefinitionModel priorityDefinition;
+    @XmlElement(name = "jobPriorityDefinition", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private JobPriorityDefinitionModel jobPriorityDefinition;
     @XmlElement(name = "executionListeners", namespace = "http://camunda.org/schema/zeebe/1.0")
     private ExecutionListenersModel executionListeners;
 }

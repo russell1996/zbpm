@@ -11,7 +11,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.HeaderModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.MappingModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeLoopCharacteristicsModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
-import com.zorrodev.bpm.engine.bpmn.xml.extension.PriorityDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.JobPriorityDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenerModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenersModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
@@ -97,6 +97,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             pd.setVersionTag(Optional.ofNullable(process.getExtensionElements())
                 .map(ExtensionElements::getVersionTag)
                 .map(VersionTagModel::getValue)
+                .orElse(null));
+            // WO-C8-13 (A-1): process-level zeebe:jobPriorityDefinition — default job priority
+            // for all service tasks of the process unless overridden on the task itself.
+            pd.setDefaultJobPriority(Optional.ofNullable(process.getExtensionElements())
+                .map(ExtensionElements::getJobPriorityDefinition)
+                .map(JobPriorityDefinitionModel::getPriority)
                 .orElse(null));
             // WO-C8-12: process-level zeebe:userTaskForm list (embedded form JSON, id+body).
             pd.setUserTaskForms(Optional.ofNullable(process.getExtensionElements())
@@ -632,9 +638,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 element.getExtensions().getServiceTaskExtension().setTaskHeaders(map);
             }
             // WO-C8-9: raw priority rides along for FEEL→Integer resolution at enqueue time (null when absent).
-            PriorityDefinitionModel priorityDefinition = serviceTask.getExtensionElements().getPriorityDefinition();
-            if (priorityDefinition != null) {
-                element.getExtensions().getServiceTaskExtension().setPriority(priorityDefinition.getPriority());
+            // WO-C8-13 (A-1): the element is zeebe:jobPriorityDefinition — priorityDefinition is
+            // only allowed on user tasks and is never read here.
+            JobPriorityDefinitionModel jobPriorityDefinition = serviceTask.getExtensionElements().getJobPriorityDefinition();
+            if (jobPriorityDefinition != null) {
+                element.getExtensions().getServiceTaskExtension().setPriority(jobPriorityDefinition.getPriority());
             }
             // WO-C8-11: start execution listeners block the real job until each completes.
             // eventType="end" is silently skipped here — separate WO-C8-11b, not a bug.

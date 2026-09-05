@@ -8,7 +8,7 @@
     <bpmn:serviceTask id="svc" name="svc">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="job-c8" />
-        <zeebe:priorityDefinition priority="75" />
+        <zeebe:jobPriorityDefinition priority="75" />
       </bpmn:extensionElements>
       <bpmn:incoming>f1</bpmn:incoming>
       <bpmn:outgoing>f2</bpmn:outgoing>
