@@ -6,6 +6,8 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.UUID;
+
 /**
  * WO-DEBT-1c: домен ProcessDefinitions — реализация.
  * Перенесено 1:1 из DBServiceImpl (getProcessDefinition, getMaxProcessDefinitionVersionByKey).
@@ -38,5 +40,17 @@ public class ProcessDefinitionDbOperationsImpl implements ProcessDefinitionDbOpe
     @Override
     public Integer getMaxProcessDefinitionVersionByKeyAndVersionTag(String key, String versionTag) {
         return processDefinitionRepository.findMaxByKeyAndVersionTag(key, versionTag).orElse(0);
+    }
+
+    @Override
+    public Integer getMaxProcessDefinitionVersionByKeyAndDeploymentId(String key, UUID deploymentId) {
+        return processDefinitionRepository.findMaxByKeyAndDeploymentId(key, deploymentId).orElse(0);
+    }
+
+    @Override
+    public UUID getDeploymentIdByProcessDefinitionId(UUID processDefinitionId) {
+        return processDefinitionRepository.findById(processDefinitionId)
+            .map(ProcessDefinitionEntity::getDeploymentId)
+            .orElse(null);
     }
 }
