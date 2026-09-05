@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c8jt" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="pingMsg" name="ping" />
+  <bpmn:process id="c8-job-throw" name="c8-job-throw" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="msgThrow" />
+    <bpmn:intermediateThrowEvent id="msgThrow" name="msgThrow">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med1" messageRef="pingMsg" />
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="job-c8" />
+      </bpmn:extensionElements>
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="msgThrow" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

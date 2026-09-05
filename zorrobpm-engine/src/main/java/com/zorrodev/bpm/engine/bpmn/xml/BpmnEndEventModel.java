@@ -29,4 +29,7 @@ public class BpmnEndEventModel extends BpmnBaseElementModel {
 
     @XmlElement(name = "cancelEventDefinition", namespace = NS)
     private BpmnCancelEventDefinitionModel cancelEventDefinition;
+
+    @XmlElement(name = "extensionElements", namespace = NS)
+    private ExtensionElements extensionElements;
 }

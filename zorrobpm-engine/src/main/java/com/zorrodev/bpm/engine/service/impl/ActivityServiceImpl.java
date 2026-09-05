@@ -127,6 +127,13 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         try {
             BpmnElementType type = element.getType();
 
+            if (isJobBasedEvent(element)) {
+                // WO-C8-16: job-based end/throw events park as jobs via the service-task
+                // mechanism (createServiceTask + enqueueAfterCommit); the worker's completion
+                // continues the flow through CompletionService.completeServiceTask.
+                enterServiceTask(processInstanceId, tokenId, element);
+                return;
+            }
             ElementHandler handler = handlerRegistry.get(type);
             if (handler == null) {
                 // No handler for this element type: park the token as an incident instead of
@@ -160,6 +167,29 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     public void enterServiceTask(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement) {
         ((com.zorrodev.bpm.engine.handler.ServiceTaskHandler) handlerRegistry.get(BpmnElementType.SERVICE_TASK))
             .enter(processInstanceId, token, bpmnElement, this);
+    }
+
+    /**
+     * WO-C8-16: true for plain end events and job-capable throw events carrying
+     * {@code zeebe:taskDefinition} (Camunda 8 "outbound message via worker" pattern:
+     * message throws/ends behave like service tasks and create jobs).
+     * HOLD (находка CTO): signal/link/escalation/compensation throws намеренно ВНЕ списка —
+     * их хендлеры несут внутреннюю семантику без воркерного эквивалента (broadcast сигнала,
+     * прыжок на link-catch, throwEscalation, запуск компенсаций), а завершение job'а уходит в
+     * общий proceedToOutgoing, минуя хендлер, — парковка молча роняла бы бросок (тихая регрессия
+     * класса A-2). Typed end events — вне списка по той же причине (немедленная семантика).
+     * Explicit type list: a future new event type defaults to sync (safe direction).
+     */
+    private boolean isJobBasedEvent(BpmnElementModel element) {
+        BpmnElementType type = element.getType();
+        boolean eventKind = type == BpmnElementType.END_EVENT
+            || type == BpmnElementType.INTERMEDIATE_THROW_EVENT
+            || type == BpmnElementType.MESSAGE_THROW_EVENT;
+        if (!eventKind) {
+            return false;
+        }
+        String job = elementSupport.serviceTaskJob(element);
+        return job != null && !job.isBlank();
     }
 
     @Override
