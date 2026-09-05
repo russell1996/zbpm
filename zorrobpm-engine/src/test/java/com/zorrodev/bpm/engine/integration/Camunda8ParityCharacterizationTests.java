@@ -1529,6 +1529,30 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
+    @Test
+    @Transactional
+    void escalationThrowWithJobDefinition_stillThrowsSynchronously() throws Exception {
+        // WO-C8-16 HOLD (находка CTO): escalation-throw с taskDefinition НЕ паркуется — у броска
+        // нет воркерного эквивалента (хендлер вызывает throwEscalation, завершение job'а ушло бы
+        // в общий proceedToOutgoing мимо хендлера). Бросок происходит как раньше: boundary
+        // specific ловит, job в outbox НЕ диспетчеризуется.
+        String key = uniq("c8etj");
+        String xml = bpmn("test-c8-escalation-throw-with-job.bpmn").replace("c8-escalation-throw-job", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        Set<String> completedEnds = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .filter(a -> a.getStatus() == ActivityStatus.COMPLETED)
+            .map(ActivityEntity::getBpmnElementId)
+            .collect(Collectors.toSet());
+        assertThat(completedEnds).contains("endSpecific");
+        assertThat(serviceTaskJobs(piId)).isEmpty();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
     /** WO-C8-16: payload of this instance's first outbox SERVICE_TASK entry. */
     private String outboxPayload(UUID processInstanceId) throws Exception {
         tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
