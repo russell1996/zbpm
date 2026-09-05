@@ -316,6 +316,25 @@ class DBServiceImplTest {
     }
 
     @Test
+    void getMaxProcessDefinitionVersionByKeyAndDeploymentId_delegates() {
+        UUID deploymentId = UUID.randomUUID();
+        when(processDefinitionDbOperations.getMaxProcessDefinitionVersionByKeyAndDeploymentId("present", deploymentId)).thenReturn(2);
+
+        assertThat(dbService.getMaxProcessDefinitionVersionByKeyAndDeploymentId("present", deploymentId)).isEqualTo(2);
+        verify(processDefinitionDbOperations).getMaxProcessDefinitionVersionByKeyAndDeploymentId("present", deploymentId);
+    }
+
+    @Test
+    void getDeploymentIdByProcessDefinitionId_delegates() {
+        UUID pdId = UUID.randomUUID();
+        UUID deploymentId = UUID.randomUUID();
+        when(processDefinitionDbOperations.getDeploymentIdByProcessDefinitionId(pdId)).thenReturn(deploymentId);
+
+        assertThat(dbService.getDeploymentIdByProcessDefinitionId(pdId)).isEqualTo(deploymentId);
+        verify(processDefinitionDbOperations).getDeploymentIdByProcessDefinitionId(pdId);
+    }
+
+    @Test
     void completeProcessInstance_callsRepository() {
         UUID id = UUID.randomUUID();
         dbService.completeProcessInstance(id);

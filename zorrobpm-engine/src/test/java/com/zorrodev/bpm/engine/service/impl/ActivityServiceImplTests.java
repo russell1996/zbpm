@@ -579,7 +579,8 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(bpmnService.getProcessDefinitionModelById(dummyProcessDefinitionId)).thenReturn(dummyBpmn);
-        when(dbService.getMaxProcessDefinitionVersionByKey("dummy-process")).thenReturn(1);
+        // WO-C8-3b: this fixture binds with bindingType="deployment", so the pinned lookup
+        // replaces the latest lookup below (removed as dead — strict stubs enforce it).
         when(dbService.getProcessDefinition(eq("dummy-process"), any())).thenReturn(dummyProcessDefinition);
         when(dbService.createProcessInstance(any(UUID.class), eq(dummyProcessDefinitionId), any())).thenReturn(dummyProcessInstanceId);
         when(dbService.getProcessInstance(eq(dummyProcessInstanceId))).thenReturn(dummyPi);
@@ -598,6 +599,11 @@ public class ActivityServiceImplTests {
         when(dbService.getToken(eq(token1.getId()))).thenReturn(token1);
         // WO-C8-2: CallActivityHandler resolves processId via elementSupport — a literal passes through as-is.
         when(elementSupport.resolveExpression(eq("dummy-process"), eq(processInstanceId))).thenReturn("dummy-process");
+        // WO-C8-3b: this fixture binds with bindingType="deployment" — stub the pinned lookup
+        // (deployment linkage), otherwise the handler parks an incident and the flow stops here.
+        UUID deploymentId = UUID.randomUUID();
+        when(dbService.getDeploymentIdByProcessDefinitionId(eq(processDefinitionId))).thenReturn(deploymentId);
+        when(dbService.getMaxProcessDefinitionVersionByKeyAndDeploymentId(eq("dummy-process"), eq(deploymentId))).thenReturn(1);
 
         activityService.execute(processInstanceId, tokenId, "startEvent1");
 
