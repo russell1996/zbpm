@@ -13,6 +13,9 @@ public interface FormRepository extends JpaRepository<FormEntity, UUID> {
 
     Optional<FormEntity> findTopByFormKeyOrderByVersionDesc(String formKey);
 
+    /** WO-C8-22: latest deployed version of a Modeler-linked form (binding {@code latest}). */
+    Optional<FormEntity> findTopByFormIdOrderByVersionDesc(String formId);
+
     Optional<FormEntity> findByFormKeyAndVersion(String formKey, int version);
 
     @Query("SELECT COALESCE(MAX(f.version), 0) FROM FormEntity f WHERE f.formKey = :formKey")

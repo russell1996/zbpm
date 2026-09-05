@@ -132,6 +132,8 @@ public class DeploymentArtifactRegistrar {
             FormEntity entity = new FormEntity();
             entity.setId(UUID.randomUUID());
             entity.setFormKey(formKey);
+            // WO-C8-22: embedded forms carry their Modeler id — addressable by formId too.
+            entity.setFormId(form.getId());
             entity.setVersion(version);
             entity.setSchemaJson(form.getBody());
             entity.setKind(FormArtifactKind.FORM_JS);

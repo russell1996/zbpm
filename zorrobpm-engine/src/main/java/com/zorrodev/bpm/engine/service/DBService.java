@@ -84,13 +84,13 @@ public interface DBService {
 
     void completeServiceTask(UUID serviceTaskId);
 
-    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate);
 
     /** WO-C8-21: opens the creating-listener phase (durable marker row, task not yet created). */
     void startCreatingPhase(UUID activityId);
 
     /** WO-C8-21: closes the creating-listener phase — the task creation for phased elements. */
-    void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+    void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate);
 
     /** WO-C8-21: advance/clear the in-flight creating-listener phase (null = no phase). */
     void setPendingCreatingListenerIndex(UUID taskId, Integer index);

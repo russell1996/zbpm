@@ -27,14 +27,14 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
     private final DomainEventEmitter domainEventEmitter;
 
     @Override
-    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate) {
+    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         UserTaskEntity entity = new UserTaskEntity();
         entity.setId(activity.getId());
         entity.setBpmnElementId(activity.getBpmnElementId());
         entity.setProcessInstanceId(activity.getProcessInstanceId());
         entity.setCreatedAt(activity.getCreatedAt());
-        fillCreationFields(entity, assignee, candidateGroups, formKey, dueDate, followUpDate);
+        fillCreationFields(entity, assignee, candidateGroups, formKey, formId, dueDate, followUpDate);
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
@@ -47,10 +47,11 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
      * WO-C8-21: shared tail of both creation paths (immediate and phased) — resolved task
      * fields only, no phase/index/event logic, so the two paths cannot diverge.
      */
-    private void fillCreationFields(UserTaskEntity entity, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate) {
+    private void fillCreationFields(UserTaskEntity entity, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate) {
         entity.setAssignee(assignee);
         entity.setCandidateGroups(candidateGroups);
         entity.setFormKey(formKey);
+        entity.setFormId(formId);
         entity.setDueDate(dueDate);
         entity.setFollowUpDate(followUpDate);
     }
@@ -74,9 +75,9 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
     }
 
     @Override
-    public void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate) {
+    public void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate) {
         UserTaskEntity entity = userTaskRepository.findById(activityId).orElseThrow();
-        fillCreationFields(entity, assignee, candidateGroups, formKey, dueDate, followUpDate);
+        fillCreationFields(entity, assignee, candidateGroups, formKey, formId, dueDate, followUpDate);
         entity.setPendingCreatingListenerIndex(null);
         userTaskRepository.save(entity);
 

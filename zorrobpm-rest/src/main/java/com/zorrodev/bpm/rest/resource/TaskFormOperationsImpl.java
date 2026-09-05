@@ -52,6 +52,12 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"));
         // WO-ACL-1: task form of a concrete instance = runtime read (variables prefill)
         formAccessSupport.requireRuntimePdAccess(pi.getProcessDefinitionId());
+        // WO-C8-22: a linked formId wins over formKey (docs list the reference kinds as
+        // mutually exclusive; the specific linked id beats the generic key on invalid
+        // models carrying both). formKey/externalReference paths below are untouched.
+        if (task.getFormId() != null && !task.getFormId().isBlank()) {
+            return formResolver.resolveTaskFormByFormId(task.getFormId(), prefillData(task.getProcessInstanceId()));
+        }
         return resolveForm(task.getFormKey(), task.getProcessInstanceId());
     }
 
