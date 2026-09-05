@@ -758,45 +758,64 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setType(BpmnElementType.SERVICE_TASK);
         element.setIncoming(serviceTask.getIncoming());
         element.setOutgoing(serviceTask.getOutgoing());
-        if (serviceTask.getExtensionElements() != null && serviceTask.getExtensionElements().getTaskDefinition() != null) {
-            element.setExtensions(new BpmnElementExtensionModel());
-            element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
-            element.getExtensions().getServiceTaskExtension().setJob(serviceTask.getExtensionElements().getTaskDefinition().getType());
-            element.getExtensions().getServiceTaskExtension().setRetries(serviceTask.getExtensionElements().getTaskDefinition().getRetries());
-            // WO-C8-7: custom headers ride along to the worker via JobDetailModel (null when absent).
-            TaskHeadersModel headers = serviceTask.getExtensionElements().getTaskHeaders();
-            if (headers != null && headers.getHeaders() != null) {
-                Map<String, String> map = new LinkedHashMap<>();
-                for (HeaderModel h : headers.getHeaders()) {
-                    if (h.getKey() != null) map.put(h.getKey(), h.getValue());
+        attachServiceTaskJob(element, serviceTask.getExtensionElements());
+        // WO-C8-11: start execution listeners block the real job until each completes.
+        // eventType="end" is silently skipped here — separate WO-C8-11b, not a bug.
+        // Service-task-only: end/throw events never read startListeners.
+        if (serviceTask.getExtensionElements() != null && serviceTask.getExtensionElements().getTaskDefinition() != null
+            && serviceTask.getExtensionElements().getExecutionListeners() != null
+            && serviceTask.getExtensionElements().getExecutionListeners().getListeners() != null) {
+            List<ListenerModel> starts = new ArrayList<>();
+            for (ExecutionListenerModel l : serviceTask.getExtensionElements().getExecutionListeners().getListeners()) {
+                if ("start".equals(l.getEventType()) && l.getType() != null) {
+                    starts.add(new ListenerModel(l.getType(), l.getRetries()));
                 }
-                element.getExtensions().getServiceTaskExtension().setTaskHeaders(map);
             }
-            // WO-C8-9: raw priority rides along for FEEL→Integer resolution at enqueue time (null when absent).
-            // WO-C8-13 (A-1): the element is zeebe:jobPriorityDefinition — priorityDefinition is
-            // only allowed on user tasks and is never read here.
-            JobPriorityDefinitionModel jobPriorityDefinition = serviceTask.getExtensionElements().getJobPriorityDefinition();
-            if (jobPriorityDefinition != null) {
-                element.getExtensions().getServiceTaskExtension().setPriority(jobPriorityDefinition.getPriority());
-            }
-            // WO-C8-11: start execution listeners block the real job until each completes.
-            // eventType="end" is silently skipped here — separate WO-C8-11b, not a bug.
-            ExecutionListenersModel executionListeners = serviceTask.getExtensionElements().getExecutionListeners();
-            if (executionListeners != null && executionListeners.getListeners() != null) {
-                List<ListenerModel> starts = new ArrayList<>();
-                for (ExecutionListenerModel l : executionListeners.getListeners()) {
-                    if ("start".equals(l.getEventType()) && l.getType() != null) {
-                        starts.add(new ListenerModel(l.getType(), l.getRetries()));
-                    }
-                }
-                if (!starts.isEmpty()) {
-                    element.getExtensions().getServiceTaskExtension().setStartListeners(starts);
-                }
+            if (!starts.isEmpty()) {
+                element.getExtensions().getServiceTaskExtension().setStartListeners(starts);
             }
         }
         attachIoMapping(element, serviceTask.getExtensionElements());
         attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
         return element;
+    }
+
+    /**
+     * WO-C8-16: attaches job identity ({@code zeebe:taskDefinition} type/retries,
+     * {@code taskHeaders}, {@code jobPriorityDefinition}) to any element carrying a
+     * taskDefinition — service tasks (extracted 1:1, behavior-identical) and now end/throw
+     * events. One body shared by all callers, not a simplified copy (criterion 5).
+     * Reuses a pre-existing extensions object (message throws already set one) instead of
+     * overwriting it. Start listeners stay service-task-only (parsed after this call).
+     */
+    private void attachServiceTaskJob(BpmnElementModel element, ExtensionElements ee) {
+        if (ee == null || ee.getTaskDefinition() == null) {
+            return;
+        }
+        if (element.getExtensions() == null) {
+            element.setExtensions(new BpmnElementExtensionModel());
+        }
+        if (element.getExtensions().getServiceTaskExtension() == null) {
+            element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
+        }
+        element.getExtensions().getServiceTaskExtension().setJob(ee.getTaskDefinition().getType());
+        element.getExtensions().getServiceTaskExtension().setRetries(ee.getTaskDefinition().getRetries());
+        // WO-C8-7: custom headers ride along to the worker via JobDetailModel (null when absent).
+        TaskHeadersModel headers = ee.getTaskHeaders();
+        if (headers != null && headers.getHeaders() != null) {
+            Map<String, String> map = new LinkedHashMap<>();
+            for (HeaderModel h : headers.getHeaders()) {
+                if (h.getKey() != null) map.put(h.getKey(), h.getValue());
+            }
+            element.getExtensions().getServiceTaskExtension().setTaskHeaders(map);
+        }
+        // WO-C8-9: raw priority rides along for FEEL→Integer resolution at enqueue time (null when absent).
+        // WO-C8-13 (A-1): the element is zeebe:jobPriorityDefinition — priorityDefinition is
+        // only allowed on user tasks and is never read here.
+        JobPriorityDefinitionModel jobPriorityDefinition = ee.getJobPriorityDefinition();
+        if (jobPriorityDefinition != null) {
+            element.getExtensions().getServiceTaskExtension().setPriority(jobPriorityDefinition.getPriority());
+        }
     }
 
     /** Reads a {@code zeebe:ioMapping} into the element's extensions (input/output FEEL transformations). */
@@ -1021,6 +1040,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.setType(BpmnElementType.END_EVENT);
         }
         element.setIncoming(endEvent.getIncoming());
+        // WO-C8-16: job-based end events (zeebe:taskDefinition) park as jobs.
+        attachServiceTaskJob(element, endEvent.getExtensionElements());
         return element;
     }
 
@@ -1163,7 +1184,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         } else {
             element.setType(BpmnElementType.INTERMEDIATE_THROW_EVENT);
         }
-
+        // WO-C8-16: job-based throw events (zeebe:taskDefinition) park as jobs.
+        attachServiceTaskJob(element, throwEvent.getExtensionElements());
         return element;
     }
 

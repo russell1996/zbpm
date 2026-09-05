@@ -148,6 +148,15 @@ public class CompletionService {
 
         log.info("{}/{}: Completing {}: {}/{}", processInstanceId, tokenId, activity.getType(), serviceTaskId, activity.getBpmnElementId());
 
+        if (bpmnElement.getType() == BpmnElementType.END_EVENT) {
+            // WO-C8-16: job-based end event — the worker's completion ends the branch exactly
+            // like EndEventHandler (finishBranch; no proceedToOutgoing/conditional pass, which
+            // would strand the token: proceedToOutgoing is a no-op without outgoing flows).
+            // Only plain ends can arrive here (typed ends never park — see isJobBasedEvent).
+            flowNavigator.finishBranch(processInstanceId, tokenId, bpmn, executor);
+            return;
+        }
+
         elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, serviceTaskId);
