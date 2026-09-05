@@ -644,6 +644,69 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 pd.addElement(child);
             }
         }
+        // WO-C8-14b (A-2, срез 2): вложенные контейнеры и boundary-события — ТЕМИ ЖЕ вызовами,
+        // что верхний уровень. adHoc (zeebe:adHoc) — не здесь (категория 3, отдельный дизайн).
+        if (sub.getCallActivities() != null) {
+            for (BpmnCallActivityModel callActivity : sub.getCallActivities()) {
+                BpmnElementModel child = toElementModel(callActivity);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getSubProcesses() != null) {
+            for (BpmnSubProcessModel nested : sub.getSubProcesses()) {
+                BpmnElementModel child = toSubProcessElement(nested, pd, registry, messageNames, messageKeys);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getTransactions() != null) {
+            for (BpmnSubProcessModel transaction : sub.getTransactions()) {
+                BpmnElementModel child = toSubProcessElement(transaction, pd, registry, messageNames, messageKeys);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getBoundaryEvents() != null) {
+            for (BpmnBoundaryEventModel boundaryEvent : sub.getBoundaryEvents()) {
+                boolean timer = boundaryEvent.getTimerEventDefinition() != null;
+                boolean error = boundaryEvent.getErrorEventDefinition() != null;
+                boolean message = boundaryEvent.getMessageEventDefinition() != null;
+                boolean signal = boundaryEvent.getSignalEventDefinition() != null;
+                boolean escalation = boundaryEvent.getEscalationEventDefinition() != null;
+                boolean conditional = boundaryEvent.getConditionalEventDefinition() != null;
+                boolean compensation = boundaryEvent.getCompensateEventDefinition() != null;
+                boolean cancel = boundaryEvent.getCancelEventDefinition() != null;
+                if (!timer && !error && !message && !signal && !escalation && !conditional && !compensation && !cancel) {
+                    continue; // only timer, error, message, signal, escalation, conditional, compensation and cancel boundaries are executable today
+                }
+                BpmnElementModel child = toBoundaryElement(boundaryEvent);
+                child.setProcessDefinition(pd);
+                attachEventDefinition(child, boundaryEvent.getErrorEventDefinition(), boundaryEvent.getSignalEventDefinition(), boundaryEvent.getEscalationEventDefinition(), boundaryEvent.getConditionalEventDefinition(), null, null, registry);
+                if (message) {
+                    MessageEventExtensionModel msg = new MessageEventExtensionModel();
+                    String ref = boundaryEvent.getMessageEventDefinition().getMessageRef();
+                    msg.setMessageName(messageNames.getOrDefault(ref, ref));
+                    msg.setCorrelationKeyExpression(messageKeys.get(ref));
+                    child.getExtensions().setMessageEventExtension(msg);
+                }
+                pd.addElement(child);
+            }
+        }
+        // Compensation associations declared inside the subprocess: same resolution as the
+        // top-level pass, scoped to this container's association list (boundary ids are unique,
+        // so no cross-container contamination — resolveCompensationHandler matches by id).
+        if (sub.getAssociations() != null) {
+            for (BpmnElementModel child : pd.getElements()) {
+                if (child.getType() != BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
+                    continue;
+                }
+                String handlerId = resolveCompensationHandler(child.getId(), sub.getAssociations());
+                if (handlerId != null) {
+                    child.getExtensions().getBoundaryEventExtension().setCompensationHandlerId(handlerId);
+                }
+            }
+        }
         if (sub.getFlows() != null) {
             for (BpmnSequenceFlowModel flow : sub.getFlows()) {
                 pd.addFlow(toFlowModel(flow));
