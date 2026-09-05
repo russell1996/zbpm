@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.DmnContract;
+import com.zorrodev.bpm.contract.dto.DeployDmnDTO;
 import com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.DmnDecision;
@@ -62,6 +63,44 @@ public class DmnResource implements DmnContract {
     @Override
     public List<DmnDecision> getDecisions() {
         return dmnService.listDecisions(resolveAllowedPdIds());
+    }
+
+    /**
+     * WO-C8-15 (A-7): DMN deploy — the missing production path for getting decisions into the
+     * engine (previously only tests called {@code DmnService.deploy}).
+     * ADR-2, exactly like BPMN deploy ({@code ProcessDefinitionResource.addProcessDefinition}):
+     * SUPER_ADMIN only — no principal → 401, non-admin → 403. An endpoint uploading executable
+     * logic must not be weaker than the BPMN one.
+     */
+    @Override
+    public List<DmnDecision> deployDmn(@RequestBody DeployDmnDTO dto) {
+        requireSuperAdmin();
+        try {
+            dmnService.deploy(dto.getDmn(), dto.getProcessDefinitionId());
+        } catch (EngineException e) {
+            log.warn("DMN deploy failed: {}", e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DMN deployment failed");
+        }
+        return dmnService.listDecisions(null);
+    }
+
+    /**
+     * ADR-2 mechanism, copied 1:1 from {@code ProcessDefinitionResource.requireSuperAdmin} —
+     * the same codes for the same cases (WO-C8-15: no weaker auth on the DMN path).
+     */
+    private void requireSuperAdmin() {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (!principal.isSuperAdmin()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Deploy requires SUPER_ADMIN");
+        }
+    }
+
+    private Principal getPrincipal() {
+        Object attr = request.getAttribute("principal");
+        return attr instanceof Principal p ? p : null;
     }
 
     @Override
