@@ -17,6 +17,11 @@ import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.FormEntity;
+import com.zorrodev.bpm.engine.entity.FormArtifactKind;
+import com.zorrodev.bpm.engine.service.FormResolver;
+import com.zorrodev.bpm.contract.dto.TaskFormDTO;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
@@ -67,6 +72,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /**
  * WO-C8-1 (Фаза 0) — эмпирическая характеризация BPMN/DMN-паритета с Camunda 8.
@@ -111,6 +117,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private FormRepository formRepository;
+
+    @Autowired
+    private FormResolver formResolver;
 
     @Autowired
     private OutboxRepository outboxRepository;
@@ -879,9 +888,28 @@ public class Camunda8ParityCharacterizationTests {
 
     // ==================== §C.1: formId ====================
 
+    /** WO-C8-22: выкладка linked-формы (form_id + версия max+1, как ручная загрузка). */
+    private void deployLinkedForm(String formKey, String formId, String schema) {
+        int version = formRepository.findMaxVersionByFormKey(formKey) + 1;
+        FormEntity entity = new FormEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setFormKey(formKey);
+        entity.setFormId(formId);
+        entity.setVersion(version);
+        entity.setKind(FormArtifactKind.FORM_JS);
+        entity.setSchemaJson(schema);
+        entity.setCreatedAt(java.time.Instant.now());
+        formRepository.save(entity);
+    }
+
     @Test
     @Transactional
-    void formId_isSilentlyIgnored_userTaskCompletesNormally() throws Exception {
+    void formId_withoutDeployedForm_userTaskCompletesNormally() throws Exception {
+        // WO-C8-22 GREEN (переименован из formId_isSilentlyIgnored_userTaskCompletesNormally
+        // (WO-C8-1)): фикстура test-c8-form-id.bpmn ВАЛИДНА (formId="order-form" на userTask,
+        // сверено с сырой схемой — находки нет, в отличие от 4 предыдущих случаев); резолв
+        // формы ленивый (только по явному запросу формы), поэтому задача без выложенной
+        // формы выполняется как раньше.
         String key = uniq("c8fi");
         String xml = bpmn("test-c8-form-id.bpmn").replace("c8-form-id", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
@@ -893,6 +921,74 @@ public class Camunda8ParityCharacterizationTests {
 
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
         assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void formId_parsedAsSeparateField_notConflatedIntoFormKey() throws Exception {
+        // WO-C8-22, критерий 1: formId едет отдельным полем; formKey при этом null
+        // (конфляция externalReference→formKey рядом не тронута и не задействована).
+        String key = uniq("c8fid");
+        String xml = bpmn("test-c8-form-id.bpmn").replace("c8-form-id", key);
+
+        var ext = bpmnParseService.parse(xml).getElement("review").getExtensions().getUserTaskExtension();
+        assertThat(ext.getFormId()).isEqualTo("order-form");
+        assertThat(ext.getFormKey()).isNull();
+    }
+
+    @Test
+    @Transactional
+    void formId_linkedFormResolvedByFormId() throws Exception {
+        // WO-C8-22, критерий 2 (POF): задача с formId получает схему linked-формы;
+        // form_id задачи записан в строке (пин при создании, зеркало formKey).
+        String formId = uniq("c8fid");
+        deployLinkedForm("linked-key-" + formId, formId, "{\"id\":\"" + formId + "\",\"v\":1}");
+        String key = uniq("c8fif");
+        String xml = bpmn("test-c8-form-id.bpmn").replace("c8-form-id", key).replace("order-form", formId);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        UUID taskId = userTasksOfInstance(piId).get(0).getId();
+        assertThat(userTaskRepository.findById(taskId).orElseThrow().getFormId()).isEqualTo(formId);
+
+        TaskFormDTO dto = formResolver.resolveTaskFormByFormId(formId, null);
+        assertThat(dto.getType()).isEqualTo("embedded");
+        assertThat(dto.getSchema()).contains("\"v\":1");
+    }
+
+    @Test
+    @Transactional
+    void formId_multipleVersionsWithSameFormId_resolvesLatest() throws Exception {
+        // WO-C8-22, критерий 3 (зеркало findTopByFormKeyOrderByVersionDesc): повторная
+        // выкладка той же linked-формы (тот же ключ, новый version, тот же form_id) →
+        // отдаётся последняя. Доказано прогоном, не чтением запроса.
+        String formId = uniq("c8fidl");
+        String key = "linked-key-" + formId;
+        deployLinkedForm(key, formId, "{\"id\":\"" + formId + "\",\"v\":1}");
+        deployLinkedForm(key, formId, "{\"id\":\"" + formId + "\",\"v\":2}");
+
+        TaskFormDTO dto = formResolver.resolveTaskFormByFormId(formId, null);
+        assertThat(dto.getSchema()).contains("\"v\":2");
+    }
+
+    @Test
+    @Transactional
+    void formId_missingForm_behavesLikeMissingFormKey() throws Exception {
+        // WO-C8-22, критерий 4: формы нет → та же ошибка, что у отсутствующего formKey
+        // (404 той же формы), а не молчаливый type "none".
+        String missingId = uniq("c8fidm");
+        String missingKey = uniq("c8fkeym");
+
+        var byId = catchThrowable(() -> formResolver.resolveTaskFormByFormId(missingId, null));
+        var byKey = catchThrowable(() -> formResolver.resolveTaskForm(missingKey, null));
+
+        assertThat(byId).isInstanceOf(ResponseStatusException.class);
+        assertThat(byKey).isInstanceOf(ResponseStatusException.class);
+        assertThat(((ResponseStatusException) byId).getStatusCode())
+            .isEqualTo(((ResponseStatusException) byKey).getStatusCode());
+        assertThat(((ResponseStatusException) byId).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(((ResponseStatusException) byId).getReason()).contains(missingId);
     }
 
     // ==================== §C.1: UserTaskForm ====================

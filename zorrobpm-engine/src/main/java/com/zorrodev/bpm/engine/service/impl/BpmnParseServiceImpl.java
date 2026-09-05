@@ -1005,6 +1005,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     element.getExtensions().getUserTaskExtension().setFormKey(userTask.getExtensionElements().getFormDefinition().getExternalReference());
                     element.getExtensions().getUserTaskExtension().setExternalReference(userTask.getExtensionElements().getFormDefinition().getExternalReference());
                 }
+                // WO-C8-22: formId rides a separate field — never merged into formKey.
+                // Docs list the three reference kinds as mutually exclusive, so co-presence
+                // is invalid input; resolve prefers the specific linked id (see FormResolver).
+                if (userTask.getExtensionElements().getFormDefinition().getFormId() != null) {
+                    element.getExtensions().getUserTaskExtension().setFormId(userTask.getExtensionElements().getFormDefinition().getFormId());
+                }
             }
             // WO-C8-21: creating task listeners block task creation until each completes.
             // Only user tasks may carry taskListeners (schema allowedIn); other eventTypes

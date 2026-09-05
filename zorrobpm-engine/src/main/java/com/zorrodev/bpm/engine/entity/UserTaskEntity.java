@@ -22,6 +22,12 @@ public class UserTaskEntity {
     private Instant createdAt;
     private Instant completedAt;
     private String formKey;
+    /**
+     * WO-C8-22: linked-form id pinned at task creation (mirror of {@code formKey} above).
+     * Read by the form endpoint before {@code formKey}; null for key/external models and
+     * mid-creating-phase (C8-21) marker rows — those resolve exactly as before.
+     */
+    private String formId;
     /** Resolved zeebe:taskSchedule dueDate (WO-C8-8) — informational String, never blocks execution. */
     private String dueDate;
     /** Resolved zeebe:taskSchedule followUpDate (WO-C8-8). */

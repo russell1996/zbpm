@@ -88,6 +88,35 @@ class TaskFormOperationsImplTest {
     // ==================== getUserTaskForm ====================
 
     @Test
+    void getUserTaskForm_formId_winsOverFormKey_resolvesById() {
+        // WO-C8-22: строка с formId идёт в resolveTaskFormByFormId; formKey-путь при этом
+        // не вызывается вообще (formId нигде не перезаписывает formKey — см. verifier (в)).
+        UUID taskId = UUID.randomUUID();
+        UUID piId = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(taskId);
+        task.setProcessInstanceId(piId);
+        task.setFormKey("orderForm");
+        task.setFormId("order-form");
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(piId);
+        pi.setProcessDefinitionId(pdId);
+        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(dbService.getVariables(eq(piId))).thenReturn(List.of());
+        TaskFormDTO resolved = new TaskFormDTO();
+        resolved.setType("embedded");
+        when(formResolver.resolveTaskFormByFormId(eq("order-form"), eq(Map.of())))
+            .thenReturn(resolved);
+
+        TaskFormDTO result = impl.getUserTaskForm(taskId);
+
+        assertSame(resolved, result);
+        verify(formResolver, never()).resolveTaskForm(any(), any());
+    }
+
+    @Test
     void getUserTaskForm_happy_prefillFromVariables() {
         UUID taskId = UUID.randomUUID();
         UUID piId = UUID.randomUUID();
