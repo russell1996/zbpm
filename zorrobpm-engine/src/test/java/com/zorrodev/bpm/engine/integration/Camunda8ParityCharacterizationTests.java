@@ -330,6 +330,114 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(serviceTaskJobs(piId)).containsExactly("listener-job");
     }
 
+    // ==================== WO-C8-11b (A-2 срез 2): end execution listeners ====================
+
+    @Test
+    @Transactional
+    void executionListeners_endListenerBlocksTokenAdvance() throws Exception {
+        // WO-C8-11b, критерии 2+5: end-listener РЕАЛЬНО блокирует — реальный job завершён,
+        // но токен стоит, а активность НЕ COMPLETED (прямой ассерт п.9: блокер снят правильно,
+        // а не обойдён); end-listener диспетчеризован; после его завершения — продвижение.
+        String key = uniq("c8ele");
+        String xml = bpmn("test-c8-execution-listeners-end-only.bpmn").replace("c8-exec-listeners-end", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getEndListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("listener-job-end");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        // real job dispatched first, activity parked
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8");
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+        // complete the real job — token must NOT advance, activity must NOT complete
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8", "listener-job-end");
+
+        // complete the end listener — now the token advances
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(activityId)).isNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void executionListeners_twoEndListeners_runSequentiallyInDeclarationOrder() throws Exception {
+        // WO-C8-11b, критерий 3 (зеркало twoStartListeners): второй end-listener
+        // диспетчеризуется только после завершения первого; индекс 0→1→null.
+        String key = uniq("c8el2e");
+        String xml = bpmn("test-c8-execution-listeners-two-ends.bpmn").replace("c8-exec-listeners-two-ends", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8");
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8", "listener-job-end-1");
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(activityId)).isEqualTo(0);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8", "listener-job-end-1", "listener-job-end-2");
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(activityId)).isEqualTo(1);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(activityId)).isNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void executionListeners_startAndEnd_fullChainInOrder() throws Exception {
+        // WO-C8-11b, критерий 4 (главный интеграционный тест): start + end на одном элементе —
+        // listener-start → job-c8 → listener-end → продвижение.
+        String key = uniq("c8else");
+        String xml = bpmn("test-c8-execution-listeners-start-end.bpmn").replace("c8-exec-listeners-start-end", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-start");
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isEqualTo(0);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-start", "job-c8");
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId)).isNull();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-start", "job-c8", "listener-job-end");
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(activityId)).isEqualTo(0);
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(activityId)).isNull();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
     /** WO-C8-11: job types of THIS test's outbox SERVICE_TASK entries, oldest first. */
     private List<String> serviceTaskJobs(UUID processInstanceId) throws Exception {
         tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();

@@ -176,6 +176,21 @@ class DBServiceImplTest {
     }
 
     @Test
+    void setPendingEndListenerIndex_delegates() {
+        UUID id = UUID.randomUUID();
+        dbService.setPendingEndListenerIndex(id, 1);
+        verify(serviceTaskDbOperations).setPendingEndListenerIndex(id, 1);
+    }
+
+    @Test
+    void getServiceTaskPendingEndListenerIndex_delegates() {
+        UUID id = UUID.randomUUID();
+        when(serviceTaskDbOperations.getPendingEndListenerIndex(id)).thenReturn(0);
+        assertThat(dbService.getServiceTaskPendingEndListenerIndex(id)).isEqualTo(0);
+        verify(serviceTaskDbOperations).getPendingEndListenerIndex(id);
+    }
+
+    @Test
     void incident_delegates() {
         UUID activityId = UUID.randomUUID();
         UUID id = UUID.randomUUID();

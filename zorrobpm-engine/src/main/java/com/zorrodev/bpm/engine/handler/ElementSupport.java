@@ -212,6 +212,19 @@ public class ElementSupport {
         return listeners == null ? List.of() : listeners;
     }
 
+    /**
+     * WO-C8-11b: end execution listeners of a service task, in declaration order
+     * (already filtered to {@code eventType="end"} at parse time). Empty when absent —
+     * callers must not touch end-listener state for such elements.
+     */
+    public List<ListenerModel> serviceTaskEndListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getServiceTaskExtension)
+            .map(ServiceTaskExtensionModel::getEndListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
+    }
+
     // ─── IO mapping ────────────────────────────────────────────────────
 
     public void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {

@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-087
+  - changeSet:
+      id: 20260905-087
+      author: zorrodev
+      changes:
+        # WO-C8-11b: zeebe:executionListeners (end) на service task — индекс ожидающего
+        # end-listener'а. Отдельная колонка (не магические значения в pending_listener_index):
+        # null = end-фаза не идёт (обычный путь либо ещё не дошли до end-фазы).
+        - addColumn:
+            tableName: service_tasks
+            columns:
+              - column:
+                  name: pending_end_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего end-listener (WO-C8-11b); null — end-фаза не идёт'
