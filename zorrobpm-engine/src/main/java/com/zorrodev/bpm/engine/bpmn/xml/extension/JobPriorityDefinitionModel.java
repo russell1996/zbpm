@@ -9,7 +9,7 @@ import lombok.Setter;
 @Getter
 @Setter
 @XmlAccessorType(XmlAccessType.FIELD)
-public class PriorityDefinitionModel {
+public class JobPriorityDefinitionModel {
     @XmlAttribute
     private String priority;
 }

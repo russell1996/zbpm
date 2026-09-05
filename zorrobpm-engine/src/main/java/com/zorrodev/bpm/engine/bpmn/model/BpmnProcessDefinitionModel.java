@@ -30,6 +30,9 @@ public class BpmnProcessDefinitionModel {
     @Getter
     @Setter
     private List<com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskFormModel> userTaskForms;
+    @Getter
+    @Setter
+    private String defaultJobPriority;
     private final Map<String, BpmnElementModel> elements = new HashMap<>();
     @Getter
     @Setter

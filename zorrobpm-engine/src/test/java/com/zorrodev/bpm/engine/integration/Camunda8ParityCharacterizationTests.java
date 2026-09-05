@@ -342,14 +342,15 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
-    // ==================== §C.1: zeebe:priorityDefinition ====================
+    // ==================== §C.1: zeebe:jobPriorityDefinition (WO-C8-13/A-1: исправлено с priorityDefinition) ====================
 
     @Test
     @Transactional
-    void priorityDefinition_parsedAndDelivered_serviceTaskParksWithoutIncident() throws Exception {
-        // WO-C8-9 GREEN (переименован из priorityDefinition_isSilentlyIgnored_serviceTaskParksWithoutIncident):
-        // priority парсится из фикстуры; доставку до JobDetailModel/outbox доказывает
-        // ServiceTaskEnqueueServiceImplTest (включая реальный JSON payload).
+    void jobPriorityDefinition_parsedAndDelivered_serviceTaskParksWithoutIncident() throws Exception {
+        // WO-C8-13 GREEN (переименован из priorityDefinition_parsedAndDelivered_... (WO-C8-9),
+        // тот — из priorityDefinition_isSilentlyIgnored_... (WO-C8-1)): элемент исправлен на
+        // zeebe:jobPriorityDefinition — priorityDefinition разрешён схемой только на user task.
+        // Доставку до JobDetailModel/outbox доказывает ServiceTaskEnqueueServiceImplTest.
         String key = uniq("c8pr");
         String xml = bpmn("test-c8-priority.bpmn").replace("c8-priority", key);
 
@@ -368,9 +369,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void priorityDefinition_feelExpression_resolvesToInteger() throws Exception {
-        // WO-C8-9, критерий 1 (FEEL-форма): `=priorityVar` вычисляется через
-        // elementSupport.resolvePriority в Integer на реальной переменной инстанса.
+    void jobPriorityDefinition_feelExpression_resolvesToInteger() throws Exception {
+        // WO-C8-9, критерий 1 (FEEL-форма, имя элемента исправлено WO-C8-13): `=priorityVar`
+        // вычисляется через elementSupport.resolvePriority в Integer на реальной переменной.
         String key = uniq("c8prf");
         String xml = bpmn("test-c8-priority.bpmn")
             .replace("c8-priority", key)
@@ -389,9 +390,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void priorityDefinition_brokenValue_resolvesToNullWithoutIncident() throws Exception {
-        // WO-C8-9, критерий 4: не-Integer — не исключение, не инцидент: резолвится в null,
-        // задача паркуется штатно (информационное поле, не триггер).
+    void jobPriorityDefinition_brokenValue_resolvesToNullWithoutIncident() throws Exception {
+        // WO-C8-9, критерий 4 (имя элемента исправлено WO-C8-13): не-Integer — не исключение,
+        // не инцидент: резолвится в null, задача паркуется штатно.
         String key = uniq("c8prb");
         String xml = bpmn("test-c8-priority.bpmn")
             .replace("c8-priority", key)
@@ -402,6 +403,48 @@ public class Camunda8ParityCharacterizationTests {
 
         assertThat(elementSupport.resolvePriority(piId, bpmnParseService.parse(xml).getElement("svc")))
             .isNull();
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void jobPriorityDefinition_processDefault_resolvesWhenTaskHasNone() throws Exception {
+        // WO-C8-13, критерий 3: jobPriorityDefinition на <bpmn:process> — default для всех
+        // service tasks процесса, у которых своего нет.
+        String key = uniq("c8prd");
+        String xml = bpmn("test-c8-job-priority-process-default.bpmn").replace("c8-priority-default", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        assertThat(bpmnParseService.parse(xml).getDefaultJobPriority()).isEqualTo("50");
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(elementSupport.resolvePriority(piId, bpmnParseService.parse(xml).getElement("svc")))
+            .isEqualTo(50);
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void jobPriorityDefinition_taskValue_overridesProcessDefault() throws Exception {
+        // WO-C8-13, критерий 4: значение на задаче побеждает process-level default.
+        String key = uniq("c8pro");
+        String xml = bpmn("test-c8-job-priority-process-default.bpmn")
+            .replace("c8-priority-default", key)
+            .replace("<zeebe:taskDefinition type=\"job-c8\" />",
+                "<zeebe:taskDefinition type=\"job-c8\" /><zeebe:jobPriorityDefinition priority=\"90\" />");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(elementSupport.resolvePriority(piId, bpmnParseService.parse(xml).getElement("svc")))
+            .isEqualTo(90);
 
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
         assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
