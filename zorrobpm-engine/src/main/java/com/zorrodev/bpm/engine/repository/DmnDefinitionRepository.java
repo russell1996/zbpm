@@ -21,8 +21,14 @@ public interface DmnDefinitionRepository extends JpaRepository<DmnDefinitionEnti
     Optional<DmnDefinitionEntity> findFirstByDecisionIdAndProcessDefinitionIdOrderByVersionDesc(String decisionId, UUID processDefinitionId);
 
     /**
-     * WO-C8-18: all decision rows created by one batch deployment (reporting the batch result;
-     * keyed by the unique batch id, so concurrent deploys cannot leak in).
+     * WO-C8-20: the latest version of a decision annotated with the given version tag
+     * ({@code bindingType="versionTag"} pinning) — proven by test, not by reading this query.
+     */
+    Optional<DmnDefinitionEntity> findFirstByDecisionIdAndVersionTagOrderByVersionDesc(String decisionId, String versionTag);
+
+    /**
+     * WO-C8-18: rows of one decision created by one batch deployment (reporting the batch
+     * result; keyed by the unique batch id, so concurrent deploys cannot leak in).
      */
     List<DmnDefinitionEntity> findByDeploymentId(UUID deploymentId);
 
