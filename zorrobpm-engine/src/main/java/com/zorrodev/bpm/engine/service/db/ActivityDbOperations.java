@@ -36,4 +36,20 @@ public interface ActivityDbOperations {
     boolean hasActiveActivityOnTokenAndElement(UUID tokenId, String bpmnElementId);
 
     Activity getActivity(UUID activityId);
+
+    /**
+     * WO-C8-21r2: advance/clear the in-flight creating-listener phase on the activity row
+     * (null = no phase). Entity mutation + save (never bulk UPDATE: the dispatcher re-reads
+     * the index in the same transaction — a bulk update would leave a stale copy).
+     */
+    void setPendingCreatingListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-21r2: null when no creating-listener phase is in flight for this activity. */
+    Integer getPendingCreatingListenerIndex(UUID activityId);
+
+    /** WO-C8-21r2: durable budget of the current creating-listener job (null = unset). */
+    void setCreatingListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-21r2: remaining retries of the current creating-listener job. */
+    Integer getCreatingListenerRetriesRemaining(UUID activityId);
 }

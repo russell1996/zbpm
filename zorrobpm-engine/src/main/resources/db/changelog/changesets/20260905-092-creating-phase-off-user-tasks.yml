@@ -1,0 +1,26 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-092
+  - changeSet:
+      id: 20260905-092
+      author: zorrodev
+      changes:
+        # WO-C8-21 раунд 2: индекс creating-фазы переезжает со строки-маркера в user_tasks
+        # (её добавляла 089) на строку активности — в user_tasks не появляется ни одной
+        # строки, пока задача не создана. Живых данных с непустым индексом нет (фича не
+        # выходила в прод, моделей с taskListeners в проде нет) — бэкфилл не нужен.
+        # Рядом — durable-бюджет ретраев текущего listener-job'а (шаг 5): start/end
+        # переиспользуют retriesRemaining service_tasks, у creating своей строки там нет.
+        - addColumn:
+            tableName: activities
+            columns:
+              - column:
+                  name: pending_creating_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего creating-listener (WO-C8-21r2); null — фазы нет'
+              - column:
+                  name: creating_listener_retries_remaining
+                  type: integer
+                  remarks: 'Остаток ретраев текущего creating-listener job (WO-C8-21r2)'
+        - dropColumn:
+            tableName: user_tasks
+            columnName: pending_creating_listener_index

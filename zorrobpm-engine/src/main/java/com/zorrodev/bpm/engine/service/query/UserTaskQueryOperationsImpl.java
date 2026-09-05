@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.UUID;
 
 @Service
@@ -33,9 +32,9 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
         if (allowedPdIds != null && allowedPdIds.isEmpty()) {
             return queryPaginationSupport.emptyPage(query);
         }
-        // WO-C8-21: a task mid-creating-phase is not a task yet — never listed, claimed
-        // or completed through the query path (same for every caller, no opt-out).
-        specifications.add((root, q, cb) -> cb.isNull(root.get("pendingCreatingListenerIndex")));
+        // WO-C8-21r2: the creating-phase filter is GONE with the marker row (step 4) — no
+        // user_tasks row exists until the task is really created, so every reader is
+        // correct by construction and no filter has to remember the phase.
         if (allowedPdIds != null) {
             specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
         }
@@ -61,12 +60,8 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
 
     @Override
     public UserTask getUserTask(UUID id) {
-        UserTaskEntity e = userTaskRepository.findById(id).orElseThrow();
-        // WO-C8-21: a task mid-creating-phase is not retrievable by id either — same
-        // absence the list path reports (orElseThrow's NoSuchElementException → 404).
-        if (e.getPendingCreatingListenerIndex() != null) {
-            throw new NoSuchElementException("User task " + id + " is not created yet");
-        }
-        return userTaskMapper.toDTO(e);
+        // WO-C8-21r2: the mid-phase guard is gone with the marker row — a missing row
+        // orElseThrows by itself (a task that was never created is simply not there).
+        return userTaskMapper.toDTO(userTaskRepository.findById(id).orElseThrow());
     }
 }

@@ -74,14 +74,9 @@ class UserTaskQueryOperationsImplTest {
         Predicate inPredicate = mock(Predicate.class);
         when(root.get("processDefinitionId")).thenReturn((Path) processDefinitionIdPath);
         when(processDefinitionIdPath.in(anyCollection())).thenReturn(inPredicate);
-        // WO-C8-21: the unconditional creating-phase spec always joins (null = no phase)
-        Predicate phasePredicate = mock(Predicate.class);
-        when(root.get("pendingCreatingListenerIndex")).thenReturn((Path) mock(Path.class));
-        when(cb.isNull(any())).thenReturn(phasePredicate);
 
         captured.toPredicate(root, cq, cb);
         verify(processDefinitionIdPath).in(List.of(allowedPdId));
-        verify(cb).isNull(any());
 
         verify(queryPaginationSupport).clampedPage(0, 10, Sort.by("createdAt").descending());
         verify(queryPaginationSupport).toDTOBulk(eq(page), any());
