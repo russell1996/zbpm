@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,6 +19,12 @@ public interface DmnDefinitionRepository extends JpaRepository<DmnDefinitionEnti
      * definition version ({@code bindingType="deployment"} pinning).
      */
     Optional<DmnDefinitionEntity> findFirstByDecisionIdAndProcessDefinitionIdOrderByVersionDesc(String decisionId, UUID processDefinitionId);
+
+    /**
+     * WO-C8-18: all decision rows created by one batch deployment (reporting the batch result;
+     * keyed by the unique batch id, so concurrent deploys cannot leak in).
+     */
+    List<DmnDefinitionEntity> findByDeploymentId(UUID deploymentId);
 
     /**
      * The process definition id of the latest deployed version of a decision.
