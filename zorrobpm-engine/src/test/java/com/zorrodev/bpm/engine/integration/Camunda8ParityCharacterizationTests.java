@@ -25,6 +25,7 @@ import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import com.zorrodev.bpm.engine.service.impl.ServiceTaskEnqueueServiceImpl;
@@ -102,6 +103,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private DBService dbService;
+
+    @Autowired
+    private ActivityService activityService;
 
     /**
      * WO-C8-11: в profile "test" штатный {@code TestServiceTaskEnqueueService} — no-op
@@ -1160,20 +1164,141 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void intermediateThrowInsideSubprocess_isDroppedByParser() throws Exception {
-        // Парсер сабпроцесса собирает только endEvents/service/script/user tasks/gateways/flows
-        // (BpmnParseServiceImpl, ветка sub-*): intermediateThrowEvent внутри sub1 дропается,
-        // поток упирается в missing target. В gap-анализе этого нет.
+    void intermediateThrowInsideSubprocess_isParsedAndThrows() throws Exception {
+        // WO-C8-14 GREEN (переименован из intermediateThrowInsideSubprocess_isDroppedByParser):
+        // intermediateThrowEvent внутри сабпроцесса разбирается ТЕМ ЖЕ вызовом, что верхний
+        // уровень (включая attachEventDefinition с escalation) — escalation реально бросается
+        // и ловится boundary specific → endSpecific.
         String key = uniq("c8esp");
         String xml = bpmn("test-c8-escalation-priority.bpmn").replace("c8-escalation-priority", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
 
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        Set<String> completedEnds = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .filter(a -> a.getStatus() == ActivityStatus.COMPLETED)
+            .map(ActivityEntity::getBpmnElementId)
+            .collect(Collectors.toSet());
+        assertThat(completedEnds).contains("endSpecific");
+        assertThat(completedEnds).doesNotContain("endCatchAll");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void intermediateCatchInsideSubprocess_parksAndResumesOnMessage() throws Exception {
+        // WO-C8-14, intermediateCatchEvent: message-catch внутри сабпроцесса паркуется и
+        // продолжается по корреляции — элемент исполнился, а не только распарсился.
+        String key = uniq("c8subc");
+        String xml = bpmn("test-c8-sub-catch.bpmn").replace("c8-sub-catch", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
-        List<IncidentEntity> incidents = incidentsOfInstance(piId);
-        assertThat(incidents).hasSize(1);
-        assertThat(incidents.get(0).getMessage()).contains("escThrow").contains("not found");
+        assertThat(activity(piId, "msgCatch").getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+        activityService.correlateMessage("ping", piId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(activity(piId, "msgCatch").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void sendAndReceiveInsideSubprocess_passThroughAndCorrelate() throws Exception {
+        // WO-C8-14, sendTask + receiveTask: send внутри сабпроцесса проходит насквозь,
+        // receive паркуется и продолжается по корреляции (зеркало SendReceiveTaskIntegrationTests).
+        String key = uniq("c8subsr");
+        String xml = bpmn("test-c8-sub-send-receive.bpmn").replace("c8-sub-send-receive", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(activity(piId, "sendTask1").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(activity(piId, "receiveTask1").getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+        activityService.correlateMessage("approve", piId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        List<ActivityEntity> activities = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .toList();
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("sendTask1") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("receiveTask1") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void businessRuleInsideSubprocess_evaluatesDmnDecision() throws Exception {
+        // WO-C8-14, businessRuleTask: DMN реально вычисляется внутри сабпроцесса, результат
+        // в переменной (зеркало BusinessRuleTaskIntegrationTests).
+        dmnService.deploy(bpmn("test-discount.dmn"));
+        String key = uniq("c8subbr");
+        String xml = bpmn("test-c8-sub-business-rule.bpmn").replace("c8-sub-business-rule", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("category", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        ProcessVariableEntity discount = variableRepository.findByNameAndProcessInstanceId("discount", piId).orElseThrow();
+        assertThat(discount.getType()).isEqualTo(ProcessVariableType.LONG);
+        assertThat(discount.getTextValue()).isEqualTo("20");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void inclusiveGatewayInsideSubprocess_evaluatesBranches() throws Exception {
+        // WO-C8-14, inclusiveGateway: a=yes, b=yes — обе ветки активны, default нет; join ждёт
+        // ровно взятые ветки (зеркало InclusiveGatewayIntegrationTests).
+        String key = uniq("c8subinc");
+        String xml = bpmn("test-c8-sub-inclusive.bpmn").replace("c8-sub-inclusive", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("a", ProcessVariableType.STRING, "yes"), var("b", ProcessVariableType.STRING, "yes")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        List<ActivityEntity> activities = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .toList();
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("flowA") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("flowB") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).noneMatch(a -> a.getBpmnElementId().equals("flowDefault"));
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("join") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("endEvent") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void eventBasedGatewayInsideSubprocess_messageWinsRace() throws Exception {
+        // WO-C8-14, eventBasedGateway: гонка внутри сабпроцесса — сообщение приходит первым,
+        // его ветка идёт, таймерная отменяется (зеркало EventBasedGatewayIntegrationTests,
+        // таймер не срабатывает — PT1H).
+        String key = uniq("c8subebg");
+        String xml = bpmn("test-c8-sub-ebg.bpmn").replace("c8-sub-ebg", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        activityService.correlateMessage("approve", piId, List.of());
+
+        List<ActivityEntity> activities = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .toList();
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("msgCatch") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("endApprove") && a.getStatus() == ActivityStatus.COMPLETED);
+        assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("timerCatch") && a.getStatus() == ActivityStatus.CANCELLED);
+        assertThat(activities).noneMatch(a -> a.getBpmnElementId().equals("endTimeout"));
+        assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
     // ==================== §C.2: MI на intermediate throw ====================
