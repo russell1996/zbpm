@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.DmnDecision;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,6 +32,7 @@ public class DmnResource implements DmnContract {
     private final DmnService dmnService;
     private final EventAuthzResolver eventAuthzResolver;
     private final HttpServletRequest request;
+    private final AuditLogService auditLogService;
 
     /**
      * WO-SEC-40: resolves the process definition ids the current principal may access.
@@ -75,13 +78,34 @@ public class DmnResource implements DmnContract {
     @Override
     public List<DmnDecision> deployDmn(@RequestBody DeployDmnDTO dto) {
         requireSuperAdmin();
+        Map<String, Integer> before;
         try {
+            before = maxVersions(dmnService.listDecisions(null));
             dmnService.deploy(dto.getDmn(), dto.getProcessDefinitionId());
         } catch (EngineException e) {
             log.warn("DMN deploy failed: {}", e.getMessage());
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DMN deployment failed");
         }
-        return dmnService.listDecisions(null);
+        List<DmnDecision> after = dmnService.listDecisions(null);
+        // WO-C8-17 (debt from WO-C8-15): audit every newly deployed decision version, like
+        // BPMN deploy does in both its places. One record per decision version —
+        // key = decisionId, target = decisionId:vN (the entity UUID is not exposed in the DTO).
+        // Only rows whose version actually advanced are recorded (the list also carries old ones).
+        for (DmnDecision decision : after) {
+            if (decision.getVersion() > before.getOrDefault(decision.getId(), 0)) {
+                auditLogService.record(getPrincipal(), "DEPLOY", decision.getId(),
+                    decision.getId() + ":v" + decision.getVersion());
+            }
+        }
+        return after;
+    }
+
+    private static Map<String, Integer> maxVersions(List<DmnDecision> decisions) {
+        Map<String, Integer> max = new HashMap<>();
+        for (DmnDecision decision : decisions) {
+            max.merge(decision.getId(), decision.getVersion(), Math::max);
+        }
+        return max;
     }
 
     /**

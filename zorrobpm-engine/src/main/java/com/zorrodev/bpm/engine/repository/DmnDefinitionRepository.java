@@ -14,6 +14,12 @@ public interface DmnDefinitionRepository extends JpaRepository<DmnDefinitionEnti
     Optional<DmnDefinitionEntity> findFirstByDecisionIdOrderByVersionDesc(String decisionId);
 
     /**
+     * WO-C8-17: the latest version of a decision deployed together with the given process
+     * definition version ({@code bindingType="deployment"} pinning).
+     */
+    Optional<DmnDefinitionEntity> findFirstByDecisionIdAndProcessDefinitionIdOrderByVersionDesc(String decisionId, UUID processDefinitionId);
+
+    /**
      * The process definition id of the latest deployed version of a decision.
      * Scalar projection — avoids hydrating the {@code @Lob dmn} column (which fails on
      * PostgreSQL outside a transaction, "Large Objects may not be used in auto-commit mode").

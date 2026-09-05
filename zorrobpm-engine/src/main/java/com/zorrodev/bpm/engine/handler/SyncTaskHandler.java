@@ -147,7 +147,16 @@ public class SyncTaskHandler {
                 if (decisionId == null || decisionId.isBlank()) {
                     throw new IllegalStateException("Business rule task '" + el.getId() + "' decisionId expression '" + ext.getDecisionId() + "' resolved to null/blank — check instance variables and FEEL syntax");
                 }
-                result = dmnService.evaluate(decisionId, variables);
+                // WO-C8-17: bindingType="deployment" pins the decision version deployed together
+                // with the currently running process version; "latest"/absent/anything else keeps
+                // the historical latest-wins path byte-identical. versionTag is parsed but not
+                // consumed here (separate WO).
+                if ("deployment".equals(ext.getBindingType())) {
+                    UUID processDefinitionId = dbService.getProcessInstance(processInstanceId).getProcessDefinitionId();
+                    result = dmnService.evaluate(decisionId, variables, processDefinitionId);
+                } else {
+                    result = dmnService.evaluate(decisionId, variables);
+                }
             } else if (ext.getExpression() != null && !ext.getExpression().isBlank()) {
                 String expression = ext.getExpression().startsWith("=") ? ext.getExpression().substring(1) : ext.getExpression();
                 result = scriptService.evaluateExpression(expression, variables);
