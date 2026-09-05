@@ -59,6 +59,10 @@ public class ServiceTaskHandler implements ElementHandler, TypedElementHandler {
             dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement), elementSupport.serviceTaskJob(bpmnElement));
         } else {
             dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement), elementSupport.serviceTaskJob(bpmnElement), 0);
+            // WO-C8-21r2: the in-flight listener owns the retry budget (model value, default
+            // 3) — not the real job's budget it used to silently consume. Restored for the
+            // real job when the last listener completes (see CompletionService).
+            dbService.setServiceTaskRetries(activityId, elementSupport.listenerBudget(startListeners.get(0)));
         }
         elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 

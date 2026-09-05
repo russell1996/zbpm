@@ -240,6 +240,17 @@ public class ElementSupport {
         return listeners == null ? List.of() : listeners;
     }
 
+    // ─── Listener helpers ─────────────────────────────────────────────
+
+    /**
+     * WO-C8-21r2: durable retry budget of one listener job — the model value, default 3
+     * from the docs when the attribute is absent. Shared by all three listener kinds
+     * (start/end/creating); callers set it wherever they set the phase index.
+     */
+    public int listenerBudget(ListenerModel listener) {
+        return listener.retries() != null ? listener.retries() : 3;
+    }
+
     // ─── IO mapping ────────────────────────────────────────────────────
 
     public void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {

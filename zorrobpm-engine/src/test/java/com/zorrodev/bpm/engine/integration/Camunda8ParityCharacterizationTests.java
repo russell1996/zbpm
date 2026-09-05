@@ -530,12 +530,12 @@ public class Camunda8ParityCharacterizationTests {
 
         UUID activityId = activity(piId, "review").getId();
         assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.CREATED);
-        // creating listener #0 in flight — задача НЕ создана: в списке её нет, хотя
-        // durable-маркер фазы (строка с индексом 0) уже лежит в БД
+        // creating listener #0 in flight — задача НЕ создана: в списке её нет, и в user_tasks
+        // нет даже строки (раунд 2: индекс фазы живёт на активности, маркера больше нет)
         assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isEqualTo(0);
         assertThat(serviceTaskJobs(piId)).containsExactly("notify-job");
         assertThat(userTasksOfInstance(piId)).isEmpty();
-        assertThat(userTaskRepository.findById(activityId)).isPresent();
+        assertThat(userTaskRepository.findById(activityId)).isEmpty();
 
         // complete the listener job through the regular completion path
         runtimeService.completeServiceTask(activityId, List.of());
@@ -598,9 +598,10 @@ public class Camunda8ParityCharacterizationTests {
     @Test
     @Transactional
     void taskListeners_taskNotVisibleWhileCreatingPhaseRuns() throws Exception {
-        // WO-C8-21, критерий 4: задача середины фазы отсутствует ВЕЗДЕ — в списке, по id
-        // (тот же 404, что у несуществующей) и для claim'а; при этом маркер фазы лежит в БД
-        // (durable-состояние, а не "строки нет"). После фазы — видна и по списку, и по id.
+        // WO-C8-21, критерий 4 (раунд 2: маркера больше нет — отсутствие ВЕЗДЕ следует из
+        // отсутствия строки): задача середины фазы отсутствует в списке, по id (тот же 404,
+        // что у несуществующей) и для claim'а (строки нет — orElseThrow); фаза при этом идёт
+        // (индекс на активности). После фазы — видна и по списку, и по id.
         String key = uniq("c8tlv");
         String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
@@ -612,9 +613,9 @@ public class Camunda8ParityCharacterizationTests {
         assertThatThrownBy(() -> queryService.getUserTask(activityId))
             .isInstanceOf(NoSuchElementException.class);
         assertThatThrownBy(() -> dbService.claimUserTask(activityId, "bob"))
-            .isInstanceOf(IllegalStateException.class);
-        assertThat(userTaskRepository.findById(activityId).orElseThrow()
-            .getPendingCreatingListenerIndex()).isEqualTo(0);
+            .isInstanceOf(NoSuchElementException.class);
+        assertThat(userTaskRepository.findById(activityId)).isEmpty();
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isEqualTo(0);
 
         runtimeService.completeServiceTask(activityId, List.of());
 
@@ -669,6 +670,159 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(userTasksOfInstance(piId)).isEmpty();
         // exhausted — no redispatch
         assertThat(serviceTaskJobs(piId)).containsExactly("notify-job");
+    }
+
+    // ==================== WO-C8-21 раунд 2: фаза вне user_tasks + retries ====================
+
+    @Test
+    @Transactional
+    void creatingPhase_userTasksTableEmptyMidPhase() throws Exception {
+        // Раунд 2, крит. 1 (п.8): в середине фазы в user_tasks НЕТ СТРОКИ вообще — прямой
+        // ассерт на repository/БД (findById + findAll по инстансу), а не на выдачу API.
+        // Именно отсутствие этого теста позволило дефекту раунда 1 появиться.
+        String key = uniq("c8r2e");
+        String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        // фаза идёт (индекс на активности), а задачи нет ни по id, ни в таблице
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(userTaskRepository.findById(activityId)).isEmpty();
+        assertThat(userTaskRepository.findByProcessInstanceId(piId)).isEmpty();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // фаза закрыта — строка ровно одна
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isNull();
+        assertThat(userTaskRepository.findById(activityId)).isPresent();
+        assertThat(userTaskRepository.findByProcessInstanceId(piId)).hasSize(1);
+    }
+
+    @Test
+    @Transactional
+    void creatingPhase_completeMidPhase_notFound() throws Exception {
+        // Раунд 2, крит. 2 (п.7): complete недосозданной задачи — 404-класс
+        // (NoSuchElementException → REST 404), а не 500-класс. На master (раунд 1):
+        // строка-маркер есть → requireCreated → IllegalStateException → RED.
+        String key = uniq("c8r2c");
+        String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        assertThatThrownBy(() -> runtimeService.completeUserTask(activityId, List.of()))
+            .isInstanceOf(NoSuchElementException.class);
+        // Порядок побочных эффектов — доисковой (completeActivity до проверки строки):
+        // activity помечена COMPLETED, но токен стоит (outgoing не идётся), инцидентов нет.
+        // В проде через REST сюда не дойти — там 404 раньше, на findById.
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+    }
+
+    @Test
+    @Transactional
+    void creatingListener_retriesFromModel_incidentAfterSecondAttempt() throws Exception {
+        // Раунд 2, крит. 4 (п.9): retries="2" — первое падение редиспатчит без инцидента,
+        // второе паркует с инцидентом.
+        String key = uniq("c8r2r");
+        String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key)
+            .replace("type=\"notify-job\"", "type=\"notify-job\" retries=\"2\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("notify-job");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("notify-job", "notify-job");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.ERROR);
+    }
+
+    @Test
+    @Transactional
+    void creatingListener_noRetriesAttribute_defaultsToThreeAttempts() throws Exception {
+        // Раунд 2, крит. 4: без атрибута — дефолт 3 из доки (инцидент на третьей попытке).
+        String key = uniq("c8r2d");
+        String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("notify-job", "notify-job", "notify-job");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.ERROR);
+    }
+
+    @Test
+    @Transactional
+    void startListener_retriesFromModel_incidentAfterSecondAttempt() throws Exception {
+        // Раунд 2, крит. 4: тот же контракт для start-listener'а (сегодня бюджет общий с
+        // настоящим job'ом, retries="2" молча игнорируется).
+        String key = uniq("c8r2s");
+        String xml = bpmn("test-c8-execution-listeners.bpmn")
+            .replace("c8-exec-listeners", key)
+            .replace("          <zeebe:executionListener eventType=\"end\" type=\"listener-job\" />\n", "")
+            .replace("type=\"listener-job\"", "type=\"listener-job\" retries=\"2\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job", "listener-job");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.ERROR);
+    }
+
+    @Test
+    @Transactional
+    void endListener_retriesFromModel_incidentAfterSecondAttempt() throws Exception {
+        // Раунд 2, крит. 4: тот же контракт для end-listener'а (единообразие трёх видов —
+        // WO запрещает делать молча половину).
+        String key = uniq("c8r2n");
+        String xml = bpmn("test-c8-execution-listeners-start-end.bpmn")
+            .replace("c8-exec-listeners-start-end", key)
+            .replace("eventType=\"end\" type=\"listener-job-end\"",
+                "eventType=\"end\" type=\"listener-job-end\" retries=\"2\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        // настоящий job + открытие end-фазы
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-start");
+        runtimeService.completeServiceTask(activityId, List.of());
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job-start", "job-c8");
+        runtimeService.completeServiceTask(activityId, List.of());
+        assertThat(serviceTaskJobs(piId))
+            .containsExactly("listener-job-start", "job-c8", "listener-job-end");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.ERROR);
     }
 
     // ==================== §C.1: zeebe:jobPriorityDefinition (WO-C8-13/A-1: исправлено с priorityDefinition) ====================

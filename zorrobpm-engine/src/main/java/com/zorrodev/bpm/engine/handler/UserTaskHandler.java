@@ -45,18 +45,20 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
 
-        // WO-C8-21: elements with creating listeners park a listener job first (durable
-        // phase-marker row, index 0); the task is created only after the last listener
-        // completes. Elements without listeners take the pre-existing path below, whose
+        // WO-C8-21r2: elements with creating listeners park a listener job first — the phase
+        // index lives on the ACTIVITY row (no user_tasks row exists until the task is really
+        // created). Elements without listeners take the pre-existing path below, whose
         // statement order (row → input mappings → boundaries) is preserved exactly.
         List<ListenerModel> creatingListeners = elementSupport.userTaskCreatingListeners(bpmnElement);
         if (creatingListeners.isEmpty()) {
-            createTaskRow(processInstanceId, activityId, bpmnElement, false);
+            createTaskRow(processInstanceId, activityId, bpmnElement);
             elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
             postCreation(processInstanceId, token, activityId, bpmnElement);
         } else {
             elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
-            dbService.startCreatingPhase(activityId);
+            dbService.setPendingCreatingListenerIndex(activityId, 0);
+            dbService.setCreatingListenerRetriesRemaining(activityId,
+                elementSupport.listenerBudget(creatingListeners.get(0)));
             log.info("{}/{}: Entering {} with {} creating listener(s), phase opened: {}/{}",
                 processInstanceId, token, bpmnElement.getType(), creatingListeners.size(), activityId, bpmnElement.getId());
             serviceTaskEnqueueService.enqueueAfterCommit(activityId);
@@ -64,30 +66,22 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
     }
 
     /**
-     * Resolves the task fields and writes the task row: a fresh row when no phase exists,
-     * the phased row (fields + index clear + created event) when a creating-listener phase
-     * opened the marker. The ONLY row-writing body — the immediate path above and the
-     * phased path both call it, so the two cannot diverge.
+     * Resolves the task fields and writes the task row. The ONLY row-writing body — the
+     * immediate path above and the phased path (via {@link CompletionService}) both call
+     * it, so the two cannot diverge.
      *
      * <p>Public so that {@link CompletionService} can run it when the last creating
      * listener completes (precedent: {@code ServiceTaskHandler.enter} is public for
      * {@code ActivityService} delegation).
-     *
-     * @param phased true when a creating-listener phase opened the marker row (finish it),
-     *               false when no phase exists (create the row now)
      */
-    public void createTaskRow(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement, boolean phased) {
+    public void createTaskRow(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement) {
         String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
         String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
         String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, bpmnElement);
         String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
-        if (phased) {
-            dbService.finishUserTaskCreation(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
-        } else {
-            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
-        }
+        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
     }
 
     /**

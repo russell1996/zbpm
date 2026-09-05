@@ -79,6 +79,30 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
     }
 
     @Override
+    public void setPendingCreatingListenerIndex(UUID activityId, Integer index) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setPendingCreatingListenerIndex(index);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getPendingCreatingListenerIndex(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getPendingCreatingListenerIndex();
+    }
+
+    @Override
+    public void setCreatingListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setCreatingListenerRetriesRemaining(remaining);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getCreatingListenerRetriesRemaining(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getCreatingListenerRetriesRemaining();
+    }
+
+    @Override
     public void cancelActivity(UUID activityId) {
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.CANCELLED, Instant.now());
     }

@@ -122,12 +122,10 @@ public class CompletionService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
-        // WO-C8-21: creating-listener completion — read only for elements that declare
-        // creating listeners, so the common path never touches the new state. A completion
-        // means "this listener finished": advance to the next listener, or run the task
-        // creation tail after the last one — WITHOUT touching the service-task tail below
-        // (there is no service_tasks row for a user task; falling through would complete
-        // a foreign tail and move the token while the task was never created).
+        // WO-C8-21r2: creating-listener completion — the phase index lives on the ACTIVITY
+        // row (no user_tasks row exists until the task is really created). A completion means
+        // "this listener finished": advance to the next listener (with its own retry budget),
+        // or create the task after the last one — WITHOUT touching the service-task tail below.
         List<ListenerModel> creatingListeners = elementSupport.userTaskCreatingListeners(bpmnElement);
         if (!creatingListeners.isEmpty()) {
             Integer pendingCreating = dbService.getPendingCreatingListenerIndex(serviceTaskId);
@@ -135,12 +133,16 @@ public class CompletionService {
                 dbService.setVariables(processInstanceId, variables);
                 if (pendingCreating + 1 < creatingListeners.size()) {
                     dbService.setPendingCreatingListenerIndex(serviceTaskId, pendingCreating + 1);
+                    dbService.setCreatingListenerRetriesRemaining(serviceTaskId,
+                        elementSupport.listenerBudget(creatingListeners.get(pendingCreating + 1)));
                     serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                     log.info("{}/{}: Completing creating listener {} of {}: {}/{}", processInstanceId, tokenId,
                         pendingCreating, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
                     return;
                 }
-                userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement, true);
+                dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
+                dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
+                userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement);
                 userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
                 log.info("{}/{}: Last creating listener done, task created: {}/{}", processInstanceId, tokenId,
                     serviceTaskId, activity.getBpmnElementId());
@@ -148,7 +150,9 @@ public class CompletionService {
             }
             // Out-of-bounds/foreign index (model redeployed mid-flight): fail-open into task
             // creation rather than stranding (mirror of the C8-11 fail-open below).
-            userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement, true);
+            dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
+            dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
+            userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement);
             userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
             log.info("{}/{}: Out-of-bounds creating listener index, task created fail-open: {}/{}",
                 processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
@@ -164,8 +168,16 @@ public class CompletionService {
                 dbService.setVariables(processInstanceId, variables);
                 if (pending + 1 < startListeners.size()) {
                     dbService.setPendingListenerIndex(serviceTaskId, pending + 1);
+                    // WO-C8-21r2: the next listener owns its own retry budget (model value,
+                    // default 3) — listener failures no longer eat the real job's budget.
+                    dbService.setServiceTaskRetries(serviceTaskId,
+                        elementSupport.listenerBudget(startListeners.get(pending + 1)));
                 } else {
                     dbService.setPendingListenerIndex(serviceTaskId, null);
+                    // WO-C8-21r2: the real job dispatches next with its own budget, fresh —
+                    // whatever the listeners consumed stays with them.
+                    dbService.setServiceTaskRetries(serviceTaskId,
+                        elementSupport.serviceTaskRetries(bpmnElement));
                 }
                 serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                 log.info("{}/{}: Completing start listener {} of {}: {}/{}", processInstanceId, tokenId,
@@ -186,6 +198,9 @@ public class CompletionService {
             // status guard above stays green for every listener completion).
             dbService.setVariables(processInstanceId, variables);
             dbService.setPendingEndListenerIndex(serviceTaskId, 0);
+            // WO-C8-21r2: the in-flight end listener owns its own retry budget.
+            dbService.setServiceTaskRetries(serviceTaskId,
+                elementSupport.listenerBudget(endListeners.get(0)));
             serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
             log.info("{}/{}: Real job done, opening end-listener phase of {}: {}/{}", processInstanceId, tokenId,
                 activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
@@ -195,6 +210,9 @@ public class CompletionService {
             if (pendingEnd + 1 < endListeners.size()) {
                 dbService.setVariables(processInstanceId, variables);
                 dbService.setPendingEndListenerIndex(serviceTaskId, pendingEnd + 1);
+                // WO-C8-21r2: the next end listener owns its own retry budget.
+                dbService.setServiceTaskRetries(serviceTaskId,
+                    elementSupport.listenerBudget(endListeners.get(pendingEnd + 1)));
                 serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                 log.info("{}/{}: Completing end listener {} of {}: {}/{}", processInstanceId, tokenId,
                     pendingEnd, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
@@ -246,18 +264,34 @@ public class CompletionService {
             return;
         }
         String message = (errorMessage == null || errorMessage.isBlank()) ? "Service task failed" : errorMessage;
-        // WO-C8-21: a failing creating-listener job parks the token with an incident. There is
-        // no service_tasks row (and no retry budget) for a user task, so the shared budget
-        // path below would orElseThrow — never reach it. ListenerModel.retries is parsed but
-        // not applied in this slice, same as WO-C8-11. Gated on the activity type first, so
-        // the common service-task fail path never pays for the bpmn load below.
+        // WO-C8-21r2: a failing creating-listener job draws from its own durable budget
+        // (model value, default 3 — set at phase open/advance; there is no service_tasks
+        // row for a user task, so the shared budget path below would orElseThrow).
+        // Gated on the activity type first, so the common service-task fail path never
+        // pays for the bpmn load below.
         if (activity.getType() == BpmnElementType.USER_TASK) {
             ProcessInstance failPi = dbService.getProcessInstance(activity.getProcessInstanceId());
             BpmnProcessDefinitionModel failBpmn = bpmnService.getProcessDefinitionModelById(failPi.getProcessDefinitionId());
             BpmnElementModel failElement = failBpmn.getElement(activity.getBpmnElementId());
             if (!elementSupport.userTaskCreatingListeners(failElement).isEmpty()
                 && dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {
-                log.info("{}/{}: User task creating listener {} failed — raising incident: {}",
+                int remaining;
+                if (retries != null) {
+                    // Camunda failJob semantics: explicit value sets the budget (0 → incident now).
+                    dbService.setCreatingListenerRetriesRemaining(serviceTaskId, retries);
+                    remaining = retries;
+                } else {
+                    Integer budget = dbService.getCreatingListenerRetriesRemaining(serviceTaskId);
+                    remaining = (budget == null ? 0 : budget) - 1;
+                    dbService.setCreatingListenerRetriesRemaining(serviceTaskId, remaining);
+                }
+                if (remaining > 0) {
+                    log.info("{}/{}: User task creating listener {} failed ({} retries left), re-dispatching: {}",
+                        activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
+                    serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                    return;
+                }
+                log.info("{}/{}: User task creating listener {} failed, retries exhausted — raising incident: {}",
                     activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
                 dbService.errorActivity(serviceTaskId);
                 dbService.createIncident(serviceTaskId, message);

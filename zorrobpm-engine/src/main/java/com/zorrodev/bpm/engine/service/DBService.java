@@ -86,17 +86,20 @@ public interface DBService {
 
     void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
 
-    /** WO-C8-21: opens the creating-listener phase (durable marker row, task not yet created). */
-    void startCreatingPhase(UUID activityId);
+    /**
+     * WO-C8-21r2: the creating-listener phase index lives on the ACTIVITIES row (no
+     * {@code user_tasks} row exists until the task is really created). Null = no phase.
+     */
+    void setPendingCreatingListenerIndex(UUID activityId, Integer index);
 
-    /** WO-C8-21: closes the creating-listener phase — the task creation for phased elements. */
-    void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+    /** WO-C8-21r2: null when no creating-listener phase is in flight for this activity. */
+    Integer getPendingCreatingListenerIndex(UUID activityId);
 
-    /** WO-C8-21: advance/clear the in-flight creating-listener phase (null = no phase). */
-    void setPendingCreatingListenerIndex(UUID taskId, Integer index);
+    /** WO-C8-21r2: durable budget of the current creating-listener job (null = unset). */
+    void setCreatingListenerRetriesRemaining(UUID activityId, Integer remaining);
 
-    /** WO-C8-21: null when no creating-listener phase is in flight for this task. */
-    Integer getPendingCreatingListenerIndex(UUID taskId);
+    /** WO-C8-21r2: remaining retries of the current creating-listener job. */
+    Integer getCreatingListenerRetriesRemaining(UUID activityId);
 
     void completeUserTask(UUID serviceTaskId);
 
