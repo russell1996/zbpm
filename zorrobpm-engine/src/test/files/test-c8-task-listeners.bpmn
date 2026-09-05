@@ -10,7 +10,9 @@
         <zeebe:userTask />
         <zeebe:assignmentDefinition assignee="alice" />
         <zeebe:taskListeners>
-          <zeebe:taskListener eventType="create" type="notify-job" />
+          <!-- WO-C8-21: было eventType="create" (Фаза 0) — такого события нет в доке
+               (creating/assigning/updating/completing/canceling); исправлено -->
+          <zeebe:taskListener eventType="creating" type="notify-job" />
         </zeebe:taskListeners>
       </bpmn:extensionElements>
       <bpmn:incoming>f1</bpmn:incoming>

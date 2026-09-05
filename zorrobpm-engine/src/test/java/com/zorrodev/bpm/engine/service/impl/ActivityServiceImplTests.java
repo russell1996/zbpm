@@ -125,9 +125,11 @@ public class ActivityServiceImplTests {
             elementSupport.computeDueAt(any(com.zorrodev.bpm.engine.bpmn.model.TimerEventExtensionModel.class), any(), any(java.util.UUID.class))
         ).thenAnswer(invocation -> java.time.Instant.now().plus(java.time.Duration.ofMinutes(5)));
         // Create real CompletionService with mocked dependencies and inject it (WO-AUD-24)
+        // WO-C8-21: 9th arg — real UserTaskHandler (creating-phase tail runner in CompletionService)
         var completionService = new com.zorrodev.bpm.engine.handler.CompletionService(
             dbService, bpmnService, serviceTaskEnqueueService, elementSupport, multiInstanceExecutor,
-            flowNavigator, eventTrigger, executionContext);
+            flowNavigator, eventTrigger, executionContext,
+            new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService));
         try {
             var csField = ActivityServiceImpl.class.getDeclaredField("completionService");
             csField.setAccessible(true);
@@ -177,7 +179,7 @@ public class ActivityServiceImplTests {
             new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNav, activityService)));
         registerHandler(BpmnElementType.SUB_PROCESS, new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService));
         registerHandler(BpmnElementType.CALL_ACTIVITY, new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, activityService, elementSupport));
-        registerHandler(BpmnElementType.USER_TASK, new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler));
+        registerHandler(BpmnElementType.USER_TASK, new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService));
         registerHandler(BpmnElementType.START_EVENT, new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent(dbService, flowNav));
         registerHandler(BpmnElementType.SCRIPT_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNav, activityService));
         registerHandler(BpmnElementType.BUSINESS_RULE_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNav));

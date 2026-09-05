@@ -62,6 +62,24 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             .map(ext -> ext.getJob())
             .orElse(null);
 
+        // WO-C8-21: while a creating listener is in flight, the dispatched job is the
+        // listener's. Read ONLY for elements that declare creating listeners (user tasks),
+        // so every pre-existing path never touches the new read. A user task has no "real"
+        // job of its own — a corrupt index cannot fail open into one, so it parks with an
+        // incident instead (the operator resolves; the phase row stays intact).
+        List<ListenerModel> creatingListeners = elementSupport.userTaskCreatingListeners(element);
+        Integer pendingCreating = creatingListeners.isEmpty() ? null : dbService.getPendingCreatingListenerIndex(serviceTaskId);
+        if (pendingCreating != null && pendingCreating >= 0 && pendingCreating < creatingListeners.size()) {
+            job = creatingListeners.get(pendingCreating).jobType();
+        } else if (pendingCreating != null) {
+            log.warn("User task {} has out-of-bounds pendingCreatingListenerIndex {} ({} creating listeners) — raising incident",
+                serviceTaskId, pendingCreating, creatingListeners.size());
+            dbService.createIncident(
+                serviceTaskId,
+                "User task '" + bpmnElementId + "' has out-of-bounds creating listener index — fix the process model");
+            return;
+        }
+
         // WO-C8-11: while a start listener is in flight, the dispatched job is the listener's,
         // not the real one. The index is read ONLY for elements that declare listeners, so the
         // common path (and all pre-existing tests with mock DBService) never touches the new read.

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c8tl2" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-task-listeners-2" name="c8-task-listeners-2" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="review" />
+    <bpmn:userTask id="review" name="review">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="alice" />
+        <zeebe:taskListeners>
+          <zeebe:taskListener eventType="creating" type="creating-job-1" />
+          <!-- assigning — чужой WO: парсер обязан пропустить, порядок creating не рвётся -->
+          <zeebe:taskListener eventType="assigning" type="assigning-job" />
+          <zeebe:taskListener eventType="creating" type="creating-job-2" />
+        </zeebe:taskListeners>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="review" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
