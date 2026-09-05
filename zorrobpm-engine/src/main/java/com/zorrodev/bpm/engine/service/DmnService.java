@@ -16,6 +16,13 @@ public interface DmnService {
     /** Deploys a DMN resource bound to a process definition (for authz scoping). */
     void deploy(String dmnXml, UUID processDefinitionId);
 
+    /**
+     * WO-C8-18: same as {@link #deploy(String, UUID)}, but stamps {@code deploymentId} on the
+     * created rows (batch deploys via {@code POST /deployments}). Null keeps single-deploy
+     * behaviour byte-identical.
+     */
+    void deploy(String dmnXml, UUID processDefinitionId, UUID deploymentId);
+
     /** Evaluates a deployed decision against the given variables and returns its single output value. */
     Object evaluate(String decisionId, List<ProcessVariable> variables);
 

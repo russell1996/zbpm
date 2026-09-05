@@ -27,6 +27,7 @@ class JwtAuthFilterDenyByDefaultTest {
         com.zorrodev.bpm.contract.AuditLogContract.class,
         com.zorrodev.bpm.contract.ApiKeyManagementContract.class,
         com.zorrodev.bpm.contract.DmnContract.class,
+        com.zorrodev.bpm.contract.DeploymentContract.class,
         com.zorrodev.bpm.contract.FormContract.class,
         com.zorrodev.bpm.contract.VariableSchemaContract.class,
     };

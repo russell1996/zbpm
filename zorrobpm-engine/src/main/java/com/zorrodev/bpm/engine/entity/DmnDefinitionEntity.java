@@ -26,4 +26,6 @@ public class DmnDefinitionEntity {
     private Instant createdAt;
     /** Link to the process definition this DMN belongs to (embedded DMN in BPMN deploy). */
     private UUID processDefinitionId;
+    /** WO-C8-18: деплоймент пачки (POST /deployments); null — одиночный деплой (обратная совместимость). */
+    private UUID deploymentId;
 }

@@ -52,6 +52,17 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     @SneakyThrows
     @Override
     public ProcessDefinition addProcessDefinition(String bpmn) {
+        return addProcessDefinition(bpmn, null);
+    }
+
+    /**
+     * WO-C8-18: same as {@link #addProcessDefinition(String)}, but stamps {@code deploymentId}
+     * on newly created version rows (batch deploys). A null id keeps single-deploy behaviour
+     * byte-identical (nullable column, no extra rows); the sha256 fast path never rewrites linkage.
+     */
+    @SneakyThrows
+    @Override
+    public ProcessDefinition addProcessDefinition(String bpmn, UUID deploymentId) {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         String sha256 = Base64.getEncoder().encodeToString(digest.digest(bpmn.getBytes(StandardCharsets.UTF_8)));
 
@@ -98,6 +109,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
 
                 processDefinitionEntity = versioning.createNewVersionEntity(key, name, sha256, id, model.getStartFormKey(), model.getVersionTag());
                 processDefinitionEntity.setDeploymentState(ProcessDefinitionEntity.STATE_PENDING);
+                processDefinitionEntity.setDeploymentId(deploymentId);
                 processDefinitionRepository.save(processDefinitionEntity);
 
                 fileService.saveFile(id, bpmn);
