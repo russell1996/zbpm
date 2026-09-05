@@ -30,4 +30,11 @@ public class ServiceTaskEntity {
      * flight. {@code null} = the normal path (no listeners, or the real job dispatched/awaited).
      */
     private Integer pendingListenerIndex;
+    /**
+     * WO-C8-11b: index into the element's {@code endListeners} while an end-listener job is in
+     * flight. Separate column by design (no magic values in {@code pendingListenerIndex}).
+     * {@code null} = the end phase is not running. Start and end phases never overlap: the end
+     * index is set only at real-job completion, by which the start index is already null.
+     */
+    private Integer pendingEndListenerIndex;
 }
