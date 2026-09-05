@@ -66,13 +66,27 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         // not the real one. The index is read ONLY for elements that declare listeners, so the
         // common path (and all pre-existing tests with mock DBService) never touches the new read.
         List<ListenerModel> startListeners = elementSupport.serviceTaskStartListeners(element);
-        if (!startListeners.isEmpty()) {
-            Integer pending = dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
-            if (pending != null && pending >= 0 && pending < startListeners.size()) {
-                job = startListeners.get(pending).jobType();
-            } else if (pending != null) {
-                log.warn("Service task {} has out-of-bounds pendingListenerIndex {} ({} start listeners) — dispatching real job",
-                    serviceTaskId, pending, startListeners.size());
+        Integer pendingStart = startListeners.isEmpty() ? null : dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
+        if (pendingStart != null && pendingStart >= 0 && pendingStart < startListeners.size()) {
+            job = startListeners.get(pendingStart).jobType();
+        } else if (pendingStart != null) {
+            log.warn("Service task {} has out-of-bounds pendingListenerIndex {} ({} start listeners) — dispatching real job",
+                serviceTaskId, pendingStart, startListeners.size());
+        }
+
+        // WO-C8-11b: end-listener dispatch, same index discipline. Explicit precedence (the code
+        // does not silently rely on the construction invariant "phases never overlap"): an
+        // in-flight start listener wins; otherwise the end phase owns dispatch when its index
+        // is valid. Corrupt start index skips the end phase (fail-open to the real job — the next
+        // completion re-enters the end logic and recovers, no strand).
+        List<ListenerModel> endListeners = elementSupport.serviceTaskEndListeners(element);
+        if (!endListeners.isEmpty() && pendingStart == null) {
+            Integer pendingEnd = dbService.getServiceTaskPendingEndListenerIndex(serviceTaskId);
+            if (pendingEnd != null && pendingEnd >= 0 && pendingEnd < endListeners.size()) {
+                job = endListeners.get(pendingEnd).jobType();
+            } else if (pendingEnd != null) {
+                log.warn("Service task {} has out-of-bounds pendingEndListenerIndex {} ({} end listeners) — dispatching real job",
+                    serviceTaskId, pendingEnd, endListeners.size());
             }
         }
 

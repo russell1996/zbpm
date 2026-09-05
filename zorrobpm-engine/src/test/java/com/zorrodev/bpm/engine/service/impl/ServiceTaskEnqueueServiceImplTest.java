@@ -563,4 +563,90 @@ class ServiceTaskEnqueueServiceImplTest {
 
         verify(dbService, never()).getServiceTaskPendingListenerIndex(any());
     }
+
+    @Test
+    void enqueueAfterCommit_withEndListenerInFlight_dispatchesEndListenerJob() throws Exception {
+        // WO-C8-11b: pendingEndListenerIndex=0 → в outbox уходит end-listener-job, НЕ реальный.
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskEndListener";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setEndListeners(List.of(new ListenerModel("listener-job-end", null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingEndListenerIndex(serviceTaskId)).thenReturn(0);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getJob()).isEqualTo("listener-job-end");
+    }
+
+    @Test
+    void enqueueAfterCommit_withoutEndListeners_neverReadsEndListenerIndex() throws Exception {
+        // WO-C8-11b, зеркало start-U3: у элементов без endListeners новый DB-read не вызывается.
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskPlainEnd";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        service.enqueueAfterCommit(serviceTaskId);
+
+        verify(dbService, never()).getServiceTaskPendingEndListenerIndex(any());
+    }
 }

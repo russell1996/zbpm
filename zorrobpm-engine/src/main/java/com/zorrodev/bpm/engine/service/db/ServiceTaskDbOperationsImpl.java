@@ -84,6 +84,18 @@ public class ServiceTaskDbOperationsImpl implements ServiceTaskDbOperations {
     }
 
     @Override
+    public void setPendingEndListenerIndex(UUID serviceTaskId, Integer pendingEndListenerIndex) {
+        ServiceTaskEntity entity = serviceTaskRepository.findById(serviceTaskId).orElseThrow();
+        entity.setPendingEndListenerIndex(pendingEndListenerIndex);
+        serviceTaskRepository.save(entity);
+    }
+
+    @Override
+    public Integer getPendingEndListenerIndex(UUID serviceTaskId) {
+        return serviceTaskRepository.findById(serviceTaskId).orElseThrow().getPendingEndListenerIndex();
+    }
+
+    @Override
     public void completeServiceTask(UUID serviceTaskId) {
         serviceTaskRepository.setCompletedAt(serviceTaskId, Instant.now());
     }

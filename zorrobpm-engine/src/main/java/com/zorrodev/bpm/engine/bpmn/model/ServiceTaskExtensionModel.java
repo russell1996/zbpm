@@ -18,4 +18,6 @@ public class ServiceTaskExtensionModel {
     private String priority;
     /** Start execution listeners from {@code zeebe:executionListeners} (WO-C8-11) — dispatched in declaration order before the real job; null/empty when absent. */
     private List<ListenerModel> startListeners;
+    /** End execution listeners from {@code zeebe:executionListeners} (WO-C8-11b) — dispatched in declaration order after the real job completes; null/empty when absent. */
+    private List<ListenerModel> endListeners;
 }

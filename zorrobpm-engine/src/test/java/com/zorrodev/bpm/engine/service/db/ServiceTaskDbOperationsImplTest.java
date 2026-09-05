@@ -138,4 +138,19 @@ class ServiceTaskDbOperationsImplTest {
         assertThat(e.getPendingListenerIndex()).isNull();
         assertThat(db.getPendingListenerIndex(id)).isNull();
     }
+
+    @Test
+    void setAndGetPendingEndListenerIndex_roundTrip() {
+        // WO-C8-11b: separate column, same discipline as the start index.
+        UUID id = UUID.randomUUID();
+        ServiceTaskEntity e = new ServiceTaskEntity(); e.setId(id); e.setPendingEndListenerIndex(null);
+        when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(e));
+        db.setPendingEndListenerIndex(id, 1);
+        assertThat(e.getPendingEndListenerIndex()).isEqualTo(1);
+        verify(serviceTaskRepository).save(e);
+        assertThat(db.getPendingEndListenerIndex(id)).isEqualTo(1);
+        db.setPendingEndListenerIndex(id, null);
+        assertThat(e.getPendingEndListenerIndex()).isNull();
+        assertThat(db.getPendingEndListenerIndex(id)).isNull();
+    }
 }
