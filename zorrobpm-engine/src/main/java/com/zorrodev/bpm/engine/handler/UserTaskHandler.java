@@ -3,11 +3,14 @@ package com.zorrodev.bpm.engine.handler;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -23,6 +26,7 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
     private final ElementSupport elementSupport;
     private final MultiInstanceExecutor multiInstanceExecutor;
     private final BoundaryScheduler boundaryScheduler;
+    private final ServiceTaskEnqueueService serviceTaskEnqueueService;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.USER_TASK; }
@@ -40,15 +44,58 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
+
+        // WO-C8-21: elements with creating listeners park a listener job first (durable
+        // phase-marker row, index 0); the task is created only after the last listener
+        // completes. Elements without listeners take the pre-existing path below, whose
+        // statement order (row → input mappings → boundaries) is preserved exactly.
+        List<ListenerModel> creatingListeners = elementSupport.userTaskCreatingListeners(bpmnElement);
+        if (creatingListeners.isEmpty()) {
+            createTaskRow(processInstanceId, activityId, bpmnElement, false);
+            elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+            postCreation(processInstanceId, token, activityId, bpmnElement);
+        } else {
+            elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+            dbService.startCreatingPhase(activityId);
+            log.info("{}/{}: Entering {} with {} creating listener(s), phase opened: {}/{}",
+                processInstanceId, token, bpmnElement.getType(), creatingListeners.size(), activityId, bpmnElement.getId());
+            serviceTaskEnqueueService.enqueueAfterCommit(activityId);
+        }
+    }
+
+    /**
+     * Resolves the task fields and writes the task row: a fresh row when no phase exists,
+     * the phased row (fields + index clear + created event) when a creating-listener phase
+     * opened the marker. The ONLY row-writing body — the immediate path above and the
+     * phased path both call it, so the two cannot diverge.
+     *
+     * <p>Public so that {@link CompletionService} can run it when the last creating
+     * listener completes (precedent: {@code ServiceTaskHandler.enter} is public for
+     * {@code ActivityService} delegation).
+     *
+     * @param phased true when a creating-listener phase opened the marker row (finish it),
+     *               false when no phase exists (create the row now)
+     */
+    public void createTaskRow(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement, boolean phased) {
         String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
         String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
         String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, bpmnElement);
         String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
-        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
-        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+        if (phased) {
+            dbService.finishUserTaskCreation(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
+        } else {
+            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
+        }
+    }
 
+    /**
+     * Runs the post-row creation tail (log + boundary schedules). Called by the immediate
+     * path above and by {@link CompletionService} after {@link #createTaskRow} — one body,
+     * so the schedule calls cannot diverge between the paths.
+     */
+    public void postCreation(UUID processInstanceId, UUID token, UUID activityId, BpmnElementModel bpmnElement) {
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 
         boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);

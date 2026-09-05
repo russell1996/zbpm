@@ -29,6 +29,7 @@ import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
 import com.zorrodev.bpm.engine.service.BpmnService;
@@ -59,6 +60,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -112,6 +114,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private OutboxRepository outboxRepository;
+
+    @Autowired
+    private UserTaskRepository userTaskRepository;
 
     @Autowired
     private DBService dbService;
@@ -497,21 +502,173 @@ public class Camunda8ParityCharacterizationTests {
 
     // ==================== §C.1: zeebe:taskListeners ====================
 
+    /** WO-C8-21: видимые (созданные) задачи инстанса — прямой ассерт блокирующей семантики. */
+    private List<UserTask> userTasksOfInstance(UUID processInstanceId) {
+        UserTaskQuery query = new UserTaskQuery();
+        query.setProcessInstanceId(processInstanceId);
+        return queryService.findUserTasks(query, null).getData();
+    }
+
     @Test
     @Transactional
-    void taskListeners_doNotBreakUserTaskFlow() throws Exception {
+    void taskListeners_creatingListenerBlocksTaskUntilComplete() throws Exception {
+        // WO-C8-21 GREEN (переименован из taskListeners_doNotBreakUserTaskFlow (WO-C8-1)):
+        // фикстура Фазы 0 несла невалидный eventType="create" (такого события нет ни в схеме,
+        // ни в доке — находка №4 класса ФИКСТУРА≠ИСТИНА) — исправлен на "creating", и тест
+        // теперь доказывает блокирующую семантику вместо "не ломает поток".
         String key = uniq("c8tl");
         String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCreatingListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("notify-job");
+
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
 
+        UUID activityId = activity(piId, "review").getId();
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        // creating listener #0 in flight — задача НЕ создана: в списке её нет, хотя
+        // durable-маркер фазы (строка с индексом 0) уже лежит в БД
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("notify-job");
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+        assertThat(userTaskRepository.findById(activityId)).isPresent();
+
+        // complete the listener job through the regular completion path
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // task created now, no follow-up job (у user task нет "настоящего" job'а); instance parked
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isNull();
+        assertThat(serviceTaskJobs(piId)).containsExactly("notify-job");
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.CREATED);
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        // complete the user task — token moves, instance completes
         completeUserTask(piId, "review");
 
-        ProcessInstance pi = queryService.getProcessInstance(piId);
-        assertThat(pi.getCompletedAt()).isNotNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
         assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_twoCreatingListeners_runSequentiallyInDeclarationOrder() throws Exception {
+        // WO-C8-21, критерий 3 (зеркало executionListeners_twoStartListeners): второй
+        // creating-listener диспетчеризуется только после завершения первого; висящий между
+        // ними assigning-listener парсер обязан пропустить (чужие WO), порядок не рвётся.
+        String key = uniq("c8tl2");
+        String xml = bpmn("test-c8-task-listeners-two-creating.bpmn").replace("c8-task-listeners-2", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCreatingListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("creating-job-1", "creating-job-2");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job-1");
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job-1", "creating-job-2");
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isEqualTo(1);
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job-1", "creating-job-2");
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isNull();
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+
+        completeUserTask(piId, "review");
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_taskNotVisibleWhileCreatingPhaseRuns() throws Exception {
+        // WO-C8-21, критерий 4: задача середины фазы отсутствует ВЕЗДЕ — в списке, по id
+        // (тот же 404, что у несуществующей) и для claim'а; при этом маркер фазы лежит в БД
+        // (durable-состояние, а не "строки нет"). После фазы — видна и по списку, и по id.
+        String key = uniq("c8tlv");
+        String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+        assertThatThrownBy(() -> queryService.getUserTask(activityId))
+            .isInstanceOf(NoSuchElementException.class);
+        assertThatThrownBy(() -> dbService.claimUserTask(activityId, "bob"))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(userTaskRepository.findById(activityId).orElseThrow()
+            .getPendingCreatingListenerIndex()).isEqualTo(0);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+        assertThat(queryService.getUserTask(activityId).getId()).isEqualTo(activityId);
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_corruptCreatingIndex_failsOpenIntoTaskCreation() throws Exception {
+        // WO-C8-21, шаг 6 (зеркало C8-11 fail-open): битый индекс (модель redeployed
+        // mid-flight) — задача создаётся, а не strand'ится; инцидента нет.
+        String key = uniq("c8tlf");
+        String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        dbService.setPendingCreatingListenerIndex(activityId, 99);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+
+        completeUserTask(piId, "review");
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_creatingListenerFailure_raisesIncident() throws Exception {
+        // WO-C8-21 (hardening сверх критериев, зеркало C8-11 критерия 4): упавший
+        // creating-listener job паркует токен с инцидентом общим путём (отдельного
+        // listener-механизма нет); задача по-прежнему не создана, redispatch нет.
+        String key = uniq("c8tle");
+        String xml = bpmn("test-c8-task-listeners.bpmn").replace("c8-task-listeners", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("notify-job");
+
+        runtimeService.failServiceTask(activityId, "listener boom", 0);
+
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.ERROR);
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+        // exhausted — no redispatch
+        assertThat(serviceTaskJobs(piId)).containsExactly("notify-job");
     }
 
     // ==================== §C.1: zeebe:jobPriorityDefinition (WO-C8-13/A-1: исправлено с priorityDefinition) ====================
