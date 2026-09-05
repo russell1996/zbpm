@@ -64,4 +64,25 @@ public class BpmnSubProcessModel {
 
     @XmlElement(name = "parallelGateway", namespace = NS)
     private List<BpmnParallelGatewayModel> parallelGateways;
+
+    @XmlElement(name = "intermediateCatchEvent", namespace = NS)
+    private List<BpmnIntermediateCatchEventModel> intermediateCatchEvents;
+
+    @XmlElement(name = "intermediateThrowEvent", namespace = NS)
+    private List<BpmnIntermediateThrowEventModel> intermediateThrowEvents;
+
+    @XmlElement(name = "businessRuleTask", namespace = NS)
+    private List<BpmnBusinessRuleTaskModel> businessRuleTasks;
+
+    @XmlElement(name = "sendTask", namespace = NS)
+    private List<BpmnSendTaskModel> sendTasks;
+
+    @XmlElement(name = "receiveTask", namespace = NS)
+    private List<BpmnReceiveTaskModel> receiveTasks;
+
+    @XmlElement(name = "inclusiveGateway", namespace = NS)
+    private List<BpmnInclusiveGatewayModel> inclusiveGateways;
+
+    @XmlElement(name = "eventBasedGateway", namespace = NS)
+    private List<BpmnEventBasedGatewayModel> eventBasedGateways;
 }

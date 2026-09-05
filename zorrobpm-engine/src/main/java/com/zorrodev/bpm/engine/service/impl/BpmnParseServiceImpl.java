@@ -295,7 +295,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (process.getSubProcesses() != null) {
                 for (BpmnSubProcessModel subProcess : process.getSubProcesses()) {
-                    BpmnElementModel element = toSubProcessElement(subProcess, pd, registry, messageNames);
+                    BpmnElementModel element = toSubProcessElement(subProcess, pd, registry, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -305,7 +305,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             // are carried by its cancel-end event and cancel boundary, not the container type
             if (process.getTransactions() != null) {
                 for (BpmnSubProcessModel transaction : process.getTransactions()) {
-                    BpmnElementModel element = toSubProcessElement(transaction, pd, registry, messageNames);
+                    BpmnElementModel element = toSubProcessElement(transaction, pd, registry, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -467,7 +467,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         return element;
     }
 
-    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames) {
+    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(sub.getId());
         element.setName(sub.getName());
@@ -568,6 +568,78 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (sub.getParallelGateways() != null) {
             for (BpmnParallelGatewayModel gateway : sub.getParallelGateways()) {
                 BpmnElementModel child = toElementModel(gateway);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        // WO-C8-14 (A-2, срез 1): 7 плоских flow-нод разбираются ТЕМИ ЖЕ вызовами, что верхний
+        // уровень (включая attachEventDefinition) — не упрощённой копией. callActivity,
+        // вложенный subProcess, transaction, boundaryEvent, association — WO-C8-14b.
+        if (sub.getIntermediateCatchEvents() != null) {
+            for (BpmnIntermediateCatchEventModel catchEvent : sub.getIntermediateCatchEvents()) {
+                BpmnElementModel child = toElementModel(catchEvent, messageNames, messageKeys);
+                child.setProcessDefinition(pd);
+                attachEventDefinition(child, null, catchEvent.getSignalEventDefinition(), null,
+                    catchEvent.getConditionalEventDefinition(), catchEvent.getLinkEventDefinition(), null, registry);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getIntermediateThrowEvents() != null) {
+            for (BpmnIntermediateThrowEventModel throwEvent : sub.getIntermediateThrowEvents()) {
+                BpmnElementModel child = toElementModel(throwEvent, messageNames);
+                child.setProcessDefinition(pd);
+                attachEventDefinition(child, null, throwEvent.getSignalEventDefinition(),
+                    throwEvent.getEscalationEventDefinition(), null, throwEvent.getLinkEventDefinition(),
+                    throwEvent.getCompensateEventDefinition(), registry);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getBusinessRuleTasks() != null) {
+            for (BpmnBusinessRuleTaskModel businessRuleTask : sub.getBusinessRuleTasks()) {
+                BpmnElementModel child = toElementModel(businessRuleTask);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getSendTasks() != null) {
+            for (BpmnSendTaskModel sendTask : sub.getSendTasks()) {
+                BpmnElementModel child = toElementModel(sendTask, messageNames);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getReceiveTasks() != null) {
+            for (BpmnReceiveTaskModel receiveTask : sub.getReceiveTasks()) {
+                BpmnElementModel child = toElementModel(receiveTask, messageNames, messageKeys);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getInclusiveGateways() != null) {
+            for (BpmnInclusiveGatewayModel inclusiveGateway : sub.getInclusiveGateways()) {
+                BpmnElementModel child = new BpmnElementModel();
+                child.setId(inclusiveGateway.getId());
+                child.setName(inclusiveGateway.getName());
+                child.setType(BpmnElementType.INCLUSIVE_GATEWAY);
+                child.setIncoming(inclusiveGateway.getIncoming());
+                child.setOutgoing(inclusiveGateway.getOutgoing());
+                if (inclusiveGateway.getDefaultFlow() != null) {
+                    child.setExtensions(new BpmnElementExtensionModel());
+                    child.getExtensions().setExclusiveGatewayExtension(new ExclusiveGatewayExtensionModel());
+                    child.getExtensions().getExclusiveGatewayExtension().setDefaultFlowId(inclusiveGateway.getDefaultFlow());
+                }
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getEventBasedGateways() != null) {
+            for (BpmnEventBasedGatewayModel eventGateway : sub.getEventBasedGateways()) {
+                BpmnElementModel child = new BpmnElementModel();
+                child.setId(eventGateway.getId());
+                child.setName(eventGateway.getName());
+                child.setType(BpmnElementType.EVENT_BASED_GATEWAY);
+                child.setIncoming(eventGateway.getIncoming());
+                child.setOutgoing(eventGateway.getOutgoing());
                 child.setProcessDefinition(pd);
                 pd.addElement(child);
             }
