@@ -773,10 +773,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         continue;
                     }
                     if ("start".equals(l.getEventType())) {
-                        starts.add(new ListenerModel(l.getType(), l.getRetries()));
+                        starts.add(new ListenerModel(l.getType(), l.getRetries(), listenerHeaders(l)));
                     } else if ("end".equals(l.getEventType())) {
                         // WO-C8-11b: end listeners block the token until each completes (after the real job).
-                        ends.add(new ListenerModel(l.getType(), l.getRetries()));
+                        ends.add(new ListenerModel(l.getType(), l.getRetries(), listenerHeaders(l)));
                     }
                 }
                 if (!starts.isEmpty()) {
@@ -789,6 +789,23 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         attachIoMapping(element, serviceTask.getExtensionElements());
         attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
         return element;
+    }
+
+    /**
+     * WO-C8-7r2: nested {@code zeebe:taskHeaders} of one execution listener as a map
+     * (null when absent) — delivered with the listener's job merged over the element
+     * headers, listener wins per the docs.
+     */
+    private Map<String, String> listenerHeaders(ExecutionListenerModel l) {
+        TaskHeadersModel headers = l == null ? null : l.getTaskHeaders();
+        if (headers == null || headers.getHeaders() == null) {
+            return null;
+        }
+        Map<String, String> map = new LinkedHashMap<>();
+        for (HeaderModel h : headers.getHeaders()) {
+            if (h.getKey() != null) map.put(h.getKey(), h.getValue());
+        }
+        return map;
     }
 
     /**
@@ -1046,7 +1063,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         continue;
                     }
                     if ("creating".equals(l.getEventType())) {
-                        creating.add(new ListenerModel(l.getType(), l.getRetries()));
+                        // No nested headers here: the schema gives TaskListener no headers
+                        // property (unlike ExecutionListener) — always null, by schema.
+                        creating.add(new ListenerModel(l.getType(), l.getRetries(), null));
                     }
                 }
                 if (!creating.isEmpty()) {

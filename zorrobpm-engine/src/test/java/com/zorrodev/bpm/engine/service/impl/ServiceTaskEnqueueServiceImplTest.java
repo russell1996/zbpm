@@ -451,7 +451,7 @@ class ServiceTaskEnqueueServiceImplTest {
 
         ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
         ext.setJob("real-job");
-        ext.setStartListeners(List.of(new ListenerModel("listener-job", null)));
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
         BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
         extensions.setServiceTaskExtension(ext);
 
@@ -498,7 +498,7 @@ class ServiceTaskEnqueueServiceImplTest {
 
         ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
         ext.setJob("real-job");
-        ext.setStartListeners(List.of(new ListenerModel("listener-job", null)));
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
         BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
         extensions.setServiceTaskExtension(ext);
 
@@ -585,7 +585,7 @@ class ServiceTaskEnqueueServiceImplTest {
 
         ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
         ext.setJob("real-job");
-        ext.setEndListeners(List.of(new ListenerModel("listener-job-end", null)));
+        ext.setEndListeners(List.of(new ListenerModel("listener-job-end", null, null)));
         BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
         extensions.setServiceTaskExtension(ext);
 

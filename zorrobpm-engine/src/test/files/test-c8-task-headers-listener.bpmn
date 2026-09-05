@@ -10,9 +10,15 @@
         <zeebe:taskDefinition type="job-c8" />
         <zeebe:taskHeaders>
           <zeebe:header key="tenant" value="acme" />
+          <zeebe:header key="mode" value="element" />
         </zeebe:taskHeaders>
         <zeebe:executionListeners>
-          <zeebe:executionListener eventType="start" type="listener-job" />
+          <zeebe:executionListener eventType="start" type="listener-job">
+            <zeebe:taskHeaders>
+              <zeebe:header key="mode" value="listener" />
+              <zeebe:header key="trace" value="t1" />
+            </zeebe:taskHeaders>
+          </zeebe:executionListener>
         </zeebe:executionListeners>
       </bpmn:extensionElements>
       <bpmn:incoming>f1</bpmn:incoming>
