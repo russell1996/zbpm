@@ -225,6 +225,21 @@ public class ElementSupport {
         return listeners == null ? List.of() : listeners;
     }
 
+    // ─── User task helpers ──────────────────────────────────────────────
+
+    /**
+     * WO-C8-21: creating task listeners of a user task, in declaration order
+     * (already filtered to {@code eventType="creating"} at parse time). Empty when absent —
+     * callers must not touch listener state for such elements.
+     */
+    public List<ListenerModel> userTaskCreatingListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCreatingListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
+    }
+
     // ─── IO mapping ────────────────────────────────────────────────────
 
     public void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {

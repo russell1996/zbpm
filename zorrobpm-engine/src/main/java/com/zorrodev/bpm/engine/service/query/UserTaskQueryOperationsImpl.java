@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
 @Service
@@ -32,6 +33,9 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
         if (allowedPdIds != null && allowedPdIds.isEmpty()) {
             return queryPaginationSupport.emptyPage(query);
         }
+        // WO-C8-21: a task mid-creating-phase is not a task yet — never listed, claimed
+        // or completed through the query path (same for every caller, no opt-out).
+        specifications.add((root, q, cb) -> cb.isNull(root.get("pendingCreatingListenerIndex")));
         if (allowedPdIds != null) {
             specifications.add((root, q, cb) -> root.get("processDefinitionId").in(allowedPdIds));
         }
@@ -57,6 +61,12 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
 
     @Override
     public UserTask getUserTask(UUID id) {
-        return userTaskMapper.toDTO(userTaskRepository.findById(id).orElseThrow());
+        UserTaskEntity e = userTaskRepository.findById(id).orElseThrow();
+        // WO-C8-21: a task mid-creating-phase is not retrievable by id either — same
+        // absence the list path reports (orElseThrow's NoSuchElementException → 404).
+        if (e.getPendingCreatingListenerIndex() != null) {
+            throw new NoSuchElementException("User task " + id + " is not created yet");
+        }
+        return userTaskMapper.toDTO(e);
     }
 }

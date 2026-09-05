@@ -177,6 +177,26 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void startCreatingPhase(UUID activityId) {
+        userTaskDbOperations.startCreatingPhase(activityId);
+    }
+
+    @Override
+    public void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate) {
+        userTaskDbOperations.finishUserTaskCreation(activityId, assignee, candidateGroups, formKey, dueDate, followUpDate);
+    }
+
+    @Override
+    public void setPendingCreatingListenerIndex(UUID taskId, Integer index) {
+        userTaskDbOperations.setPendingCreatingListenerIndex(taskId, index);
+    }
+
+    @Override
+    public Integer getPendingCreatingListenerIndex(UUID taskId) {
+        return userTaskDbOperations.getPendingCreatingListenerIndex(taskId);
+    }
+
+    @Override
     public void completeServiceTask(UUID serviceTaskId) {
         serviceTaskDbOperations.completeServiceTask(serviceTaskId);
     }

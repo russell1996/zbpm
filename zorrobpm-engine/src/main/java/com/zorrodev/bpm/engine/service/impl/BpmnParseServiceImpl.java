@@ -14,6 +14,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.JobPriorityDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenerModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenersModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskListenerModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
@@ -1003,6 +1004,24 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 } else if (userTask.getExtensionElements().getFormDefinition().getExternalReference() != null) {
                     element.getExtensions().getUserTaskExtension().setFormKey(userTask.getExtensionElements().getFormDefinition().getExternalReference());
                     element.getExtensions().getUserTaskExtension().setExternalReference(userTask.getExtensionElements().getFormDefinition().getExternalReference());
+                }
+            }
+            // WO-C8-21: creating task listeners block task creation until each completes.
+            // Only user tasks may carry taskListeners (schema allowedIn); other eventTypes
+            // (assigning/updating/completing/canceling) are separate WOs and stay unparsed.
+            if (userTask.getExtensionElements().getTaskListeners() != null
+                && userTask.getExtensionElements().getTaskListeners().getListeners() != null) {
+                List<ListenerModel> creating = new ArrayList<>();
+                for (TaskListenerModel l : userTask.getExtensionElements().getTaskListeners().getListeners()) {
+                    if (l.getType() == null) {
+                        continue;
+                    }
+                    if ("creating".equals(l.getEventType())) {
+                        creating.add(new ListenerModel(l.getType(), l.getRetries()));
+                    }
+                }
+                if (!creating.isEmpty()) {
+                    element.getExtensions().getUserTaskExtension().setCreatingListeners(creating);
                 }
             }
         }
