@@ -142,6 +142,36 @@ public class CompletionService {
             // normal path below (fail-open, completes and moves the token) rather than stranding.
         }
 
+        // WO-C8-11b: end-listener phase — read only for elements that declare end listeners,
+        // so the common path never touches the new state.
+        List<ListenerModel> endListeners = elementSupport.serviceTaskEndListeners(bpmnElement);
+        Integer pendingEnd = endListeners.isEmpty() ? null : dbService.getServiceTaskPendingEndListenerIndex(serviceTaskId);
+        if (!endListeners.isEmpty() && pendingEnd == null) {
+            // Real-job completion → open the end phase WITHOUT completing the activity
+            // (design CTO: the element is not complete until its end listeners ran, so the
+            // status guard above stays green for every listener completion).
+            dbService.setVariables(processInstanceId, variables);
+            dbService.setPendingEndListenerIndex(serviceTaskId, 0);
+            serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+            log.info("{}/{}: Real job done, opening end-listener phase of {}: {}/{}", processInstanceId, tokenId,
+                activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
+            return;
+        }
+        if (pendingEnd != null && pendingEnd >= 0 && pendingEnd < endListeners.size()) {
+            if (pendingEnd + 1 < endListeners.size()) {
+                dbService.setVariables(processInstanceId, variables);
+                dbService.setPendingEndListenerIndex(serviceTaskId, pendingEnd + 1);
+                serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                log.info("{}/{}: Completing end listener {} of {}: {}/{}", processInstanceId, tokenId,
+                    pendingEnd, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
+                return;
+            }
+            dbService.setPendingEndListenerIndex(serviceTaskId, null);
+            // Last end listener done → fall through to the real completion tail below
+            // (it applies this completion's variables itself).
+        }
+        // No end phase (or corrupt/foreign end index): fail-open into the normal tail below.
+
         dbService.setVariables(processInstanceId, variables);
         dbService.completeActivity(serviceTaskId);
         dbService.completeServiceTask(serviceTaskId);

@@ -759,22 +759,32 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setIncoming(serviceTask.getIncoming());
         element.setOutgoing(serviceTask.getOutgoing());
         attachServiceTaskJob(element, serviceTask.getExtensionElements());
-        // WO-C8-11: start execution listeners block the real job until each completes.
-        // eventType="end" is silently skipped here — separate WO-C8-11b, not a bug.
-        // Service-task-only: end/throw events never read startListeners.
-        if (serviceTask.getExtensionElements() != null && serviceTask.getExtensionElements().getTaskDefinition() != null
-            && serviceTask.getExtensionElements().getExecutionListeners() != null
-            && serviceTask.getExtensionElements().getExecutionListeners().getListeners() != null) {
-            List<ListenerModel> starts = new ArrayList<>();
-            for (ExecutionListenerModel l : serviceTask.getExtensionElements().getExecutionListeners().getListeners()) {
-                if ("start".equals(l.getEventType()) && l.getType() != null) {
-                    starts.add(new ListenerModel(l.getType(), l.getRetries()));
+            // WO-C8-11: start execution listeners block the real job until each completes.
+            // WO-C8-11b: end listeners block the token until each completes (after the real job).
+            // Service-task-only: end/throw events never read startListeners.
+            if (serviceTask.getExtensionElements() != null && serviceTask.getExtensionElements().getTaskDefinition() != null
+                && serviceTask.getExtensionElements().getExecutionListeners() != null
+                && serviceTask.getExtensionElements().getExecutionListeners().getListeners() != null) {
+                List<ListenerModel> starts = new ArrayList<>();
+                List<ListenerModel> ends = new ArrayList<>();
+                for (ExecutionListenerModel l : serviceTask.getExtensionElements().getExecutionListeners().getListeners()) {
+                    if (l.getType() == null) {
+                        continue;
+                    }
+                    if ("start".equals(l.getEventType())) {
+                        starts.add(new ListenerModel(l.getType(), l.getRetries()));
+                    } else if ("end".equals(l.getEventType())) {
+                        // WO-C8-11b: end listeners block the token until each completes (after the real job).
+                        ends.add(new ListenerModel(l.getType(), l.getRetries()));
+                    }
+                }
+                if (!starts.isEmpty()) {
+                    element.getExtensions().getServiceTaskExtension().setStartListeners(starts);
+                }
+                if (!ends.isEmpty()) {
+                    element.getExtensions().getServiceTaskExtension().setEndListeners(ends);
                 }
             }
-            if (!starts.isEmpty()) {
-                element.getExtensions().getServiceTaskExtension().setStartListeners(starts);
-            }
-        }
         attachIoMapping(element, serviceTask.getExtensionElements());
         attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
         return element;

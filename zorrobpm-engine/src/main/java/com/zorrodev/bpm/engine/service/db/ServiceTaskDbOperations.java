@@ -20,6 +20,12 @@ public interface ServiceTaskDbOperations {
     /** WO-C8-11: reads the in-flight listener index; null = normal path. */
     Integer getPendingListenerIndex(UUID serviceTaskId);
 
+    /** WO-C8-11b: advances (or clears, with null) the in-flight end-listener; null = end phase off. */
+    void setPendingEndListenerIndex(UUID serviceTaskId, Integer pendingEndListenerIndex);
+
+    /** WO-C8-11b: reads the in-flight end-listener index; null = end phase off. */
+    Integer getPendingEndListenerIndex(UUID serviceTaskId);
+
     void completeServiceTask(UUID serviceTaskId);
 
     void setServiceTaskRetries(UUID serviceTaskId, int retries);
