@@ -238,10 +238,12 @@ public class Camunda8ParityCharacterizationTests {
         // WO-C8-11 GREEN (переименован из executionListeners_areSilentlyIgnored_serviceTaskParksWithoutIncident):
         // start-listener РЕАЛЬНО блокирует: в outbox уходит listener-job, job-c8 — только после
         // завершения listener'а; токен двигается только после завершения настоящего job'а.
-        // Parse-ассерт (критерий 1): start распаршен, end из той же фикстуры молча пропущен
-        // (в списке ровно 1 — явный вынос eventType="end" за рамки, не баг).
+        // WO-C8-11b: end-listener из общей фикстуры вырезан — этот тест изолирует START-фазу
+        // (end-фазу доказывают executionListeners_end* тесты); иначе поток уходил бы в end-фазу.
         String key = uniq("c8el");
-        String xml = bpmn("test-c8-execution-listeners.bpmn").replace("c8-exec-listeners", key);
+        String xml = bpmn("test-c8-execution-listeners.bpmn")
+            .replace("c8-exec-listeners", key)
+            .replace("          <zeebe:executionListener eventType=\"end\" type=\"listener-job\" />\n", "");
 
         assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
             .getServiceTaskExtension().getStartListeners())
