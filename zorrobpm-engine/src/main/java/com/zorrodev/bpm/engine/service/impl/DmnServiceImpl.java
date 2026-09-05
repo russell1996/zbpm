@@ -8,12 +8,14 @@ import com.zorrodev.bpm.contract.model.DmnRule;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionModel;
+import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionExtensionModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionTableModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDefinitionsModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnInputModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnOutputModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnRuleModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnTextModel;
+import com.zorrodev.bpm.engine.dmn.xml.DmnVersionTagModel;
 import com.zorrodev.bpm.engine.dmn.xml.InformationRequirementModel;
 import com.zorrodev.bpm.engine.entity.DmnDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.DmnDefinitionRepository;
@@ -76,6 +78,11 @@ public class DmnServiceImpl implements DmnService {
             DmnDefinitionEntity entity = new DmnDefinitionEntity();
             entity.setId(java.util.UUID.randomUUID());
             entity.setDecisionId(decision.getId());
+            entity.setVersionTag(Optional.ofNullable(decision.getExtensionElements())
+                .map(DmnDecisionExtensionModel::getVersionTag)
+                .map(DmnVersionTagModel::getValue)
+                .filter(s -> !s.isBlank())
+                .orElse(null));
             entity.setVersion(version);
             entity.setDmn(dmnXml);
             entity.setCreatedAt(Instant.now());
@@ -107,6 +114,18 @@ public class DmnServiceImpl implements DmnService {
             .orElseThrow(() -> new IllegalStateException("DMN decision '" + decisionId
                 + "' has no version deployed together with process version '" + pinnedProcessDefinitionId
                 + "' (bindingType=\"deployment\") — deploy the decision bound to this process version"));
+        return evaluateEntity(entity, decisionId, variables);
+    }
+
+    @Override
+    public Object evaluateByVersionTag(String decisionId, List<ProcessVariable> variables, String versionTag) {
+        // Same IllegalStateException mechanics as the deployment overload above (see its NOTE):
+        // a missing id+tag pair is an incident with an explicit message, never a silent latest.
+        DmnDefinitionEntity entity = dmnDefinitionRepository
+            .findFirstByDecisionIdAndVersionTagOrderByVersionDesc(decisionId, versionTag)
+            .orElseThrow(() -> new IllegalStateException("DMN decision '" + decisionId
+                + "' has no deployed version annotated with version tag '" + versionTag
+                + "' (bindingType=\"versionTag\") — deploy the decision carrying this tag"));
         return evaluateEntity(entity, decisionId, variables);
     }
 

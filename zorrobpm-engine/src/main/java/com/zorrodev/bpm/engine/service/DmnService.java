@@ -27,6 +27,14 @@ public interface DmnService {
     Object evaluate(String decisionId, List<ProcessVariable> variables);
 
     /**
+     * WO-C8-20: evaluates the latest deployed version annotated with the given version tag
+     * ({@code bindingType="versionTag"} pinning). Signature form (named method, not a third
+     * overload or enum param): the two existing overloads stay byte-identical, and the call
+     * site reads explicitly ({@code else if versionTag → evaluateByVersionTag}).
+     */
+    Object evaluateByVersionTag(String decisionId, List<ProcessVariable> variables, String versionTag);
+
+    /**
      * WO-C8-17: evaluates the decision version deployed together with the given process
      * definition version ({@code bindingType="deployment"} pinning). A null
      * {@code pinnedProcessDefinitionId} behaves exactly like {@link #evaluate(String, List)}.

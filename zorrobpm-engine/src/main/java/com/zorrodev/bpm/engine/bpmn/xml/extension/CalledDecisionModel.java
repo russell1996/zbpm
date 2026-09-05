@@ -18,8 +18,8 @@ public class CalledDecisionModel {
     @XmlAttribute
     private String bindingType;
     /**
-     * WO-C8-17: parsed for the future, NOT consumed — versionTag pinning needs a separate
-     * reconnaissance (unclear where the tag lives on a DMN resource), see the WO.
+     * WO-C8-17: parsed here; consumed since WO-C8-20 (SyncTaskHandler pins the latest DMN
+     * version annotated with this tag, explicit incident when the pair is missing).
      */
     @XmlAttribute
     private String versionTag;
