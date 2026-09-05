@@ -19,6 +19,13 @@ public interface DmnService {
     /** Evaluates a deployed decision against the given variables and returns its single output value. */
     Object evaluate(String decisionId, List<ProcessVariable> variables);
 
+    /**
+     * WO-C8-17: evaluates the decision version deployed together with the given process
+     * definition version ({@code bindingType="deployment"} pinning). A null
+     * {@code pinnedProcessDefinitionId} behaves exactly like {@link #evaluate(String, List)}.
+     */
+    Object evaluate(String decisionId, List<ProcessVariable> variables, UUID pinnedProcessDefinitionId);
+
     /** All deployed decisions (latest version of each), parsed for display. */
     List<DmnDecision> listDecisions();
 

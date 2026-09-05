@@ -15,4 +15,12 @@ public class CalledDecisionModel {
     private String decisionId;
     @XmlAttribute
     private String resultVariable;
+    @XmlAttribute
+    private String bindingType;
+    /**
+     * WO-C8-17: parsed for the future, NOT consumed — versionTag pinning needs a separate
+     * reconnaissance (unclear where the tag lives on a DMN resource), see the WO.
+     */
+    @XmlAttribute
+    private String versionTag;
 }

@@ -80,6 +80,27 @@ public class DmnServiceImpl implements DmnService {
     public Object evaluate(String decisionId, List<ProcessVariable> variables) {
         DmnDefinitionEntity entity = dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decisionId)
             .orElseThrow(() -> new EngineException("No deployed DMN decision '" + decisionId + "'"));
+        return evaluateEntity(entity, decisionId, variables);
+    }
+
+    @Override
+    public Object evaluate(String decisionId, List<ProcessVariable> variables, UUID pinnedProcessDefinitionId) {
+        if (pinnedProcessDefinitionId == null) {
+            return evaluate(decisionId, variables);
+        }
+        // NOTE: IllegalStateException, not EngineException, is deliberate here: the execution
+        // dispatcher (ActivityServiceImpl.execute) rethrows EngineException as an abort, while any
+        // other exception parks the token as an incident — and a missing pinned version must be
+        // an incident with an explicit message (WO-C8-17 step 4), never a silent latest fallback.
+        DmnDefinitionEntity entity = dmnDefinitionRepository
+            .findFirstByDecisionIdAndProcessDefinitionIdOrderByVersionDesc(decisionId, pinnedProcessDefinitionId)
+            .orElseThrow(() -> new IllegalStateException("DMN decision '" + decisionId
+                + "' has no version deployed together with process version '" + pinnedProcessDefinitionId
+                + "' (bindingType=\"deployment\") — deploy the decision bound to this process version"));
+        return evaluateEntity(entity, decisionId, variables);
+    }
+
+    private Object evaluateEntity(DmnDefinitionEntity entity, String decisionId, List<ProcessVariable> variables) {
         DmnDefinitionsModel model = SecureXmlParser.unmarshal(entity.getDmn(), DmnDefinitionsModel.class);
         DmnDecisionModel decision = model.getDecisions().stream()
             .filter(d -> decisionId.equals(d.getId()))
