@@ -7,7 +7,7 @@ import java.util.UUID;
  */
 public interface UserTaskDbOperations {
 
-    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate);
 
     /**
      * WO-C8-21: opens the creating-listener phase — writes the durable phase-marker row
@@ -19,7 +19,7 @@ public interface UserTaskDbOperations {
      * WO-C8-21: closes the creating-listener phase — fills the resolved task fields, clears
      * the index and emits the created event. This IS the task creation for phased elements.
      */
-    void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+    void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate);
 
     void setPendingCreatingListenerIndex(UUID taskId, Integer index);
 
