@@ -29,4 +29,12 @@ public class UserTaskEntity {
     private String assignee;
     /** Comma-separated resolved candidate groups (WO-INT-1). */
     private String candidateGroups;
+    /**
+     * WO-C8-21: index of the in-flight creating task listener (mirror of
+     * {@code pendingListenerIndex} on service tasks, WO-C8-11). The row is the durable
+     * phase marker: it is written when the phase opens (task fields still null, task
+     * invisible) and cleared when the last listener completes (the task is created then).
+     * Null = no phase in flight. Never magic values.
+     */
+    private Integer pendingCreatingListenerIndex;
 }

@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-089
+  - changeSet:
+      id: 20260905-089
+      author: zorrodev
+      changes:
+        # WO-C8-21: zeebe:taskListeners (creating) на user task — индекс ожидающего
+        # listener'а в user_tasks. Nullable: null = обычный путь (без listener'ов или фаза
+        # завершена и задача создана) — все существующие задачи ведут себя как раньше.
+        - addColumn:
+            tableName: user_tasks
+            columns:
+              - column:
+                  name: pending_creating_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего creating-listener (WO-C8-21); null — обычный путь без listener-ов'

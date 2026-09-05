@@ -86,6 +86,18 @@ public interface DBService {
 
     void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
 
+    /** WO-C8-21: opens the creating-listener phase (durable marker row, task not yet created). */
+    void startCreatingPhase(UUID activityId);
+
+    /** WO-C8-21: closes the creating-listener phase — the task creation for phased elements. */
+    void finishUserTaskCreation(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+
+    /** WO-C8-21: advance/clear the in-flight creating-listener phase (null = no phase). */
+    void setPendingCreatingListenerIndex(UUID taskId, Integer index);
+
+    /** WO-C8-21: null when no creating-listener phase is in flight for this task. */
+    Integer getPendingCreatingListenerIndex(UUID taskId);
+
     void completeUserTask(UUID serviceTaskId);
 
     void claimUserTask(UUID taskId, String assignee);
