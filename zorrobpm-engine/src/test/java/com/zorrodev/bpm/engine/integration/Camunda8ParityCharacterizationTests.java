@@ -1070,6 +1070,117 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidents.get(0).getMessage()).contains(decision).contains("bindingType=\"deployment\"");
     }
 
+    // ==================== WO-C8-20: bindingType="versionTag" для calledDecision ====================
+
+    @Test
+    @Transactional
+    void calledDecisionBindingTypeVersionTag_pinnedTaggedVersionWins() throws Exception {
+        // WO-C8-20 GREEN: v1 помечена тегом v1.0, прилетевшая позже v2 — без тега;
+        // bindingType="versionTag" исполняет v1, а не latest.
+        String decision = uniq("c8tagged");
+        dmnService.deploy(bpmn("test-c8-version-tag-decision.dmn")
+            .replace("c8tagged", decision)
+            .replace("VTAG", "v1.0")
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8cdvt");
+        String xml = bpmn("test-c8-called-decision-version-tag.bpmn")
+            .replace("c8-called-decision-version-tag", key)
+            .replace("c8tagged", decision);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        // v2 свежее, но без тега — под пиннинг не попадает.
+        dmnService.deploy(bpmn("test-c8-version-tag-decision.dmn")
+            .replace("c8tagged", decision)
+            .replace("<zeebe:versionTag value=\"VTAG\" />", "")
+            .replace("C8VAL", "\"v2-val\""));
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        ProcessInstance pi = queryService.getProcessInstance(piId);
+        assertThat(pi.getCompletedAt()).isNotNull();
+        ProcessVariableEntity picked = variableRepository
+            .findByNameAndProcessInstanceId("picked", piId).orElseThrow();
+        assertThat(picked.getTextValue()).isEqualTo("v1-val");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void calledDecisionBindingTypeVersionTag_latestTaggedVersionWins() throws Exception {
+        // WO-C8-20, критерий 3: тег стоит на НЕСКОЛЬКИХ версиях — берётся ПОСЛЕДНЯЯ из них
+        // (доказано прогоном, не чтением запроса).
+        String decision = uniq("c8tagged");
+        dmnService.deploy(bpmn("test-c8-version-tag-decision.dmn")
+            .replace("c8tagged", decision)
+            .replace("VTAG", "v1.0")
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8cdvtm");
+        String xml = bpmn("test-c8-called-decision-version-tag.bpmn")
+            .replace("c8-called-decision-version-tag", key)
+            .replace("c8tagged", decision);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        dmnService.deploy(bpmn("test-c8-version-tag-decision.dmn")
+            .replace("c8tagged", decision)
+            .replace("VTAG", "v1.0")
+            .replace("C8VAL", "\"v2-val\""));
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        ProcessVariableEntity picked = variableRepository
+            .findByNameAndProcessInstanceId("picked", piId).orElseThrow();
+        assertThat(picked.getTextValue()).isEqualTo("v2-val");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void calledDecisionBindingTypeVersionTag_missingPair_raisesIncident() throws Exception {
+        // WO-C8-20, критерий 4: пары «решение + тег» нет — явный инцидент с внятным текстом,
+        // инстанс стоит, НЕ тихий latest.
+        String decision = uniq("c8tagged");
+        dmnService.deploy(bpmn("test-c8-version-tag-decision.dmn")
+            .replace("c8tagged", decision)
+            .replace("<zeebe:versionTag value=\"VTAG\" />", "")
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8cdvn");
+        String xml = bpmn("test-c8-called-decision-version-tag.bpmn")
+            .replace("c8-called-decision-version-tag", key)
+            .replace("c8tagged", decision);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage()).contains(decision).contains("v1.0");
+    }
+
+    @Test
+    @Transactional
+    void calledDecisionBindingTypeVersionTag_missingTagAttribute_raisesIncident() throws Exception {
+        // WO-C8-20: bindingType="versionTag" без атрибута versionTag — явная ошибка с именем
+        // элемента (зеркало ветки versionTag CallActivityHandler'а), не silent-null lookup.
+        String decision = uniq("c8tagged");
+        dmnService.deploy(bpmn("test-c8-version-tag-decision.dmn")
+            .replace("c8tagged", decision)
+            .replace("VTAG", "v1.0")
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8cdva");
+        String xml = bpmn("test-c8-called-decision-version-tag.bpmn")
+            .replace("c8-called-decision-version-tag", key)
+            .replace("c8tagged", decision)
+            .replace(" versionTag=\"v1.0\"", "");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage()).contains("decide").contains("versionTag");
+    }
+
     // ==================== §C.2: processId как FEEL (WO-C8-2 GREEN) ====================
 
     @Test

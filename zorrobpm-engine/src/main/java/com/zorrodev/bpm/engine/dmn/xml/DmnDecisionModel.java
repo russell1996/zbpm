@@ -24,4 +24,6 @@ public class DmnDecisionModel {
     private DmnTextModel literalExpression;
     @XmlElement(name = "informationRequirement", namespace = DmnDefinitionsModel.NS)
     private List<InformationRequirementModel> informationRequirements;
+    @XmlElement(name = "extensionElements", namespace = DmnDefinitionsModel.NS)
+    private DmnDecisionExtensionModel extensionElements;
 }
