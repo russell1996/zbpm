@@ -45,6 +45,7 @@ class DmnDeployIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private UiUserRepository userRepository;
     @Autowired private PasswordHasher passwordHasher;
+    @Autowired private com.zorrodev.bpm.engine.repository.AuditLogRepository auditLogRepository;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
@@ -174,6 +175,26 @@ class DmnDeployIntegrationTest {
     }
 
     // ==================== Criterion #5: businessRuleTask runs after HTTP deploys (the value test) ====================
+
+    @Test
+    void deployDmn_writesAuditLogRecord() throws Exception {
+        // WO-C8-17 (debt from WO-C8-15): every newly deployed decision version leaves a DEPLOY
+        // audit record, like BPMN deploy does. Unique decision id — rest ITs commit rows.
+        String decision = "c8-17-audit-" + UUID.randomUUID().toString().substring(0, 8);
+        String dmn = DMN_DISCOUNT
+            .replace("Definitions_discount", "Definitions_" + decision)
+            .replace("id=\"discount\"", "id=\"" + decision + "\"");
+        MvcResult deploy = mockMvc.perform(post("/dmn")
+                .header("Authorization", "Bearer " + adminToken)
+                .content("{\"dmn\":" + mapper.writeValueAsString(dmn) + "}")
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+        assertThat(decisionIds(deploy)).contains(decision);
+
+        assertThat(auditLogRepository.findByFilters(decision, null, null, null))
+            .anyMatch(e -> "DEPLOY".equals(e.getAction()));
+    }
 
     @Test
     void businessRuleProcess_endToEnd_afterHttpDeploys() throws Exception {

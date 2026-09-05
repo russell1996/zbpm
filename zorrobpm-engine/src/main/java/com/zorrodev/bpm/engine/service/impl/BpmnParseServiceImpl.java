@@ -908,6 +908,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (ee != null && ee.getCalledDecision() != null) {
             ext.setDecisionId(ee.getCalledDecision().getDecisionId());
             ext.setResultVariable(ee.getCalledDecision().getResultVariable());
+            ext.setBindingType(ee.getCalledDecision().getBindingType());
+            ext.setVersionTag(ee.getCalledDecision().getVersionTag());
         } else if (ee != null && ee.getScript() != null) {
             ext.setExpression(ee.getScript().getExpression() != null ? ee.getScript().getExpression().strip() : null);
             ext.setResultVariable(ee.getScript().getResultVariable());
