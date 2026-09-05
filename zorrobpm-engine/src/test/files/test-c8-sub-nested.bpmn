@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8subnest" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-sub-nested" name="c8-sub-nested" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow1" name="subFlow1" sourceRef="subStart" targetRef="sub2" />
+      <bpmn:subProcess id="sub2" name="sub2">
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:outgoing>subFlow2</bpmn:outgoing>
+        <bpmn:startEvent id="innerStart" name="innerStart">
+          <bpmn:outgoing>innerFlow1</bpmn:outgoing>
+        </bpmn:startEvent>
+        <bpmn:sequenceFlow id="innerFlow1" name="innerFlow1" sourceRef="innerStart" targetRef="innerReview" />
+        <bpmn:userTask id="innerReview" name="innerReview">
+          <bpmn:incoming>innerFlow1</bpmn:incoming>
+          <bpmn:outgoing>innerFlow2</bpmn:outgoing>
+        </bpmn:userTask>
+        <bpmn:sequenceFlow id="innerFlow2" name="innerFlow2" sourceRef="innerReview" targetRef="innerEnd" />
+        <bpmn:endEvent id="innerEnd" name="innerEnd">
+          <bpmn:incoming>innerFlow2</bpmn:incoming>
+        </bpmn:endEvent>
+      </bpmn:subProcess>
+      <bpmn:sequenceFlow id="subFlow2" name="subFlow2" sourceRef="sub2" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subFlow2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

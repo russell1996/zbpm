@@ -17,12 +17,17 @@ import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
+import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
+import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
+import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ActivityService;
@@ -42,9 +47,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -106,6 +114,18 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private ActivityService activityService;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.scheduler.TimerJobExecutor timerJobExecutor;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private TimerJobRepository timerJobRepository;
+
+    @Autowired
+    private ProcessInstanceRepository processInstanceRepository;
 
     /**
      * WO-C8-11: в profile "test" штатный {@code TestServiceTaskEnqueueService} — no-op
@@ -325,6 +345,37 @@ public class Camunda8ParityCharacterizationTests {
             jobs.add(om.readTree(e.getPayload()).get("job").asText());
         }
         return jobs;
+    }
+
+    /** WO-C8-14b: runs the action in its own committed transaction (timer fires need committed rows). */
+    private void inNewTx(Runnable action) {
+        TransactionTemplate tt = new TransactionTemplate(transactionManager);
+        tt.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        tt.execute(status -> {
+            action.run();
+            return null;
+        });
+    }
+
+    /** WO-C8-14b: fires due timer jobs created after {@code since} (foreign jobs untouched). */
+    private void fireDueTimersInWindow(Instant since) {
+        dbService.findDueTimerJobs(Instant.now().plusSeconds(3600)).stream()
+            .filter(j -> j.getCreatedAt() != null && !j.getCreatedAt().isBefore(since))
+            .forEach(j -> {
+                try {
+                    timerJobExecutor.fire(j);
+                } catch (Exception ignored) {
+                    // isolate unrelated jobs, mirroring TimerScheduler
+                }
+            });
+    }
+
+    /** WO-C8-14b: deletes timer jobs created after {@code since} (committed-tx test cleanup). */
+    private void deleteTimerJobsInWindow(Instant since) {
+        List<TimerJobEntity> mine = timerJobRepository.findAll().stream()
+            .filter(e -> e.getCreatedAt() != null && !e.getCreatedAt().isBefore(since))
+            .toList();
+        timerJobRepository.deleteAll(mine);
     }
 
     // ==================== §C.1: zeebe:taskListeners ====================
@@ -1298,6 +1349,128 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("endApprove") && a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(activities).anyMatch(a -> a.getBpmnElementId().equals("timerCatch") && a.getStatus() == ActivityStatus.CANCELLED);
         assertThat(activities).noneMatch(a -> a.getBpmnElementId().equals("endTimeout"));
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    // ==================== WO-C8-14b (A-2, срез 2): вложенные контейнеры и boundary ====================
+
+    @Test
+    @Transactional
+    void callActivityInsideSubprocess_startsAndCompletesChild() throws Exception {
+        // WO-C8-14b, callActivity: вызов дочернего процесса из сабпроцесса — ребёнок реально
+        // стартует и завершается, родитель продолжается (зеркало CallActivity-тестов).
+        processDefinitionService.addProcessDefinition(bpmn("test-eng11-child.bpmn"));
+        String key = uniq("c8subcall");
+        String xml = bpmn("test-c8-sub-call.bpmn").replace("c8-sub-call", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        List<ProcessInstanceEntity> children = processInstanceRepository
+            .findAll(ProcessInstanceRepository.byParentProcessInstanceId(piId));
+        assertThat(children).hasSize(1);
+        assertThat(queryService.getProcessInstance(children.get(0).getId()).getCompletedAt()).isNotNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void nestedSubprocess_executesThroughBothLevels() throws Exception {
+        // WO-C8-14b, вложенный subProcess: рекурсия toSubProcessElement — поток проходит оба
+        // уровня, внутренняя user task исполняется.
+        String key = uniq("c8subnest");
+        String xml = bpmn("test-c8-sub-nested.bpmn").replace("c8-sub-nested", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(activity(piId, "innerReview").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        completeUserTask(piId, "innerReview");
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(activity(piId, "innerReview").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void transactionInsideSubprocess_completesNormally() throws Exception {
+        // WO-C8-14b, transaction: вложенная транзакция с service task завершается штатно,
+        // родитель продолжается (cancel-путь — вне среза).
+        String key = uniq("c8subtx");
+        String xml = bpmn("test-c8-sub-transaction.bpmn").replace("c8-sub-transaction", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        UUID svcId = activity(piId, "svc").getId();
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        runtimeService.completeServiceTask(svcId, List.of());
+
+        assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    void boundaryTimerOnTaskInsideSubprocess_interruptsIt() throws Exception {
+        // WO-C8-14b, критерий 4 (самый ценный тест среза): timer-boundary на задаче внутри
+        // сабпроцесса реально прерывает её — «таймаут на шаге внутри подпроцесса».
+        // Committed-tx паттерн TimerCycle-прецедента (без @Transactional): файры видят только
+        // закоммиченные строки; чистка — только свои timer jobs по окну времени.
+        Instant startedAt = Instant.now();
+        String key = uniq("c8subbt");
+        String xml = bpmn("test-c8-sub-boundary-timer.bpmn").replace("c8-sub-boundary-timer", key);
+        UUID[] piId = new UUID[1];
+        inNewTx(() -> {
+            try {
+                ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+                piId[0] = start(model.getId(), List.of());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        try {
+            assertThat(queryService.getProcessInstance(piId[0]).getCompletedAt()).isNull();
+            assertThat(activity(piId[0], "work").getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+            inNewTx(() -> fireDueTimersInWindow(startedAt));
+
+            assertThat(activity(piId[0], "work").getStatus()).isEqualTo(ActivityStatus.CANCELLED);
+            List<ActivityEntity> activities = activityRepository.findAll().stream()
+                .filter(a -> a.getProcessInstanceId().equals(piId[0]))
+                .toList();
+            assertThat(activities).anyMatch(a -> "endTimeout".equals(a.getBpmnElementId()) && a.getStatus() == ActivityStatus.COMPLETED);
+            assertThat(queryService.getProcessInstance(piId[0]).getCompletedAt()).isNotNull();
+            assertThat(incidentsOfInstance(piId[0])).isEmpty();
+        } finally {
+            Instant since = startedAt;
+            inNewTx(() -> deleteTimerJobsInWindow(since));
+        }
+    }
+
+    @Test
+    @Transactional
+    void associationInsideSubprocess_linksCompensationHandler() throws Exception {
+        // WO-C8-14b, association: compensate-boundary внутри сабпроцесса линкуется к хендлеру
+        // через association из того же сабпроцесса — компенсация исполняется (зеркало
+        // CompensationIntegrationTests, log = 0*10+1).
+        String key = uniq("c8subcomp");
+        String xml = bpmn("test-c8-sub-compensation.bpmn").replace("c8-sub-compensation", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("log", ProcessVariableType.LONG, "0")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        ProcessVariableEntity result = variableRepository.findByNameAndProcessInstanceId("log", piId).orElseThrow();
+        assertThat(result.getTextValue()).isEqualTo("1");
+        List<ActivityEntity> activities = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId))
+            .toList();
+        assertThat(activities).anyMatch(a -> "handlerA".equals(a.getBpmnElementId()) && a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 

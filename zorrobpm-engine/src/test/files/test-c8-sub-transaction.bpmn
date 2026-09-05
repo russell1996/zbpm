@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c8subtx" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-sub-transaction" name="c8-sub-transaction" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow1" name="subFlow1" sourceRef="subStart" targetRef="tx1" />
+      <bpmn:transaction id="tx1" name="tx1">
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:outgoing>subFlow2</bpmn:outgoing>
+        <bpmn:startEvent id="txStart" name="txStart">
+          <bpmn:outgoing>txFlow1</bpmn:outgoing>
+        </bpmn:startEvent>
+        <bpmn:sequenceFlow id="txFlow1" name="txFlow1" sourceRef="txStart" targetRef="svc" />
+        <bpmn:serviceTask id="svc" name="svc">
+          <bpmn:extensionElements>
+            <zeebe:taskDefinition type="job-c8" />
+          </bpmn:extensionElements>
+          <bpmn:incoming>txFlow1</bpmn:incoming>
+          <bpmn:outgoing>txFlow2</bpmn:outgoing>
+        </bpmn:serviceTask>
+        <bpmn:sequenceFlow id="txFlow2" name="txFlow2" sourceRef="svc" targetRef="txEnd" />
+        <bpmn:endEvent id="txEnd" name="txEnd">
+          <bpmn:incoming>txFlow2</bpmn:incoming>
+        </bpmn:endEvent>
+      </bpmn:transaction>
+      <bpmn:sequenceFlow id="subFlow2" name="subFlow2" sourceRef="tx1" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subFlow2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
