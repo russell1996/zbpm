@@ -221,7 +221,7 @@ expressions (WO-C8-6), decision requirements graph (WO-C8-10) — **код ко�
 
 ---
 
-### A-4 — СРЕДНЯЯ. Job worker не поддержан на end event / intermediate throw event
+### A-4 — ✅ ЗАКРЫТА (WO-C8-16, `897b81f0`). Была: job worker не поддержан на end event / intermediate throw event
 
 **Схема:** абстрактный тип `ZeebeServiceTask` (носитель `taskDefinition`, `taskHeaders`,
 `jobPriorityDefinition`) расширяет:
