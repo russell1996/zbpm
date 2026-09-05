@@ -329,25 +329,37 @@ public class Camunda8ParityCharacterizationTests {
     @Test
     @Transactional
     void taskHeaders_startListenerJob_carriesElementHeaders() throws Exception {
-        // WO-C8-7r2: вложенных headers у самого listener'а нет (у ExecutionListener нет
-        // properties в схеме — парсить не во что) и не надо: заголовки ЭЛЕМЕНТА едут в КАЖДОМ
-        // job'е, включая listener-job'ы (общий enqueue-путь). Этот тест — живое доказательство
-        // решения «ExecutionListener — вне скоупа».
+        // WO-C8-7r2: вложенные headers самого listener'а (легальный taskHeaders внутри
+        // executionListener — свойство headers: TaskHeaders в схеме) мержатся поверх
+        // заголовков элемента (listener wins по доке) и едут в listener-job'е; настоящий
+        // job несёт ТОЛЬКО заголовки элемента (утечки listener-headers в него нет).
         String key = uniq("c8thl");
         String xml = bpmn("test-c8-task-headers-listener.bpmn").replace("c8-task-headers-listener", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("listener-job");
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::headers)
+            .containsExactly(Map.of("mode", "listener", "trace", "t1"));
+
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
         UUID piId = start(model.getId(), List.of());
         UUID activityId = activity(piId, "svc").getId();
 
         assertThat(serviceTaskJobs(piId)).containsExactly("listener-job");
-        assertThat(serviceTaskHeaders(piId)).containsExactly(Map.of("tenant", "acme"));
+        assertThat(serviceTaskHeaders(piId)).containsExactly(
+            Map.of("tenant", "acme", "mode", "listener", "trace", "t1"));
 
         runtimeService.completeServiceTask(activityId, List.of());
 
         assertThat(serviceTaskJobs(piId)).containsExactly("listener-job", "job-c8");
-        assertThat(serviceTaskHeaders(piId))
-            .containsExactly(Map.of("tenant", "acme"), Map.of("tenant", "acme"));
+        assertThat(serviceTaskHeaders(piId)).containsExactly(
+            Map.of("tenant", "acme", "mode", "listener", "trace", "t1"),
+            Map.of("tenant", "acme", "mode", "element"));
 
         runtimeService.completeServiceTask(activityId, List.of());
 

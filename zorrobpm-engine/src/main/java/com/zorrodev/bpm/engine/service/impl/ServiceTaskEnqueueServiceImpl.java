@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,6 +63,10 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             .map(ext -> ext.getJob())
             .orElse(null);
 
+        // WO-C8-7r2: headers declared on the in-flight listener itself (null unless a
+        // listener job is dispatched below) — merged over the element headers at the end.
+        Map<String, String> listenerHeaders = null;
+
         // WO-C8-21: while a creating listener is in flight, the dispatched job is the
         // listener's. Read ONLY for elements that declare creating listeners (user tasks),
         // so every pre-existing path never touches the new read. A user task has no "real"
@@ -71,6 +76,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         Integer pendingCreating = creatingListeners.isEmpty() ? null : dbService.getPendingCreatingListenerIndex(serviceTaskId);
         if (pendingCreating != null && pendingCreating >= 0 && pendingCreating < creatingListeners.size()) {
             job = creatingListeners.get(pendingCreating).jobType();
+            listenerHeaders = creatingListeners.get(pendingCreating).headers();
         } else if (pendingCreating != null) {
             log.warn("User task {} has out-of-bounds pendingCreatingListenerIndex {} ({} creating listeners) — raising incident",
                 serviceTaskId, pendingCreating, creatingListeners.size());
@@ -87,6 +93,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         Integer pendingStart = startListeners.isEmpty() ? null : dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
         if (pendingStart != null && pendingStart >= 0 && pendingStart < startListeners.size()) {
             job = startListeners.get(pendingStart).jobType();
+            listenerHeaders = startListeners.get(pendingStart).headers();
         } else if (pendingStart != null) {
             log.warn("Service task {} has out-of-bounds pendingListenerIndex {} ({} start listeners) — dispatching real job",
                 serviceTaskId, pendingStart, startListeners.size());
@@ -102,6 +109,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             Integer pendingEnd = dbService.getServiceTaskPendingEndListenerIndex(serviceTaskId);
             if (pendingEnd != null && pendingEnd >= 0 && pendingEnd < endListeners.size()) {
                 job = endListeners.get(pendingEnd).jobType();
+                listenerHeaders = endListeners.get(pendingEnd).headers();
             } else if (pendingEnd != null) {
                 log.warn("Service task {} has out-of-bounds pendingEndListenerIndex {} ({} end listeners) — dispatching real job",
                     serviceTaskId, pendingEnd, endListeners.size());
@@ -113,6 +121,15 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             .map(ext -> ext.getServiceTaskExtension())
             .map(ext -> ext.getTaskHeaders())
             .orElse(null);
+
+        // WO-C8-7r2: a listener job carries the listener's own headers merged over the
+        // element's — listener wins on key conflict, per the docs. Plain jobs keep the
+        // element headers as-is (null when absent, as before).
+        if (listenerHeaders != null && !listenerHeaders.isEmpty()) {
+            Map<String, String> merged = taskHeaders == null ? new LinkedHashMap<>() : new LinkedHashMap<>(taskHeaders);
+            merged.putAll(listenerHeaders);
+            taskHeaders = merged;
+        }
 
         // WO-C8-9: null-safe priority resolution — FEEL→Integer, null when absent or broken.
         Integer priority = elementSupport.resolvePriority(processInstanceId, element);
