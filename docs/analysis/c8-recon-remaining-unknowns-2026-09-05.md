@@ -172,7 +172,7 @@ embedded — вставку JSON, custom — `externalReference`/`formKey`.
 (`formId`/`bindingType`/`versionTag` не парсятся); парсинг — `BpmnParseServiceImpl:1000-1005`
 (`formKey` → `UserTaskExtensionModel.formKey`); резолв — `FormArtifactService` через
 `FormRepository.findTopByFormKeyOrderByVersionDesc` (всегда latest, биндинга нет);
-наша таблица `FormEntity` ключValsя строкой `formKey`. Нужно: допарсить `formId`+`bindingType`
+наша таблица `FormEntity` ключуется строкой `formKey`. Нужно: допарсить `formId`+`bindingType`
 (+`versionTag` на потом), реестр `.form`-ресурсов (либо колонка `formId` рядом с `formKey`,
 либо отдельная таблица — решение дизайна), резолв latest/deployment/versionTag при активации
 задачи (deployment — естественный потребитель нашего `POST /deployments` из WO-C8-18:
@@ -235,7 +235,7 @@ have an incident.»
 
 Якоря реальны: `DmnDecisionModel` сегодня НЕ читает `extensionElements` вообще (проверено
 грепом — в `dmn/xml` пакете нет ни одного упоминания zeebe-неймспейса, это будет первый
-кросс-неймспейс JAXB там); `DmnDefinitionEntity` несёт `(decisionId, version, dmn,
+кросс-неймспейс JAXB там); `DmnDefinitionEntity` несёт `(decisionId, version, dmn, deploymentId,
 processDefinitionId)` — нужен nullable `version_tag` + миграция; `DmnDefinitionRepository` —
 запрос `(decisionId, versionTag) → latest version` (образец: соседний pinned-запрос WO-C8-17);
 `DmnServiceImpl.evaluate` — ветка в диспетче binding'ов рядом с `deployment` из WO-C8-17;
