@@ -1,6 +1,9 @@
 package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.contract.dto.DeploymentDTO;
+import com.zorrodev.bpm.contract.dto.DeploymentItemDTO;
+import com.zorrodev.bpm.contract.dto.DeploymentResourceType;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
@@ -31,6 +34,7 @@ import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ActivityService;
+import com.zorrodev.bpm.engine.service.DeploymentService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import com.zorrodev.bpm.engine.service.impl.ServiceTaskEnqueueServiceImpl;
@@ -114,6 +118,9 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private ActivityService activityService;
+
+    @Autowired
+    private DeploymentService deploymentService;
 
     @Autowired
     private com.zorrodev.bpm.engine.scheduler.TimerJobExecutor timerJobExecutor;
@@ -1021,26 +1028,31 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void bindingTypeDeployment_resolvesLatestNotPinned() throws Exception {
+    void bindingTypeDeployment_callsPinnedVersionNotLatest() throws Exception {
+        // WO-C8-3b GREEN (переименован из bindingTypeDeployment_resolvesLatestNotPinned):
+        // родитель и child v1 выложены ОДНИМ деплойментом; прилетевшая позже child v2
+        // (отдельно) НЕ вызывается — исполняется зафиксированная v1.
         String childKey = uniq("c8callee");
-        processDefinitionService.addProcessDefinition(
-            bpmn("test-c8-child.bpmn")
-                .replace("c8-child", childKey)
-                .replace("C8MARKER", "\"v1\""));
         String key = uniq("c8bt");
-        String xml = bpmn("test-c8-binding-deployment.bpmn")
+        DeploymentItemDTO childItem = batchItem(bpmn("test-c8-child.bpmn")
+            .replace("c8-child", childKey)
+            .replace("C8MARKER", "\"v1\""));
+        DeploymentItemDTO parentItem = batchItem(bpmn("test-c8-binding-deployment.bpmn")
             .replace("c8-binding-deployment", key)
-            .replace("c8-callee", childKey);
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
-        // новая версия вызываемого приземляется ПОСЛЕ деплоя вызывающего.
+            .replace("c8-callee", childKey));
+        DeploymentDTO batch = deploymentService.deployBatch(List.of(childItem, parentItem), null, null);
+        UUID parentPdId = batch.getProcesses().stream()
+            .filter(p -> key.equals(p.getKey()))
+            .findFirst().orElseThrow().getProcessDefinitionId();
+        // новая версия вызываемого приземляется ПОСЛЕ деплоймента (отдельно, вне пачки).
         processDefinitionService.addProcessDefinition(
             bpmn("test-c8-child.bpmn")
                 .replace("c8-child", childKey)
                 .replace("C8MARKER", "\"v2\""));
 
-        UUID piId = start(model.getId(), List.of());
+        UUID piId = start(parentPdId, List.of());
 
-        // bindingType="deployment" не соблюдается: выполняется latest (v2), не зафиксированная v1.
+        // исполняется v1 (маркер дочернего инстанса), не прилетевшая позже v2.
         // (Маркер пишется и в дочернем, и — WO-ENG-11 propagation — в родительском инстансе,
         // поэтому смотрим именно строку дочернего инстанса.)
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
@@ -1049,7 +1061,130 @@ public class Camunda8ParityCharacterizationTests {
             .filter(v -> !v.getProcessInstanceId().equals(piId))
             .toList();
         assertThat(childMarkers).hasSize(1);
+        assertThat(childMarkers.get(0).getTextValue()).isEqualTo("v1");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void bindingTypeLatest_stillResolvesLatest() throws Exception {
+        // WO-C8-3b, критерий 2: bindingType="latest" — прежний путь, побеждает v2.
+        String childKey = uniq("c8callee");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child.bpmn")
+                .replace("c8-child", childKey)
+                .replace("C8MARKER", "\"v1\""));
+        String key = uniq("c8btl");
+        String xml = bpmn("test-c8-binding-deployment.bpmn")
+            .replace("c8-binding-deployment", key)
+            .replace("c8-callee", childKey)
+            .replace("bindingType=\"deployment\"", "bindingType=\"latest\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child.bpmn")
+                .replace("c8-child", childKey)
+                .replace("C8MARKER", "\"v2\""));
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        List<ProcessVariableEntity> childMarkers = variableRepository.findAll().stream()
+            .filter(v -> v.getName().equals("ranVersion"))
+            .filter(v -> !v.getProcessInstanceId().equals(piId))
+            .toList();
+        assertThat(childMarkers).hasSize(1);
         assertThat(childMarkers.get(0).getTextValue()).isEqualTo("v2");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void bindingTypeAbsent_stillResolvesLatest() throws Exception {
+        // WO-C8-3b, критерий 2: отсутствие атрибута — прежний путь (latest), побеждает v2.
+        String childKey = uniq("c8callee");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child.bpmn")
+                .replace("c8-child", childKey)
+                .replace("C8MARKER", "\"v1\""));
+        String key = uniq("c8bta");
+        String xml = bpmn("test-c8-binding-deployment.bpmn")
+            .replace("c8-binding-deployment", key)
+            .replace("c8-callee", childKey)
+            .replace(" bindingType=\"deployment\"", "");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child.bpmn")
+                .replace("c8-child", childKey)
+                .replace("C8MARKER", "\"v2\""));
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        List<ProcessVariableEntity> childMarkers = variableRepository.findAll().stream()
+            .filter(v -> v.getName().equals("ranVersion"))
+            .filter(v -> !v.getProcessInstanceId().equals(piId))
+            .toList();
+        assertThat(childMarkers).hasSize(1);
+        assertThat(childMarkers.get(0).getTextValue()).isEqualTo("v2");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void bindingTypeDeployment_childMissingFromDeployment_raisesIncident() throws Exception {
+        // WO-C8-3b, критерий 3: вызываемого нет в деплойменте родителя — явный инцидент
+        // с внятным текстом, НЕ тихий fallback в latest.
+        String childKey = uniq("c8callee");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child.bpmn")
+                .replace("c8-child", childKey)
+                .replace("C8MARKER", "\"v1\""));
+        String key = uniq("c8btm");
+        DeploymentItemDTO parentItem = batchItem(bpmn("test-c8-binding-deployment.bpmn")
+            .replace("c8-binding-deployment", key)
+            .replace("c8-callee", childKey));
+        DeploymentDTO batch = deploymentService.deployBatch(List.of(parentItem), null, null);
+        UUID parentPdId = batch.getProcesses().stream()
+            .filter(p -> key.equals(p.getKey()))
+            .findFirst().orElseThrow().getProcessDefinitionId();
+
+        UUID piId = start(parentPdId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage()).contains(childKey).contains("bindingType=\"deployment\"");
+    }
+
+    @Test
+    @Transactional
+    void bindingTypeDeployment_singlyDeployedParent_raisesIncident() throws Exception {
+        // WO-C8-3b + диспатч (следствие Option B): родитель выложен одиночкой (deployment_id
+        // NULL) — пиннинг невозможен, явный инцидент с указанием перевыложить пачкой.
+        String childKey = uniq("c8callee");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-child.bpmn")
+                .replace("c8-child", childKey)
+                .replace("C8MARKER", "\"v1\""));
+        String key = uniq("c8bts");
+        String xml = bpmn("test-c8-binding-deployment.bpmn")
+            .replace("c8-binding-deployment", key)
+            .replace("c8-callee", childKey);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage()).contains("POST /deployments");
+    }
+
+    private static DeploymentItemDTO batchItem(String bpmn) {
+        DeploymentItemDTO item = new DeploymentItemDTO();
+        item.setType(DeploymentResourceType.BPMN);
+        item.setContent(bpmn);
+        return item;
     }
 
     // ==================== WO-C8-3: bindingType="versionTag" ====================

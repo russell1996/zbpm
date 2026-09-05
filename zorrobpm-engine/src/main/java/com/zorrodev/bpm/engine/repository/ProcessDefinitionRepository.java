@@ -47,6 +47,13 @@ public interface ProcessDefinitionRepository extends JpaRepository<ProcessDefini
     @Query("SELECT MAX(pd.version) FROM ProcessDefinitionEntity pd WHERE pd.key = :key AND pd.versionTag = :versionTag")
     Optional<Integer> findMaxByKeyAndVersionTag(String key, String versionTag);
 
+    /**
+     * WO-C8-3b: latest version of a process deployed together with the given deployment
+     * ({@code bindingType="deployment"} pinning on call activities).
+     */
+    @Query("SELECT MAX(pd.version) FROM ProcessDefinitionEntity pd WHERE pd.key = :key AND pd.deploymentId = :deploymentId")
+    Optional<Integer> findMaxByKeyAndDeploymentId(String key, UUID deploymentId);
+
     Optional<ProcessDefinitionEntity> findByKeyAndVersion(String key, Integer version);
 
     @Query("SELECT pd1 FROM ProcessDefinitionEntity pd1 JOIN (SELECT pd2.key AS key, MAX(pd2.version) AS version FROM ProcessDefinitionEntity pd2 GROUP BY pd2.key) AS pd3 ON pd1.key = pd3.key AND pd1.version = pd3.version")
