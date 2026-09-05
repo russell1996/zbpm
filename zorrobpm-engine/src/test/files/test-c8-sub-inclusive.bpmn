@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c8subinc" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-sub-inclusive" name="c8-sub-inclusive" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow0</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow0" name="subFlow0" sourceRef="subStart" targetRef="split" />
+      <bpmn:inclusiveGateway id="split" name="split" default="flowDefault">
+        <bpmn:incoming>subFlow0</bpmn:incoming>
+        <bpmn:outgoing>flowA</bpmn:outgoing>
+        <bpmn:outgoing>flowB</bpmn:outgoing>
+        <bpmn:outgoing>flowDefault</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="flowA" name="flowA" sourceRef="split" targetRef="join">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=a = "yes"</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="split" targetRef="join">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=b = "yes"</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="flowDefault" name="flowDefault" sourceRef="split" targetRef="join" />
+      <bpmn:inclusiveGateway id="join" name="join">
+        <bpmn:incoming>flowA</bpmn:incoming>
+        <bpmn:incoming>flowB</bpmn:incoming>
+        <bpmn:incoming>flowDefault</bpmn:incoming>
+        <bpmn:outgoing>subFlowEnd</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="subFlowEnd" name="subFlowEnd" sourceRef="join" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subFlowEnd</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
