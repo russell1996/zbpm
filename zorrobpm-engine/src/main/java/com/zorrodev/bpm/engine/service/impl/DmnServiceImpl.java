@@ -56,6 +56,15 @@ public class DmnServiceImpl implements DmnService {
 
     @Override
     public void deploy(String dmnXml, UUID processDefinitionId) {
+        deploy(dmnXml, processDefinitionId, null);
+    }
+
+    /**
+     * WO-C8-18: same as {@link #deploy(String, UUID)}, but stamps {@code deploymentId} on the
+     * created rows (batch deploys). Null keeps single-deploy behaviour byte-identical.
+     */
+    @Override
+    public void deploy(String dmnXml, UUID processDefinitionId, UUID deploymentId) {
         DmnDefinitionsModel model = SecureXmlParser.unmarshal(dmnXml, DmnDefinitionsModel.class);
         if (model.getDecisions() == null || model.getDecisions().isEmpty()) {
             throw new EngineException("DMN resource has no decisions");
@@ -71,6 +80,7 @@ public class DmnServiceImpl implements DmnService {
             entity.setDmn(dmnXml);
             entity.setCreatedAt(Instant.now());
             entity.setProcessDefinitionId(processDefinitionId);
+            entity.setDeploymentId(deploymentId);
             dmnDefinitionRepository.save(entity);
             log.info("Deployed DMN decision '{}' version {}", decision.getId(), version);
         }
