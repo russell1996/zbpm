@@ -16,7 +16,7 @@ public class BusinessRuleExtensionModel {
     /** WO-C8-17: DMN version binding ("latest" default, "deployment" pins to the process version). */
     private String bindingType;
     /**
-     * WO-C8-17: parsed, NOT consumed — versionTag pinning is a separate WO (see CalledDecisionModel).
+     * WO-C8-17: parsed here; consumed since WO-C8-20 (see CalledDecisionModel).
      */
     private String versionTag;
 }
