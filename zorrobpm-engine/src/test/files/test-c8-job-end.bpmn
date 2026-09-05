@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c8je" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-job-end" name="c8-job-end" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="end" />
+    <bpmn:endEvent id="end" name="end">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="job-c8" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="tenant" value="acme" />
+        </zeebe:taskHeaders>
+        <zeebe:jobPriorityDefinition priority="75" />
+      </bpmn:extensionElements>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
