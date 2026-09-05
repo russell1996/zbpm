@@ -848,29 +848,109 @@ public class Camunda8ParityCharacterizationTests {
 
     @Test
     @Transactional
-    void calledDecisionBindingType_isIgnored_latestDecisionWins() throws Exception {
+    void calledDecisionBindingTypeDeployment_pinnedVersionWins() throws Exception {
+        // WO-C8-17 GREEN (переименован из calledDecisionBindingType_isIgnored_latestDecisionWins):
+        // процесс деплоится первым; v1 привязывается к его версии; прилетевшая позже v2
+        // (без привязки) НЕ побеждает — исполняется v1.
         String decision = uniq("c8pinned");
-        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
-            .replace("c8pinned", decision)
-            .replace("C8VAL", "\"v1-val\""));
         String key = uniq("c8cdb");
         String xml = bpmn("test-c8-called-decision-binding.bpmn")
             .replace("c8-called-decision-binding", key)
             .replace("c8pinned", decision);
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
-        // a newer version of the same decision lands AFTER the caller was deployed.
+
+        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
+            .replace("c8pinned", decision)
+            .replace("C8VAL", "\"v1-val\""), model.getId());
         dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
             .replace("c8pinned", decision)
             .replace("C8VAL", "\"v2-val\""));
 
         UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
 
-        // bindingType="deployment" is not honoured: the latest decision version wins.
         ProcessInstance pi = queryService.getProcessInstance(piId);
         assertThat(pi.getCompletedAt()).isNotNull();
         ProcessVariableEntity picked = variableRepository
             .findByNameAndProcessInstanceId("picked", piId).orElseThrow();
+        assertThat(picked.getTextValue()).isEqualTo("v1-val");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void calledDecisionBindingTypeLatest_stillWins() throws Exception {
+        // WO-C8-17, критерий 3: bindingType="latest" — прежний путь, побеждает v2.
+        String decision = uniq("c8pinned");
+        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
+            .replace("c8pinned", decision)
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8cdl");
+        String xml = bpmn("test-c8-called-decision-binding.bpmn")
+            .replace("c8-called-decision-binding", key)
+            .replace("c8pinned", decision)
+            .replace(" bindingType=\"deployment\"", " bindingType=\"latest\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
+            .replace("c8pinned", decision)
+            .replace("C8VAL", "\"v2-val\""));
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        ProcessVariableEntity picked = variableRepository
+            .findByNameAndProcessInstanceId("picked", piId).orElseThrow();
         assertThat(picked.getTextValue()).isEqualTo("v2-val");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void calledDecisionBindingTypeAbsent_stillWins() throws Exception {
+        // WO-C8-17, критерий 3: отсутствие атрибута — прежний путь (latest), побеждает v2.
+        String decision = uniq("c8pinned");
+        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
+            .replace("c8pinned", decision)
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8cda");
+        String xml = bpmn("test-c8-called-decision-binding.bpmn")
+            .replace("c8-called-decision-binding", key)
+            .replace("c8pinned", decision)
+            .replace(" bindingType=\"deployment\"", "");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
+            .replace("c8pinned", decision)
+            .replace("C8VAL", "\"v2-val\""));
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        ProcessVariableEntity picked = variableRepository
+            .findByNameAndProcessInstanceId("picked", piId).orElseThrow();
+        assertThat(picked.getTextValue()).isEqualTo("v2-val");
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void calledDecisionBindingTypeDeployment_withoutPinnedVersion_raisesIncident() throws Exception {
+        // WO-C8-17, критерий 4: решение деплоилось только без привязки — явный инцидент
+        // с внятным текстом, НЕ тихий fallback в latest (иначе чинимый дефект вернулся бы).
+        String decision = uniq("c8pinned");
+        dmnService.deploy(bpmn("test-c8-pinned-decision.dmn")
+            .replace("c8pinned", decision)
+            .replace("C8VAL", "\"v1-val\""));
+        String key = uniq("c8cdn");
+        String xml = bpmn("test-c8-called-decision-binding.bpmn")
+            .replace("c8-called-decision-binding", key)
+            .replace("c8pinned", decision);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("tier", ProcessVariableType.STRING, "gold")));
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        List<IncidentEntity> incidents = incidentsOfInstance(piId);
+        assertThat(incidents).hasSize(1);
+        assertThat(incidents.get(0).getMessage()).contains(decision).contains("bindingType=\"deployment\"");
     }
 
     // ==================== §C.2: processId как FEEL (WO-C8-2 GREEN) ====================
