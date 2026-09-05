@@ -35,6 +35,8 @@ public class ProcessDefinitionEntity {
     private String startFormKey;
     /** WO-C8-3: zeebe:versionTag процесса (nullable) — для bindingType="versionTag" на call activity. */
     private String versionTag;
+    /** WO-C8-18: деплоймент пачки (POST /deployments); null — одиночный деплой (обратная совместимость). */
+    private UUID deploymentId;
     @Column(name = "deployment_state", nullable = false)
     private String deploymentState = STATE_ACTIVE;
 }

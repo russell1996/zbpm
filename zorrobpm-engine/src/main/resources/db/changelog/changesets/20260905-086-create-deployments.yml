@@ -1,0 +1,48 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-086
+  - changeSet:
+      id: 20260905-086
+      author: zorrodev
+      changes:
+        # WO-C8-18: понятие деплоймента — пачка ресурсов, выложенная атомарно (enabler для
+        # WO-C8-3b bindingType="deployment" у call activity: «версия, задеплоенная ВМЕСТЕ»).
+        # deployment_id везде nullable: одиночные деплои (POST /process-definitions, POST /dmn)
+        # продолжают работать без изменений и оставляют NULL; пачковый POST /deployments
+        # проставляет один id на все свои строки. FK сознательно нет (мягкая ссылка,
+        # удаление/откат деплоймента — вне scope; обоснование — в отчёте WO-C8-18).
+        - createTable:
+            tableName: deployments
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    primaryKeyName: pk_deployments
+              - column:
+                  name: created_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: deployed_by
+                  type: varchar(255)
+                  remarks: 'Принципал, выполнивший деплой (nullable — системные/тестовые выкладки)'
+              - column:
+                  name: description
+                  type: varchar(255)
+                  remarks: 'Описание пачки от вызывающего (nullable)'
+        - addColumn:
+            tableName: process_definitions
+            columns:
+              - column:
+                  name: deployment_id
+                  type: uuid
+                  remarks: 'Деплоймент пачки WO-C8-18 (POST /deployments); null — одиночный деплой'
+        - addColumn:
+            tableName: dmn_definitions
+            columns:
+              - column:
+                  name: deployment_id
+                  type: uuid
+                  remarks: 'Деплоймент пачки WO-C8-18 (POST /deployments); null — одиночный деплой'
