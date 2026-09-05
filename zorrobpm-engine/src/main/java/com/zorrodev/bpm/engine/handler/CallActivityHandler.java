@@ -85,8 +85,22 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
             if (version == null || version == 0) {
                 throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' with versionTag '" + tag + "' which has no matching deployed version");
             }
+        } else if ("deployment".equals(bindingType)) {
+            // WO-C8-3b: resolve the child version laid down TOGETHER WITH the currently running
+            // parent version (shared deployment_id from POST /deployments) — NOT latest overall.
+            // A singly-deployed parent (deployment_id NULL) or a child missing from the deployment
+            // is an explicit incident, never a silent latest fallback (same philosophy as WO-C8-17).
+            UUID parentPdId = dbService.getProcessInstance(processInstanceId).getProcessDefinitionId();
+            UUID deploymentId = dbService.getDeploymentIdByProcessDefinitionId(parentPdId);
+            if (deploymentId == null) {
+                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has bindingType=\"deployment\" but its process version was laid down singly (no deployment) — redeploy parent and child together via POST /deployments");
+            }
+            version = dbService.getMaxProcessDefinitionVersionByKeyAndDeploymentId(key, deploymentId);
+            if (version == null || version == 0) {
+                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no version deployed together with deployment '" + deploymentId + "' (bindingType=\"deployment\") — deploy parent and child together via POST /deployments");
+            }
         } else {
-            // "latest" (default) and "deployment" (WO-C8-3b, not yet implemented — same as latest for now)
+            // "latest" (default) — latest overall wins, historical behaviour.
             version = dbService.getMaxProcessDefinitionVersionByKey(key);
             if (version == null || version == 0) {
                 throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no deployed definition");

@@ -90,4 +90,43 @@ class ProcessDefinitionDbOperationsImplTest {
 
         assertThat(service.getMaxProcessDefinitionVersionByKeyAndVersionTag("absent", "v9")).isEqualTo(0);
     }
+
+    @Test
+    void getMaxProcessDefinitionVersionByKeyAndDeploymentId_returnsValue() {
+        UUID deploymentId = UUID.randomUUID();
+        when(processDefinitionRepository.findMaxByKeyAndDeploymentId("present", deploymentId)).thenReturn(Optional.of(2));
+
+        assertThat(service.getMaxProcessDefinitionVersionByKeyAndDeploymentId("present", deploymentId)).isEqualTo(2);
+    }
+
+    @Test
+    void getMaxProcessDefinitionVersionByKeyAndDeploymentId_returnsZeroWhenAbsent() {
+        UUID deploymentId = UUID.randomUUID();
+        when(processDefinitionRepository.findMaxByKeyAndDeploymentId("absent", deploymentId)).thenReturn(Optional.empty());
+
+        assertThat(service.getMaxProcessDefinitionVersionByKeyAndDeploymentId("absent", deploymentId)).isEqualTo(0);
+    }
+
+    @Test
+    void getDeploymentIdByProcessDefinitionId_returnsValue() {
+        UUID pdId = UUID.randomUUID();
+        UUID deploymentId = UUID.randomUUID();
+        ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
+        entity.setId(pdId);
+        entity.setDeploymentId(deploymentId);
+        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(entity));
+
+        assertThat(service.getDeploymentIdByProcessDefinitionId(pdId)).isEqualTo(deploymentId);
+    }
+
+    @Test
+    void getDeploymentIdByProcessDefinitionId_returnsNullWhenSingle() {
+        UUID pdId = UUID.randomUUID();
+        ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
+        entity.setId(pdId);
+        entity.setDeploymentId(null);
+        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(entity));
+
+        assertThat(service.getDeploymentIdByProcessDefinitionId(pdId)).isNull();
+    }
 }
