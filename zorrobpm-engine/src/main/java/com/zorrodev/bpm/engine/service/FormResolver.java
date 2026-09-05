@@ -44,6 +44,28 @@ public class FormResolver {
         return dto;
     }
 
+    /**
+     * WO-C8-22: resolves a Modeler-linked form by its {@code formId} — always the latest
+     * deployed version carrying this id (binding {@code latest}; {@code deployment} and
+     * {@code versionTag} are separate WOs). A missing form behaves exactly like a missing
+     * {@code formKey} above (404, same shape) — never a silent {@code type: "none"}.
+     */
+    public TaskFormDTO resolveTaskFormByFormId(String formId, java.util.Map<String, String> prefillData) {
+        FormEntity form = (formId == null || formId.isBlank()) ? null
+            : formRepository.findTopByFormIdOrderByVersionDesc(formId).orElse(null);
+        if (form == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Form schema not found for id: " + formId);
+        }
+
+        TaskFormDTO dto = new TaskFormDTO();
+        dto.setType("embedded");
+        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
+        dto.setSchema(form.getSchemaJson());
+        if (prefillData != null) dto.setData(prefillData);
+        return dto;
+    }
+
     public String getSchemaJson(String formKey) {
         if (formKey == null || formKey.isBlank()) return null;
         if (formKey.startsWith("http://") || formKey.startsWith("https://")) return null;

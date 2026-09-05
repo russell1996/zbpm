@@ -133,9 +133,12 @@ public class MultiInstanceExecutor {
             String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, element);
             String formKey = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
                 ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
+            // WO-C8-22: linked-form id rides its own field into the row (never into formKey).
+            String formId = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
+                ? element.getExtensions().getUserTaskExtension().getFormId() : null;
             String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, element);
             String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, element);
-            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
+            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, resolvedDueDate, resolvedFollowUpDate);
         } else {
             dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(element), elementSupport.serviceTaskJob(element));
             elementSupport.applyIoMappings(processInstanceId, activityId, element, true);

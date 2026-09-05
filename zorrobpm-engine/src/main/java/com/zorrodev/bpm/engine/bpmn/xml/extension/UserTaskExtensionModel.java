@@ -13,6 +13,12 @@ public class UserTaskExtensionModel {
     private String candidateUsers;
     private String candidateGroups;
     private String formKey;
+    /**
+     * WO-C8-22: linked-form id ({@code zeebe:formDefinition/@formId}) — a SEPARATE field,
+     * never merged into {@code formKey} (the pre-existing {@code externalReference}→{@code formKey}
+     * conflation is left untouched). Null when the model uses formKey/externalReference.
+     */
+    private String formId;
     private String externalReference;
     private String dueDate;
     private String followUpDate;
