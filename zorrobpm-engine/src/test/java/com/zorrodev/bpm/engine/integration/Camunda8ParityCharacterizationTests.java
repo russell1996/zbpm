@@ -244,6 +244,129 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
+    // ==================== WO-C8-7 раунд 2: taskHeaders шире service task ====================
+
+    /** WO-C8-7r2: taskHeaders каждого outbox-job'а инстанса по порядку (зеркало serviceTaskJobs). */
+    private List<Map<String, String>> serviceTaskHeaders(UUID processInstanceId) throws Exception {
+        tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
+        List<OutboxEntry> entries = outboxRepository.findAll().stream()
+            .filter(e -> e.getKind() == OutboxKind.SERVICE_TASK)
+            .filter(e -> {
+                try {
+                    return processInstanceId.toString().equals(om.readTree(e.getPayload()).get("processInstanceId").asText());
+                } catch (Exception ex) {
+                    throw new RuntimeException(ex);
+                }
+            })
+            .sorted(java.util.Comparator.comparing(OutboxEntry::getCreatedAt).thenComparing(OutboxEntry::getId))
+            .collect(Collectors.toList());
+        List<Map<String, String>> headers = new java.util.ArrayList<>();
+        for (OutboxEntry e : entries) {
+            var node = om.readTree(e.getPayload()).get("taskHeaders");
+            if (node == null || node.isNull()) {
+                headers.add(null);
+            } else {
+                Map<String, String> map = new java.util.LinkedHashMap<>();
+                var it = node.propertyNames().iterator();
+                while (it.hasNext()) {
+                    String name = it.next();
+                    map.put(name, node.get(name).asText());
+                }
+                headers.add(map);
+            }
+        }
+        return headers;
+    }
+
+    @Test
+    @Transactional
+    void taskHeaders_scriptTaskJobWorker_deliversHeadersToJob() throws Exception {
+        // WO-C8-7r2: script task с taskDefinition — job worker; заголовки доезжают до job'а.
+        String key = uniq("c8ths");
+        String xml = bpmn("test-c8-task-headers-script.bpmn").replace("c8-task-headers-script", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getTaskHeaders())
+            .containsExactlyEntriesOf(Map.of("tenant", "acme"));
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8");
+        assertThat(serviceTaskHeaders(piId)).containsExactly(Map.of("tenant", "acme"));
+
+        runtimeService.completeServiceTask(activity(piId, "svc").getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskHeaders_sendTaskJobWorker_deliversHeadersToJob() throws Exception {
+        // WO-C8-7r2: send task с taskDefinition — job worker; заголовки доезжают до job'а.
+        String key = uniq("c8thse");
+        String xml = bpmn("test-c8-task-headers-send.bpmn").replace("c8-task-headers-send", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getTaskHeaders())
+            .containsExactlyEntriesOf(Map.of("tenant", "acme"));
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("job-c8");
+        assertThat(serviceTaskHeaders(piId)).containsExactly(Map.of("tenant", "acme"));
+
+        runtimeService.completeServiceTask(activity(piId, "svc").getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskHeaders_startListenerJob_carriesElementHeaders() throws Exception {
+        // WO-C8-7r2: вложенные headers самого listener'а (легальный taskHeaders внутри
+        // executionListener — свойство headers: TaskHeaders в схеме) мержатся поверх
+        // заголовков элемента (listener wins по доке) и едут в listener-job'е; настоящий
+        // job несёт ТОЛЬКО заголовки элемента (утечки listener-headers в него нет).
+        String key = uniq("c8thl");
+        String xml = bpmn("test-c8-task-headers-listener.bpmn").replace("c8-task-headers-listener", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("listener-job");
+        assertThat(bpmnParseService.parse(xml).getElement("svc").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::headers)
+            .containsExactly(Map.of("mode", "listener", "trace", "t1"));
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "svc").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job");
+        assertThat(serviceTaskHeaders(piId)).containsExactly(
+            Map.of("tenant", "acme", "mode", "listener", "trace", "t1"));
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("listener-job", "job-c8");
+        assertThat(serviceTaskHeaders(piId)).containsExactly(
+            Map.of("tenant", "acme", "mode", "listener", "trace", "t1"),
+            Map.of("tenant", "acme", "mode", "element"));
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
     // ==================== §C.1: zeebe:executionListeners ====================
 
     @Test
