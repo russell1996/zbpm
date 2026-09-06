@@ -16,7 +16,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -39,6 +42,31 @@ public class CompletionService {
     private final EventTrigger eventTrigger;
     private final ExecutionContext executionContext;
     private final UserTaskHandler userTaskHandler;
+    private final ElementListenerPhaseService elementListenerPhaseService;
+
+    /**
+     * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
+     * {@code service_tasks} rows (user tasks — C8-21/C8-24 phases; gateways and events —
+     * C8-25 phases). A service-task completion arriving for them with no listener phase
+     * open is spurious (e.g. a redelivered listener completion; the broker is at-least-once)
+     * and is ignored instead of falling into the service-task tail (no row → orElseThrow).
+     * Any FUTURE kind defaults to the tail (loud 500) — fail-closed by construction.
+     */
+    private static final Set<BpmnElementType> PHASE_ONLY_ELEMENT_TYPES = EnumSet.of(
+        BpmnElementType.USER_TASK,
+        BpmnElementType.EXCLUSIVE_GATEWAY, BpmnElementType.PARALLEL_GATEWAY,
+        BpmnElementType.EVENT_BASED_GATEWAY, BpmnElementType.INCLUSIVE_GATEWAY,
+        BpmnElementType.START_EVENT, BpmnElementType.MESSAGE_START_EVENT,
+        BpmnElementType.TIMER_START_EVENT, BpmnElementType.SIGNAL_START_EVENT,
+        BpmnElementType.END_EVENT, BpmnElementType.TERMINATE_END_EVENT,
+        BpmnElementType.ERROR_END_EVENT, BpmnElementType.ESCALATION_END_EVENT,
+        BpmnElementType.CANCEL_END_EVENT,
+        BpmnElementType.INTERMEDIATE_CATCH_EVENT, BpmnElementType.MESSAGE_CATCH_EVENT,
+        BpmnElementType.TIMER_CATCH_EVENT, BpmnElementType.SIGNAL_CATCH_EVENT,
+        BpmnElementType.LINK_CATCH_EVENT, BpmnElementType.CONDITIONAL_CATCH_EVENT,
+        BpmnElementType.INTERMEDIATE_THROW_EVENT, BpmnElementType.MESSAGE_THROW_EVENT,
+        BpmnElementType.SIGNAL_THROW_EVENT, BpmnElementType.LINK_THROW_EVENT,
+        BpmnElementType.ESCALATION_THROW_EVENT, BpmnElementType.COMPENSATION_THROW_EVENT);
 
     /** True if {@code element} is a catch event whose (only) incoming flow comes from an event-based gateway. */
     private boolean isBehindEventBasedGateway(BpmnProcessDefinitionModel bpmn, BpmnElementModel element) {
@@ -148,6 +176,21 @@ public class CompletionService {
      * WITHOUT moving the token. Only the real job's completion follows the path below.
      */
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
+        // WO-C8-25: element-listener phase jobs carry no activity row — route by phase PK
+        // FIRST (the lock below would orElseThrow). Absent phase = existing path below,
+        // byte-identical (one indexed PK read extra on the completion path).
+        Optional<ElementListenerPhaseService.Resume> phaseResume =
+            elementListenerPhaseService.completePhaseListener(serviceTaskId, variables);
+        if (phaseResume.isPresent()) {
+            ElementListenerPhaseService.Resume resume = phaseResume.get();
+            if (resume.finished()) {
+                // No re-entry guard needed: the finished phase is marked done BEFORE this
+                // call, so the park-check below finds the done marker and proceeds to the
+                // handler instead of re-opening (a loop is structurally impossible).
+                executor.execute(resume.processInstanceId(), resume.tokenId(), resume.bpmnElementId());
+            }
+            return;
+        }
         Activity activity = elementSupport.lockAndReload(serviceTaskId);
         if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
             // only an active task may complete. Ignore anything else to avoid advancing the token twice:
@@ -253,13 +296,22 @@ public class CompletionService {
             // reaching the user-task guard below is spurious and ignored there).
         }
 
-        // WO-C8-24: user tasks have no "real" job — a service-task completion arriving here
-        // with no listener phase open on either branch is spurious (e.g. a redelivered
+        // WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
+        // service_tasks rows have no "real" job — a service-task completion arriving here
+        // with no listener phase open on any branch above is spurious (e.g. a redelivered
         // listener completion; the broker is at-least-once). Ignore it instead of falling
-        // into the service-task tail below (no service_tasks row → orElseThrow → 500).
-        // Same philosophy as the status guard at the top of this method.
-        if (bpmnElement.getType() == BpmnElementType.USER_TASK) {
-            log.info("Ignoring service-task completion of user task {} with no listener phase in flight", serviceTaskId);
+        // into the service-task branches/tail below (no service_tasks row → orElseThrow).
+        // Same philosophy as the status guard at the top of this method. Job-based
+        // elements (taskDefinition present — C8-16 end/throw events) are EXEMPT: their jobs
+        // do own service_tasks rows and complete through the normal path below.
+        // Kinds owning service_tasks rows never match otherwise, so their path — including
+        // the orElseThrow loudness on corruption — is unchanged. Future kinds default to
+        // the tail (loud) — fail-closed by construction.
+        String elementJob = elementSupport.serviceTaskJob(bpmnElement);
+        if (PHASE_ONLY_ELEMENT_TYPES.contains(bpmnElement.getType())
+            && (elementJob == null || elementJob.isBlank())) {
+            log.info("Ignoring service-task completion of {} {} with no listener phase in flight",
+                bpmnElement.getType(), serviceTaskId);
             return;
         }
 
@@ -361,6 +413,11 @@ public class CompletionService {
      * is marked ERROR and an incident carrying {@code errorMessage} is raised. The token stays parked.
      */
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries) {
+        // WO-C8-25: element-listener phase jobs carry no activity row — route by phase PK
+        // FIRST (the lock below would orElseThrow). Absent phase = existing path below.
+        if (elementListenerPhaseService.failPhaseListener(serviceTaskId, errorMessage, retries)) {
+            return;
+        }
         Activity activity = elementSupport.lockAndReload(serviceTaskId);
         if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
             // already finished (redelivered failure, or interrupted by a boundary) — ignore
