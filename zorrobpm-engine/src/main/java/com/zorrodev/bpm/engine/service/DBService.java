@@ -116,6 +116,83 @@ public interface DBService {
     /** WO-C8-24: remaining retries of the current completing-listener job. */
     Integer getCompletingListenerRetriesRemaining(UUID activityId);
 
+    /**
+     * WO-C8-28: the assigning-listener phase index lives on the ACTIVITIES row, mirror
+     * of the creating/completing pairs above. Null = no phase. The parked assignment
+     * itself lives in {@link #setPendingAssignee}.
+     */
+    void setPendingAssigningListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-28: null when no assigning-listener phase is in flight for this activity. */
+    Integer getPendingAssigningListenerIndex(UUID activityId);
+
+    /** WO-C8-28: durable budget of the current assigning-listener job (null = unset). */
+    void setAssigningListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-28: remaining retries of the current assigning-listener job. */
+    Integer getAssigningListenerRetriesRemaining(UUID activityId);
+
+    /**
+     * WO-C8-28: assignee parked while the assigning phase runs (model assignee at
+     * activation, requested assignee at assign/claim). Null = nothing parked.
+     */
+    void setPendingAssignee(UUID activityId, String assignee);
+
+    /** WO-C8-28: parked assignee of an in-flight assigning phase (null when none). */
+    String getPendingAssignee(UUID activityId);
+
+    /**
+     * WO-C8-28: the updating-listener phase index lives on the ACTIVITIES row, mirror
+     * of the pairs above. Null = no phase.
+     */
+    void setPendingUpdatingListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-28: null when no updating-listener phase is in flight for this activity. */
+    Integer getPendingUpdatingListenerIndex(UUID activityId);
+
+    /** WO-C8-28: durable budget of the current updating-listener job (null = unset). */
+    void setUpdatingListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-28: remaining retries of the current updating-listener job. */
+    Integer getUpdatingListenerRetriesRemaining(UUID activityId);
+
+    /**
+     * WO-C8-28: the canceling-listener phase index lives on the ACTIVITIES row, mirror
+     * of the pairs above. Null = no phase. The deferred tail (boundary continuation
+     * vs process-cancel tail) is chosen by {@link #getPendingCancelBoundaryElementId}.
+     */
+    void setPendingCancelingListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-28: null when no canceling-listener phase is in flight for this activity. */
+    Integer getPendingCancelingListenerIndex(UUID activityId);
+
+    /** WO-C8-28: durable budget of the current canceling-listener job (null = unset). */
+    void setCancelingListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-28: remaining retries of the current canceling-listener job. */
+    Integer getCancelingListenerRetriesRemaining(UUID activityId);
+
+    /**
+     * WO-C8-28: boundary element whose continuation the canceling phase defers.
+     * Null = process-cancel path (no boundary involved).
+     */
+    void setPendingCancelBoundaryElementId(UUID activityId, String boundaryElementId);
+
+    /** WO-C8-28: deferred boundary element id (null = process-cancel path). */
+    String getPendingCancelBoundaryElementId(UUID activityId);
+
+    /**
+     * WO-C8-28: true while any activity on the token has an open canceling phase —
+     * the last-closer check for a deferred boundary continuation.
+     */
+    boolean hasOpenCancelingListenerPhaseOnToken(UUID tokenId);
+
+    /**
+     * WO-C8-28: true while any activity in the instance has an open canceling phase —
+     * the last-closer check for a deferred process-cancel tail.
+     */
+    boolean hasOpenCancelingListenerPhaseInInstance(UUID processInstanceId);
+
     void completeUserTask(UUID serviceTaskId);
 
     void claimUserTask(UUID taskId, String assignee);

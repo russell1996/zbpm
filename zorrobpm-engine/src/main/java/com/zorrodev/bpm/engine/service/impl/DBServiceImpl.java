@@ -216,6 +216,99 @@ public class DBServiceImpl implements DBService {
         return activityDbOperations.getCompletingListenerRetriesRemaining(activityId);
     }
 
+    // WO-C8-28: assigning/updating/canceling phase delegation — mechanical mirror
+    // of the creating/completing pairs above.
+
+    @Override
+    public void setPendingAssigningListenerIndex(UUID activityId, Integer index) {
+        activityDbOperations.setPendingAssigningListenerIndex(activityId, index);
+    }
+
+    @Override
+    public Integer getPendingAssigningListenerIndex(UUID activityId) {
+        return activityDbOperations.getPendingAssigningListenerIndex(activityId);
+    }
+
+    @Override
+    public void setAssigningListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        activityDbOperations.setAssigningListenerRetriesRemaining(activityId, remaining);
+    }
+
+    @Override
+    public Integer getAssigningListenerRetriesRemaining(UUID activityId) {
+        return activityDbOperations.getAssigningListenerRetriesRemaining(activityId);
+    }
+
+    @Override
+    public void setPendingAssignee(UUID activityId, String assignee) {
+        activityDbOperations.setPendingAssignee(activityId, assignee);
+    }
+
+    @Override
+    public String getPendingAssignee(UUID activityId) {
+        return activityDbOperations.getPendingAssignee(activityId);
+    }
+
+    @Override
+    public void setPendingUpdatingListenerIndex(UUID activityId, Integer index) {
+        activityDbOperations.setPendingUpdatingListenerIndex(activityId, index);
+    }
+
+    @Override
+    public Integer getPendingUpdatingListenerIndex(UUID activityId) {
+        return activityDbOperations.getPendingUpdatingListenerIndex(activityId);
+    }
+
+    @Override
+    public void setUpdatingListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        activityDbOperations.setUpdatingListenerRetriesRemaining(activityId, remaining);
+    }
+
+    @Override
+    public Integer getUpdatingListenerRetriesRemaining(UUID activityId) {
+        return activityDbOperations.getUpdatingListenerRetriesRemaining(activityId);
+    }
+
+    @Override
+    public void setPendingCancelingListenerIndex(UUID activityId, Integer index) {
+        activityDbOperations.setPendingCancelingListenerIndex(activityId, index);
+    }
+
+    @Override
+    public Integer getPendingCancelingListenerIndex(UUID activityId) {
+        return activityDbOperations.getPendingCancelingListenerIndex(activityId);
+    }
+
+    @Override
+    public void setCancelingListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        activityDbOperations.setCancelingListenerRetriesRemaining(activityId, remaining);
+    }
+
+    @Override
+    public Integer getCancelingListenerRetriesRemaining(UUID activityId) {
+        return activityDbOperations.getCancelingListenerRetriesRemaining(activityId);
+    }
+
+    @Override
+    public void setPendingCancelBoundaryElementId(UUID activityId, String boundaryElementId) {
+        activityDbOperations.setPendingCancelBoundaryElementId(activityId, boundaryElementId);
+    }
+
+    @Override
+    public String getPendingCancelBoundaryElementId(UUID activityId) {
+        return activityDbOperations.getPendingCancelBoundaryElementId(activityId);
+    }
+
+    @Override
+    public boolean hasOpenCancelingListenerPhaseOnToken(UUID tokenId) {
+        return activityDbOperations.hasOpenCancelingListenerPhaseOnToken(tokenId);
+    }
+
+    @Override
+    public boolean hasOpenCancelingListenerPhaseInInstance(UUID processInstanceId) {
+        return activityDbOperations.hasOpenCancelingListenerPhaseInInstance(processInstanceId);
+    }
+
     @Override
     public void completeServiceTask(UUID serviceTaskId) {
         serviceTaskDbOperations.completeServiceTask(serviceTaskId);

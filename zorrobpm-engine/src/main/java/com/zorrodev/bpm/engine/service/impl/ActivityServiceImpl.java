@@ -232,6 +232,16 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     @Override
+    public void assignUserTask(UUID taskId, String assignee) {
+        completionService.assignUserTask(taskId, assignee);
+    }
+
+    @Override
+    public void claimUserTask(UUID taskId, String assignee) {
+        completionService.claimUserTask(taskId, assignee);
+    }
+
+    @Override
     public void signal(UUID activityId, List<ProcessVariable> variables) {
         completionService.signal(activityId, variables, this);
     }

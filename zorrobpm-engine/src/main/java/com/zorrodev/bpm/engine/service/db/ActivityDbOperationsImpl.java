@@ -109,6 +109,116 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
         activityRepository.save(entity);
     }
 
+    // WO-C8-28: assigning/updating/canceling phase accessors — mechanical mirror of
+    // the creating/completing pairs above (load → set → save / load → get).
+
+    @Override
+    public void setPendingAssigningListenerIndex(UUID activityId, Integer index) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setPendingAssigningListenerIndex(index);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getPendingAssigningListenerIndex(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getPendingAssigningListenerIndex();
+    }
+
+    @Override
+    public void setAssigningListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setAssigningListenerRetriesRemaining(remaining);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getAssigningListenerRetriesRemaining(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getAssigningListenerRetriesRemaining();
+    }
+
+    @Override
+    public void setPendingAssignee(UUID activityId, String assignee) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setPendingAssignee(assignee);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public String getPendingAssignee(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getPendingAssignee();
+    }
+
+    @Override
+    public void setPendingUpdatingListenerIndex(UUID activityId, Integer index) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setPendingUpdatingListenerIndex(index);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getPendingUpdatingListenerIndex(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getPendingUpdatingListenerIndex();
+    }
+
+    @Override
+    public void setUpdatingListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setUpdatingListenerRetriesRemaining(remaining);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getUpdatingListenerRetriesRemaining(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getUpdatingListenerRetriesRemaining();
+    }
+
+    @Override
+    public void setPendingCancelingListenerIndex(UUID activityId, Integer index) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setPendingCancelingListenerIndex(index);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getPendingCancelingListenerIndex(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getPendingCancelingListenerIndex();
+    }
+
+    @Override
+    public void setCancelingListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setCancelingListenerRetriesRemaining(remaining);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public Integer getCancelingListenerRetriesRemaining(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getCancelingListenerRetriesRemaining();
+    }
+
+    @Override
+    public void setPendingCancelBoundaryElementId(UUID activityId, String boundaryElementId) {
+        ActivityEntity entity = activityRepository.findById(activityId).orElseThrow();
+        entity.setPendingCancelBoundaryElementId(boundaryElementId);
+        activityRepository.save(entity);
+    }
+
+    @Override
+    public String getPendingCancelBoundaryElementId(UUID activityId) {
+        return activityRepository.findById(activityId).orElseThrow().getPendingCancelBoundaryElementId();
+    }
+
+    @Override
+    public boolean hasOpenCancelingListenerPhaseOnToken(UUID tokenId) {
+        return !activityRepository.findByTokenAndPendingCancelingListenerIndexIsNotNull(tokenId).isEmpty();
+    }
+
+    @Override
+    public boolean hasOpenCancelingListenerPhaseInInstance(UUID processInstanceId) {
+        return !activityRepository
+            .findByProcessInstanceIdAndPendingCancelingListenerIndexIsNotNull(processInstanceId).isEmpty();
+    }
+
     @Override
     public Integer getPendingCompletingListenerIndex(UUID activityId) {
         return activityRepository.findById(activityId).orElseThrow().getPendingCompletingListenerIndex();

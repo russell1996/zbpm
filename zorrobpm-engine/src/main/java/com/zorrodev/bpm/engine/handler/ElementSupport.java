@@ -253,6 +253,45 @@ public class ElementSupport {
         return listeners == null ? List.of() : listeners;
     }
 
+    /**
+     * WO-C8-28: assigning task listeners of a user task, in declaration order
+     * (already filtered to {@code eventType="assigning"} at parse time). Empty when absent —
+     * callers must not touch listener state for such elements.
+     */
+    public List<ListenerModel> userTaskAssigningListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getAssigningListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
+    }
+
+    /**
+     * WO-C8-28: updating task listeners of a user task, in declaration order
+     * (already filtered to {@code eventType="updating"} at parse time). Empty when absent —
+     * callers must not touch listener state for such elements.
+     */
+    public List<ListenerModel> userTaskUpdatingListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getUpdatingListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
+    }
+
+    /**
+     * WO-C8-28: canceling task listeners of a user task, in declaration order
+     * (already filtered to {@code eventType="canceling"} at parse time). Empty when absent —
+     * callers must not touch listener state for such elements.
+     */
+    public List<ListenerModel> userTaskCancelingListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCancelingListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
+    }
+
     // ─── Listener helpers ─────────────────────────────────────────────
 
     /**
