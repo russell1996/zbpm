@@ -13,6 +13,8 @@ import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormResolver;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +53,7 @@ class TaskFormOperationsImplTest {
     private ElementArtifactBindingRepository bindingRepository;
     private FormRepository formRepository;
     private FormResolver formResolver;
+    private BpmnService bpmnService;
     private DBService dbService;
     private FormAccessSupport formAccessSupport;
     private TaskFormOperationsImpl impl;
@@ -63,11 +66,16 @@ class TaskFormOperationsImplTest {
         bindingRepository = mock(ElementArtifactBindingRepository.class);
         formRepository = mock(FormRepository.class);
         formResolver = mock(FormResolver.class);
+        bpmnService = mock(BpmnService.class);
+        // WO-C8-26: default — plain start without formDefinition → legacy paths
+        // (bindings → scalar) stay byte-identical for all pre-existing tests.
+        when(bpmnService.getProcessDefinitionModelById(any()))
+            .thenReturn(new BpmnProcessDefinitionModel());
         dbService = mock(DBService.class);
         formAccessSupport = mock(FormAccessSupport.class);
         impl = new TaskFormOperationsImpl(userTaskRepository, processInstanceRepository,
             processDefinitionRepository, bindingRepository, formRepository,
-            formResolver, dbService, formAccessSupport);
+            formResolver, bpmnService, dbService, formAccessSupport);
     }
 
     private static ProcessDefinitionEntity pd(String key, int version) {
@@ -346,6 +354,77 @@ class TaskFormOperationsImplTest {
 
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
             () -> impl.getStartForm("missing"));
+
+        assertEquals(HttpStatus.NOT_FOUND, e.getStatusCode());
+    }
+
+    // ==================== getStartForm: WO-C8-26 formDefinition ====================
+
+    private ProcessDefinitionEntity pdWithStartForm(String key, String startFormId, String bindingType) {
+        ProcessDefinitionEntity pd = pd(key, 3);
+        when(processDefinitionRepository.findMaxByKey(key)).thenReturn(Optional.of(3));
+        when(processDefinitionRepository.findByKeyAndVersion(eq(key), any())).thenReturn(Optional.of(pd));
+        BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
+        model.setStartFormId(startFormId);
+        model.setStartFormBindingType(bindingType);
+        when(bpmnService.getProcessDefinitionModelById(pd.getId())).thenReturn(model);
+        return pd;
+    }
+
+    @Test
+    void getStartForm_formId_winsOverLegacy_resolvesById() {
+        // Крит. 2/3/6: formDefinition побеждает legacy (bindings + scalar не трогаем
+        // вообще) и идёт в готовый resolveTaskFormByFormId (крит. 6 — новых
+        // механизмов нет: formResolver — mock, реализация не дублируется).
+        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "latest");
+        pd.setStartFormKey("legacyForm");
+        ElementArtifactBindingEntity b = new ElementArtifactBindingEntity();
+        b.setProcessDefinitionId(pd.getId());
+        b.setArtifactKey("legacyForm");
+        b.setArtifactVersion(1);
+        when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(b));
+        TaskFormDTO resolved = new TaskFormDTO();
+        resolved.setType("embedded");
+        when(formResolver.resolveTaskFormByFormId(eq("order-start-form"), isNull())).thenReturn(resolved);
+
+        TaskFormDTO result = impl.getStartForm("ord");
+
+        assertSame(resolved, result);
+        verify(formResolver).resolveTaskFormByFormId("order-start-form", null);
+        // legacy-пути при живом formId недостижимы
+        verify(bindingRepository, never()).findByProcessDefinitionId(any());
+        verify(formResolver, never()).resolveTaskForm(any(), any());
+    }
+
+    @Test
+    void getStartForm_formId_deploymentBinding_resolvesPinned() {
+        // Крит. 4: deployment-пин берёт deployment_id ТЕКУЩЕЙ версии процесса
+        // (той, чью форму запрашивают) и идёт в resolveTaskFormByFormIdAndDeployment.
+        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "deployment");
+        UUID deploymentId = UUID.randomUUID();
+        pd.setDeploymentId(deploymentId);
+        TaskFormDTO resolved = new TaskFormDTO();
+        resolved.setType("embedded");
+        when(formResolver.resolveTaskFormByFormIdAndDeployment(
+            eq("order-start-form"), eq(deploymentId), isNull())).thenReturn(resolved);
+
+        TaskFormDTO result = impl.getStartForm("ord");
+
+        assertSame(resolved, result);
+        verify(formResolver).resolveTaskFormByFormIdAndDeployment("order-start-form", deploymentId, null);
+        verify(formResolver, never()).resolveTaskFormByFormId(any(), any());
+    }
+
+    @Test
+    void getStartForm_formId_deploymentBinding_noPair_404() {
+        // Крит. 5: пара отсутствует → 404 той же формы, что C8-23 для user task.
+        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "deployment");
+        pd.setDeploymentId(UUID.randomUUID());
+        when(formResolver.resolveTaskFormByFormIdAndDeployment(eq("order-start-form"), any(), isNull()))
+            .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Form version not found"));
+
+        ResponseStatusException e = assertThrows(ResponseStatusException.class,
+            () -> impl.getStartForm("ord"));
 
         assertEquals(HttpStatus.NOT_FOUND, e.getStatusCode());
     }

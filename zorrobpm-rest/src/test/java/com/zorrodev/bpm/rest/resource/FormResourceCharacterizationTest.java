@@ -456,7 +456,9 @@ class FormResourceCharacterizationTest {
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(b));
         FormEntity pinned = form("startForm", 2);
         when(formRepository.findByFormKeyAndVersion("startForm", 2)).thenReturn(Optional.of(pinned));
-
+        // WO-C8-26: plain start without formDefinition → legacy binding path
+        when(bpmnService.getProcessDefinitionModelById(eq(pd.getId())))
+            .thenReturn(new BpmnProcessDefinitionModel());
         // ADR-6 §D8: pinned to artifact_version from binding, not latest
         mockMvc.perform(get("/process-definitions/ord/start-form")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))
@@ -475,6 +477,9 @@ class FormResourceCharacterizationTest {
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of());
         when(formRepository.findTopByFormKeyOrderByVersionDesc("sForm"))
             .thenReturn(Optional.of(form("sForm", 1)));
+        // WO-C8-26: plain start without formDefinition → legacy scalar path
+        when(bpmnService.getProcessDefinitionModelById(eq(pd.getId())))
+            .thenReturn(new BpmnProcessDefinitionModel());
 
         mockMvc.perform(get("/process-definitions/ord/start-form")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))
@@ -489,6 +494,9 @@ class FormResourceCharacterizationTest {
         when(processDefinitionRepository.findMaxByKey("ord")).thenReturn(Optional.of(3));
         when(processDefinitionRepository.findByKeyAndVersion(eq("ord"), any())).thenReturn(Optional.of(pd));
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of());
+        // WO-C8-26: plain start without formDefinition → none path
+        when(bpmnService.getProcessDefinitionModelById(eq(pd.getId())))
+            .thenReturn(new BpmnProcessDefinitionModel());
 
         mockMvc.perform(get("/process-definitions/ord/start-form")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))

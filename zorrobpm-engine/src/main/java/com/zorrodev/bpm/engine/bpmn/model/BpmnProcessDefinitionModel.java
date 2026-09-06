@@ -24,6 +24,25 @@ public class BpmnProcessDefinitionModel {
     @Getter
     @Setter
     private String startFormKey;
+    /**
+     * WO-C8-26: linked-form id of the plain start event ({@code zeebe:formDefinition/@formId}).
+     * Wins over the legacy {@code startFormKey} property (docs: the Modeler offers one Form
+     * type at a time — linked XOR embedded XOR custom — so coexistence is invalid input).
+     */
+    @Getter
+    @Setter
+    private String startFormId;
+    /** WO-C8-26: resource binding of the start form ({@code latest} default / {@code deployment}). */
+    @Getter
+    @Setter
+    private String startFormBindingType;
+    /**
+     * WO-C8-26: parsed into the model ONLY (⛔ граница — место тега в .form-ресурсе не
+     * выяснено, WO-C8-27; реализация запрещена).
+     */
+    @Getter
+    @Setter
+    private String startFormVersionTag;
     @Getter
     @Setter
     private String versionTag;
