@@ -56,6 +56,16 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
         // mutually exclusive; the specific linked id beats the generic key on invalid
         // models carrying both). formKey/externalReference paths below are untouched.
         if (task.getFormId() != null && !task.getFormId().isBlank()) {
+            // WO-C8-23: bindingType="deployment" pins the form version deployed together
+            // with this instance's process version; anything else (latest/absent) keeps
+            // the C8-22 path byte-identical.
+            if ("deployment".equals(task.getBindingType())) {
+                UUID deploymentId = processDefinitionRepository.findById(pi.getProcessDefinitionId())
+                    .map(ProcessDefinitionEntity::getDeploymentId)
+                    .orElse(null);
+                return formResolver.resolveTaskFormByFormIdAndDeployment(
+                    task.getFormId(), deploymentId, prefillData(task.getProcessInstanceId()));
+            }
             return formResolver.resolveTaskFormByFormId(task.getFormId(), prefillData(task.getProcessInstanceId()));
         }
         return resolveForm(task.getFormKey(), task.getProcessInstanceId());

@@ -66,6 +66,35 @@ public class FormResolver {
         return dto;
     }
 
+    /**
+     * WO-C8-23: resolves a Modeler-linked form pinned to a deployment
+     * ({@code bindingType="deployment"} — «the version deployed together with the
+     * currently running version of the process in the same deployment»).
+     *
+     * <p>A missing pair is an explicit 404 naming the id, the deployment and the remedy —
+     * never a silent latest fallback (the quiet divergence this WO fixes). A null
+     * {@code deploymentId} (process not batch-deployed) 404s before any query: passing it
+     * into the derived query would match {@code IS NULL} rows (Spring null semantics) and
+     * silently resurrect the singly-deployed form — the exact trap of criterion п.9.
+     */
+    public TaskFormDTO resolveTaskFormByFormIdAndDeployment(String formId, java.util.UUID deploymentId,
+            java.util.Map<String, String> prefillData) {
+        FormEntity form = (formId == null || formId.isBlank() || deploymentId == null) ? null
+            : formRepository.findFirstByFormIdAndDeploymentIdOrderByVersionDesc(formId, deploymentId).orElse(null);
+        if (form == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Form schema not found for id: " + formId + " in deployment: " + deploymentId
+                    + " — deploy the form together with the process version (POST /deployments)");
+        }
+
+        TaskFormDTO dto = new TaskFormDTO();
+        dto.setType("embedded");
+        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
+        dto.setSchema(form.getSchemaJson());
+        if (prefillData != null) dto.setData(prefillData);
+        return dto;
+    }
+
     public String getSchemaJson(String formKey) {
         if (formKey == null || formKey.isBlank()) return null;
         if (formKey.startsWith("http://") || formKey.startsWith("https://")) return null;

@@ -16,4 +16,13 @@ public class FormDefinitionModel {
     private String formId;
     @XmlAttribute
     private String externalReference;
+    /** WO-C8-23: latest (default) / deployment; versionTag — только парсинг (граница WO). */
+    @XmlAttribute
+    private String bindingType;
+    /**
+     * WO-C8-23: parsed into the model ONLY (⛔ граница — где тег живёт в .form-ресурсе,
+     * не выяснено, гадать запрещено; наткнёшься на первоисточник — находка в отчёт).
+     */
+    @XmlAttribute
+    private String versionTag;
 }

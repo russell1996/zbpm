@@ -86,7 +86,10 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         // and phase-end), since finishUserTaskCreation is gone with the marker row.
         String formId = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormId() : null;
-        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, resolvedDueDate, resolvedFollowUpDate);
+        // WO-C8-23: binding rides alongside (latest/absent keep the old resolve path).
+        String bindingType = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
+            ? bpmnElement.getExtensions().getUserTaskExtension().getBindingType() : null;
+        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate);
     }
 
     /**

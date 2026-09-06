@@ -19,6 +19,16 @@ public class UserTaskExtensionModel {
      * conflation is left untouched). Null when the model uses formKey/externalReference.
      */
     private String formId;
+    /**
+     * WO-C8-23: resource binding of the form ({@code latest} default / {@code deployment}).
+     * Pinned into the task row at creation; {@code latest}/absent keeps the old path.
+     */
+    private String bindingType;
+    /**
+     * WO-C8-23: parsed into the model ONLY (⛔ граница — место тега в .form-ресурсе не
+     * выяснено; реализация запрещена, находка — в отчёт).
+     */
+    private String versionTag;
     private String externalReference;
     private String dueDate;
     private String followUpDate;

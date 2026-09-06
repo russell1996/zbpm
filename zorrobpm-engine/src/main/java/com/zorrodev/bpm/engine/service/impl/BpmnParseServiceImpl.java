@@ -1051,6 +1051,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 if (userTask.getExtensionElements().getFormDefinition().getFormId() != null) {
                     element.getExtensions().getUserTaskExtension().setFormId(userTask.getExtensionElements().getFormDefinition().getFormId());
                 }
+                // WO-C8-23: bindingType (+versionTag — parse-only, ⛔ граница) rides alongside.
+                // latest/absent keeps the old resolve path untouched (see TaskFormOperationsImpl).
+                if (userTask.getExtensionElements().getFormDefinition().getBindingType() != null) {
+                    element.getExtensions().getUserTaskExtension().setBindingType(userTask.getExtensionElements().getFormDefinition().getBindingType());
+                }
+                if (userTask.getExtensionElements().getFormDefinition().getVersionTag() != null) {
+                    element.getExtensions().getUserTaskExtension().setVersionTag(userTask.getExtensionElements().getFormDefinition().getVersionTag());
+                }
             }
             // WO-C8-21: creating task listeners block task creation until each completes.
             // Only user tasks may carry taskListeners (schema allowedIn); other eventTypes

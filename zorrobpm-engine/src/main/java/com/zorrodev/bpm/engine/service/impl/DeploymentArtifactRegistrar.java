@@ -117,8 +117,11 @@ public class DeploymentArtifactRegistrar {
      * WO-C8-12: stores embedded {@code zeebe:userTaskForm} JSON bodies of the deployed definition
      * in the shared forms table (same mechanism as manual REST upload — unconditional new version
      * per deploy, consistent with {@code carryForwardBindings}, no dedup).
+     *
+     * @param deploymentId WO-C8-23: batch id stamped on the rows ({@code POST /deployments});
+     *                     null on single deploys keeps behaviour byte-identical (WO-C8-18 pattern).
      */
-    public void registerUserTaskForms(UUID processDefinitionId, BpmnProcessDefinitionModel model) {
+    public void registerUserTaskForms(UUID processDefinitionId, BpmnProcessDefinitionModel model, UUID deploymentId) {
         var forms = model.getUserTaskForms();
         if (forms == null || forms.isEmpty()) {
             return;
@@ -134,6 +137,8 @@ public class DeploymentArtifactRegistrar {
             entity.setFormKey(formKey);
             // WO-C8-22: embedded forms carry their Modeler id — addressable by formId too.
             entity.setFormId(form.getId());
+            // WO-C8-23: batch stamp for bindingType="deployment" resolve (null = single deploy).
+            entity.setDeploymentId(deploymentId);
             entity.setVersion(version);
             entity.setSchemaJson(form.getBody());
             entity.setKind(FormArtifactKind.FORM_JS);

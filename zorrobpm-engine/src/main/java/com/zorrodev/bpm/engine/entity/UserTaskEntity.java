@@ -28,6 +28,11 @@ public class UserTaskEntity {
      * mid-creating-phase (C8-21) marker rows — those resolve exactly as before.
      */
     private String formId;
+    /**
+     * WO-C8-23: resource binding pinned at task creation (mirror of the two fields above).
+     * Only {@code "deployment"} changes the resolve path; {@code latest}/absent/null keep it.
+     */
+    private String bindingType;
     /** Resolved zeebe:taskSchedule dueDate (WO-C8-8) — informational String, never blocks execution. */
     private String dueDate;
     /** Resolved zeebe:taskSchedule followUpDate (WO-C8-8). */

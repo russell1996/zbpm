@@ -16,6 +16,14 @@ public interface FormRepository extends JpaRepository<FormEntity, UUID> {
     /** WO-C8-22: latest deployed version of a Modeler-linked form (binding {@code latest}). */
     Optional<FormEntity> findTopByFormIdOrderByVersionDesc(String formId);
 
+    /**
+     * WO-C8-23: the version of a linked form deployed together with a process
+     * ({@code bindingType="deployment"}). Exact match on both columns — a null
+     * {@code deploymentId} argument never matches (callers 404 first, see FormResolver),
+     * so singly-deployed rows are invisible here by construction, never by fallback.
+     */
+    Optional<FormEntity> findFirstByFormIdAndDeploymentIdOrderByVersionDesc(String formId, UUID deploymentId);
+
     Optional<FormEntity> findByFormKeyAndVersion(String formKey, int version);
 
     @Query("SELECT COALESCE(MAX(f.version), 0) FROM FormEntity f WHERE f.formKey = :formKey")

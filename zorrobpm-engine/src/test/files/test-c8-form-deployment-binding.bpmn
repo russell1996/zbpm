@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c8fdb" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-form-deployment-binding" name="c8-form-deployment-binding" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="pinned-form">{"components": [{"type": "textfield", "key": "name", "label": "v1"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="review" />
+    <bpmn:userTask id="review" name="review">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="alice" />
+        <!-- WO-C8-23: linked form + deployment pinning (bindingType из миксина
+             BindingTypeSupported; latest — дефолт, здесь явно deployment) -->
+        <zeebe:formDefinition formId="pinned-form" bindingType="deployment" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="review" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

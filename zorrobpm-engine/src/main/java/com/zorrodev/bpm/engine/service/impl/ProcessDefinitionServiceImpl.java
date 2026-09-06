@@ -117,7 +117,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
                 artifactRegistrar.registerMessageStartSubscriptions(key, id, model);
                 artifactRegistrar.registerTimerStartJobs(key, id, model);
                 artifactRegistrar.registerSignalStartSubscriptions(key, id, model);
-                artifactRegistrar.registerUserTaskForms(id, model);
+                artifactRegistrar.registerUserTaskForms(id, model, processDefinitionEntity.getDeploymentId());
 
                 // WO-VM-9a: carry-forward element_artifact_bindings from previous version
                 if (processDefinitionEntity.getVersion() > 1) {
@@ -160,7 +160,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         artifactRegistrar.registerMessageStartSubscriptions(entity.getKey(), id, model);
         artifactRegistrar.registerTimerStartJobs(entity.getKey(), id, model);
         artifactRegistrar.registerSignalStartSubscriptions(entity.getKey(), id, model);
-        artifactRegistrar.registerUserTaskForms(id, model);
+        artifactRegistrar.registerUserTaskForms(id, model, entity.getDeploymentId());
 
         bindingRepository.findByProcessDefinitionId(id).forEach(bindingRepository::delete);
         if (entity.getVersion() != null && entity.getVersion() > 1) {
