@@ -13,4 +13,9 @@ public class TestServiceTaskEnqueueService implements ServiceTaskEnqueueService 
         log.info("Service task enqueued => {}", serviceTaskId);
     }
 
+    @Override
+    public void enqueuePhaseListener(UUID phaseId) {
+        log.info("Phase listener enqueued => {}", phaseId);
+    }
+
 }

@@ -59,6 +59,8 @@ public class RetentionBatchProcessor {
         total += jdbc.update("DELETE FROM incidents WHERE activity_id IN (SELECT id FROM activities WHERE process_instance_id IN (:ids))", params);
         total += jdbc.update("DELETE FROM service_tasks WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM user_tasks WHERE process_instance_id IN (:ids)", params);
+        // WO-C8-25: done element-listener phases (open ones die with the instance anyway).
+        total += jdbc.update("DELETE FROM element_listener_phase WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM variables WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM activities WHERE process_instance_id IN (:ids)", params);
         if (!tokenIds.isEmpty()) {
