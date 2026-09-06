@@ -7,65 +7,25 @@
 
 ## Текущее состояние
 
-<!-- ОБНОВЛЯЕТСЯ ПРИ КАЖДОМ МЕРЖЕ В master. Правило и порядок — governance/agents/README.md. -->
+<!-- ОБНОВЛЯЕТСЯ ПРИ КАЖДОМ МЕРЖЕ В master. Правило и порядок — governance/agents/README.md.
+     Здесь только состояние; перечень задач живёт в governance/workorders/_index.md и НЕ дублируется. -->
 
 | | |
 |---|---|
-| **Обновлено** | 2026-08-30 |
+| **Обновлено** | 2026-09-06 |
 | **Версия** | 0.8.0-SNAPSHOT |
-| **Стадия** | стабилизация: закрываем находки внешнего аудита от 2026-08-07 и свежего полного аудита от 2026-08-23 |
-| **Активных задач** | см. [`governance/workorders/_index.md`](governance/workorders/_index.md) (таблица ниже не обновлялась построчно с 2026-08-17, см. примечание) |
+| **Стадия** | эпик паритета с Camunda 8: **30 задач смёржено**, 1 в работе, 7 в очереди |
+| **Задачи** | [`governance/workorders/_index.md`](governance/workorders/_index.md) — единственный актуальный список |
+| **Разбор паритета** | [`docs/analysis/camunda8-parity-audit-2026-09-05.md`](docs/analysis/camunda8-parity-audit-2026-09-05.md) |
 
-**Последнее закрытое (2026-08-26…28):** WO-UI-9 (сырой JSON вместо текста ошибки на
-`/admin/mail-settings`; в списке пользователей не было опции роли SUPER_ADMIN — 28.08 это вызвало
-реальный инцидент: единственный супер-админ тихо потерял роль, восстановлено прямым `UPDATE` в БД;
-форма почты без `max-w`, растянута на всю ширину), WO-ACL-18 (приглашения вместо паролей — админ не
-знает пароль пользователя никогда, забыл — новая ссылка, не новый секрет; токен одноразовый, хранится
-хешем), WO-SEC-59 (семь точечных фиксов свежего аудита — `ExclusiveGatewayHandler` без `else`-ветки
-вешал легальный 1-in/1-out gateway молча навсегда, подписки без CAS, form-schema fail-open),
-WO-SEC-58 (раздел «Мой профиль» — обычный пользователь с
-`forcePasswordChange` больше не заперт: своя смена пароля через `PUT /me/password`, личный API-ключ
-переехал сюда с `/me/api-key`), WO-OPS-6 (PG-тесты модуля `zorrobpm-rest` теперь реально выполняются в CI —
-раньше `-pl zorrobpm-engine` их не собирал никогда, включая тест на partial unique index из ACL-12),
-WO-ACL-17 (поиск кандидата на добавление в процесс расширен с логина на
-имя и почту, с сохранением экранирования LIKE и потолка выдачи), WO-OPS-7 (precondition-миграция `onFail: HALT`→`CONTINUE` — закрывает класс
-дефекта, из-за которого прод-инцидент 502 на test-zbpm 2026-08-21 остановил весь Liquibase changelog
-и старт приложения из-за двух сиротских строк в непустой таблице), WO-ACL-7 (эндпоинты под экраны ACL: свои членства, модель заявки для админа, поиск кандидатов; контакты участников), WO-ACL-6 частично (загрузка внутри раздела, участники на карточке, экраны заявок; три экрана ждут ACL-7), WO-ACL-5 (свои токены; права ключа = пересечение с текущими правами владельца, пересчёт на каждый запрос), WO-ACL-4 (владелец обновляет модель изнутри процесса; ключ в XML обязан совпадать с целевым), WO-ACL-3 (новый процесс — заявкой с одобрением; одобрение делает отправителя владельцем одной транзакцией), WO-ACL-2 (роли перечислением, владелец управляет своим процессом; последнего OWNER больше не снять в два запроса), WO-ACL-1 (обычный пользователь наконец видит определения; runtime — по членству), WO-OPS-3-DISK (деплой не стартует на переполненном диске — в инциденте 28.07 падал и откат), WO-TEST-4 (`Rel4ConcurrencyTest` снова умеет падать — гонял копию гварда вместо прод-кода), WO-SEC-57 (ротируемые ключи подписи JWT — секрет можно сменить, не разлогинив всех), WO-OPS-5 (образы больше не копятся на деплой-хосте; защищены текущий, предыдущий и собираемый теги), WO-CLEAN-1 (убраны перегрузки `createTimerJob`, одна из которых разоружала регресс-тест REL-17), WO-PERF-3 (индекс под перевзвод boundary-таймера; осиротевшие job'ы больше не
-копятся вечно — уборка батчами в ретеншене), WO-OPS-4a (vitest стал merge-гейтом, test-gate сопоставляет тесты модулям,
-`ci/test-gate-selftest.sh` ловит ослабление самого гейта), WO-PERF-4 (jacoco за профилем `coverage`,
-локальный прогон движка −18 %),
-WO-REL-17 (конечный цикл `R<n>` boundary-таймера теперь исчерпывается), WO-REL-16 (очереди джоб
-объявляются при деплое и старте, а не лениво), WO-SEC-50 (контейнеры под non-root, healthcheck,
-лимиты), WO-SEC-48 (CSP сведён в один источник, убран `unsafe-eval`), WO-PERF-2 (N+1 в
-page-мапперах, индексы на горячих колонках), WO-ENG-10.
+**Что закрыто эпиком:** биндинги версий (`latest`/`deployment`/`versionTag`) для процессов, решений
+и форм; execution- и task-листенеры; `taskHeaders` на всех разрешённых схемой элементах; связанные
+формы по `formId`; DMN DRG и деплой решений; job-воркеры на end/throw-событиях; атомарная выкладка
+пачкой (`POST /deployments`).
 
-*(Список ниже WO-OPS-7 не обновлялся с 2026-08-17 — за это время смержено больше двух десятков WO
-(весь эпик ACL-9…ACL-18, WO-TEST-6/7/9, WO-INT-4/5/6, WO-OPS-6, WO-SEC-54…59, WO-REL-12…18,
-WO-ENG-11…13, WO-UI-9 и другие). Полная сверка этого блока с
-`governance/workorders/_index.md` — отдельная задача, не часть текущего мержа.)*
-
-**В работе / ждёт решения:**
-
-| Задача | Состояние |
-|---|---|
-| WO-TEST-5 — `TokenServiceAlgVerificationTest` не может упасть | 🔧 в пуле, 1-я — защита от alg-confusion стоит на слепом тесте |
-| WO-PERF-5 — покрытие строится и выбрасывается | 🔧 в пуле, 2-я — **решено: публиковать** |
-| WO-SEC-51 — блокирующий CVE-гейт | 🔧 в пуле, 3-я — **решено: валим на CVSS ≥ 9.0, HIGH предупреждением** |
-| WO-SEC-49 — fail-fast на дефолтных кредах | 🟡 код готов на ветке; ждёт строки `ZORROBPM_SECURITY_ENFORCE_DB_CREDS=true` в host `.env` после ротации кредов (см. `governance/runbooks/credential-rotation.md`) |
-| WO-OPS-4b — гейты прод-доставки | ⬜ деплой с любой ветки, без health-check. Ведёт CTO: нужны пуш и реальные выкатки |
-| WO-SEC-53 — housekeeping мелких находок | ⬜ есть черновик на ветке, без DoD |
-| WO-SEC-52 — глобальный rate-limit | ⬜ нужно архитектурное решение |
-| **Эпик ACL** — разграничение доступа ([ADR-8](docs/adr/ADR-8-self-service-ownership.md)) | 🔧 ACL-1…5 и часть ACL-6 смержены; **ACL-8** (36 критериев в четыре этапа: дефекты → UX → локализация → переустройство) |
-
-**Закрыты без реализации 2026-08-15:** WO-AUD-8c и WO-AUD-8f (чистый рефакторинг без функционального
-выигрыша; 8c брошен самим исполнителем как тупик по verify-цепочке), WO-OPS-3-cve (обе проблемы
-решены: падение `cve:scan` исправлено, артефакты замерены — 207 МБ из 213 против 813 из 822 в задаче).
-
-**Известные пробелы инфраструктуры:** деплой не проверяет `healthy`; rollback возвращает образ, но не
-схему БД. **Ретеншен на стенде выключен** (`RETENTION_TTL_DAYS=0`), поэтому исторические `timer_jobs`
-с `process_instance_id IS NULL` там не вычищаются — деградацию снимает индекс (WO-PERF-3), включение
-ретеншена остаётся решением CTO. Среда развёрнутого стенда — тестовая, работает на дефолтных кредах
-осознанно.
+**Известные эксплуатационные пробелы** (не задачи, а свойства стенда): деплой не проверяет
+`healthcheck` перед переключением; **ретеншен на стенде выключен** (`RETENTION_TTL_DAYS=0`), поэтому
+строки с `process_instance_id IS NULL` там не вычищаются; среда стенда — одноузловая осознанно.
 
 ## Обзор
 
@@ -113,27 +73,54 @@ ZorroBPM исполняет определения BPMN-процессов:
 
 Условия и выражения вычисляются движком **Camunda FEEL**; десятичные и JSON-объекты/списки доступны как числа и Map/List.
 
-## Camunda 8 Compatibility
+## Совместимость с Camunda 8
 
-**Совместимость с исполняемым BPMN-набором Camunda 8: ≈ 95 %.** Из конструкций, которые исполняет Zeebe (движок
-Camunda 8), ZorroBPM поддерживает практически все — каждая подтверждена интеграционным тестом на реальной
-C8-модели (см. `zorrobpm-engine/src/test/.../integration/*IntegrationTests.java`). Дополнительно движок исполняет
-несколько BPMN-стандартных элементов, которые сам C8 **не** исполняет (Conditional-события, Transaction-subprocess,
-Cancel-события). Методика оценки: доля исполняемых элементов Zeebe, для которых есть работающий обработчик + зелёный
-интеграционный тест. Не покрыты только точечные edge-режимы (правая колонка таблиц) — не целые конструкции.
+Цель проекта одной фразой: **исполнять те же BPMN-модели, что и Camunda 8, без правок файлов — на
+своём железе и без лицензии.** Модель, нарисованная в Camunda Modeler, деплоится в ZorroBPM как есть.
 
-Движок использует BPMN 2.0 + Zeebe-расширения (`http://camunda.org/schema/zeebe/1.0`), поэтому большинство
-конструкций моделируется так же, как в **Camunda 8**. Сводка:
+Совместимость измеряется по **двум независимым осям**, и раньше в этом README они были смешаны в одну
+цифру «≈95 %», что вводило в заблуждение: элементы и расширения покрыты по-разному.
 
-| Статус | Конструкции |
+### Ось 1 — BPMN-элементы (что исполняет Zeebe)
+
+Поддержаны практически все исполняемые Zeebe конструкции, каждая подтверждена интеграционным тестом
+на реальной C8-модели (`zorrobpm-engine/src/test/.../integration/`). Полный перечень — в таблице
+«Поддержка BPMN» выше. Не покрыты **точечные режимы**, а не целые конструкции (правая колонка той же
+таблицы).
+
+Сверх того движок исполняет три BPMN-стандартных элемента, которые **сам Camunda 8 не исполняет**:
+Conditional-события, Transaction-subprocess, Cancel-события. Это надстройка, полезная вне C8.
+
+### Ось 2 — расширения `zeebe:*` (замерено по сырой схеме)
+
+Это то, что делает модель «камундовской»: `taskDefinition`, `ioMapping`, `calledDecision`, листенеры,
+формы, биндинги версий. Замер механический — по
+[`zeebe-bpmn-moddle`](https://raw.githubusercontent.com/camunda/zeebe-bpmn-moddle/main/resources/zeebe.json),
+типы с `meta.allowedIn`, наличие в продакшн-коде (комментарии не считаются):
+
+**20 из 26 типов расширений — 77 %.**
+
+| Не поддержано | Причина |
 |---|---|
-| ✅ **Совместимо** | Start/End/Terminate, Message/Timer/Error/Signal/Escalation/Link события, Exclusive/Parallel/Inclusive/Event-based шлюзы, Service/User/Receive/Send task, Script task, Business rule task (DMN), Call activity, Embedded & Event subprocess, Multi-instance (per-instance vars + outputCollection), переменные STRING/LONG/DOUBLE/BOOLEAN/UUID/JSON, timeCycle (ISO + cron), zeebe:ioMapping (scoped), Compensation (compensate-all + targeted), correlation key, FEEL-условия |
-| ⚠️ **Точечные edge'ы** | Business rule FEEL-режим, компенсация в scope подпроцесса, ограниченный повтор таймера `R<n>`, MI на send/script job-worker форме |
-| ❌ **Не в Camunda 8** (BPMN-стандарт, но C8 не исполняет) | Conditional события, Transaction subprocess, Cancel события — надстройка движка, полезная вне C8 |
+| `LinkedResource`, `LinkedResources` | **не берём сознательно** — привязка RPA-ресурсов, у нас нет RPA-раннера |
+| `AgentDefinition` | AI-агенты Camunda 8.8+, вне задач проекта |
+| `AdHoc` | ad-hoc subprocess — новая семантика исполнения, требует отдельного дизайна |
+| `ConditionalFilter` | сузить переоценку условия — задача написана (`WO-C8-29`) |
+| `PriorityDefinition` | приоритет user task — задача написана (`WO-C8-30`) |
 
-Реальные C8-BPMN-модели исполняются **без правок файлов** (главная цель проекта): JSON-payload, десятичные,
-collection-driven multi-instance, cron-таймеры, DMN с версионированием. DMN исполняется собственным движком
-решений поверх того же `feel-engine`, что и Camunda 8 (DMN 1.3 + FEEL).
+Из шести незакрытых **три сознательно не берём**, три расписаны и стоят в очереди. Остаток и его
+приоритеты — [`governance/workorders/_index.md`](governance/workorders/_index.md).
+
+### Чего честно нет
+
+- **Кластеризация.** Camunda 8 — распределённый брокер с партициями; ZorroBPM рассчитан на **один
+  экземпляр** (таймеры и версионирование определений небезопасны при нескольких репликах).
+- **gRPC-API Zeebe.** У нас REST + RabbitMQ для воркеров, а не протокол Zeebe. Готовые C8-клиенты
+  не подключатся — воркеры пишутся под наш контракт (см. «Сервис-задачи: написание воркера»).
+- **Экосистема.** Operate/Tasklist/Optimize заменены одним встроенным SPA; Optimize-аналитики нет.
+
+То есть **совместимость на уровне моделей, а не на уровне протокола и инфраструктуры.** Ваши `.bpmn`
+и `.dmn` переносятся; ваши Zeebe-клиенты и кластерные ожидания — нет.
 
 ## Архитектура
 
@@ -346,174 +333,17 @@ curl -X POST http://localhost:8080/service-tasks/<SERVICE_TASK_ID>/fail \
 
 > Бизнес-ошибки (ожидаемые исходы) — это **не** инцидент: их моделируют через **error boundary / event-subprocess** по `errorCode`, а не через `FAILED`.
 
-## Руководство по интеграции — пошагово (для новичка)
+## Интеграция и события — руководства
 
-> От «что это вообще» до рабочей интеграции внешней системы. Справочник эндпоинтов — в разделе [REST API](#rest-api)
-> выше; воркеры — в [Сервис-задачи](#сервис-задачи-написание-воркера). URL в примерах: прод — `https://<host>/api/…`
-> (nginx срезает `/api`); локально — `http://localhost:8080/…` без `/api`.
+Пошаговые руководства вынесены из README, чтобы он оставался обзором продукта:
 
-### Что это простыми словами
-ZorroBPM — «дирижёр» процессов. Вы рисуете схему (`.bpmn`: прямоугольники — шаги, ромбы — развилки, стрелки —
-порядок), движок её **исполняет**: ведёт каждую заявку по шагам, ждёт людей, зовёт внешние системы, помнит
-состояние. Сам бизнес-логику **не выполняет** — только оркеструет. Четыре роли: **моделлер** (рисует схему),
-**движок** (исполняет), **воркер** (ваш код на service task), **UI/фронт** (человек на user task). Новая внешняя
-система = ещё один API-ключ, per-system кода в движке нет.
-
-Восемь слов: **Definition** (задеплоенная схема, `key`+`version`) · **Instance** (одна заявка, `id`) · **Token**
-(где сейчас заявка) · **Variables** (данные заявки) · **User Task** (ждёт человека) · **Service Task** (ждёт
-машину/воркер) · **Job** (единица работы service task по типу `zeebe:taskDefinition type`) · **Incident**
-(застряло — нужен оператор).
-
-### Доступ для внешней системы (API-ключ)
-Человек-владелец создаёт ключ (UI «Мой профиль → API-ключи» или `POST /me/api-key`); ключ вида `zbpm_sk_…`
-показывается один раз. Дальше каждый запрос машины шлёт его в заголовке — он приоритетнее cookie:
-
-```
-Authorization: Bearer zbpm_sk_XXXXXXXX
-```
-
-Для машин — только API-ключ (не логин/пароль). Ниже подразумевается `-H "$AUTH"`, где `AUTH="Authorization: Bearer zbpm_sk_…"`.
-
-### Шаг 1 — нарисовать схему (Camunda Modeler)
-Скачайте **Camunda Modeler**, создайте диаграмму типа **BPMN (Camunda 8 / Cloud)** — важно именно C8, движок читает
-Zeebe-расширения (`zeebe:*`) как Camunda 8. Нарисуйте `Start → User Task → End`. Кликните по процессу → **Process ID**
-= `vacation` (будущий `key`). На шагах панель справа проставляет `zeebe:*` за вас: service task —
-`<zeebe:taskDefinition type="send-email" retries="3"/>`; user task — `<zeebe:userTask/>` +
-`<zeebe:assignmentDefinition assignee="ivan" candidateGroups="hr"/>`; форма — `<zeebe:formDefinition
-externalReference="…"/>`. Поэтому реальные C8-модели идут **без правок файла**.
-
-### Шаг 2 — задеплоить и запустить
-Деплой (`POST /process-definitions`, тело JSON `{bpmn}`, требует SUPER_ADMIN) и запуск (`POST /process-instances`) —
-см. примеры в разделе [REST API](#rest-api). Повторный деплой того же `Process ID` = новая версия; старые экземпляры
-доедут по своей.
-
-### Шаг 3 — User Tasks (человек в процессе): полный цикл
-Ваш внешний Tasklist/портал:
-1. **Инбокс** — поллинг (webhook «новая задача» пока нет):
-   `GET /user-tasks?candidateGroup=hr&state=CREATED&page=0&size=50` (или `?assignee=ivan`). Ответ — страница
-   `UserTask`: `id, processInstanceId, bpmnElementId, name, formKey, assignee, candidateGroups, createdAt`.
-2. **Данные формы** — `GET /variables?processInstanceId=<id>`; какую форму рисовать — по `formKey` (ваш фронт мапит
-   ключ на компонент; валидация ввода — через Variable Schema, ниже).
-3. **Завершить** — вернуть результат:
-   ```bash
-   curl -X POST https://<host>/user-tasks/<taskId>/complete -H "$AUTH" -H 'Content-Type: application/json' \
-     -d '{"variables":[{"name":"approved","type":"BOOLEAN","value":"true"}]}'
-   ```
-   Движок сам продвинет токен (например, шлюз по `approved` выберет ветку).
-
-### Шаг 4 — Service Tasks (машина в процессе)
-Два способа получить работу — подробно в разделе [Сервис-задачи: написание воркера](#сервис-задачи-написание-воркера):
-**A) RabbitMQ push** (Java, стартер `JobHandler`, очередь `zorrobpm.jobs.<type>`) — рекомендуется; **B) REST-поллинг**
-(любой язык): `GET /service-tasks?job=<type>&state=CREATED` → `POST /service-tasks/{id}/complete` (успех, с
-переменными) или `/fail` (`{message, retries?}`). Семантика `fail`/retries/инцидентов — там же.
-
-### Свой внешний фронтенд + Variable Schema
-UI ходит в API через ваш BFF (ключ на бэкенде, не в браузере). Движок форм **не рендерит**, но хранит **JSON Schema
-2020-12** артефакты (`ElementArtifact`, `kind=VARIABLE_SCHEMA`) и привязывает к элементам
-(`GET/POST /process-definitions/{key}/element-bindings`, версия пиннится к версии определения). BFF: получить схему
-входных переменных элемента → **провалидировать** ввод → `POST …/complete`. Расширения `x-ui`/`x-builder` в схеме
-несут метаданные для рендера полей. Дизайн — [ADR-6](docs/adr/ADR-6-element-artifact-variable-schema.md).
-
-### End-to-end: «Отпуск»
-`Start → User Task «Согласовать» → Exclusive Gateway (по approved) → [да] Service Task send-email → End ; [нет] End`.
-```bash
-AUTH="Authorization: Bearer zbpm_sk_…"
-# деплой и старт — см. REST API; затем:
-TASK=$(curl -s "https://<host>/user-tasks?candidateGroup=hr&state=CREATED" -H "$AUTH" | jq -r '.data[0].id')
-curl -X POST https://<host>/user-tasks/$TASK/complete -H "$AUTH" -H 'Content-Type: application/json' \
-  -d '{"variables":[{"name":"approved","type":"BOOLEAN","value":"true"}]}'
-# движок дошёл до service task send-email → ваш воркер выполнил → End.
-```
-
-### Частые ошибки
-- **401/403 везде** — нет/просрочен токен; для машин `Authorization: Bearer zbpm_sk_…`. Читать может любой
-  аутентифицированный; энфорс прав записи по владельцу ещё раскатывается (см. [Ограничения](#ограничения-и-замечания-по-проду)).
-- **Застряло на service task** — воркер не берёт джобы этого типа или исчерпал retries → `GET /incidents`. `getJob()`
-  воркера должен == `zeebe:taskDefinition type`.
-- **User task не в инбоксе** — проверьте фильтр (`assignee` vs `candidateGroup`) и маркер `zeebe:userTask`.
-- **Шлюз → инцидент** — ни одно условие не истинно и нет **default flow**. Задайте default.
-- **Переменная не читается в FEEL** — неверный `type` (число как `STRING`). Число → `LONG`/`DOUBLE`, объект → `JSON`.
-
-## События (event notifications) — как узнать, что что-то изменилось
-
-Движок эмитит **доменные события** на каждом изменении состояния (старт/завершение/отмена инстанса, создание/
-завершение user-task, создание service-task, инцидент, завершение активности). Событие пишется в **транзакционный
-outbox в той же транзакции**, что и изменение (at-least-once, не теряется), затем публикуется. Три способа получить
-(ADR-7, `docs/adr/ADR-7-event-notification-architecture.md`):
-
-| Контракт | Транспорт | Кому |
-|---|---|---|
-| **A** exchange `zorrobpm.events` | RabbitMQ topic | внешние **системы** с AMQP |
-| **B** `GET /events?since=cursor` | HTTP pull | любая система/UI без AMQP (firewall-friendly) |
-| **C** `GET /events/stream` | HTTP SSE | браузерные UI (push) |
-
-**Каталог типов событий (routing key):** `process-instance.started` · `process-instance.completed` ·
-`process-instance.cancelled` · `activity.completed` · `user-task.created` · `user-task.completed` ·
-`service-task.created` · `incident.raised` · `incident.resolved`.
-
-**Envelope (JSON):** `{ sequence, id, type, version, occurredAt, processDefinitionKey, processDefinitionId,
-processInstanceId, elementId, ownerScope, data }`.
-
-### Ловля через RabbitMQ (Контракт A) — пошагово
-
-Движок сам объявляет durable topic-exchange `zorrobpm.events` при старте и публикует туда каждое событие с
-routing-key = тип. **Очередь создаёт потребитель:** topic-exchange без привязанной очереди роняет сообщения (стандарт
-AMQP) — поэтому подпишитесь, создав СВОЮ очередь и привязав её.
-
-**Шаг 1. Проверьте, что exchange есть** (на хосте с RabbitMQ):
-```bash
-rabbitmqctl list_exchanges | grep zorrobpm.events      # → zorrobpm.events   topic
-```
-
-**Шаг 2. Создайте свою durable-очередь и привяжите к exchange** (паттерн routing-key под ваши нужды):
-```bash
-# все события:
-rabbitmqadmin declare queue name=my-app.events durable=true
-rabbitmqadmin declare binding source=zorrobpm.events destination=my-app.events routing_key="#"
-# ИЛИ только инциденты:      routing_key="incident.*"
-# ИЛИ конкретный тип:        routing_key="user-task.created"
-```
-> Один потребитель = одна durable-очередь. Несколько потребителей — каждый свою очередь (каждый получит копию по
-> своему паттерну). Не биндите к общей очереди, если хотите независимую доставку.
-
-**Шаг 3. Читайте из своей очереди** (пример — Spring Boot воркер):
-```java
-@Component
-public class EventConsumer {
-    @RabbitListener(queues = "my-app.events")
-    public void onEvent(String envelopeJson) {
-        // envelopeJson — JSON envelope (type, sequence, processInstanceId, data, …)
-        // РАЗБЕРИТЕ и реагируйте. Обработка ДОЛЖНА быть идемпотентной:
-        //   доставка at-least-once → возможен повтор; дедуп по полю "id" или "sequence".
-    }
-}
-```
-Пример на любом языке — консюмер AMQP 0-9-1 к очереди `my-app.events` (Go/Python/Node — любой клиент RabbitMQ).
-
-**Шаг 4. Гарантии и правила:**
-- **At-least-once, не exactly-once** — возможен дубликат при ретрае. Дедуп по `id`/`sequence`, обработка идемпотентна.
-- **Порядок** — монотонный `sequence` (глобальный); в рамках одного `processInstanceId` порядок сохранён.
-- **Догон после простоя** — если консюмер лежал, события копились в его durable-очереди (не потеряются). Либо
-  добрать пропущенное через Контракт B: `GET /events?since=<последний_обработанный_sequence>`.
-- **Не подтверждайте (ack) до успешной обработки** — при падении сообщение вернётся (requeue) или уйдёт в DLQ по
-  вашей настройке.
-
-**Быстрая проверка «вживую»:** привяжите очередь с `routing_key="#"`, запустите любой процесс (см. [Руководство по
-интеграции](#руководство-по-интеграции--пошагово-для-новичка)) — в очереди появятся `process-instance.started`,
-`user-task.created` и т.д.
-
-### Контракт B (HTTP pull) — без RabbitMQ
-```bash
-curl "https://<host>/events?since=<sequence>&type=incident.raised&limit=100" \
-  -H "Authorization: Bearer zbpm_sk_..."
-# → события после курсора (только те process-definition, на которые у ключа есть grant); в ответе — следующий курсор.
-```
-Курсор `since` — последний обработанный `sequence`; реплеится, firewall-friendly. **AuthZ:** видны только свои
-process-definition (кросс-тенант события не отдаются).
-
-### Контракт C (SSE push) — для браузерных UI
-`GET /events/stream` (`text/event-stream`, JWT-auth, `Last-Event-ID`=sequence для докачки) — живой поток в браузер/
-BFF. Тот же authz-фильтр. Встроенный SPA использует его для realtime без поллинга.
+- **[Интеграция — пошагово](docs/guides/integration-quickstart.md)** — от схемы в Modeler до
+  работающего процесса: API-ключ, деплой, User Tasks, Service Tasks, свой фронтенд, сквозной
+  пример «Отпуск», частые ошибки.
+- **[Уведомления о событиях](docs/guides/event-notifications-guide.md)** — три контракта: RabbitMQ (A),
+  HTTP-pull (B), SSE-push (C); что выбрать и как поймать. Перечень routing key —
+  [справочник событий](docs/guides/event-catalog.md).
+- **[Внешний фронтенд](docs/guides/external-frontend-integration.md)** — если своё UI поверх нашего API.
 
 ## Авторизация веб-консоли (UI)
 
