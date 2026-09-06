@@ -2,6 +2,7 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.entity.ElementArtifactBindingEntity;
 import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
@@ -12,6 +13,7 @@ import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormResolver;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +43,7 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
     private final ElementArtifactBindingRepository bindingRepository;
     private final FormRepository formRepository;
     private final FormResolver formResolver;
+    private final BpmnService bpmnService;
     private final DBService dbService;
     private final FormAccessSupport formAccessSupport;
 
@@ -79,6 +82,24 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
 
         formAccessSupport.requirePdAccess(pd.getId());
+
+        // WO-C8-26: linked formDefinition of the plain start event wins over every
+        // legacy path (docs: the Modeler offers one Form type at a time — linked XOR
+        // embedded XOR custom — so the structured reference beats the hand-written
+        // zeebe:properties formKey on invalid models carrying both). Read from the
+        // cached PD model (BpmnService cache; version-correct: this version's id);
+        // the deployment pin uses this version's deployment_id.
+        // ADR-6 §D7 bindings and scalar startFormKey below are byte-identical fallbacks.
+        BpmnProcessDefinitionModel startModel =
+            bpmnService.getProcessDefinitionModelById(pd.getId());
+        String startFormId = startModel.getStartFormId();
+        if (startFormId != null && !startFormId.isBlank()) {
+            if ("deployment".equals(startModel.getStartFormBindingType())) {
+                return formResolver.resolveTaskFormByFormIdAndDeployment(
+                    startFormId, pd.getDeploymentId(), null);
+            }
+            return formResolver.resolveTaskFormByFormId(startFormId, null);
+        }
 
         // ADR-6 §D7: try element-artifact binding first (per elementId)
         List<ElementArtifactBindingEntity> bindings = bindingRepository.findByProcessDefinitionId(pd.getId());

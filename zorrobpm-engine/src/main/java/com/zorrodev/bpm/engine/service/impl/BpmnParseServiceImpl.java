@@ -147,6 +147,16 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 if (element.getType() == BpmnElementType.START_EVENT) {
                     pd.setStartEvent(element);
                 }
+                // WO-C8-26: formDefinition of the plain start event (docs: linking targets the
+                // none start event). Scalar startFormKey below stays untouched (fallback).
+                if (element.getType() == BpmnElementType.START_EVENT
+                    && startEvent.getExtensionElements() != null
+                    && startEvent.getExtensionElements().getFormDefinition() != null) {
+                    var startFormDefinition = startEvent.getExtensionElements().getFormDefinition();
+                    pd.setStartFormId(startFormDefinition.getFormId());
+                    pd.setStartFormBindingType(startFormDefinition.getBindingType());
+                    pd.setStartFormVersionTag(startFormDefinition.getVersionTag());
+                }
                 if (startEvent.getExtensionElements() != null && startEvent.getExtensionElements().getProperties() != null && startEvent.getExtensionElements().getProperties().getProperties() != null) {
                     List<PropertyModel> properties = startEvent.getExtensionElements().getProperties().getProperties();
                     for (PropertyModel property : properties) {
