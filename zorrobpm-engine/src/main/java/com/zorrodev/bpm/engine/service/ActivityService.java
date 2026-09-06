@@ -24,6 +24,18 @@ public interface ActivityService {
     void completeUserTask(UUID activityId, List<ProcessVariable> variables);
 
     /**
+     * WO-C8-28: phase-aware assignment (assign-API) — parks in an assigning phase
+     * when the element declares assigning listeners, applies immediately otherwise.
+     */
+    void assignUserTask(UUID taskId, String assignee);
+
+    /**
+     * WO-C8-28: phase-aware claim (Tasklist assignment) — same assigning-phase
+     * discipline as {@link #assignUserTask}.
+     */
+    void claimUserTask(UUID taskId, String assignee);
+
+    /**
      * Resumes a token parked at a wait state (intermediate/message/timer catch event):
      * applies the given variables, completes the waiting activity and follows its outgoing flows.
      * Called by the timer scheduler and message-correlation subsystems.

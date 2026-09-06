@@ -44,4 +44,26 @@ public class UserTaskExtensionModel {
      * null/empty as "no phase" and never touch listener state for such elements.
      */
     private List<ListenerModel> completingListeners;
+    /**
+     * WO-C8-28: assigning task listeners in declaration order (already filtered to
+     * {@code eventType="assigning"} at parse time). Null when absent — same contract
+     * as the pairs above. Fires on assignment changes (activation with a model
+     * assignee, assign-API, claim); deny is deferred (criterion 5), so listeners
+     * observe while the assignment parks in {@code pendingAssignee}.
+     */
+    private List<ListenerModel> assigningListeners;
+    /**
+     * WO-C8-28: updating task listeners in declaration order (already filtered to
+     * {@code eventType="updating"} at parse time). Null when absent — same contract
+     * as the pairs above. Fires on complete-with-variables (the only variable-write
+     * path); deny is deferred (criterion 5).
+     */
+    private List<ListenerModel> updatingListeners;
+    /**
+     * WO-C8-28: canceling task listeners in declaration order (already filtered to
+     * {@code eventType="canceling"} at parse time). Null when absent — same contract
+     * as the pairs above. Observe-only: Camunda does not support deny for canceling
+     * ("it's not possible to deny the cancelation"), so no deny branch exists.
+     */
+    private List<ListenerModel> cancelingListeners;
 }

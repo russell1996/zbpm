@@ -56,6 +56,10 @@ class EventTriggerTest {
     private ElementSupport elementSupport;
     @Mock
     private TimerJobRepository timerJobRepository;
+    // WO-C8-28: новый конструкторный параметр (инжект моком — существующие тесты
+    // путей без отмены его не трогают, но @InjectMocks без мока дал бы null).
+    @Mock
+    private CancelingPhaseService cancelingPhaseService;
 
     @InjectMocks
     private EventTrigger eventTrigger;

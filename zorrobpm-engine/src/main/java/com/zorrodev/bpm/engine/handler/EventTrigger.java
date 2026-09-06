@@ -49,6 +49,7 @@ public class EventTrigger {
     private final FlowNavigator flowNavigator;
     private final ElementSupport elementSupport;
     private final TimerJobRepository timerJobRepository;
+    private final CancelingPhaseService cancelingPhaseService;
 
     // WO-REL-17: explicit business zone for cycle re-arm resolution (same as TimerJobExecutor)
     @Value("${zorrobpm.business-timezone:Asia/Almaty}")
@@ -122,12 +123,26 @@ public class EventTrigger {
             .orElse(true);
 
         if (interrupting) {
+            // WO-C8-28: snapshot the live user tasks FIRST — only freshly cancelled
+            // activities may open a canceling phase (an already-cancelled task whose
+            // phase ran and closed must never reopen on a later firing).
+            List<UUID> cancelCandidates = cancelingPhaseService.activeUserTaskIdsOnToken(tokenId);
             dbService.cancelActivity(hostActivityId);
             // WO-ENG-3: Cancel all remaining active activities on this token.  For multi-instance,
             // this terminates all sibling MI instances and their inner tasks (they share the same
             // token).  For a single-instance host, the host was already cancelled above so this
             // call is a safe no-op (the host is no longer CREATED/IN_PROGRESS).
             dbService.cancelActiveActivitiesForToken(tokenId);
+            // WO-C8-28: canceling listeners defer the cancellation tail — the boundary
+            // continuation below runs only after the last canceling listener completes
+            // (see the canceling resume branch in CompletionService). Returns true all
+            // the same: the boundary fired, cancellation started; only its tail parked.
+            // (Callers trigger conditional events on true — they evaluate at fire time,
+            // not at continuation time; no retry hinges on this value — timer jobs are
+            // one-shot by then, message correlations ignore it.)
+            if (cancelingPhaseService.openForActivities(cancelCandidates, boundaryElementId)) {
+                return true;
+            }
             // WO-ENG-1: An interrupting boundary replaces the host's branch path.  The original branch
             // (e.g. host → join → endEvent) is cancelled; the boundary's continuation (boundary →
             // boundary-end) takes its place.  Decrement the token's pending_branches counter so that
