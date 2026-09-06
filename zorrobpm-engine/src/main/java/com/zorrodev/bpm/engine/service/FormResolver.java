@@ -95,6 +95,35 @@ public class FormResolver {
         return dto;
     }
 
+    /**
+     * WO-C8-31: resolves a Modeler-linked form pinned by version tag
+     * ({@code bindingType="versionTag"} — top-level {@code versionTag} of the
+     * {@code .form} JSON, WO-C8-27; one tag on several versions pins the latest).
+     *
+     * <p>A missing pair is an explicit 404 naming both the id and the tag — never a
+     * silent latest fallback (the quiet divergence this WO fixes). A null/blank
+     * {@code versionTag} 404s before any query: passing it into the derived query
+     * would match {@code IS NULL} rows (Spring null semantics) and silently resurrect
+     * an untagged form — the exact trap of C8-23 п.9.
+     */
+    public TaskFormDTO resolveTaskFormByFormIdAndVersionTag(String formId, String versionTag,
+            java.util.Map<String, String> prefillData) {
+        FormEntity form = (formId == null || formId.isBlank() || versionTag == null || versionTag.isBlank()) ? null
+            : formRepository.findFirstByFormIdAndVersionTagOrderByVersionDesc(formId, versionTag).orElse(null);
+        if (form == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Form schema not found for id: " + formId + " with version tag: " + versionTag
+                    + " — deploy a form version carrying this tag");
+        }
+
+        TaskFormDTO dto = new TaskFormDTO();
+        dto.setType("embedded");
+        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
+        dto.setSchema(form.getSchemaJson());
+        if (prefillData != null) dto.setData(prefillData);
+        return dto;
+    }
+
     public String getSchemaJson(String formKey) {
         if (formKey == null || formKey.isBlank()) return null;
         if (formKey.startsWith("http://") || formKey.startsWith("https://")) return null;

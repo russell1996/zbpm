@@ -137,6 +137,9 @@ public class DeploymentArtifactRegistrar {
             entity.setFormKey(formKey);
             // WO-C8-22: embedded forms carry their Modeler id — addressable by formId too.
             entity.setFormId(form.getId());
+            // WO-C8-31: top-level "versionTag" of the embedded .form JSON (WO-C8-27;
+            // lenient — absent on most forms → null, never matches a versionTag resolve).
+            entity.setVersionTag(FormEntity.extractVersionTag(form.getBody()));
             // WO-C8-23: batch stamp for bindingType="deployment" resolve (null = single deploy).
             entity.setDeploymentId(deploymentId);
             entity.setVersion(version);
