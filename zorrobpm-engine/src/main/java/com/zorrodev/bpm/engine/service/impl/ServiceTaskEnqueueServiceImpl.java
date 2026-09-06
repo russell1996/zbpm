@@ -188,7 +188,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
         BpmnElementModel element = bpmn.getElement(phase.getBpmnElementId());
 
-        List<ListenerModel> listeners = elementSupport.serviceTaskStartListeners(element);
+        List<ListenerModel> listeners = elementSupport.elementStartListeners(element);
         Integer index = phase.getListenerIndex();
         if (listeners.isEmpty() || index == null || index < 0 || index >= listeners.size()) {
             // Unreachable by construction (index is set only to valid values in the same

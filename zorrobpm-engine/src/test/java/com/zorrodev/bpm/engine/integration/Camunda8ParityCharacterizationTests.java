@@ -1185,7 +1185,7 @@ public class Camunda8ParityCharacterizationTests {
         String xml = bpmn("test-c8-el-exclusive-gateway.bpmn").replace("c8-el-exclusive-gateway", key);
 
         assertThat(bpmnParseService.parse(xml).getElement("gw").getExtensions()
-            .getServiceTaskExtension().getStartListeners())
+            .getElementStartListeners())
             .extracting(ListenerModel::jobType)
             .containsExactly("gw-listener-job");
 
@@ -1214,7 +1214,7 @@ public class Camunda8ParityCharacterizationTests {
         String xml = bpmn("test-c8-el-inclusive-gateway.bpmn").replace("c8-el-inclusive-gateway", key);
 
         assertThat(bpmnParseService.parse(xml).getElement("gw").getExtensions()
-            .getServiceTaskExtension().getStartListeners())
+            .getElementStartListeners())
             .extracting(ListenerModel::jobType)
             .containsExactly("gw-listener-job");
 
@@ -1242,7 +1242,7 @@ public class Camunda8ParityCharacterizationTests {
         String xml = bpmn("test-c8-el-parallel-gateway.bpmn").replace("c8-el-parallel-gateway", key);
 
         assertThat(bpmnParseService.parse(xml).getElement("gw").getExtensions()
-            .getServiceTaskExtension().getStartListeners())
+            .getElementStartListeners())
             .extracting(ListenerModel::jobType)
             .containsExactly("gw-listener-job");
 
@@ -1271,7 +1271,7 @@ public class Camunda8ParityCharacterizationTests {
         String xml = bpmn("test-c8-el-event-based-gateway.bpmn").replace("c8-el-event-based-gateway", key);
 
         assertThat(bpmnParseService.parse(xml).getElement("eventGw").getExtensions()
-            .getServiceTaskExtension().getStartListeners())
+            .getElementStartListeners())
             .extracting(ListenerModel::jobType)
             .containsExactly("gw-listener-job");
 
@@ -1300,7 +1300,7 @@ public class Camunda8ParityCharacterizationTests {
         String xml = bpmn("test-c8-el-message-catch.bpmn").replace("c8-el-message-catch", key);
 
         assertThat(bpmnParseService.parse(xml).getElement("wait").getExtensions()
-            .getServiceTaskExtension().getStartListeners())
+            .getElementStartListeners())
             .extracting(ListenerModel::jobType)
             .containsExactly("catch-listener-job");
 
@@ -1329,7 +1329,7 @@ public class Camunda8ParityCharacterizationTests {
         String xml = bpmn("test-c8-el-plain-start.bpmn").replace("c8-el-plain-start", key);
 
         assertThat(bpmnParseService.parse(xml).getElement("startEvent").getExtensions()
-            .getServiceTaskExtension().getStartListeners())
+            .getElementStartListeners())
             .extracting(ListenerModel::jobType)
             .containsExactly("start-listener-job");
 

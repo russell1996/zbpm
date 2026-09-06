@@ -633,6 +633,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     child.getExtensions().setExclusiveGatewayExtension(new ExclusiveGatewayExtensionModel());
                     child.getExtensions().getExclusiveGatewayExtension().setDefaultFlowId(inclusiveGateway.getDefaultFlow());
                 }
+                // WO-C8-25: вложенные шлюзы — тем же хуком, что верхний уровень.
+                attachElementStartListeners(child, inclusiveGateway.getExtensionElements());
                 child.setProcessDefinition(pd);
                 pd.addElement(child);
             }
@@ -645,6 +647,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 child.setType(BpmnElementType.EVENT_BASED_GATEWAY);
                 child.setIncoming(eventGateway.getIncoming());
                 child.setOutgoing(eventGateway.getOutgoing());
+                // WO-C8-25: вложенные шлюзы — тем же хуком, что верхний уровень.
+                attachElementStartListeners(child, eventGateway.getExtensionElements());
                 child.setProcessDefinition(pd);
                 pd.addElement(child);
             }
@@ -844,10 +848,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
     /**
      * WO-C8-25 (part B of finding A-5): start execution listeners for gateway/event
-     * elements — parsed into the shared {@code ServiceTaskExtensionModel.startListeners}
-     * so the phase machinery reads one shape. Service/user tasks never pass through here
-     * (they keep their own C8-11/C8-21 paths); boundary elements have a separate mapping
-     * ({@code toBoundaryElement}) that deliberately does NOT call this.
+     * elements — parsed into the DEDICATED {@code elementStartListeners} field (NOT into
+     * {@code ServiceTaskExtensionModel.startListeners}: the C8-11 service-task machinery
+     * assumes a service_tasks row, which these elements never have). Service/user tasks
+     * never pass through here (they keep their own C8-11/C8-21 paths); boundary elements
+     * have a separate mapping ({@code toBoundaryElement}) that deliberately does NOT call
+     * this.
      */
     private void attachElementStartListeners(BpmnElementModel element, ExtensionElements ee) {
         if (ee == null || ee.getExecutionListeners() == null
@@ -869,10 +875,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (element.getExtensions() == null) {
             element.setExtensions(new BpmnElementExtensionModel());
         }
-        if (element.getExtensions().getServiceTaskExtension() == null) {
-            element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
-        }
-        element.getExtensions().getServiceTaskExtension().setStartListeners(starts);
+        element.getExtensions().setElementStartListeners(starts);
     }
 
     /**

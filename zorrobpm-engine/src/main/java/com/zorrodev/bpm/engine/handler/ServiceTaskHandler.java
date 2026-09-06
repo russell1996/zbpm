@@ -54,12 +54,7 @@ public class ServiceTaskHandler implements ElementHandler, TypedElementHandler {
         // WO-C8-11: elements with start listeners park a listener job first (pendingListenerIndex=0);
         // the real job is dispatched only after the last listener completes. Elements without
         // listeners take the pre-existing path with a null index (behaviour unchanged).
-        // WO-C8-25: the service_tasks-row phase is SERVICE_TASK-only. Gateway/event elements
-        // carry parsed start listeners for the element-listener phase table instead — routing
-        // them here would run every listener TWICE (phase table + this row phase).
-        List<ListenerModel> startListeners = bpmnElement.getType() == BpmnElementType.SERVICE_TASK
-            ? elementSupport.serviceTaskStartListeners(bpmnElement)
-            : List.of();
+        List<ListenerModel> startListeners = elementSupport.serviceTaskStartListeners(bpmnElement);
         if (startListeners.isEmpty()) {
             dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(bpmnElement), elementSupport.serviceTaskJob(bpmnElement));
         } else {
