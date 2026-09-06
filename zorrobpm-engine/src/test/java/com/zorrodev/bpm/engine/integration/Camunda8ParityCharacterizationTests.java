@@ -957,6 +957,183 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(activity(piId, "svc").getStatus()).isEqualTo(ActivityStatus.ERROR);
     }
 
+    /** WO-C8-24: текстовая переменная инстанса (durable-читаемость между шагами фазы). */
+    private String instanceVariable(UUID processInstanceId, String name) {
+        return variableRepository.findByNameAndProcessInstanceId(name, processInstanceId)
+            .map(v -> v.getTextValue()).orElse(null);
+    }
+
+    // ==================== WO-C8-24: completing task listeners ====================
+
+    @Test
+    @Transactional
+    void taskListeners_completingListenerBlocksCompletionUntilComplete() throws Exception {
+        // WO-C8-24, критерии 1+2 (POF): complete вернул 200 (без throw), но задача НЕ
+        // COMPLETED и токен не двинулся; статус честно показывает незавершение.
+        String key = uniq("c8tc");
+        String xml = bpmn("test-c8-task-listeners-completing.bpmn").replace("c8-task-listeners-completing", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCompletingListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("completing-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+
+        // Первый complete открывает фазу: 200-подобно (без throw), задача создана и видна,
+        // но НЕ завершена; токен стоит.
+        completeUserTask(piId, "review");
+
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("completing-job");
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+        assertThat(queryService.getUserTask(activityId).getStatus()).isNotEqualTo("COMPLETED");
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        // Завершение листенера обычным путём — задача завершена, токен двинулся.
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_twoCompletingListeners_runSequentiallyInDeclarationOrder() throws Exception {
+        // WO-C8-24, критерий 3 (зеркало creating/start): второй completing-listener
+        // диспетчеризуется только после завершения первого.
+        String key = uniq("c8tc2");
+        String xml = bpmn("test-c8-task-listeners-two-completing.bpmn").replace("c8-task-listeners-two-completing", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCompletingListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("completing-job-1", "completing-job-2");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        completeUserTask(piId, "review");
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("completing-job-1");
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("completing-job-1", "completing-job-2");
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isEqualTo(1);
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_repeatCompleteMidPhase_conflict409() throws Exception {
+        // WO-C8-24, критерий 4 (п.12): повторный complete в середине фазы — dedicated
+        // исключение (REST маппит в 409), состояние не испорчено: индекс тот же, дупликата
+        // job'а нет, задача по-прежнему не завершена — и нормально завершается после фазы.
+        String key = uniq("c8tc409");
+        String xml = bpmn("test-c8-task-listeners-completing.bpmn").replace("c8-task-listeners-completing", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        UUID userTaskId = userTasksOfInstance(piId).get(0).getId();
+
+        completeUserTask(piId, "review");
+
+        assertThatThrownBy(() -> runtimeService.completeUserTask(userTaskId, List.of()))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException.class);
+
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("completing-job");
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_completingListenerFailure_retriesThenIncidentVariablesSurvive() throws Exception {
+        // WO-C8-24, критерии 5+6 (п.13): retries="2" — первое падение редиспатчит, второе
+        // паркует с инцидентом; переменные из вызова complete (применены в начале фазы,
+        // durable) переживают и редиспатч, и инцидент; задача не завершена, токен стоит.
+        String key = uniq("c8tcf");
+        String xml = bpmn("test-c8-task-listeners-completing.bpmn").replace("c8-task-listeners-completing", key)
+            .replace("type=\"completing-job\"", "type=\"completing-job\" retries=\"2\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        UUID userTaskId = userTasksOfInstance(piId).get(0).getId();
+
+        runtimeService.completeUserTask(userTaskId, List.of(var("markerVar", ProcessVariableType.STRING, "done")));
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("completing-job");
+        assertThat(instanceVariable(piId, "markerVar")).isEqualTo("done");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("completing-job", "completing-job");
+        assertThat(instanceVariable(piId, "markerVar")).isEqualTo("done");
+
+        runtimeService.failServiceTask(activityId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.ERROR);
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+        assertThat(instanceVariable(piId, "markerVar")).isEqualTo("done");
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_creatingAndCompleting_fullChain() throws Exception {
+        // WO-C8-24, критерий 6 (п.14): creating + completing на одной задаче —
+        // creating-фаза → задача создана → completing-фаза → задача завершена.
+        String key = uniq("c8tlcc");
+        String xml = bpmn("test-c8-task-listeners-creating-completing.bpmn").replace("c8-task-listeners-creating-completing", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job");
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isNull();
+
+        completeUserTask(piId, "review");
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job", "completing-job");
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
     // ==================== §C.1: zeebe:jobPriorityDefinition (WO-C8-13/A-1: исправлено с priorityDefinition) ====================
 
     @Test

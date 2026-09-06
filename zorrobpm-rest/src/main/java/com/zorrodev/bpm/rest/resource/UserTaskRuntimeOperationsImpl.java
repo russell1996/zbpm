@@ -72,7 +72,15 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
         if (onBehalfOf != null) {
             runtimeOperationSupport.requireOnBehalfMatchesTask(task, onBehalfOf);
         }
-        IdDTO result = Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(runtimeOperationSupport::toDTO).orElseThrow();
+        IdDTO result;
+        try {
+            result = Optional.ofNullable(runtimeService.completeUserTask(id, dto.getVariables())).map(runtimeOperationSupport::toDTO).orElseThrow();
+        } catch (com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException e) {
+            // WO-C8-24: repeat complete while completing listeners run — 409, never 500
+            // (dedicated type, so no other failure is masked into a conflict).
+            log.warn("Complete of user task {} while completing listeners run: {}", id, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
         auditLogService.record(runtimeOperationSupport.getPrincipal(), "COMPLETE_USER_TASK", runtimeOperationSupport.resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(),
             onBehalfOf != null ? "[claimed] " + onBehalfOf : null);
         return result;

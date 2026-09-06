@@ -86,6 +86,23 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             return;
         }
 
+        // WO-C8-24: while a completing listener is in flight, the dispatched job is the
+        // listener's. Same discipline as the creating branch above (read-only for declaring
+        // elements; no real job to fail open into — corrupt index parks with an incident).
+        List<ListenerModel> completingListeners = elementSupport.userTaskCompletingListeners(element);
+        Integer pendingCompleting = completingListeners.isEmpty() ? null : dbService.getPendingCompletingListenerIndex(serviceTaskId);
+        if (pendingCompleting != null && pendingCompleting >= 0 && pendingCompleting < completingListeners.size()) {
+            job = completingListeners.get(pendingCompleting).jobType();
+            listenerHeaders = completingListeners.get(pendingCompleting).headers();
+        } else if (pendingCompleting != null) {
+            log.warn("User task {} has out-of-bounds pendingCompletingListenerIndex {} ({} completing listeners) — raising incident",
+                serviceTaskId, pendingCompleting, completingListeners.size());
+            dbService.createIncident(
+                serviceTaskId,
+                "User task '" + bpmnElementId + "' has out-of-bounds completing listener index — fix the process model");
+            return;
+        }
+
         // WO-C8-11: while a start listener is in flight, the dispatched job is the listener's,
         // not the real one. The index is read ONLY for elements that declare listeners, so the
         // common path (and all pre-existing tests with mock DBService) never touches the new read.

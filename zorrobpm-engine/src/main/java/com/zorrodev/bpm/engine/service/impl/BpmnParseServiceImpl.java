@@ -1061,11 +1061,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
             // WO-C8-21: creating task listeners block task creation until each completes.
+            // WO-C8-24: completing task listeners block task completion until each completes.
             // Only user tasks may carry taskListeners (schema allowedIn); other eventTypes
-            // (assigning/updating/completing/canceling) are separate WOs and stay unparsed.
+            // (assigning/updating/canceling) are separate WOs and stay unparsed.
             if (userTask.getExtensionElements().getTaskListeners() != null
                 && userTask.getExtensionElements().getTaskListeners().getListeners() != null) {
                 List<ListenerModel> creating = new ArrayList<>();
+                List<ListenerModel> completing = new ArrayList<>();
                 for (TaskListenerModel l : userTask.getExtensionElements().getTaskListeners().getListeners()) {
                     if (l.getType() == null) {
                         continue;
@@ -1074,10 +1076,16 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         // No nested headers here: the schema gives TaskListener no headers
                         // property (unlike ExecutionListener) — always null, by schema.
                         creating.add(new ListenerModel(l.getType(), l.getRetries(), null));
+                    } else if ("completing".equals(l.getEventType())) {
+                        // WO-C8-24: same — completing listeners block completion.
+                        completing.add(new ListenerModel(l.getType(), l.getRetries(), null));
                     }
                 }
                 if (!creating.isEmpty()) {
                     element.getExtensions().getUserTaskExtension().setCreatingListeners(creating);
+                }
+                if (!completing.isEmpty()) {
+                    element.getExtensions().getUserTaskExtension().setCompletingListeners(completing);
                 }
             }
         }

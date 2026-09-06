@@ -52,4 +52,20 @@ public interface ActivityDbOperations {
 
     /** WO-C8-21r2: remaining retries of the current creating-listener job. */
     Integer getCreatingListenerRetriesRemaining(UUID activityId);
+
+    /**
+     * WO-C8-24: advance/clear the in-flight completing-listener phase on the activity row
+     * (null = no phase). Entity mutation + save, never bulk UPDATE (same stale-copy reason
+     * as the creating pair above — the dispatcher re-reads in the same transaction).
+     */
+    void setPendingCompletingListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-24: null when no completing-listener phase is in flight for this activity. */
+    Integer getPendingCompletingListenerIndex(UUID activityId);
+
+    /** WO-C8-24: durable budget of the current completing-listener job (null = unset). */
+    void setCompletingListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-24: remaining retries of the current completing-listener job. */
+    Integer getCompletingListenerRetriesRemaining(UUID activityId);
 }
