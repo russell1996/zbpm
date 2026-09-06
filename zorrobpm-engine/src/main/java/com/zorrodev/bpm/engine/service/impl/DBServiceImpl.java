@@ -197,6 +197,26 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void setPendingCompletingListenerIndex(UUID activityId, Integer index) {
+        activityDbOperations.setPendingCompletingListenerIndex(activityId, index);
+    }
+
+    @Override
+    public Integer getPendingCompletingListenerIndex(UUID activityId) {
+        return activityDbOperations.getPendingCompletingListenerIndex(activityId);
+    }
+
+    @Override
+    public void setCompletingListenerRetriesRemaining(UUID activityId, Integer remaining) {
+        activityDbOperations.setCompletingListenerRetriesRemaining(activityId, remaining);
+    }
+
+    @Override
+    public Integer getCompletingListenerRetriesRemaining(UUID activityId) {
+        return activityDbOperations.getCompletingListenerRetriesRemaining(activityId);
+    }
+
+    @Override
     public void completeServiceTask(UUID serviceTaskId) {
         serviceTaskDbOperations.completeServiceTask(serviceTaskId);
     }

@@ -101,6 +101,21 @@ public interface DBService {
     /** WO-C8-21r2: remaining retries of the current creating-listener job. */
     Integer getCreatingListenerRetriesRemaining(UUID activityId);
 
+    /**
+     * WO-C8-24: the completing-listener phase index lives on the ACTIVITIES row, mirror
+     * of the creating pair above. Null = no phase.
+     */
+    void setPendingCompletingListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-24: null when no completing-listener phase is in flight for this activity. */
+    Integer getPendingCompletingListenerIndex(UUID activityId);
+
+    /** WO-C8-24: durable budget of the current completing-listener job (null = unset). */
+    void setCompletingListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-24: remaining retries of the current completing-listener job. */
+    Integer getCompletingListenerRetriesRemaining(UUID activityId);
+
     void completeUserTask(UUID serviceTaskId);
 
     void claimUserTask(UUID taskId, String assignee);

@@ -38,4 +38,10 @@ public class UserTaskExtensionModel {
      * null/empty as "no phase" and never touch listener state for such elements.
      */
     private List<ListenerModel> creatingListeners;
+    /**
+     * WO-C8-24: completing task listeners in declaration order (already filtered to
+     * {@code eventType="completing"} at parse time). Null when absent — callers treat
+     * null/empty as "no phase" and never touch listener state for such elements.
+     */
+    private List<ListenerModel> completingListeners;
 }
