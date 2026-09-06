@@ -45,6 +45,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
     private final ElementSupport elementSupport;
+    private final com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository phaseRepository;
 
     @Transactional
     @Override
@@ -142,11 +143,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         // WO-C8-7r2: a listener job carries the listener's own headers merged over the
         // element's — listener wins on key conflict, per the docs. Plain jobs keep the
         // element headers as-is (null when absent, as before).
-        if (listenerHeaders != null && !listenerHeaders.isEmpty()) {
-            Map<String, String> merged = taskHeaders == null ? new LinkedHashMap<>() : new LinkedHashMap<>(taskHeaders);
-            merged.putAll(listenerHeaders);
-            taskHeaders = merged;
-        }
+        taskHeaders = mergeListenerHeaders(taskHeaders, listenerHeaders);
 
         // WO-C8-9: null-safe priority resolution — FEEL→Integer, null when absent or broken.
         Integer priority = elementSupport.resolvePriority(processInstanceId, element);
@@ -159,14 +156,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             return;
         }
 
-        Map<String, ProcessVariable> variables = dbService.getVariables(processInstanceId, serviceTaskId).stream()
-            .collect(Collectors.toMap(com.zorrodev.bpm.contract.model.ProcessVariable::getName, pv -> {
-                ProcessVariable v = new ProcessVariable();
-                v.setName(pv.getName());
-                v.setValue(pv.getValue());
-                v.setType(pv.getType().toString());
-                return v;
-            }));
+        Map<String, ProcessVariable> variables = toJobVariables(dbService.getVariables(processInstanceId, serviceTaskId));
 
         JobDetailModel detail = new JobDetailModel();
         detail.setServiceTaskId(serviceTaskId);
@@ -178,6 +168,81 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         detail.setTaskHeaders(taskHeaders);
         detail.setPriority(priority);
 
+        writeOutboxEntry(serviceTaskId, detail);
+    }
+
+    /**
+     * WO-C8-25: dispatches the in-flight listener job of an element-listener phase
+     * (gateways/events). Same outbox/job protocol as {@link #enqueueAfterCommit}, resolved
+     * from the phase row — no activity row exists by design (criterion 4), so this method
+     * never touches one. Called only with a live phase (park/advance/fail-redispatch).
+     */
+    @Transactional
+    @Override
+    public void enqueuePhaseListener(UUID phaseId) {
+        com.zorrodev.bpm.engine.entity.ElementListenerPhaseEntity phase =
+            phaseRepository.findById(phaseId).orElseThrow(() ->
+                new IllegalStateException("No element-listener phase for " + phaseId));
+        UUID processInstanceId = phase.getProcessInstanceId();
+        ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+        BpmnElementModel element = bpmn.getElement(phase.getBpmnElementId());
+
+        List<ListenerModel> listeners = elementSupport.elementStartListeners(element);
+        Integer index = phase.getListenerIndex();
+        if (listeners.isEmpty() || index == null || index < 0 || index >= listeners.size()) {
+            // Unreachable by construction (index is set only to valid values in the same
+            // transaction chain) — loud fail-closed, never a silent wrong job.
+            throw new IllegalStateException("Element-listener phase " + phaseId + " has corrupt index " + index);
+        }
+        ListenerModel listener = listeners.get(index);
+
+        // No activity scope exists for phase jobs — root variables only (same result as a
+        // merged view over an empty scope; local scopes cannot exist before execution).
+        Map<String, ProcessVariable> variables = toJobVariables(dbService.getVariables(processInstanceId));
+        Map<String, String> taskHeaders = mergeListenerHeaders(null, listener.headers());
+        Integer priority = elementSupport.resolvePriority(processInstanceId, element);
+
+        JobDetailModel detail = new JobDetailModel();
+        detail.setServiceTaskId(phaseId);
+        detail.setProcessDefinitionId(pi.getProcessDefinitionId());
+        detail.setProcessInstanceId(processInstanceId);
+        detail.setServiceTaskKey(phase.getBpmnElementId());
+        detail.setJob(listener.jobType());
+        detail.setVariables(variables);
+        detail.setTaskHeaders(taskHeaders);
+        detail.setPriority(priority);
+
+        writeOutboxEntry(phaseId, detail);
+    }
+
+    /**
+     * WO-C8-7r2 extraction (extended in WO-C8-25): a listener job carries the listener's
+     * own headers merged over the element's — listener wins on key conflict, per the docs.
+     */
+    private Map<String, String> mergeListenerHeaders(Map<String, String> taskHeaders, Map<String, String> listenerHeaders) {
+        if (listenerHeaders == null || listenerHeaders.isEmpty()) {
+            return taskHeaders;
+        }
+        Map<String, String> merged = taskHeaders == null ? new LinkedHashMap<>() : new LinkedHashMap<>(taskHeaders);
+        merged.putAll(listenerHeaders);
+        return merged;
+    }
+
+    /** Shared variables mapping (single + phase paths carry the same variable shape). */
+    private Map<String, ProcessVariable> toJobVariables(List<com.zorrodev.bpm.contract.model.ProcessVariable> candidated) {
+        return candidated.stream()
+            .collect(Collectors.toMap(com.zorrodev.bpm.contract.model.ProcessVariable::getName, pv -> {
+                ProcessVariable v = new ProcessVariable();
+                v.setName(pv.getName());
+                v.setValue(pv.getValue());
+                v.setType(pv.getType().toString());
+                return v;
+            }));
+    }
+
+    /** Shared outbox write (single + batch paths carry the same entry shape). */
+    private void writeOutboxEntry(UUID serviceTaskId, JobDetailModel detail) {
         try {
             OutboxEntry entry = new OutboxEntry();
             entry.setId(UUID.randomUUID());

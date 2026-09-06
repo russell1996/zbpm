@@ -73,6 +73,12 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final com.zorrodev.bpm.engine.handler.CompletionService completionService;
     private final com.zorrodev.bpm.engine.handler.IncidentService incidentService;
     private final com.zorrodev.bpm.engine.handler.ErrorEscalationThrower errorEscalationThrower;
+    /**
+     * WO-C8-25: element-listener phases (gateways/events) — one narrow collaborator instead
+     * of inlining phase/table/enqueue logic here (god-class discipline: this class already
+     * carries 16 dependencies; the alternative was 4 more).
+     */
+    private final com.zorrodev.bpm.engine.handler.ElementListenerPhaseService elementListenerPhaseService;
     private FlowNavigator flowNavigator;
 
     @PostConstruct
@@ -126,6 +132,16 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         int depth = executionContext.enterDepth(element.getId(), processInstanceId);
         try {
             BpmnElementType type = element.getType();
+            // Side-effect-free registry lookup, done once: the handler itself runs only
+            // in handler.handle() below, never on the parked path.
+            ElementHandler handler = handlerRegistry.get(type);
+
+            // WO-C8-25: element-listener phase (gateways/events) parks before anything else
+            // runs — listeners fire outermost, including before job-based routing below.
+            // Service/user tasks and handler-less elements never park (see tryParkPhase).
+            if (elementListenerPhaseService.tryParkPhase(processInstanceId, tokenId, element, handler != null)) {
+                return;
+            }
 
             if (isJobBasedEvent(element)) {
                 // WO-C8-16: job-based end/throw events park as jobs via the service-task
@@ -134,7 +150,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
                 enterServiceTask(processInstanceId, tokenId, element);
                 return;
             }
-            ElementHandler handler = handlerRegistry.get(type);
             if (handler == null) {
                 // No handler for this element type: park the token as an incident instead of
                 // silently dropping it (which would strand the process instance forever). An

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c8elg1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-el-exclusive-gateway" name="c8-el-exclusive-gateway" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="gw" />
+    <bpmn:exclusiveGateway id="gw" name="gw" default="f2">
+      <bpmn:extensionElements>
+        <zeebe:executionListeners>
+          <zeebe:executionListener eventType="start" type="gw-listener-job">
+            <zeebe:taskHeaders>
+              <zeebe:header key="mode" value="listener" />
+              <zeebe:header key="trace" value="t1" />
+            </zeebe:taskHeaders>
+          </zeebe:executionListener>
+        </zeebe:executionListeners>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="gw" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="gw" targetRef="endOther">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=false</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endOther" name="endOther">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
