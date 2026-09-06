@@ -80,7 +80,8 @@ public class ElementListenerPhaseService {
         } else if ("done".equals(existing.get().getPhase())) {
             // Incident in the HANDLER after the listeners already ran: resolve re-executes
             // the element — drop the done marker and proceed to the handler WITHOUT
-            // re-dispatching listeners (they already ran for this token+element).
+            // re-dispatching listeners (they already ran for this token+element). The row
+            // is gone, so a later redelivery falls back to the pre-existing loud path.
             phaseRepository.delete(existing.get());
             return false;
         } else {
@@ -125,7 +126,11 @@ public class ElementListenerPhaseService {
         if (listeners.isEmpty() || index == null || index < 0 || index >= listeners.size()) {
             // Model shrank mid-phase (redeploy): fail-open into normal execution (C8-11
             // spirit) rather than stranding — the element was asked to run, so run it.
-            phaseRepository.delete(phase);
+            // Marked done (not deleted) so a redelivered completion ignores gracefully.
+            phase.setPhase("done");
+            phase.setListenerIndex(null);
+            phase.setRetriesRemaining(null);
+            phaseRepository.save(phase);
             log.info("{}/{}: Out-of-bounds element-listener index, resuming fail-open: {}/{}",
                 processInstanceId, phase.getTokenId(), carrierId, phase.getBpmnElementId());
             return Optional.of(new Resume(true, processInstanceId, phase.getTokenId(), phase.getBpmnElementId()));
@@ -162,6 +167,13 @@ public class ElementListenerPhaseService {
         }
         ElementListenerPhaseEntity phase = found.get();
         UUID processInstanceId = phase.getProcessInstanceId();
+        if ("done".equals(phase.getPhase())) {
+            // Stale failure for already-consumed work (at-least-once broker): the listeners
+            // finished, failing now would raise a false incident — ignore gracefully.
+            log.info("{}/{}: Element listener failure for finished phase {} ignored: {}/{}",
+                processInstanceId, phase.getTokenId(), carrierId, processInstanceId, phase.getBpmnElementId());
+            return true;
+        }
         String message = (errorMessage == null || errorMessage.isBlank()) ? "Element listener failed" : errorMessage;
         int remaining;
         if (retries != null) {

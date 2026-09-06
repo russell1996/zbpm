@@ -184,12 +184,10 @@ public class CompletionService {
         if (phaseResume.isPresent()) {
             ElementListenerPhaseService.Resume resume = phaseResume.get();
             if (resume.finished()) {
-                executionContext.setResumingListenerPhase(true);
-                try {
-                    executor.execute(resume.processInstanceId(), resume.tokenId(), resume.bpmnElementId());
-                } finally {
-                    executionContext.setResumingListenerPhase(false);
-                }
+                // No re-entry guard needed: the finished phase is marked done BEFORE this
+                // call, so the park-check below finds the done marker and proceeds to the
+                // handler instead of re-opening (a loop is structurally impossible).
+                executor.execute(resume.processInstanceId(), resume.tokenId(), resume.bpmnElementId());
             }
             return;
         }
