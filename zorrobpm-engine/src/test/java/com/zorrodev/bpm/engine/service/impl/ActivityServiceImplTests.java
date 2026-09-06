@@ -80,6 +80,11 @@ public class ActivityServiceImplTests {
     @Mock
     private com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
 
+    // WO-C8-25: tryParkPhase returns false by Mockito default — existing tests run
+    // the pre-phase paths unchanged (element phases are covered by ITs, not here).
+    @Mock
+    private com.zorrodev.bpm.engine.handler.ElementListenerPhaseService elementListenerPhaseService;
+
     private com.zorrodev.bpm.engine.handler.BoundaryScheduler boundaryScheduler;
 
     @InjectMocks

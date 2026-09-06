@@ -303,11 +303,15 @@ public class CompletionService {
         // with no listener phase open on any branch above is spurious (e.g. a redelivered
         // listener completion; the broker is at-least-once). Ignore it instead of falling
         // into the service-task branches/tail below (no service_tasks row → orElseThrow).
-        // Same philosophy as the status guard at the top of this method. Kinds owning
-        // service_tasks rows (service tasks, send/call activities, job-based events) never
-        // match and keep the orElseThrow loudness on corruption; future kinds default to
+        // Same philosophy as the status guard at the top of this method. Job-based
+        // elements (taskDefinition present — C8-16 end/throw events) are EXEMPT: their jobs
+        // do own service_tasks rows and complete through the normal path below.
+        // Kinds owning service_tasks rows never match otherwise, so their path — including
+        // the orElseThrow loudness on corruption — is unchanged. Future kinds default to
         // the tail (loud) — fail-closed by construction.
-        if (PHASE_ONLY_ELEMENT_TYPES.contains(bpmnElement.getType())) {
+        String elementJob = elementSupport.serviceTaskJob(bpmnElement);
+        if (PHASE_ONLY_ELEMENT_TYPES.contains(bpmnElement.getType())
+            && (elementJob == null || elementJob.isBlank())) {
             log.info("Ignoring service-task completion of {} {} with no listener phase in flight",
                 bpmnElement.getType(), serviceTaskId);
             return;

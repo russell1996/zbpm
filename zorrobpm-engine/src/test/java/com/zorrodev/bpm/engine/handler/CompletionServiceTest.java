@@ -45,6 +45,11 @@ class CompletionServiceTest {
     @Mock
     private ExecutionContext executionContext;
 
+    // WO-C8-25: phase-first branches return empty/false by Mockito default —
+    // existing tests exercise the pre-phase paths unchanged.
+    @Mock
+    private ElementListenerPhaseService elementListenerPhaseService;
+
     @InjectMocks
     private CompletionService completionService;
 
