@@ -133,6 +133,21 @@ class FormOperationsImplTest {
     // ==================== deployForm ====================
 
     @Test
+    void deployForm_linkedFormIdFromSchemaJson_storedForResolve() throws Exception {
+        // WO-C8-22: выложенный .form с "id" в JSON несёт form_id в строке (ключ адресации
+        // linked-форм); без "id" — null, key-путь как раньше.
+        when(formAccessSupport.getPrincipal()).thenReturn(admin);
+        when(formRepository.findMaxVersionByFormKey("linkedKey")).thenReturn(0);
+
+        impl.deployForm(deploy("linkedKey", "FORM_JS", "{\"id\":\"linked-form\",\"components\":[]}"));
+
+        ArgumentCaptor<FormEntity> captor = ArgumentCaptor.forClass(FormEntity.class);
+        verify(formRepository).save(captor.capture());
+        assertThat(captor.getValue().getFormId()).isEqualTo("linked-form");
+        assertThat(captor.getValue().getFormKey()).isEqualTo("linkedKey");
+    }
+
+    @Test
     void deployForm_happy_versionMaxPlusOne() throws Exception {
         when(formAccessSupport.getPrincipal()).thenReturn(admin);
         when(formRepository.findMaxVersionByFormKey("orderForm")).thenReturn(2);
@@ -146,6 +161,8 @@ class FormOperationsImplTest {
         verify(formRepository).save(captor.capture());
         assertThat(captor.getValue().getVersion()).isEqualTo(3);
         assertThat(captor.getValue().getSchemaJson()).isEqualTo("{\"components\":[]}");
+        // WO-C8-22: в JSON нет "id" — form_id null, key-путь прежний
+        assertThat(captor.getValue().getFormId()).isNull();
     }
 
     @Test

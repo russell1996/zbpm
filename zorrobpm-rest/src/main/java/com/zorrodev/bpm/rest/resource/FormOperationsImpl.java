@@ -120,6 +120,9 @@ public class FormOperationsImpl implements FormOperations {
         FormEntity entity = new FormEntity();
         entity.setId(UUID.randomUUID());
         entity.setFormKey(dto.getKey());
+        // WO-C8-22: a Modeler-linked .form carries its id in the schema JSON — store it so
+        // user tasks referencing formId resolve (null when the JSON has no id: key path as before).
+        entity.setFormId(FormEntity.extractFormId(dto.getSchema()));
         entity.setVersion(maxVersion + 1);
         entity.setKind(kind);
         entity.setSchemaJson(dto.getSchema());

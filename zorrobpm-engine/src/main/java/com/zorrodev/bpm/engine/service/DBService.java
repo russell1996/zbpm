@@ -84,7 +84,7 @@ public interface DBService {
 
     void completeServiceTask(UUID serviceTaskId);
 
-    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate);
 
     /**
      * WO-C8-21r2: the creating-listener phase index lives on the ACTIVITIES row (no

@@ -13,5 +13,7 @@ public class FormDefinitionModel {
     @XmlAttribute
     private String formKey;
     @XmlAttribute
+    private String formId;
+    @XmlAttribute
     private String externalReference;
 }

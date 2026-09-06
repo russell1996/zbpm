@@ -773,10 +773,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         continue;
                     }
                     if ("start".equals(l.getEventType())) {
-                        starts.add(new ListenerModel(l.getType(), l.getRetries()));
+                        starts.add(new ListenerModel(l.getType(), l.getRetries(), listenerHeaders(l)));
                     } else if ("end".equals(l.getEventType())) {
                         // WO-C8-11b: end listeners block the token until each completes (after the real job).
-                        ends.add(new ListenerModel(l.getType(), l.getRetries()));
+                        ends.add(new ListenerModel(l.getType(), l.getRetries(), listenerHeaders(l)));
                     }
                 }
                 if (!starts.isEmpty()) {
@@ -789,6 +789,23 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         attachIoMapping(element, serviceTask.getExtensionElements());
         attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
         return element;
+    }
+
+    /**
+     * WO-C8-7r2: nested {@code zeebe:taskHeaders} of one execution listener as a map
+     * (null when absent) — delivered with the listener's job merged over the element
+     * headers, listener wins per the docs.
+     */
+    private Map<String, String> listenerHeaders(ExecutionListenerModel l) {
+        TaskHeadersModel headers = l == null ? null : l.getTaskHeaders();
+        if (headers == null || headers.getHeaders() == null) {
+            return null;
+        }
+        Map<String, String> map = new LinkedHashMap<>();
+        for (HeaderModel h : headers.getHeaders()) {
+            if (h.getKey() != null) map.put(h.getKey(), h.getValue());
+        }
+        return map;
     }
 
     /**
@@ -811,6 +828,32 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         }
         element.getExtensions().getServiceTaskExtension().setJob(ee.getTaskDefinition().getType());
         element.getExtensions().getServiceTaskExtension().setRetries(ee.getTaskDefinition().getRetries());
+        attachTaskHeaders(element, ee);
+        // WO-C8-9: raw priority rides along for FEEL→Integer resolution at enqueue time (null when absent).
+        // WO-C8-13 (A-1): the element is zeebe:jobPriorityDefinition — priorityDefinition is
+        // only allowed on user tasks and is never read here.
+        JobPriorityDefinitionModel jobPriorityDefinition = ee.getJobPriorityDefinition();
+        if (jobPriorityDefinition != null) {
+            element.getExtensions().getServiceTaskExtension().setPriority(jobPriorityDefinition.getPriority());
+        }
+    }
+
+    /**
+     * WO-C8-7r2: custom headers ride along to the worker via JobDetailModel (null when
+     * absent). Headers-only slice of {@link #attachServiceTaskJob} for element kinds that
+     * build their own {@code ServiceTaskExtension} (script/send job-worker branches) —
+     * one body, so job/priority semantics of those branches stay exactly as they were.
+     */
+    private void attachTaskHeaders(BpmnElementModel element, ExtensionElements ee) {
+        if (ee == null || ee.getTaskHeaders() == null) {
+            return;
+        }
+        if (element.getExtensions() == null) {
+            element.setExtensions(new BpmnElementExtensionModel());
+        }
+        if (element.getExtensions().getServiceTaskExtension() == null) {
+            element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
+        }
         // WO-C8-7: custom headers ride along to the worker via JobDetailModel (null when absent).
         TaskHeadersModel headers = ee.getTaskHeaders();
         if (headers != null && headers.getHeaders() != null) {
@@ -819,13 +862,6 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 if (h.getKey() != null) map.put(h.getKey(), h.getValue());
             }
             element.getExtensions().getServiceTaskExtension().setTaskHeaders(map);
-        }
-        // WO-C8-9: raw priority rides along for FEEL→Integer resolution at enqueue time (null when absent).
-        // WO-C8-13 (A-1): the element is zeebe:jobPriorityDefinition — priorityDefinition is
-        // only allowed on user tasks and is never read here.
-        JobPriorityDefinitionModel jobPriorityDefinition = ee.getJobPriorityDefinition();
-        if (jobPriorityDefinition != null) {
-            element.getExtensions().getServiceTaskExtension().setPriority(jobPriorityDefinition.getPriority());
         }
     }
 
@@ -877,6 +913,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             job.setJob(scriptTask.getExtensionElements().getTaskDefinition().getType());
             job.setRetries(scriptTask.getExtensionElements().getTaskDefinition().getRetries());
             element.getExtensions().setServiceTaskExtension(job);
+            // WO-C8-7r2: job-worker script tasks deliver taskHeaders like service tasks.
+            attachTaskHeaders(element, scriptTask.getExtensionElements());
             return element;
         }
 
@@ -944,6 +982,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             job.setJob(sendTask.getExtensionElements().getTaskDefinition().getType());
             job.setRetries(sendTask.getExtensionElements().getTaskDefinition().getRetries());
             element.getExtensions().setServiceTaskExtension(job);
+            // WO-C8-7r2: job-worker send tasks deliver taskHeaders like service tasks.
+            attachTaskHeaders(element, sendTask.getExtensionElements());
         } else if (sendTask.getMessageRef() != null) {
             MessageEventExtensionModel message = new MessageEventExtensionModel();
             message.setMessageName(messageNames.getOrDefault(sendTask.getMessageRef(), sendTask.getMessageRef()));
@@ -1005,6 +1045,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     element.getExtensions().getUserTaskExtension().setFormKey(userTask.getExtensionElements().getFormDefinition().getExternalReference());
                     element.getExtensions().getUserTaskExtension().setExternalReference(userTask.getExtensionElements().getFormDefinition().getExternalReference());
                 }
+                // WO-C8-22: formId rides a separate field — never merged into formKey.
+                // Docs list the three reference kinds as mutually exclusive, so co-presence
+                // is invalid input; resolve prefers the specific linked id (see FormResolver).
+                if (userTask.getExtensionElements().getFormDefinition().getFormId() != null) {
+                    element.getExtensions().getUserTaskExtension().setFormId(userTask.getExtensionElements().getFormDefinition().getFormId());
+                }
             }
             // WO-C8-21: creating task listeners block task creation until each completes.
             // Only user tasks may carry taskListeners (schema allowedIn); other eventTypes
@@ -1017,7 +1063,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         continue;
                     }
                     if ("creating".equals(l.getEventType())) {
-                        creating.add(new ListenerModel(l.getType(), l.getRetries()));
+                        // No nested headers here: the schema gives TaskListener no headers
+                        // property (unlike ExecutionListener) — always null, by schema.
+                        creating.add(new ListenerModel(l.getType(), l.getRetries(), null));
                     }
                 }
                 if (!creating.isEmpty()) {

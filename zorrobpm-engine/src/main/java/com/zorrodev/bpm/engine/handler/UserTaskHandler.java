@@ -81,7 +81,12 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
-        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, resolvedDueDate, resolvedFollowUpDate);
+        // WO-C8-22 (merge resolution): linked-form id rides its own field into the row
+        // (never into formKey) — resolved here at creation time in BOTH paths (immediate
+        // and phase-end), since finishUserTaskCreation is gone with the marker row.
+        String formId = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
+            ? bpmnElement.getExtensions().getUserTaskExtension().getFormId() : null;
+        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, resolvedDueDate, resolvedFollowUpDate);
     }
 
     /**
