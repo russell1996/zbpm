@@ -25,6 +25,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -70,6 +71,33 @@ class UserTaskRuntimeOperationsImplTest {
         assertThat(result).isEqualTo(expected);
         verify(runtimeService).completeUserTask(id, dto.getVariables());
         verify(auditLogService).record(principal, "COMPLETE_USER_TASK", "key", id.toString(), null);
+    }
+
+    @Test
+    void completeUserTask_completionInProgress_409() {
+        // WO-C8-24, критерий 4: повторный complete в completing-фазе маппится в 409
+        // (dedicated тип — другие сбои в конфликт не превращаются).
+        UUID id = UUID.randomUUID();
+        CompleteTaskDTO dto = new CompleteTaskDTO();
+        dto.setVariables(List.of());
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        task.setProcessInstanceId(UUID.randomUUID());
+        task.setCandidateGroups("group1");
+        Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "alice", "USER");
+        when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+        when(authorizationService.canCompleteUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())).thenReturn(true);
+        doNothing().when(runtimeOperationSupport).checkAssignee(principal, task);
+        when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
+        when(runtimeService.completeUserTask(id, dto.getVariables()))
+            .thenThrow(new com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException(
+                "User task 'review' is already completing"));
+
+        ResponseStatusException e = assertThrows(ResponseStatusException.class,
+            () -> impl.completeUserTask(id, dto));
+
+        assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
     @Test

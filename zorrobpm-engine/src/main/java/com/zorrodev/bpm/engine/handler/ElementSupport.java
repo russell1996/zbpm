@@ -240,6 +240,19 @@ public class ElementSupport {
         return listeners == null ? List.of() : listeners;
     }
 
+    /**
+     * WO-C8-24: completing task listeners of a user task, in declaration order
+     * (already filtered to {@code eventType="completing"} at parse time). Empty when absent —
+     * callers must not touch listener state for such elements.
+     */
+    public List<ListenerModel> userTaskCompletingListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCompletingListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
+    }
+
     // ─── Listener helpers ─────────────────────────────────────────────
 
     /**

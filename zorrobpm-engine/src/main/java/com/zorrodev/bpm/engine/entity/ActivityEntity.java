@@ -40,4 +40,15 @@ public class ActivityEntity {
      * {@code service_tasks} row, which a user task never has).
      */
     private Integer creatingListenerRetriesRemaining;
+    /**
+     * WO-C8-24: index of the in-flight completing task listener (mirror of the creating
+     * pair above). Null = no phase in flight. The activity row is real here (the task
+     * exists) — no marker-row problem by construction.
+     */
+    private Integer pendingCompletingListenerIndex;
+    /**
+     * WO-C8-24: remaining retries of the current completing-listener job (durable
+     * per-listener budget, mirror of the creating pair above).
+     */
+    private Integer completingListenerRetriesRemaining;
 }
