@@ -191,6 +191,44 @@ class FormResourceCharacterizationTest {
     // ==================== deployForm ====================
 
     @Test
+    void deployForm_versionTagParsedFromSchemaJson() throws Exception {
+        // WO-C8-31, крит. 1 (upload-путь): top-level "versionTag" JSON штампуется в
+        // version_tag сохраняемой строки (каптор — прод-маппинг DTO→entity идёт реально).
+        when(formRepository.findMaxVersionByFormKey("orderForm")).thenReturn(2);
+        org.mockito.ArgumentCaptor<FormEntity> captor =
+            org.mockito.ArgumentCaptor.forClass(FormEntity.class);
+
+        mockMvc.perform(post("/forms")
+                .header("Authorization", "Bearer " + ADMIN_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(deploy("orderForm", "FORM_JS",
+                    "{\"id\": \"order-form\", \"versionTag\": \"v1\", \"components\":[]}"))))
+            .andExpect(status().isOk());
+
+        verify(formRepository).save(captor.capture());
+        assertThat(captor.getValue().getFormId()).isEqualTo("order-form");
+        assertThat(captor.getValue().getVersionTag()).isEqualTo("v1");
+    }
+
+    @Test
+    void deployForm_noVersionTag_storesNull() throws Exception {
+        // WO-C8-31, крит. 1 (lenient): тега нет — null, строка резолвится как раньше.
+        when(formRepository.findMaxVersionByFormKey("orderForm")).thenReturn(2);
+        org.mockito.ArgumentCaptor<FormEntity> captor =
+            org.mockito.ArgumentCaptor.forClass(FormEntity.class);
+
+        mockMvc.perform(post("/forms")
+                .header("Authorization", "Bearer " + ADMIN_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(deploy("orderForm", "FORM_JS",
+                    "{\"components\":[]}"))))
+            .andExpect(status().isOk());
+
+        verify(formRepository).save(captor.capture());
+        assertThat(captor.getValue().getVersionTag()).isNull();
+    }
+
+    @Test
     void deployForm_happy_versionMaxPlusOne() throws Exception {
         when(formRepository.findMaxVersionByFormKey("orderForm")).thenReturn(2);
 

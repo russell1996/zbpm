@@ -211,6 +211,8 @@ public class SchemaMapOperationsImpl implements SchemaMapOperations {
         artifact.setFormKey(artifactKey);
         // WO-C8-22: same linked-id extraction as the upload path (null when absent).
         artifact.setFormId(FormEntity.extractFormId(dto.getSchema()));
+        // WO-C8-31: same version-tag extraction (null when absent).
+        artifact.setVersionTag(FormEntity.extractVersionTag(dto.getSchema()));
         artifact.setVersion(maxArtifactVersion + 1);
         artifact.setKind(kind);
         artifact.setSchemaJson(dto.getSchema());

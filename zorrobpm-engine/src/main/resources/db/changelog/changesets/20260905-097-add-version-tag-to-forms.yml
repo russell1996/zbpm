@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-097
+  - changeSet:
+      id: 20260905-097
+      author: zorrodev
+      changes:
+        # WO-C8-31: bindingType="versionTag" для форм — пара (form_id, version_tag).
+        # Nullable: тег есть лишь у форм, чей .form JSON несёт top-level "versionTag"
+        # (WO-C8-27); строки без тега versionTag-резолв никогда не находит — 404
+        # вместо тихого latest, зеркало колонок form_id (090) и deployment_id (093).
+        - addColumn:
+            tableName: form
+            columns:
+              - column:
+                  name: version_tag
+                  type: varchar(255)
+                  remarks: 'Тег версии формы из .form JSON (WO-C8-31); null — versionTag-резолв не матчит'

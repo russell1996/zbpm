@@ -1701,6 +1701,94 @@ public class Camunda8ParityCharacterizationTests {
             .isEqualTo(HttpStatus.NOT_FOUND);
     }
 
+    // ==================== WO-C8-31: bindingType="versionTag" для форм ====================
+
+    @Test
+    @Transactional
+    void formVersionTagBinding_pinsToTaggedVersion_notLatest() throws Exception {
+        // WO-C8-31, критерии 1+2 (POF): embedded-форма с top-level "versionTag" в JSON
+        // парсится регистраром в version_tag (крит. 1); затем v2 без тега уводит latest
+        // вперёд — резолв по (formId, tag) отдаёт v1, а не latest-v2 (крит. 2).
+        String formId = "tagged-form";
+        String key = uniq("c8fvt");
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-form-version-tag.bpmn").replace("c8-form-version-tag", key));
+
+        // v1 из регистрара несёт тег из JSON-тела (опора крит. 1 — парсинг, не ручной штамп).
+        FormEntity v1 = formRepository.findByFormKeyAndVersion(
+            "camunda-forms:bpmn:userTaskForm_tagged-form", 1).orElseThrow();
+        assertThat(v1.getFormId()).isEqualTo(formId);
+        assertThat(v1.getVersionTag()).isEqualTo("v1");
+
+        // v2 отдельно, без тега — latest уезжает вперёд.
+        deployLinkedForm("camunda-forms:bpmn:userTaskForm_tagged-form", formId,
+            "{\"components\": [],\"label\":\"v2\"}");
+
+        // Резолв пином, не latest (критерий 2).
+        TaskFormDTO dto = formResolver.resolveTaskFormByFormIdAndVersionTag(formId, "v1", null);
+        assertThat(dto.getType()).isEqualTo("embedded");
+        assertThat(dto.getSchema()).contains("\"label\": \"v1\"");
+    }
+
+    @Test
+    @Transactional
+    void formVersionTagBinding_sameTagOnTwoVersions_picksLatest() throws Exception {
+        // WO-C8-31, критерий 3: один тег на двух версиях → последняя (семантика F7/F8
+        // разведки: latest wins). Обе версии — через прод-парсинг (повторный деплой
+        // той же фикстуры), ручных штампов нет.
+        String formId = "tagged-form";
+        String key = uniq("c8fvw");
+        String xml = bpmn("test-c8-form-version-tag.bpmn").replace("c8-form-version-tag", key);
+        processDefinitionService.addProcessDefinition(xml);
+        // Второй процесс с той же embedded-формой (тот же formKey/тег) — вторая версия
+        // строки формы; повторный деплой того же ключа идемпотентен и версии не даёт.
+        processDefinitionService.addProcessDefinition(
+            bpmn("test-c8-form-version-tag.bpmn").replace("c8-form-version-tag", uniq("c8fvw")));
+
+        TaskFormDTO dto = formResolver.resolveTaskFormByFormIdAndVersionTag(formId, "v1", null);
+        assertThat(dto.getType()).isEqualTo("embedded");
+        // Обе версии несут тег — побеждает старшая (v2 той же схемы).
+        FormEntity latest = formRepository.findFirstByFormIdAndVersionTagOrderByVersionDesc(
+            formId, "v1").orElseThrow();
+        assertThat(latest.getVersion()).isEqualTo(2);
+        assertThat(dto.getSchema()).isEqualTo(latest.getSchemaJson());
+    }
+
+    @Test
+    @Transactional
+    void formVersionTagBinding_missingPair_explicit404() throws Exception {
+        // WO-C8-31, критерий 4: пары нет — явная 404 с обоими идентификаторами
+        // (id + tag), а не тихая чужая форма.
+        String formId = uniq("c8fvx");
+
+        var thrown = catchThrowable(() ->
+            formResolver.resolveTaskFormByFormIdAndVersionTag(formId, "nope", null));
+        assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+        assertThat(((ResponseStatusException) thrown).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(((ResponseStatusException) thrown).getReason())
+            .contains(formId).contains("nope");
+    }
+
+    @Test
+    @Transactional
+    void formVersionTagBinding_nullTag_neverMatchesUntaggedRow() throws Exception {
+        // WO-C8-31, критерий 4 (ловушка C8-23 п.9): строка БЕЗ тега существует, тег null —
+        // всё равно 404 до запроса (иначе Spring IS NULL-семантика молча воскресила бы
+        // нетегированную форму).
+        String formId = uniq("c8fvn");
+        deployLinkedForm("untagged-key-" + formId, formId, "{\"components\": []}");
+
+        var thrownNull = catchThrowable(() ->
+            formResolver.resolveTaskFormByFormIdAndVersionTag(formId, null, null));
+        assertThat(thrownNull).isInstanceOf(ResponseStatusException.class);
+        assertThat(((ResponseStatusException) thrownNull).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        var thrownBlank = catchThrowable(() ->
+            formResolver.resolveTaskFormByFormIdAndVersionTag(formId, "   ", null));
+        assertThat(thrownBlank).isInstanceOf(ResponseStatusException.class);
+        assertThat(((ResponseStatusException) thrownBlank).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
     // ==================== §C.1: formId ====================
 
     /** WO-C8-22: выкладка linked-формы (form_id + версия max+1, как ручная загрузка). */
