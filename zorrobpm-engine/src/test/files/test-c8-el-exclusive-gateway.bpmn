@@ -8,7 +8,12 @@
     <bpmn:exclusiveGateway id="gw" name="gw" default="f2">
       <bpmn:extensionElements>
         <zeebe:executionListeners>
-          <zeebe:executionListener eventType="start" type="gw-listener-job" />
+          <zeebe:executionListener eventType="start" type="gw-listener-job">
+            <zeebe:taskHeaders>
+              <zeebe:header key="mode" value="listener" />
+              <zeebe:header key="trace" value="t1" />
+            </zeebe:taskHeaders>
+          </zeebe:executionListener>
         </zeebe:executionListeners>
       </bpmn:extensionElements>
       <bpmn:incoming>f1</bpmn:incoming>

@@ -1180,7 +1180,8 @@ public class Camunda8ParityCharacterizationTests {
     void elementListeners_exclusiveGateway_blocksUntilListenerCompletes() throws Exception {
         // WO-C8-25, критерий 1 (POF): start-listener шлюза отрабатывает ДО исполнения шлюза:
         // фаза в своей таблице, строк activities нет, job в outbox; после complete —
-        // шлюз исполнен, фаза закрыта.
+        // шлюз исполнен, фаза закрыта. Вложенные headers listener'а едут в job'е
+        // (HOLD-фикс раунда: merge-строка фазового пути без этого ассерта не ловится).
         String key = uniq("c8elg");
         String xml = bpmn("test-c8-el-exclusive-gateway.bpmn").replace("c8-el-exclusive-gateway", key);
 
@@ -1188,6 +1189,10 @@ public class Camunda8ParityCharacterizationTests {
             .getElementStartListeners())
             .extracting(ListenerModel::jobType)
             .containsExactly("gw-listener-job");
+        assertThat(bpmnParseService.parse(xml).getElement("gw").getExtensions()
+            .getElementStartListeners())
+            .extracting(ListenerModel::headers)
+            .containsExactly(Map.of("mode", "listener", "trace", "t1"));
 
         ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
@@ -1196,6 +1201,7 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(phasesOf(piId)).hasSize(1);
         assertThat(activitiesOf(piId, "gw")).isEmpty();
         assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job");
+        assertThat(serviceTaskHeaders(piId)).containsExactly(Map.of("mode", "listener", "trace", "t1"));
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
 
         runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
