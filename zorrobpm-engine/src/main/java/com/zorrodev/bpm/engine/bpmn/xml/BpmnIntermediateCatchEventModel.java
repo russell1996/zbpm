@@ -39,4 +39,8 @@ public class BpmnIntermediateCatchEventModel {
 
     @XmlElement(name = "linkEventDefinition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private BpmnLinkEventDefinitionModel linkEventDefinition;
+
+    /** WO-C8-25: {@code zeebe:executionListeners} live here (start phase on events). */
+    @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private ExtensionElements extensionElements;
 }

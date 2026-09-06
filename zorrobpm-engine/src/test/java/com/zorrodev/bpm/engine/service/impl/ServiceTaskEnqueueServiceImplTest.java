@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.handler.ElementSupport;
+import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -241,7 +242,7 @@ class ServiceTaskEnqueueServiceImplTest {
         // headers-only test focused (priority resolves to null, headers path untouched).
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
-            mock(ElementSupport.class));
+            mock(ElementSupport.class), mock(ElementListenerPhaseRepository.class));
 
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
@@ -291,7 +292,7 @@ class ServiceTaskEnqueueServiceImplTest {
         // реально лежит в outbox-JSON, который увидит воркер.
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
-            realElementSupport());
+            realElementSupport(), mock(ElementListenerPhaseRepository.class));
 
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
@@ -339,7 +340,7 @@ class ServiceTaskEnqueueServiceImplTest {
         // РЕАЛЬНЫЙ ElementSupport, литерал без стабов).
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
-            realElementSupport());
+            realElementSupport(), mock(ElementListenerPhaseRepository.class));
 
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
@@ -388,7 +389,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // SUT собран напрямую с реальным ElementSupport (пустой raw коротится до DB) —
         // null приходит из прод-кода, а не из дефолта мока.
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
-            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class));
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();
@@ -434,7 +436,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // WO-C8-11, критерий 2 (unit-уровень): pendingListenerIndex=0 → в outbox уходит
         // listener-job, НЕ реальный job. SUT напрямую с реальным ElementSupport.
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
-            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class));
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();
@@ -481,7 +484,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // WO-C8-11: последний listener завершён (index сброшен в null) → диспетчеризуется
         // РЕАЛЬНЫЙ job тем же кодом (без отдельной ветки).
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
-            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class));
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();
@@ -568,7 +572,8 @@ class ServiceTaskEnqueueServiceImplTest {
     void enqueueAfterCommit_withEndListenerInFlight_dispatchesEndListenerJob() throws Exception {
         // WO-C8-11b: pendingEndListenerIndex=0 → в outbox уходит end-listener-job, НЕ реальный.
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
-            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport());
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class));
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();

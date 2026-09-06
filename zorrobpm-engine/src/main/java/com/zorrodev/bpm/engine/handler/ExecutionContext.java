@@ -7,10 +7,11 @@ import org.springframework.stereotype.Component;
 import java.util.UUID;
 
 /**
- * Owns the two ThreadLocal guards used during process execution:
+ * Owns the three ThreadLocal guards used during process execution:
  * <ul>
  *   <li>{@code executionDepth} — recursion depth limiter (prevents StackOverflow)</li>
  *   <li>{@code evaluatingConditionals} — re-entrancy guard for conditional event evaluation</li>
+ *   <li>{@code resumingListenerPhase} — resume-after-listeners re-entry marker (WO-C8-25)</li>
  * </ul>
  * Centralised here so that when handlers are extracted to separate beans, they all
  * share the same depth/conditional state instead of silently creating per-bean copies.
@@ -23,6 +24,7 @@ public class ExecutionContext {
 
     private final ThreadLocal<Integer> executionDepth = ThreadLocal.withInitial(() -> 0);
     private final ThreadLocal<Boolean> evaluatingConditionals = ThreadLocal.withInitial(() -> false);
+    private final ThreadLocal<Boolean> resumingListenerPhase = ThreadLocal.withInitial(() -> false);
 
     /**
      * Enters a nested execution frame. Returns the new depth.
@@ -58,5 +60,19 @@ public class ExecutionContext {
 
     public void setEvaluatingConditionals(boolean value) {
         evaluatingConditionals.set(value);
+    }
+
+    /**
+     * WO-C8-25: marks resume-after-listeners re-entry. When the last element listener
+     * finishes, the dispatcher re-enters {@code execute()} for the same token+element —
+     * without this marker the park-check would re-open a fresh phase (the phase row was
+     * just deleted) and loop forever. Set immediately around the resume call only.
+     */
+    public boolean isResumingListenerPhase() {
+        return Boolean.TRUE.equals(resumingListenerPhase.get());
+    }
+
+    public void setResumingListenerPhase(boolean value) {
+        resumingListenerPhase.set(value);
     }
 }

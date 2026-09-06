@@ -126,10 +126,13 @@ public class ActivityServiceImplTests {
         ).thenAnswer(invocation -> java.time.Instant.now().plus(java.time.Duration.ofMinutes(5)));
         // Create real CompletionService with mocked dependencies and inject it (WO-AUD-24)
         // WO-C8-21: 9th arg — real UserTaskHandler (creating-phase tail runner in CompletionService)
+        // WO-C8-25: 10th arg — mocked phase service (element-listener phases go through
+        // CompleteServiceTask phase-first branch, covered by ITs, not here).
         var completionService = new com.zorrodev.bpm.engine.handler.CompletionService(
             dbService, bpmnService, serviceTaskEnqueueService, elementSupport, multiInstanceExecutor,
             flowNavigator, eventTrigger, executionContext,
-            new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService));
+            new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService),
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.ElementListenerPhaseService.class));
         try {
             var csField = ActivityServiceImpl.class.getDeclaredField("completionService");
             csField.setAccessible(true);

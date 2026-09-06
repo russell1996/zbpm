@@ -29,6 +29,7 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
@@ -110,6 +111,9 @@ public class Camunda8ParityCharacterizationTests {
     private ActivityRepository activityRepository;
 
     @Autowired
+    private ElementListenerPhaseRepository phaseRepository;
+
+    @Autowired
     private IncidentRepository incidentRepository;
 
     @Autowired
@@ -162,8 +166,8 @@ public class Camunda8ParityCharacterizationTests {
         @Primary
         ServiceTaskEnqueueService realServiceTaskEnqueueService(DBService dbService, BpmnService bpmnService,
                 OutboxRepository outboxRepository, tools.jackson.databind.ObjectMapper objectMapper,
-                ElementSupport elementSupport) {
-            return new ServiceTaskEnqueueServiceImpl(dbService, bpmnService, outboxRepository, objectMapper, elementSupport);
+                ElementSupport elementSupport, ElementListenerPhaseRepository phaseRepository) {
+            return new ServiceTaskEnqueueServiceImpl(dbService, bpmnService, outboxRepository, objectMapper, elementSupport, phaseRepository);
         }
     }
 
@@ -1132,6 +1136,274 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isNull();
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
         assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    // ==================== WO-C8-25: execution listeners на шлюзах и событиях ====================
+
+    /** WO-C8-25: carrier-id (phase PK) job'ов инстанса по порядку (зеркало serviceTaskJobs). */
+    private List<UUID> phaseJobIds(UUID processInstanceId) throws Exception {
+        tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
+        List<OutboxEntry> entries = outboxRepository.findAll().stream()
+            .filter(e -> e.getKind() == OutboxKind.SERVICE_TASK)
+            .filter(e -> {
+                try {
+                    return processInstanceId.toString().equals(om.readTree(e.getPayload()).get("processInstanceId").asText());
+                } catch (Exception ex) {
+                    throw new RuntimeException(ex);
+                }
+            })
+            .sorted(java.util.Comparator.comparing(OutboxEntry::getCreatedAt).thenComparing(OutboxEntry::getId))
+            .collect(Collectors.toList());
+        List<UUID> ids = new java.util.ArrayList<>();
+        for (OutboxEntry e : entries) {
+            ids.add(UUID.fromString(om.readTree(e.getPayload()).get("serviceTaskId").asText()));
+        }
+        return ids;
+    }
+
+    private List<ActivityEntity> activitiesOf(UUID processInstanceId, String bpmnElementId) {
+        return activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals(bpmnElementId))
+            .collect(Collectors.toList());
+    }
+
+    /** WO-C8-25: фазы инстанса (своя таблица; глобальный findAll видит чужие коммиты). */
+    private List<com.zorrodev.bpm.engine.entity.ElementListenerPhaseEntity> phasesOf(UUID processInstanceId) {
+        return phaseRepository.findAll().stream()
+            .filter(p -> p.getProcessInstanceId().equals(processInstanceId))
+            .collect(Collectors.toList());
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_exclusiveGateway_blocksUntilListenerCompletes() throws Exception {
+        // WO-C8-25, критерий 1 (POF): start-listener шлюза отрабатывает ДО исполнения шлюза:
+        // фаза в своей таблице, строк activities нет, job в outbox; после complete —
+        // шлюз исполнен, фаза закрыта.
+        String key = uniq("c8elg");
+        String xml = bpmn("test-c8-el-exclusive-gateway.bpmn").replace("c8-el-exclusive-gateway", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("gw").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("gw-listener-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(phasesOf(piId)).hasSize(1);
+        assertThat(activitiesOf(piId, "gw")).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job");
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
+
+        assertThat(phasesOf(piId)).isEmpty();
+        assertThat(activitiesOf(piId, "gw")).hasSize(1);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_inclusiveGateway_blocksUntilListenerCompletes() throws Exception {
+        // WO-C8-25, критерий 1 (POF): та же форма для inclusive-шлюза.
+        String key = uniq("c8elig");
+        String xml = bpmn("test-c8-el-inclusive-gateway.bpmn").replace("c8-el-inclusive-gateway", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("gw").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("gw-listener-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(phasesOf(piId)).hasSize(1);
+        assertThat(activitiesOf(piId, "gw")).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job");
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
+
+        assertThat(phasesOf(piId)).isEmpty();
+        assertThat(activitiesOf(piId, "gw")).hasSize(1);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_parallelGateway_blocksUntilListenerCompletes() throws Exception {
+        // WO-C8-25, критерий 1 (POF): та же форма для parallel-шлюза.
+        String key = uniq("c8elpg");
+        String xml = bpmn("test-c8-el-parallel-gateway.bpmn").replace("c8-el-parallel-gateway", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("gw").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("gw-listener-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(phasesOf(piId)).hasSize(1);
+        assertThat(activitiesOf(piId, "gw")).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job");
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
+
+        assertThat(phasesOf(piId)).isEmpty();
+        assertThat(activitiesOf(piId, "gw")).hasSize(1);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_eventBasedGateway_blocksUntilListenerCompletes() throws Exception {
+        // WO-C8-25, критерий 1 (POF): та же форма для event-based шлюза; после листенера
+        // шлюз встаёт в ожидание событий (инстанс не завершён — это нормально).
+        String key = uniq("c8elebg");
+        String xml = bpmn("test-c8-el-event-based-gateway.bpmn").replace("c8-el-event-based-gateway", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("eventGw").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("gw-listener-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(phasesOf(piId)).hasSize(1);
+        assertThat(activitiesOf(piId, "eventGw")).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job");
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
+
+        assertThat(phasesOf(piId)).isEmpty();
+        assertThat(activitiesOf(piId, "eventGw")).hasSize(1);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_messageCatchEvent_blocksUntilListenerCompletes() throws Exception {
+        // WO-C8-25, критерий 2: listener message-catch отрабатывает ДО постановки в ожидание:
+        // wait-активности нет, пока идёт фаза; после — есть и ждёт (инстанс стоит).
+        String key = uniq("c8elmc");
+        String xml = bpmn("test-c8-el-message-catch.bpmn").replace("c8-el-message-catch", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("wait").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("catch-listener-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(phasesOf(piId)).hasSize(1);
+        assertThat(activitiesOf(piId, "wait")).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("catch-listener-job");
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
+
+        assertThat(phasesOf(piId)).isEmpty();
+        assertThat(activitiesOf(piId, "wait")).hasSize(1);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_plainStartEvent_blocksUntilListenerCompletes() throws Exception {
+        // WO-C8-25, критерий 2: listener plain-start отрабатывает ДО старта процесса
+        // (та же точка парковки — execute()): без complete инстанс висит на старте.
+        String key = uniq("c8elps");
+        String xml = bpmn("test-c8-el-plain-start.bpmn").replace("c8-el-plain-start", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("startEvent").getExtensions()
+            .getServiceTaskExtension().getStartListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("start-listener-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(phasesOf(piId)).hasSize(1);
+        assertThat(serviceTaskJobs(piId)).containsExactly("start-listener-job");
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
+
+        assertThat(phasesOf(piId)).isEmpty();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_twoListeners_runSequentiallyInDeclarationOrder() throws Exception {
+        // WO-C8-25, критерий 3: второй listener диспетчеризуется только после завершения
+        // первого; фаза одна (индекс идёт 0→1), строк activities нет до конца фазы.
+        String key = uniq("c8el2");
+        String xml = bpmn("test-c8-el-exclusive-gateway.bpmn").replace("c8-el-exclusive-gateway", key)
+            .replace("type=\"gw-listener-job\"",
+                "type=\"gw-listener-job-1\" />\n          <zeebe:executionListener eventType=\"start\" type=\"gw-listener-job-2\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job-1");
+        assertThat(activitiesOf(piId, "gw")).isEmpty();
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(0), List.of());
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job-1", "gw-listener-job-2");
+        assertThat(activitiesOf(piId, "gw")).isEmpty();
+
+        runtimeService.completeServiceTask(phaseJobIds(piId).get(1), List.of());
+
+        assertThat(phasesOf(piId)).isEmpty();
+        assertThat(activitiesOf(piId, "gw")).hasSize(1);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void elementListeners_listenerFailure_retriesThenIncident() throws Exception {
+        // WO-C8-25, критерий 6: retries="2" — первое падение редиспатчит без инцидента,
+        // второе паркует ERROR-активность с инцидентом (инциденту нужна строка — создаём
+        // парковочную, фаза при этом закрыта); токен стоит.
+        String key = uniq("c8elr");
+        String xml = bpmn("test-c8-el-exclusive-gateway.bpmn").replace("c8-el-exclusive-gateway", key)
+            .replace("type=\"gw-listener-job\"", "type=\"gw-listener-job\" retries=\"2\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID carrierId = phaseJobIds(piId).get(0);
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job");
+
+        runtimeService.failServiceTask(carrierId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job", "gw-listener-job");
+
+        runtimeService.failServiceTask(carrierId, "listener boom", null);
+        assertThat(incidentsOfInstance(piId)).hasSize(1);
+        assertThat(activitiesOf(piId, "gw")).hasSize(1);
+        assertThat(activity(piId, "gw").getStatus()).isEqualTo(ActivityStatus.ERROR);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        // exhausted — no redispatch
+        assertThat(serviceTaskJobs(piId)).containsExactly("gw-listener-job", "gw-listener-job");
     }
 
     // ==================== §C.1: zeebe:jobPriorityDefinition (WO-C8-13/A-1: исправлено с priorityDefinition) ====================

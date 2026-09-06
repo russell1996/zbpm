@@ -238,6 +238,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     element.setType(BpmnElementType.EVENT_BASED_GATEWAY);
                     element.setIncoming(eventGateway.getIncoming());
                     element.setOutgoing(eventGateway.getOutgoing());
+                    // WO-C8-25: start listeners park the gateway before its handler runs.
+                    attachElementStartListeners(element, eventGateway.getExtensionElements());
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -255,6 +257,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         element.getExtensions().setExclusiveGatewayExtension(new ExclusiveGatewayExtensionModel());
                         element.getExtensions().getExclusiveGatewayExtension().setDefaultFlowId(inclusiveGateway.getDefaultFlow());
                     }
+                    // WO-C8-25: start listeners park the gateway before its handler runs.
+                    attachElementStartListeners(element, inclusiveGateway.getExtensionElements());
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -839,6 +843,39 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     }
 
     /**
+     * WO-C8-25 (part B of finding A-5): start execution listeners for gateway/event
+     * elements — parsed into the shared {@code ServiceTaskExtensionModel.startListeners}
+     * so the phase machinery reads one shape. Service/user tasks never pass through here
+     * (they keep their own C8-11/C8-21 paths); boundary elements have a separate mapping
+     * ({@code toBoundaryElement}) that deliberately does NOT call this.
+     */
+    private void attachElementStartListeners(BpmnElementModel element, ExtensionElements ee) {
+        if (ee == null || ee.getExecutionListeners() == null
+            || ee.getExecutionListeners().getListeners() == null) {
+            return;
+        }
+        List<ListenerModel> starts = new ArrayList<>();
+        for (ExecutionListenerModel l : ee.getExecutionListeners().getListeners()) {
+            if (l.getType() == null) {
+                continue;
+            }
+            if ("start".equals(l.getEventType())) {
+                starts.add(new ListenerModel(l.getType(), l.getRetries(), listenerHeaders(l)));
+            }
+        }
+        if (starts.isEmpty()) {
+            return;
+        }
+        if (element.getExtensions() == null) {
+            element.setExtensions(new BpmnElementExtensionModel());
+        }
+        if (element.getExtensions().getServiceTaskExtension() == null) {
+            element.getExtensions().setServiceTaskExtension(new ServiceTaskExtensionModel());
+        }
+        element.getExtensions().getServiceTaskExtension().setStartListeners(starts);
+    }
+
+    /**
      * WO-C8-7r2: custom headers ride along to the worker via JobDetailModel (null when
      * absent). Headers-only slice of {@link #attachServiceTaskJob} for element kinds that
      * build their own {@code ServiceTaskExtension} (script/send job-worker branches) —
@@ -1137,6 +1174,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setIncoming(endEvent.getIncoming());
         // WO-C8-16: job-based end events (zeebe:taskDefinition) park as jobs.
         attachServiceTaskJob(element, endEvent.getExtensionElements());
+        // WO-C8-25: start listeners park the event before its handler runs.
+        attachElementStartListeners(element, endEvent.getExtensionElements());
         return element;
     }
 
@@ -1162,6 +1201,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         } else {
             element.setType(BpmnElementType.START_EVENT);
         }
+        // WO-C8-25: start listeners park the event before its handler runs.
+        attachElementStartListeners(element, startEvent.getExtensionElements());
 
         return element;
     }
@@ -1179,6 +1220,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             element.getExtensions().setExclusiveGatewayExtension(new ExclusiveGatewayExtensionModel());
             element.getExtensions().getExclusiveGatewayExtension().setDefaultFlowId(exclusiveGateway.getDefaultFlow());
         }
+        // WO-C8-25: start listeners park the gateway before its handler runs.
+        attachElementStartListeners(element, exclusiveGateway.getExtensionElements());
         return element;
     }
 
@@ -1189,6 +1232,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setType(BpmnElementType.PARALLEL_GATEWAY);
         element.setOutgoing(parallelGateway.getOutgoing());
         element.setIncoming(parallelGateway.getIncoming());
+        // WO-C8-25: start listeners park the gateway before its handler runs.
+        attachElementStartListeners(element, parallelGateway.getExtensionElements());
         return element;
     }
 
@@ -1241,6 +1286,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             message.setCorrelationKeyExpression(messageKeys.get(ref));
             element.getExtensions().setMessageEventExtension(message);
         }
+        // WO-C8-25: start listeners park the event before its handler runs.
+        attachElementStartListeners(element, catchEvent.getExtensionElements());
 
         return element;
     }
@@ -1281,6 +1328,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         }
         // WO-C8-16: job-based throw events (zeebe:taskDefinition) park as jobs.
         attachServiceTaskJob(element, throwEvent.getExtensionElements());
+        // WO-C8-25: start listeners park the event before its handler runs.
+        attachElementStartListeners(element, throwEvent.getExtensionElements());
         return element;
     }
 
