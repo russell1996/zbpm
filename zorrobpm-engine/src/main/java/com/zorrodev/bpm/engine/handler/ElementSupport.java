@@ -256,6 +256,20 @@ public class ElementSupport {
     // ─── Listener helpers ─────────────────────────────────────────────
 
     /**
+     * WO-C8-25: start execution listeners of a gateway/event element, in declaration
+     * order (already filtered to {@code eventType="start"} at parse time). Empty when
+     * absent — callers must not touch listener state for such elements. Separate reader
+     * from {@link #serviceTaskStartListeners} ON PURPOSE (see
+     * {@code BpmnElementExtensionModel.elementStartListeners}).
+     */
+    public List<ListenerModel> elementStartListeners(BpmnElementModel element) {
+        List<ListenerModel> listeners = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getElementStartListeners)
+            .orElse(null);
+        return listeners == null ? List.of() : listeners;
+    }
+
+    /**
      * WO-C8-21r2: durable retry budget of one listener job — the model value, default 3
      * from the docs when the attribute is absent. Shared by all three listener kinds
      * (start/end/creating); callers set it wherever they set the phase index.

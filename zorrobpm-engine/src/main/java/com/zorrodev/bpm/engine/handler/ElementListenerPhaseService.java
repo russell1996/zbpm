@@ -62,7 +62,7 @@ public class ElementListenerPhaseService {
             || element.getType() == BpmnElementType.USER_TASK) {
             return false;
         }
-        List<ListenerModel> listeners = elementSupport.serviceTaskStartListeners(element);
+        List<ListenerModel> listeners = elementSupport.elementStartListeners(element);
         if (listeners.isEmpty() || !hasHandler) {
             return false;
         }
@@ -193,7 +193,7 @@ public class ElementListenerPhaseService {
     }
 
     private List<ListenerModel> listenersOf(ElementListenerPhaseEntity phase) {
-        return elementSupport.serviceTaskStartListeners(elementOf(phase));
+        return elementSupport.elementStartListeners(elementOf(phase));
     }
 
     private BpmnElementModel elementOf(ElementListenerPhaseEntity phase) {
