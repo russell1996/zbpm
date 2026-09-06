@@ -123,6 +123,8 @@ public class FormOperationsImpl implements FormOperations {
         // WO-C8-22: a Modeler-linked .form carries its id in the schema JSON — store it so
         // user tasks referencing formId resolve (null when the JSON has no id: key path as before).
         entity.setFormId(FormEntity.extractFormId(dto.getSchema()));
+        // WO-C8-31: top-level "versionTag" of the same JSON (WO-C8-27; lenient, null when absent).
+        entity.setVersionTag(FormEntity.extractVersionTag(dto.getSchema()));
         entity.setVersion(maxVersion + 1);
         entity.setKind(kind);
         entity.setSchemaJson(dto.getSchema());

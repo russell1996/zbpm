@@ -13,7 +13,10 @@ import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormResolver;
@@ -427,5 +430,79 @@ class TaskFormOperationsImplTest {
             () -> impl.getStartForm("ord"));
 
         assertEquals(HttpStatus.NOT_FOUND, e.getStatusCode());
+    }
+
+    // ==================== getUserTaskForm/getStartForm: WO-C8-31 versionTag ====================
+
+    private BpmnProcessDefinitionModel modelWithTaskTag(String elementId, String versionTag) {
+        BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(elementId);
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        UserTaskExtensionModel userTask = new UserTaskExtensionModel();
+        userTask.setVersionTag(versionTag);
+        extensions.setUserTaskExtension(userTask);
+        element.setExtensions(extensions);
+        model.addElement(element);
+        return model;
+    }
+
+    @Test
+    void getUserTaskForm_versionTagBinding_resolvesPinned() {
+        // Крит. 2 (user-task потребитель): bindingType="versionTag" идёт в готовый
+        // resolveTaskFormByFormIdAndVersionTag; значение тега — статично на элементе,
+        // читается из кэшированной модели версии ЭТОГО инстанса (паттерн C8-26,
+        // новой колонки в user_tasks нет). latest/deployment-пути недостижимы.
+        UUID taskId = UUID.randomUUID();
+        UUID piId = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(taskId);
+        task.setProcessInstanceId(piId);
+        task.setFormId("order-form");
+        task.setBindingType("versionTag");
+        task.setBpmnElementId("review");
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(piId);
+        pi.setProcessDefinitionId(pdId);
+        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(bpmnService.getProcessDefinitionModelById(pdId))
+            .thenReturn(modelWithTaskTag("review", "v1"));
+        TaskFormDTO resolved = new TaskFormDTO();
+        resolved.setType("embedded");
+        resolved.setSchema("{\"label\": \"v1\"}");
+        when(formResolver.resolveTaskFormByFormIdAndVersionTag(
+            eq("order-form"), eq("v1"), any())).thenReturn(resolved);
+
+        TaskFormDTO result = impl.getUserTaskForm(taskId);
+
+        assertSame(resolved, result);
+        verify(formResolver).resolveTaskFormByFormIdAndVersionTag(eq("order-form"), eq("v1"), any());
+        verify(formResolver, never()).resolveTaskFormByFormId(any(), any());
+        verify(formResolver, never()).resolveTaskFormByFormIdAndDeployment(any(), any(), any());
+        verify(formResolver, never()).resolveTaskForm(any(), any());
+    }
+
+    @Test
+    void getStartForm_formId_versionTagBinding_resolvesPinned() {
+        // Крит. 2 (start-потребитель): та же ветка на startFormVersionTag из C8-26,
+        // резолвер общий (граница WO — не дублировать).
+        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "versionTag");
+        BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
+        model.setStartFormId("order-start-form");
+        model.setStartFormBindingType("versionTag");
+        model.setStartFormVersionTag("v1");
+        when(bpmnService.getProcessDefinitionModelById(pd.getId())).thenReturn(model);
+        TaskFormDTO resolved = new TaskFormDTO();
+        resolved.setType("embedded");
+        when(formResolver.resolveTaskFormByFormIdAndVersionTag(
+            eq("order-start-form"), eq("v1"), isNull())).thenReturn(resolved);
+
+        TaskFormDTO result = impl.getStartForm("ord");
+
+        assertSame(resolved, result);
+        verify(formResolver).resolveTaskFormByFormIdAndVersionTag("order-start-form", "v1", null);
+        verify(bindingRepository, never()).findByProcessDefinitionId(any());
     }
 }

@@ -34,6 +34,14 @@ public class FormEntity {
      * {@code bindingType="deployment"} resolve never matches them, it 404s instead.
      */
     private UUID deploymentId;
+    /**
+     * WO-C8-31: version tag of the form (top-level {@code versionTag} in the
+     * {@code .form} JSON, WO-C8-27 recon) — the address key for
+     * {@code bindingType="versionTag"} resolve together with {@code formId}.
+     * Nullable: rows without a tag (most forms, all pre-WO rows) never match a
+     * versionTag resolve, it 404s instead of falling back to latest.
+     */
+    private String versionTag;
     private int version;
     @Column(columnDefinition = "text")
     private String schemaJson;
@@ -55,6 +63,24 @@ public class FormEntity {
         }
         try {
             var node = FORM_ID_MAPPER.readTree(schemaJson).get("id");
+            return (node != null && node.isTextual() && !node.asText().isBlank()) ? node.asText() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * WO-C8-31: extracts the form version tag from a form schema JSON (top-level
+     * {@code "versionTag"} property, WO-C8-27 recon — not XML, forms are JSON).
+     * Lenient like {@link #extractFormId}: null when absent, blank, non-textual or
+     * unparseable — callers store null (a versionTag resolve never matches such rows).
+     */
+    public static String extractVersionTag(String schemaJson) {
+        if (schemaJson == null || schemaJson.isBlank()) {
+            return null;
+        }
+        try {
+            var node = FORM_ID_MAPPER.readTree(schemaJson).get("versionTag");
             return (node != null && node.isTextual() && !node.asText().isBlank()) ? node.asText() : null;
         } catch (Exception e) {
             return null;

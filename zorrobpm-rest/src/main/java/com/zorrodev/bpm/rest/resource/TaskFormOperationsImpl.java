@@ -69,9 +69,37 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
                 return formResolver.resolveTaskFormByFormIdAndDeployment(
                     task.getFormId(), deploymentId, prefillData(task.getProcessInstanceId()));
             }
+            // WO-C8-31: bindingType="versionTag" pins the latest form version carrying
+            // the tag from this element's formDefinition (WO-C8-27: top-level .form JSON
+            // field). The tag value is static per element — read from the cached model
+            // of THIS instance's process version (no new row column, C8-26 pattern);
+            // absent tag → explicit 404 from the resolver, never silent latest.
+            if ("versionTag".equals(task.getBindingType())) {
+                return formResolver.resolveTaskFormByFormIdAndVersionTag(
+                    task.getFormId(),
+                    userTaskVersionTag(pi.getProcessDefinitionId(), task.getBpmnElementId()),
+                    prefillData(task.getProcessInstanceId()));
+            }
             return formResolver.resolveTaskFormByFormId(task.getFormId(), prefillData(task.getProcessInstanceId()));
         }
         return resolveForm(task.getFormKey(), task.getProcessInstanceId());
+    }
+
+    /**
+     * WO-C8-31: static {@code versionTag} of a user-task element
+     * ({@code zeebe:formDefinition/@versionTag}, parsed into the element model).
+     * Null-safe: unknown element/model → null → the resolver 404s explicitly.
+     */
+    private String userTaskVersionTag(UUID processDefinitionId, String elementId) {
+        if (processDefinitionId == null || elementId == null) {
+            return null;
+        }
+        var element = bpmnService.getProcessDefinitionModelById(processDefinitionId).getElement(elementId);
+        if (element == null || element.getExtensions() == null
+            || element.getExtensions().getUserTaskExtension() == null) {
+            return null;
+        }
+        return element.getExtensions().getUserTaskExtension().getVersionTag();
     }
 
     @Override
@@ -97,6 +125,12 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
             if ("deployment".equals(startModel.getStartFormBindingType())) {
                 return formResolver.resolveTaskFormByFormIdAndDeployment(
                     startFormId, pd.getDeploymentId(), null);
+            }
+            // WO-C8-31: same versionTag pin for start forms (tag parsed in C8-26,
+            // resolver shared — no duplication, boundary of this WO).
+            if ("versionTag".equals(startModel.getStartFormBindingType())) {
+                return formResolver.resolveTaskFormByFormIdAndVersionTag(
+                    startFormId, startModel.getStartFormVersionTag(), null);
             }
             return formResolver.resolveTaskFormByFormId(startFormId, null);
         }
