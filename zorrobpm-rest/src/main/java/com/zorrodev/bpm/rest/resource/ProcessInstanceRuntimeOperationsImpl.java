@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
+import com.zorrodev.bpm.engine.handler.CancelingPhaseService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
@@ -31,6 +32,7 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
     private final ProcessInstanceRepository processInstanceRepository;
     private final FormArtifactService formArtifactService;
     private final DBService dbService;
+    private final CancelingPhaseService cancelingPhaseService;
     private final AuditLogService auditLogService;
     private final RuntimeOperationSupport runtimeOperationSupport;
 
@@ -92,10 +94,21 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
         String key = runtimeOperationSupport.resolveDefinitionKeyByInstance(id);
         runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
 
+        // WO-C8-28: canceling listeners observe the cancellation; while any phase is
+        // open the process-cancel tail below waits (the last-closing listener runs it
+        // from the canceling resume branch). Snapshot BEFORE cancelling (only live
+        // tasks qualify), open AFTER (eligibility requires CANCELLED status).
+        // The audit record fires now — it records the requested operation, whose
+        // terminal effect lands asynchronously, the same eventual-consistency
+        // contract as every other parked transition.
+        List<UUID> cancelCandidates = cancelingPhaseService.activeUserTaskIdsInInstance(id);
         dbService.cancelActiveActivities(id);
+        boolean cancelPhasesOpen = cancelingPhaseService.openForInstanceSnapshot(id, cancelCandidates);
         dbService.deleteTimerJobsByProcessInstanceId(id);
         dbService.deleteMessageSubscriptionsByProcessInstanceId(id);
-        dbService.cancelProcessInstance(id);
+        if (!cancelPhasesOpen) {
+            dbService.cancelProcessInstance(id);
+        }
         auditLogService.record(runtimeOperationSupport.getPrincipal(), "CANCEL", key, id.toString());
         IdDTO result = new IdDTO();
         result.setId(id);

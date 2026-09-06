@@ -68,4 +68,68 @@ public interface ActivityDbOperations {
 
     /** WO-C8-24: remaining retries of the current completing-listener job. */
     Integer getCompletingListenerRetriesRemaining(UUID activityId);
+
+    /**
+     * WO-C8-28: advance/clear the in-flight assigning-listener phase on the activity
+     * row (null = no phase). Entity mutation + save, never bulk UPDATE (same
+     * stale-copy reason as the pairs above).
+     */
+    void setPendingAssigningListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-28: null when no assigning-listener phase is in flight for this activity. */
+    Integer getPendingAssigningListenerIndex(UUID activityId);
+
+    /** WO-C8-28: durable budget of the current assigning-listener job (null = unset). */
+    void setAssigningListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-28: remaining retries of the current assigning-listener job. */
+    Integer getAssigningListenerRetriesRemaining(UUID activityId);
+
+    /** WO-C8-28: parked assignee while the assigning phase runs (null = nothing parked). */
+    void setPendingAssignee(UUID activityId, String assignee);
+
+    /** WO-C8-28: parked assignee of an in-flight assigning phase (null when none). */
+    String getPendingAssignee(UUID activityId);
+
+    /**
+     * WO-C8-28: advance/clear the in-flight updating-listener phase on the activity
+     * row (null = no phase). Entity mutation + save, never bulk UPDATE.
+     */
+    void setPendingUpdatingListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-28: null when no updating-listener phase is in flight for this activity. */
+    Integer getPendingUpdatingListenerIndex(UUID activityId);
+
+    /** WO-C8-28: durable budget of the current updating-listener job (null = unset). */
+    void setUpdatingListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-28: remaining retries of the current updating-listener job. */
+    Integer getUpdatingListenerRetriesRemaining(UUID activityId);
+
+    /**
+     * WO-C8-28: advance/clear the in-flight canceling-listener phase on the activity
+     * row (null = no phase). Entity mutation + save, never bulk UPDATE.
+     */
+    void setPendingCancelingListenerIndex(UUID activityId, Integer index);
+
+    /** WO-C8-28: null when no canceling-listener phase is in flight for this activity. */
+    Integer getPendingCancelingListenerIndex(UUID activityId);
+
+    /** WO-C8-28: durable budget of the current canceling-listener job (null = unset). */
+    void setCancelingListenerRetriesRemaining(UUID activityId, Integer remaining);
+
+    /** WO-C8-28: remaining retries of the current canceling-listener job. */
+    Integer getCancelingListenerRetriesRemaining(UUID activityId);
+
+    /** WO-C8-28: deferred boundary element id (null = process-cancel path). */
+    void setPendingCancelBoundaryElementId(UUID activityId, String boundaryElementId);
+
+    /** WO-C8-28: deferred boundary element id (null = process-cancel path). */
+    String getPendingCancelBoundaryElementId(UUID activityId);
+
+    /** WO-C8-28: true while any activity on the token has an open canceling phase. */
+    boolean hasOpenCancelingListenerPhaseOnToken(UUID tokenId);
+
+    /** WO-C8-28: true while any activity in the instance has an open canceling phase. */
+    boolean hasOpenCancelingListenerPhaseInInstance(UUID processInstanceId);
 }

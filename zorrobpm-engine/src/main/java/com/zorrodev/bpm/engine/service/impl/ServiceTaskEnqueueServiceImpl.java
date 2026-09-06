@@ -104,6 +104,60 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             return;
         }
 
+        // WO-C8-28: while an assigning listener is in flight, the dispatched job is the
+        // listener's. Same discipline as the creating/completing branches above
+        // (read-only for declaring elements; no real job to fail open into — corrupt
+        // index parks with an incident). Precedence is explicit first-valid-wins in
+        // lifecycle order; phases never overlap by construction (each opens only when
+        // no other phase is open — see the open sites), so order is a tiebreaker for
+        // corrupt states, not a silent assumption.
+        List<ListenerModel> assigningListeners = elementSupport.userTaskAssigningListeners(element);
+        Integer pendingAssigning = assigningListeners.isEmpty() ? null : dbService.getPendingAssigningListenerIndex(serviceTaskId);
+        if (pendingAssigning != null && pendingAssigning >= 0 && pendingAssigning < assigningListeners.size()) {
+            job = assigningListeners.get(pendingAssigning).jobType();
+            listenerHeaders = assigningListeners.get(pendingAssigning).headers();
+        } else if (pendingAssigning != null) {
+            log.warn("User task {} has out-of-bounds pendingAssigningListenerIndex {} ({} assigning listeners) — raising incident",
+                serviceTaskId, pendingAssigning, assigningListeners.size());
+            dbService.createIncident(
+                serviceTaskId,
+                "User task '" + bpmnElementId + "' has out-of-bounds assigning listener index — fix the process model");
+            return;
+        }
+
+        // WO-C8-28: while an updating listener is in flight, the dispatched job is the
+        // listener's. Same discipline as above.
+        List<ListenerModel> updatingListeners = elementSupport.userTaskUpdatingListeners(element);
+        Integer pendingUpdating = updatingListeners.isEmpty() ? null : dbService.getPendingUpdatingListenerIndex(serviceTaskId);
+        if (pendingUpdating != null && pendingUpdating >= 0 && pendingUpdating < updatingListeners.size()) {
+            job = updatingListeners.get(pendingUpdating).jobType();
+            listenerHeaders = updatingListeners.get(pendingUpdating).headers();
+        } else if (pendingUpdating != null) {
+            log.warn("User task {} has out-of-bounds pendingUpdatingListenerIndex {} ({} updating listeners) — raising incident",
+                serviceTaskId, pendingUpdating, updatingListeners.size());
+            dbService.createIncident(
+                serviceTaskId,
+                "User task '" + bpmnElementId + "' has out-of-bounds updating listener index — fix the process model");
+            return;
+        }
+
+        // WO-C8-28: while a canceling listener is in flight, the dispatched job is the
+        // listener's. Same discipline as above — the activity is CANCELLED, so there
+        // is no real job to fail open into either; corrupt index parks with an incident.
+        List<ListenerModel> cancelingListeners = elementSupport.userTaskCancelingListeners(element);
+        Integer pendingCanceling = cancelingListeners.isEmpty() ? null : dbService.getPendingCancelingListenerIndex(serviceTaskId);
+        if (pendingCanceling != null && pendingCanceling >= 0 && pendingCanceling < cancelingListeners.size()) {
+            job = cancelingListeners.get(pendingCanceling).jobType();
+            listenerHeaders = cancelingListeners.get(pendingCanceling).headers();
+        } else if (pendingCanceling != null) {
+            log.warn("User task {} has out-of-bounds pendingCancelingListenerIndex {} ({} canceling listeners) — raising incident",
+                serviceTaskId, pendingCanceling, cancelingListeners.size());
+            dbService.createIncident(
+                serviceTaskId,
+                "User task '" + bpmnElementId + "' has out-of-bounds canceling listener index — fix the process model");
+            return;
+        }
+
         // WO-C8-11: while a start listener is in flight, the dispatched job is the listener's,
         // not the real one. The index is read ONLY for elements that declare listeners, so the
         // common path (and all pre-existing tests with mock DBService) never touches the new read.

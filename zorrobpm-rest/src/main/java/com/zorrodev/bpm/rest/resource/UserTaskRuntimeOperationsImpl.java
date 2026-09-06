@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
@@ -31,6 +32,7 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
 
     private final UserTaskRepository userTaskRepository;
     private final RuntimeService runtimeService;
+    private final ActivityService activityService;
     private final AuditLogService auditLogService;
     private final FormArtifactService formArtifactService;
     private final DBService dbService;
@@ -124,7 +126,15 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
         // Atomic claim can still lose the race to a concurrent claimant between the check above
         // and the update → surface as 409, not a 500.
         try {
-            dbService.claimUserTask(id, assignee);
+            activityService.claimUserTask(id, assignee);
+        } catch (com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException e) {
+            // WO-C8-28: claim while a listener phase runs — 409 with the phase-naming
+            // message (same discipline as repeat complete in C8-24). Ordered BEFORE
+            // the IllegalStateException catch below: the phase exception extends it,
+            // so the generic branch would otherwise mask the precise message (the
+            // status stays 409 either way).
+            log.warn("Claim of user task {} while a listener phase runs: {}", id, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
         } catch (IllegalStateException e) {
             log.warn("Failed to claim user task {}: {}", id, e.getMessage());
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Failed to claim user task");
@@ -192,7 +202,14 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
         // WO-INT-4: candidates are filtered in the member search — assignment itself is not
         // type-guarded (a system account is an ordinary account; the type is a marker).
 
-        dbService.assignUserTask(id, dto.getAssignee());
+        try {
+            activityService.assignUserTask(id, dto.getAssignee());
+        } catch (com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException e) {
+            // WO-C8-28: assign while a listener phase runs — 409, never 500 (mirror
+            // of the complete/claim catches above).
+            log.warn("Assign of user task {} while a listener phase runs: {}", id, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
         auditLogService.record(runtimeOperationSupport.getPrincipal(), "ASSIGN_USER_TASK", runtimeOperationSupport.resolveDefinitionKeyByInstance(task.getProcessInstanceId()), id.toString(), dto.getAssignee());
 
         IdDTO result = new IdDTO();

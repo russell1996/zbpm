@@ -51,6 +51,7 @@ class RuntimeResourceCharacterizationTest {
 
     /* --- mock all downstream services/repos --- */
     @MockitoBean private RuntimeService runtimeService;
+    @MockitoBean private com.zorrodev.bpm.engine.service.ActivityService activityService;
     @MockitoBean private DBService dbService;
     @MockitoBean private AuditLogService auditLogService;
     @MockitoBean private AuthorizationService authorizationService;
@@ -407,7 +408,7 @@ class RuntimeResourceCharacterizationTest {
         task.setCompletedAt(null); task.setAssignee(null);
         when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
         when(authorizationService.canClaimUserTask(any(), eq(piId), eq("g1"))).thenReturn(true);
-        doNothing().when(dbService).claimUserTask(eq(id), any());
+        doNothing().when(activityService).claimUserTask(eq(id), any());
 
         mockMvc.perform(post("/user-tasks/" + id + "/claim")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))
@@ -497,7 +498,7 @@ class RuntimeResourceCharacterizationTest {
         task.setId(id); task.setProcessInstanceId(piId); task.setCompletedAt(null);
         when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
         when(authorizationService.canReassignUserTask(any(), eq(piId))).thenReturn(true);
-        doNothing().when(dbService).assignUserTask(eq(id), any());
+        doNothing().when(activityService).assignUserTask(eq(id), any());
 
         AssignUserTaskDTO dto = new AssignUserTaskDTO(); dto.setAssignee("bob");
         mockMvc.perform(post("/user-tasks/" + id + "/assign")
