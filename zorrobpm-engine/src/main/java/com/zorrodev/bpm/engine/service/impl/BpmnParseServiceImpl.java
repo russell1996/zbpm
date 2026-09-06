@@ -1112,12 +1112,17 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
             // WO-C8-21: creating task listeners block task creation until each completes.
             // WO-C8-24: completing task listeners block task completion until each completes.
-            // Only user tasks may carry taskListeners (schema allowedIn); other eventTypes
-            // (assigning/updating/canceling) are separate WOs and stay unparsed.
+            // WO-C8-28: assigning/updating/canceling task listeners block their own
+            // lifecycle transitions (assignment / variable update / cancellation).
+            // Only user tasks may carry taskListeners (schema allowedIn); unknown
+            // eventTypes stay unparsed (fail-closed at parse time).
             if (userTask.getExtensionElements().getTaskListeners() != null
                 && userTask.getExtensionElements().getTaskListeners().getListeners() != null) {
                 List<ListenerModel> creating = new ArrayList<>();
                 List<ListenerModel> completing = new ArrayList<>();
+                List<ListenerModel> assigning = new ArrayList<>();
+                List<ListenerModel> updating = new ArrayList<>();
+                List<ListenerModel> canceling = new ArrayList<>();
                 for (TaskListenerModel l : userTask.getExtensionElements().getTaskListeners().getListeners()) {
                     if (l.getType() == null) {
                         continue;
@@ -1129,6 +1134,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     } else if ("completing".equals(l.getEventType())) {
                         // WO-C8-24: same — completing listeners block completion.
                         completing.add(new ListenerModel(l.getType(), l.getRetries(), null));
+                    } else if ("assigning".equals(l.getEventType())) {
+                        // WO-C8-28: same — assigning listeners block assignment.
+                        assigning.add(new ListenerModel(l.getType(), l.getRetries(), null));
+                    } else if ("updating".equals(l.getEventType())) {
+                        // WO-C8-28: same — updating listeners block the variable update.
+                        updating.add(new ListenerModel(l.getType(), l.getRetries(), null));
+                    } else if ("canceling".equals(l.getEventType())) {
+                        // WO-C8-28: same — canceling listeners observe cancellation.
+                        canceling.add(new ListenerModel(l.getType(), l.getRetries(), null));
                     }
                 }
                 if (!creating.isEmpty()) {
@@ -1136,6 +1150,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
                 if (!completing.isEmpty()) {
                     element.getExtensions().getUserTaskExtension().setCompletingListeners(completing);
+                }
+                if (!assigning.isEmpty()) {
+                    element.getExtensions().getUserTaskExtension().setAssigningListeners(assigning);
+                }
+                if (!updating.isEmpty()) {
+                    element.getExtensions().getUserTaskExtension().setUpdatingListeners(updating);
+                }
+                if (!canceling.isEmpty()) {
+                    element.getExtensions().getUserTaskExtension().setCancelingListeners(canceling);
                 }
             }
         }

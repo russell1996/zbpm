@@ -54,6 +54,12 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
             createTaskRow(processInstanceId, activityId, bpmnElement);
             elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
             postCreation(processInstanceId, token, activityId, bpmnElement);
+            // WO-C8-28: a parked assignment (see createTaskRow) opens its own phase
+            // AFTER the row and the boundaries exist — statement order above is
+            // preserved exactly; without a parked assignee this is a no-op.
+            if (openAssigningPhaseAfterCreation(processInstanceId, activityId, bpmnElement)) {
+                serviceTaskEnqueueService.enqueueAfterCommit(activityId);
+            }
         } else {
             elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
             dbService.setPendingCreatingListenerIndex(activityId, 0);
@@ -89,7 +95,40 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         // WO-C8-23: binding rides alongside (latest/absent keep the old resolve path).
         String bindingType = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getBindingType() : null;
-        dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate);
+        // WO-C8-28: when assigning listeners are declared and the model assigns someone,
+        // the assignment parks (row assignee NULL + pendingAssignee column) until the
+        // assigning phase runs it. Without listeners — or with no model assignee — the
+        // write below is byte-identical to before (resolvedAssignee straight into the row).
+        List<ListenerModel> assigningListeners = elementSupport.userTaskAssigningListeners(bpmnElement);
+        String parkedAssignee = (!assigningListeners.isEmpty() && resolvedAssignee != null && !resolvedAssignee.isBlank())
+            ? resolvedAssignee : null;
+        dbService.createUserTask(activityId, parkedAssignee != null ? null : resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate);
+        if (parkedAssignee != null) {
+            dbService.setPendingAssignee(activityId, parkedAssignee);
+        }
+    }
+
+    /**
+     * WO-C8-28: opens the assigning phase for a freshly created task whose assignment
+     * parked in {@link #createTaskRow} (model assignee + assigning listeners). Returns
+     * true when opened (caller enqueues); false is a no-op — same condition as the
+     * parking above, so an opened phase always has a parked assignee and vice versa.
+     * Called after {@code postCreation} so boundaries exist before listeners run.
+     *
+     * <p>Public so that {@link CompletionService} can run it when the last creating
+     * listener completes (creating runs first — deterministic order, WO test 8).
+     */
+    public boolean openAssigningPhaseAfterCreation(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement) {
+        List<ListenerModel> assigningListeners = elementSupport.userTaskAssigningListeners(bpmnElement);
+        if (assigningListeners.isEmpty() || dbService.getPendingAssignee(activityId) == null) {
+            return false;
+        }
+        dbService.setPendingAssigningListenerIndex(activityId, 0);
+        dbService.setAssigningListenerRetriesRemaining(activityId,
+            elementSupport.listenerBudget(assigningListeners.get(0)));
+        log.info("{}/{}: Task created with parked assignment, opening assigning-listener phase of {}: {}/{}",
+            processInstanceId, activityId, bpmnElement.getType(), activityId, bpmnElement.getId());
+        return true;
     }
 
     /**

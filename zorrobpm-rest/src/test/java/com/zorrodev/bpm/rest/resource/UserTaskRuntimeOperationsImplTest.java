@@ -34,6 +34,7 @@ class UserTaskRuntimeOperationsImplTest {
 
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private RuntimeService runtimeService;
+    @Mock private com.zorrodev.bpm.engine.service.ActivityService activityService;
     @Mock private AuditLogService auditLogService;
     @Mock private FormArtifactService formArtifactService;
     @Mock private DBService dbService;
@@ -139,7 +140,7 @@ class UserTaskRuntimeOperationsImplTest {
         IdDTO result = impl.claimUserTask(id);
 
         assertThat(result.getId()).isEqualTo(id);
-        verify(dbService).claimUserTask(id, "alice");
+        verify(activityService).claimUserTask(id, "alice");
         verify(auditLogService).record(principal, "CLAIM_USER_TASK", "key", id.toString(), "alice");
     }
 
@@ -174,11 +175,39 @@ class UserTaskRuntimeOperationsImplTest {
         when(authorizationService.canClaimUserTask(any(), any(), any())).thenReturn(true);
         when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
         when(runtimeOperationSupport.resolvePrincipalId(any())).thenReturn("alice");
-        doThrow(new IllegalStateException("already claimed")).when(dbService).claimUserTask(id, "alice");
+        doThrow(new IllegalStateException("already claimed")).when(activityService).claimUserTask(id, "alice");
 
         assertThatThrownBy(() -> impl.claimUserTask(id))
             .isInstanceOf(ResponseStatusException.class)
             .hasFieldOrPropertyWithValue("status", HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void claimUserTask_listenerPhaseInProgress_returns409WithPhaseMessage() {
+        // WO-C8-28: claim в середине listener-фазы — 409 с именем фазы (тот же
+        // dedicated тип, что completing-409; generic IllegalStateException-ветка ниже
+        // его не маскирует — порядок catch в прод-коде).
+        UUID id = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        task.setProcessInstanceId(UUID.randomUUID());
+        task.setCandidateGroups("group1");
+        task.setAssignee(null);
+        task.setCompletedAt(null);
+        Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "alice", "USER");
+        when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+        when(authorizationService.canClaimUserTask(any(), any(), any())).thenReturn(true);
+        when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
+        when(runtimeOperationSupport.resolvePrincipalId(any())).thenReturn("alice");
+        doThrow(new com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException(
+            "User task 'review' is already assigning"))
+            .when(activityService).claimUserTask(id, "alice");
+
+        assertThatThrownBy(() -> impl.claimUserTask(id))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.CONFLICT)
+            .hasMessageContaining("already assigning");
     }
 
     @Test
@@ -218,7 +247,7 @@ class UserTaskRuntimeOperationsImplTest {
         IdDTO result = impl.assignUserTask(id, dto);
 
         assertThat(result.getId()).isEqualTo(id);
-        verify(dbService).assignUserTask(id, "bob");
+        verify(activityService).assignUserTask(id, "bob");
     }
 
     @Test
@@ -238,6 +267,31 @@ class UserTaskRuntimeOperationsImplTest {
         assertThatThrownBy(() -> impl.assignUserTask(id, dto))
             .isInstanceOf(ResponseStatusException.class)
             .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void assignUserTask_listenerPhaseInProgress_returns409WithPhaseMessage() {
+        // WO-C8-28: assign в середине listener-фазы — 409 с именем фазы (зеркало
+        // completing-409 из C8-24).
+        UUID id = UUID.randomUUID();
+        AssignUserTaskDTO dto = new AssignUserTaskDTO();
+        dto.setAssignee("bob");
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        task.setProcessInstanceId(UUID.randomUUID());
+        task.setCompletedAt(null);
+        Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
+        when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+        when(authorizationService.canReassignUserTask(principal, task.getProcessInstanceId())).thenReturn(true);
+        doThrow(new com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException(
+            "User task 'review' is already completing"))
+            .when(activityService).assignUserTask(id, "bob");
+
+        assertThatThrownBy(() -> impl.assignUserTask(id, dto))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.CONFLICT)
+            .hasMessageContaining("already completing");
     }
 
     @Test

@@ -26,4 +26,17 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
     List<ActivityEntity> findByTokenAndStatusIn(UUID token, Collection<ActivityStatus> statuses);
 
     List<ActivityEntity> findByTokenAndBpmnElementIdAndStatusIn(UUID token, String bpmnElementId, Collection<ActivityStatus> statuses);
+
+    /**
+     * WO-C8-28: activities with an open canceling-listener phase on one token —
+     * the last-closer check for a deferred boundary continuation (all must close
+     * before the token proceeds; serialized by the process-instance lock).
+     */
+    List<ActivityEntity> findByTokenAndPendingCancelingListenerIndexIsNotNull(UUID token);
+
+    /**
+     * WO-C8-28: activities with an open canceling-listener phase in one instance —
+     * the last-closer check for a deferred process-cancel tail.
+     */
+    List<ActivityEntity> findByProcessInstanceIdAndPendingCancelingListenerIndexIsNotNull(UUID processInstanceId);
 }

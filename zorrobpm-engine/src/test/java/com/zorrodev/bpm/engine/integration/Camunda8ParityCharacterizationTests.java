@@ -131,11 +131,17 @@ public class Camunda8ParityCharacterizationTests {
     @Autowired
     private UserTaskRepository userTaskRepository;
 
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
+
     @Autowired
     private DBService dbService;
 
     @Autowired
     private ActivityService activityService;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.handler.CancelingPhaseService cancelingPhaseService;
 
     @Autowired
     private DeploymentService deploymentService;
@@ -694,8 +700,11 @@ public class Camunda8ParityCharacterizationTests {
     @Transactional
     void taskListeners_twoCreatingListeners_runSequentiallyInDeclarationOrder() throws Exception {
         // WO-C8-21, критерий 3 (зеркало executionListeners_twoStartListeners): второй
-        // creating-listener диспетчеризуется только после завершения первого; висящий между
-        // ними assigning-listener парсер обязан пропустить (чужие WO), порядок не рвётся.
+        // creating-listener диспетчеризуется только после завершения первого.
+        // WO-C8-28: висящий между ними assigning-listener фикстуры БОЛЬШЕ НЕ
+        // пропускается (premise retired — assigning поддержан этим WO): после creating
+        // строго идёт assigning-фаза с парковкой alice; порядок creating→assigning
+        // asserted ниже, назначение применяется только после своего листенера.
         String key = uniq("c8tl2");
         String xml = bpmn("test-c8-task-listeners-two-creating.bpmn").replace("c8-task-listeners-2", key);
 
@@ -721,9 +730,17 @@ public class Camunda8ParityCharacterizationTests {
 
         runtimeService.completeServiceTask(activityId, List.of());
 
-        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job-1", "creating-job-2");
+        // WO-C8-28: creating закрыта, следом — assigning-фаза фикстуры (alice паркуется).
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job-1", "creating-job-2", "assigning-job");
         assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isNull();
         assertThat(userTasksOfInstance(piId)).hasSize(1);
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isEqualTo(0);
+        assertThat(taskAssignee(activityId)).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isNull();
+        assertThat(taskAssignee(activityId)).isEqualTo("alice");
 
         completeUserTask(piId, "review");
 
@@ -967,6 +984,28 @@ public class Camunda8ParityCharacterizationTests {
             .map(v -> v.getTextValue()).orElse(null);
     }
 
+    /** WO-C8-28: assignee строки задачи (в contract-DTO его нет — читаем сущность).
+     * Refresh обязателен: применение назначения идёт bulk-UPDATE
+     * ({@code UserTaskRepository.setAssignee}), который обходит persistence-контекст —
+     * ранее загруженная в той же транзакции сущность останется stale. Тот же
+     * застарелый капкан у {@code setCompletedAt}/{@code claimAssignee}/
+     * {@code setCancelled} (V7-находка, не чиню — C8-24-тесты его не ловят, т.к.
+     * читают через DTO-проекции queryService). */
+    private String taskAssignee(UUID activityId) {
+        com.zorrodev.bpm.engine.entity.UserTaskEntity managed =
+            userTaskRepository.findById(activityId).orElseThrow();
+        entityManager.refresh(managed);
+        return managed.getAssignee();
+    }
+
+    /** WO-C8-28: флаг отмены инстанса — refresh по той же причине (bulk {@code setCancelled}). */
+    private boolean piCancelled(UUID processInstanceId) {
+        com.zorrodev.bpm.engine.entity.ProcessInstanceEntity managed =
+            processInstanceRepository.findById(processInstanceId).orElseThrow();
+        entityManager.refresh(managed);
+        return managed.isCancelled();
+    }
+
     // ==================== WO-C8-24: completing task listeners ====================
 
     @Test
@@ -1135,6 +1174,355 @@ public class Camunda8ParityCharacterizationTests {
 
         assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isNull();
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    // ==================== WO-C8-28: assigning/updating/canceling task listeners ====================
+
+    @Test
+    @Transactional
+    void taskListeners_assigningBlocksAssignmentUntilListenerCompletes() throws Exception {
+        // WO-C8-28, критерии 1+2 (POF): задача с assignee в модели активируется, но
+        // назначение ПАРКУЕТСЯ (строка создана, assignee NULL, pendingAssignee=alice),
+        // диспетчеризуется assigning-job; применение — только после листенера.
+        String key = uniq("c8tla");
+        String xml = bpmn("test-c8-task-listeners-assigning.bpmn").replace("c8-task-listeners-assigning", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getAssigningListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("assigning-job");
+        // Неизвестный eventType ни в один список не попадает (fail-closed на парсинге).
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCreatingListeners()).isNull();
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getUpdatingListeners()).isNull();
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCancelingListeners()).isNull();
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCompletingListeners()).isNull();
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+        assertThat(taskAssignee(activityId)).isNull();
+        assertThat(dbService.getPendingAssignee(activityId)).isEqualTo("alice");
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("assigning-job");
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isNull();
+        assertThat(dbService.getPendingAssignee(activityId)).isNull();
+        assertThat(taskAssignee(activityId)).isEqualTo("alice");
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_assignApiParksAssignmentUntilListenerCompletes() throws Exception {
+        // WO-C8-28: assign-API на активной задаче паркует назначение так же, как
+        // активация (повторный вход после закрытия фазы тоже покрыт: alice уже
+        // применена, bob паркуется поверх).
+        String key = uniq("c8tla2");
+        String xml = bpmn("test-c8-task-listeners-assigning.bpmn").replace("c8-task-listeners-assigning", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        runtimeService.completeServiceTask(activityId, List.of());
+        assertThat(taskAssignee(activityId)).isEqualTo("alice");
+
+        activityService.assignUserTask(activityId, "bob");
+
+        assertThat(taskAssignee(activityId)).isEqualTo("alice");
+        assertThat(dbService.getPendingAssignee(activityId)).isEqualTo("bob");
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("assigning-job", "assigning-job");
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(taskAssignee(activityId)).isEqualTo("bob");
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_claimParksAssignmentUntilListenerCompletes() throws Exception {
+        // WO-C8-28: claim (назначение через Tasklist — строка триггеров WO) идёт той же
+        // assigning-фазой: CAS-свойство держится REST-проверкой + 409, resume пишет
+        // plain-записью (фаза всё сериализовала).
+        String key = uniq("c8tlc");
+        String xml = bpmn("test-c8-task-listeners-assigning.bpmn").replace("c8-task-listeners-assigning", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        runtimeService.completeServiceTask(activityId, List.of());
+        dbService.unclaimUserTask(activityId);
+        assertThat(taskAssignee(activityId)).isNull();
+
+        activityService.claimUserTask(activityId, "bob");
+
+        assertThat(taskAssignee(activityId)).isNull();
+        assertThat(dbService.getPendingAssignee(activityId)).isEqualTo("bob");
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isEqualTo(0);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(taskAssignee(activityId)).isEqualTo("bob");
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_creatingThenAssigning_deterministicOrder() throws Exception {
+        // WO-C8-28, критерий 3 (п.8): creating + assigning на одной задаче с assignee
+        // в модели — creating строго первая, assigning строго после создания строки.
+        // Порядок asserted пошагово, а не подразумевается.
+        String key = uniq("c8tlca");
+        String xml = bpmn("test-c8-task-listeners-creating-assigning.bpmn")
+            .replace("c8-task-listeners-creating-assigning", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        // Шаг 1: только creating-job; строки задачи ещё нет — assigning не открылась.
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job");
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // Шаг 2: creating закрыта, строка создана БЕЗ assignee, открылась assigning.
+        assertThat(serviceTaskJobs(piId)).containsExactly("creating-job", "assigning-job");
+        assertThat(dbService.getPendingCreatingListenerIndex(activityId)).isNull();
+        assertThat(userTasksOfInstance(piId)).hasSize(1);
+        assertThat(taskAssignee(activityId)).isNull();
+        assertThat(dbService.getPendingAssignee(activityId)).isEqualTo("alice");
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isEqualTo(0);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // Шаг 3: назначение применено, задача активна.
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isNull();
+        assertThat(taskAssignee(activityId)).isEqualTo("alice");
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_updatingBlocksCompletionUntilListenerCompletes() throws Exception {
+        // WO-C8-28, критерии 1+2 (POF): complete С переменными открывает updating-фазу
+        // (переменные уже durable), завершение паркуется до листенера.
+        String key = uniq("c8tlu");
+        String xml = bpmn("test-c8-task-listeners-updating.bpmn").replace("c8-task-listeners-updating", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getUpdatingListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("updating-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        UUID userTaskId = userTasksOfInstance(piId).get(0).getId();
+
+        runtimeService.completeUserTask(userTaskId,
+            List.of(var("markerVar", ProcessVariableType.STRING, "done")));
+
+        assertThat(dbService.getPendingUpdatingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("updating-job");
+        assertThat(instanceVariable(piId, "markerVar")).isEqualTo("done");
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getPendingUpdatingListenerIndex(activityId)).isNull();
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNotNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_completeWithoutVariables_skipsUpdating() throws Exception {
+        // WO-C8-28: complete БЕЗ переменных — не update: updating-фаза не открывается,
+        // задача завершается сразу (решение зафиксировано в коде и здесь).
+        String key = uniq("c8tlu2");
+        String xml = bpmn("test-c8-task-listeners-updating.bpmn").replace("c8-task-listeners-updating", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        UUID userTaskId = userTasksOfInstance(piId).get(0).getId();
+
+        runtimeService.completeUserTask(userTaskId, List.of());
+
+        assertThat(dbService.getPendingUpdatingListenerIndex(activityId)).isNull();
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_updatingThenCompleting_sequentialNoLoop() throws Exception {
+        // WO-C8-28: updating → completing строго последовательно; resume updating
+        // ре-входит в complete() с пустыми переменными, поэтому updating НЕ
+        // переоткрывается (защита от бесконечной рекурсии доказана прогоном).
+        String key = uniq("c8tluc");
+        String xml = bpmn("test-c8-task-listeners-updating-completing.bpmn")
+            .replace("c8-task-listeners-updating-completing", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        UUID userTaskId = userTasksOfInstance(piId).get(0).getId();
+
+        runtimeService.completeUserTask(userTaskId,
+            List.of(var("markerVar", ProcessVariableType.STRING, "done")));
+
+        assertThat(serviceTaskJobs(piId)).containsExactly("updating-job");
+        assertThat(dbService.getPendingUpdatingListenerIndex(activityId)).isEqualTo(0);
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // updating закрыта, открылась completing (а не updating снова).
+        assertThat(dbService.getPendingUpdatingListenerIndex(activityId)).isNull();
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("updating-job", "completing-job");
+        assertThat(queryService.getUserTask(activityId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        assertThat(dbService.getPendingCompletingListenerIndex(activityId)).isNull();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_repeatAssignAndCompleteMidAssigningPhase_conflict409() throws Exception {
+        // WO-C8-28: повторный assign/complete в середине assigning-фазы — 409 с именем
+        // фазы (тот же dedicated тип, что completing-409 из C8-24).
+        String key = uniq("c8tl409");
+        String xml = bpmn("test-c8-task-listeners-assigning.bpmn").replace("c8-task-listeners-assigning", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+        UUID userTaskId = userTasksOfInstance(piId).get(0).getId();
+
+        assertThatThrownBy(() -> activityService.assignUserTask(activityId, "bob"))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException.class)
+            .hasMessageContaining("already assigning");
+        assertThatThrownBy(() -> runtimeService.completeUserTask(userTaskId, List.of()))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException.class)
+            .hasMessageContaining("already assigning");
+        // Фаза цела, назначение по-прежнему паркуется.
+        assertThat(dbService.getPendingAssigningListenerIndex(activityId)).isEqualTo(0);
+        assertThat(taskAssignee(activityId)).isNull();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_repeatCompleteMidUpdatingPhase_conflict409() throws Exception {
+        // WO-C8-28: повторный complete в середине updating-фазы — 409 с именем фазы.
+        String key = uniq("c8tlu409");
+        String xml = bpmn("test-c8-task-listeners-updating.bpmn").replace("c8-task-listeners-updating", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID userTaskId = userTasksOfInstance(piId).get(0).getId();
+        runtimeService.completeUserTask(userTaskId,
+            List.of(var("markerVar", ProcessVariableType.STRING, "done")));
+
+        assertThatThrownBy(() -> runtimeService.completeUserTask(userTaskId,
+                List.of(var("markerVar", ProcessVariableType.STRING, "done"))))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException.class)
+            .hasMessageContaining("already updating");
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_cancelingBlocksBoundaryContinuation() throws Exception {
+        // WO-C8-28, критерии 1+2+4 (POF, п.9): прерывание boundary-событием открывает
+        // canceling-фазу — продолжение границы отложено, пока листенер не отработает.
+        String key = uniq("c8tlx");
+        String xml = bpmn("test-c8-task-listeners-canceling.bpmn").replace("c8-task-listeners-canceling", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getCancelingListeners())
+            .extracting(ListenerModel::jobType)
+            .containsExactly("canceling-job");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        // Прерывание границей (fireBoundaryTimer — void: факт выстрела виден по
+        // состоянию, ассерты ниже).
+        activityService.fireBoundaryTimer(activityId, "reviewTimer");
+
+        // Отмена состоялась (CANCELLED), но продолжение границы НЕ ушло: фаза открыта,
+        // escalationEnd не достигнут, инстанс жив.
+        assertThat(activity(piId, "review").getStatus()).isEqualTo(ActivityStatus.CANCELLED);
+        assertThat(dbService.getPendingCancelingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("canceling-job");
+        assertThat(activitiesOf(piId, "escalationEnd")).isEmpty();
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // Листенер отработал — отмена завершилась: граница продолжена, инстанс завершён.
+        assertThat(dbService.getPendingCancelingListenerIndex(activityId)).isNull();
+        assertThat(activitiesOf(piId, "escalationEnd")).hasSize(1);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void taskListeners_processCancelDefersTailUntilCancelingDone() throws Exception {
+        // WO-C8-28, критерий 4 (второй путь отмены): отмена процесса открывает
+        // canceling-фазу, статус cancelled и очистка откладываются до листенера.
+        // Движок-уровень: те же шаги, что REST-операция (снапшот → отмена → open →
+        // условный хвост); REST-проводка — отдельным unit-тестом.
+        String key = uniq("c8tlp");
+        String xml = bpmn("test-c8-task-listeners-canceling.bpmn").replace("c8-task-listeners-canceling", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID activityId = activity(piId, "review").getId();
+
+        java.util.List<UUID> candidates = cancelingPhaseService.activeUserTaskIdsInInstance(piId);
+        assertThat(candidates).containsExactly(activityId);
+        dbService.cancelActiveActivities(piId);
+        boolean phasesOpen = cancelingPhaseService.openForInstanceSnapshot(piId, candidates);
+
+        // Фаза открыта — хвост (статус) отложен.
+        assertThat(phasesOpen).isTrue();
+        assertThat(dbService.getPendingCancelingListenerIndex(activityId)).isEqualTo(0);
+        assertThat(serviceTaskJobs(piId)).containsExactly("canceling-job");
+        assertThat(piCancelled(piId)).isFalse();
+
+        runtimeService.completeServiceTask(activityId, List.of());
+
+        // Последний листенер закрыл фазу — хвост выполнен.
+        assertThat(dbService.getPendingCancelingListenerIndex(activityId)).isNull();
+        assertThat(piCancelled(piId)).isTrue();
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 

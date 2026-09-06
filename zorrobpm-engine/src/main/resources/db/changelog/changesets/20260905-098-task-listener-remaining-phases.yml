@@ -1,0 +1,48 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-098
+  - changeSet:
+      id: 20260905-098
+      author: zorrodev
+      changes:
+        # WO-C8-28: оставшиеся события task listeners (assigning/updating/canceling).
+        # Решение по п.2 WO: ОТДЕЛЬНАЯ колонка на событие (зеркало creating/completing
+        # из C8-21r2/C8-24), а не одна с дискриминатором — смёрженные WO переписывать
+        # нельзя, магических значений быть не должно (null = фазы нет, int = индекс
+        # in-flight). Плюс два payload-поля парковки: отложенный assignee (assigning)
+        # и элемент границы, чьё продолжение отложено (canceling, null = путь отмены
+        # процесса, не boundary). Все nullable, поведение без листенеров не меняется.
+        - addColumn:
+            tableName: activities
+            columns:
+              - column:
+                  name: pending_assigning_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего assigning-listener (WO-C8-28); null — фазы нет'
+              - column:
+                  name: assigning_listener_retries_remaining
+                  type: integer
+                  remarks: 'Остаток ретраев текущего assigning-listener job (WO-C8-28)'
+              - column:
+                  name: pending_assignee
+                  type: varchar(255)
+                  remarks: 'Отложенный assignee на время assigning-фазы (WO-C8-28)'
+              - column:
+                  name: pending_updating_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего updating-listener (WO-C8-28); null — фазы нет'
+              - column:
+                  name: updating_listener_retries_remaining
+                  type: integer
+                  remarks: 'Остаток ретраев текущего updating-listener job (WO-C8-28)'
+              - column:
+                  name: pending_canceling_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего canceling-listener (WO-C8-28); null — фазы нет'
+              - column:
+                  name: canceling_listener_retries_remaining
+                  type: integer
+                  remarks: 'Остаток ретраев текущего canceling-listener job (WO-C8-28)'
+              - column:
+                  name: pending_cancel_boundary_element_id
+                  type: varchar(255)
+                  remarks: 'Элемент границы, чьё продолжение отложено canceling-фазой (WO-C8-28); null — путь отмены процесса'

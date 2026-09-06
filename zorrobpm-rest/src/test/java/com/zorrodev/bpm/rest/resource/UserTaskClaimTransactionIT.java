@@ -35,6 +35,13 @@ class UserTaskClaimTransactionIT {
     @MockitoBean private AuditLogService auditLogService;
     @MockitoBean private RuntimeOperationSupport runtimeOperationSupport;
     @MockitoBean private AuthorizationService authorizationService;
+    // WO-C8-28: claim идёт через phase-aware ActivityService (assigning-фаза);
+    // механика фаз покрыта engine- и unit-тестами, здесь важен только rollback
+    // вокруг аудита — мокаем коллаборатор, как остальные внешние зависимости.
+    @MockitoBean private com.zorrodev.bpm.engine.service.ActivityService activityService;
+    // Реальный DBService — мок выше делегирует ему запись claim (старое прямое
+    // поведение), чтобы assertions про assignee остались проверяющими запись.
+    @Autowired private com.zorrodev.bpm.engine.service.DBService dbService;
 
     private UUID cleanupTask, cleanupPi, cleanupPd;
 
@@ -93,6 +100,11 @@ class UserTaskClaimTransactionIT {
         when(authorizationService.canClaimUserTask(any(), any(), any())).thenReturn(true);
 
         doThrow(new RuntimeException("audit fail")).when(auditLogService).record(any(), eq("CLAIM_USER_TASK"), any(), eq(taskId.toString()), any());
+        // WO-C8-28: эмуляция старого прямого вызова (запись claim + откат вместе с аудитом).
+        doAnswer(inv -> {
+            dbService.claimUserTask(inv.getArgument(0), inv.getArgument(1));
+            return null;
+        }).when(activityService).claimUserTask(any(), any());
 
         assertThatThrownBy(() -> userTaskRuntimeOperations.claimUserTask(taskId))
             .isInstanceOf(RuntimeException.class)
@@ -144,6 +156,11 @@ class UserTaskClaimTransactionIT {
         lenient().when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
         lenient().when(runtimeOperationSupport.resolvePrincipalId(any())).thenReturn("test2");
         when(authorizationService.canClaimUserTask(any(), any(), any())).thenReturn(true);
+        // WO-C8-28: эмуляция старого прямого вызова (реальная запись claim).
+        doAnswer(inv -> {
+            dbService.claimUserTask(inv.getArgument(0), inv.getArgument(1));
+            return null;
+        }).when(activityService).claimUserTask(any(), any());
 
         // Should not throw
         // This will try to claim the task, which should succeed

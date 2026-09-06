@@ -38,6 +38,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private FormArtifactService formArtifactService;
     @Mock private DBService dbService;
+    @Mock private com.zorrodev.bpm.engine.handler.CancelingPhaseService cancelingPhaseService;
     @Mock private AuditLogService auditLogService;
     @Mock private RuntimeOperationSupport runtimeOperationSupport;
     @InjectMocks private ProcessInstanceRuntimeOperationsImpl impl;
@@ -134,6 +135,34 @@ class ProcessInstanceRuntimeOperationsImplTest {
         verify(dbService).deleteTimerJobsByProcessInstanceId(id);
         verify(dbService).deleteMessageSubscriptionsByProcessInstanceId(id);
         verify(dbService).cancelProcessInstance(id);
+        verify(auditLogService).record(principal, "CANCEL", key, id.toString());
+    }
+
+    @Test
+    void cancelProcessInstance_cancelingPhaseOpen_defersStatusTail() {
+        // WO-C8-28: открытая canceling-фаза откладывает только статус-хвост
+        // (cancelProcessInstance); удаление job/subscription идёт сразу, аудит — тоже
+        // (фиксирует запрошенную операцию). Статус выставит resume последнего листенера.
+        UUID id = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        com.zorrodev.bpm.contract.model.ProcessInstance pi = new com.zorrodev.bpm.contract.model.ProcessInstance();
+        pi.setId(id);
+        pi.setCompletedAt(null);
+        when(dbService.getProcessInstance(id)).thenReturn(pi);
+        String key = "key";
+        Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "user", "USER");
+        when(runtimeOperationSupport.resolveDefinitionKeyByInstance(id)).thenReturn(key);
+        doNothing().when(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
+        when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
+        when(cancelingPhaseService.activeUserTaskIdsInInstance(id)).thenReturn(java.util.List.of(taskId));
+        when(cancelingPhaseService.openForInstanceSnapshot(id, java.util.List.of(taskId))).thenReturn(true);
+
+        IdDTO result = impl.cancelProcessInstance(id);
+
+        assertThat(result.getId()).isEqualTo(id);
+        verify(dbService).deleteTimerJobsByProcessInstanceId(id);
+        verify(dbService).deleteMessageSubscriptionsByProcessInstanceId(id);
+        verify(dbService, never()).cancelProcessInstance(any());
         verify(auditLogService).record(principal, "CANCEL", key, id.toString());
     }
 

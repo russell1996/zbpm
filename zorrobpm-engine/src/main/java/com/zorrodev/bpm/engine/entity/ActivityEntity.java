@@ -51,4 +51,50 @@ public class ActivityEntity {
      * per-listener budget, mirror of the creating pair above).
      */
     private Integer completingListenerRetriesRemaining;
+    /**
+     * WO-C8-28: index of the in-flight assigning task listener (mirror of the
+     * creating/completing pairs above — separate column per event, never magic
+     * values; null = no phase in flight). The assignment itself parks in
+     * {@link #pendingAssignee} until the last listener completes.
+     */
+    private Integer pendingAssigningListenerIndex;
+    /**
+     * WO-C8-28: remaining retries of the current assigning-listener job (durable
+     * per-listener budget, mirror of the pairs above).
+     */
+    private Integer assigningListenerRetriesRemaining;
+    /**
+     * WO-C8-28: assignee parked while the assigning phase runs (model assignee at
+     * activation, requested assignee at assign/claim). Applied by the resume tail;
+     * the task row keeps its previous (or null) assignee meanwhile.
+     */
+    private String pendingAssignee;
+    /**
+     * WO-C8-28: index of the in-flight updating task listener (mirror of the pairs
+     * above). Opens on complete-with-variables only — the only variable-write path
+     * (no standalone task-variables endpoint exists).
+     */
+    private Integer pendingUpdatingListenerIndex;
+    /**
+     * WO-C8-28: remaining retries of the current updating-listener job (durable
+     * per-listener budget, mirror of the pairs above).
+     */
+    private Integer updatingListenerRetriesRemaining;
+    /**
+     * WO-C8-28: index of the in-flight canceling task listener (mirror of the pairs
+     * above). The cancellation tail (boundary continuation / process-cancel tail)
+     * waits for the last listener; deny is not supported by Camunda semantics.
+     */
+    private Integer pendingCancelingListenerIndex;
+    /**
+     * WO-C8-28: remaining retries of the current canceling-listener job (durable
+     * per-listener budget, mirror of the pairs above).
+     */
+    private Integer cancelingListenerRetriesRemaining;
+    /**
+     * WO-C8-28: boundary element whose continuation the canceling phase defers
+     * (per-token last-closer runs it). Null = process-cancel path (the deferred
+     * tail is the process-cancel tail, no boundary involved).
+     */
+    private String pendingCancelBoundaryElementId;
 }
