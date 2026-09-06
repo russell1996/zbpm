@@ -209,6 +209,8 @@ public class SchemaMapOperationsImpl implements SchemaMapOperations {
         FormEntity artifact = new FormEntity();
         artifact.setId(UUID.randomUUID());
         artifact.setFormKey(artifactKey);
+        // WO-C8-22: same linked-id extraction as the upload path (null when absent).
+        artifact.setFormId(FormEntity.extractFormId(dto.getSchema()));
         artifact.setVersion(maxArtifactVersion + 1);
         artifact.setKind(kind);
         artifact.setSchemaJson(dto.getSchema());

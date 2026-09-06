@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-091
+  - changeSet:
+      id: 20260905-091
+      author: zorrodev
+      changes:
+        # WO-C8-22: formId, за которым закреплена задача (зеркало formKey) — пишется при
+        # создании задачи из элемента. Nullable: key/external-модели и фазовые маркеры
+        # C8-21 идут прежними путями.
+        - addColumn:
+            tableName: user_tasks
+            columns:
+              - column:
+                  name: form_id
+                  type: varchar(255)
+                  remarks: 'ID связанной формы задачи (WO-C8-22); null — резолв по formKey'

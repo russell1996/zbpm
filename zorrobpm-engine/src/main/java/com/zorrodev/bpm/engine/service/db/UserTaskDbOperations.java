@@ -7,7 +7,7 @@ import java.util.UUID;
  */
 public interface UserTaskDbOperations {
 
-    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String dueDate, String followUpDate);
+    void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String dueDate, String followUpDate);
 
     void completeUserTask(UUID serviceTaskId);
 
