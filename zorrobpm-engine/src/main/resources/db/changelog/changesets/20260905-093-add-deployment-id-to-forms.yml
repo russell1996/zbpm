@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-093
+  - changeSet:
+      id: 20260905-093
+      author: zorrodev
+      changes:
+        # WO-C8-23: bindingType="deployment" для форм — пара (formId, deployment_id).
+        # Nullable: одиночно выложенные строки хранят null (осознанное решение WO-C8-18,
+        # зеркало) — deployment-резолв их никогда не находит, отдаёт 404 вместо тихого latest.
+        - addColumn:
+            tableName: form
+            columns:
+              - column:
+                  name: deployment_id
+                  type: uuid
+                  remarks: 'ID пачки деплоя формы (WO-C8-23); null — одиночная выкладка'

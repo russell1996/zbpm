@@ -117,6 +117,41 @@ class TaskFormOperationsImplTest {
     }
 
     @Test
+    void getUserTaskForm_deploymentBinding_resolvesPinnedVersion() {
+        // WO-C8-23: строка с bindingType="deployment" идёт в resolveTaskFormByFormIdAndDeployment
+        // с deploymentId ВЕРСИИ ПРОЦЕССА инстанса; latest-путь при этом не вызывается вообще.
+        UUID taskId = UUID.randomUUID();
+        UUID piId = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+        UUID deploymentId = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(taskId);
+        task.setProcessInstanceId(piId);
+        task.setFormId("pinned-form");
+        task.setBindingType("deployment");
+        ProcessInstanceEntity pi = new ProcessInstanceEntity();
+        pi.setId(piId);
+        pi.setProcessDefinitionId(pdId);
+        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
+        pd.setId(pdId);
+        pd.setDeploymentId(deploymentId);
+        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
+        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
+        when(dbService.getVariables(eq(piId))).thenReturn(List.of());
+        TaskFormDTO pinned = new TaskFormDTO();
+        pinned.setType("embedded");
+        when(formResolver.resolveTaskFormByFormIdAndDeployment(eq("pinned-form"), eq(deploymentId), eq(Map.of())))
+            .thenReturn(pinned);
+
+        TaskFormDTO result = impl.getUserTaskForm(taskId);
+
+        assertSame(pinned, result);
+        verify(formResolver, never()).resolveTaskFormByFormId(any(), any());
+        verify(formResolver, never()).resolveTaskForm(any(), any());
+    }
+
+    @Test
     void getUserTaskForm_happy_prefillFromVariables() {
         UUID taskId = UUID.randomUUID();
         UUID piId = UUID.randomUUID();

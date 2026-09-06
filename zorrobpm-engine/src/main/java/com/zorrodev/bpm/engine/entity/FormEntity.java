@@ -27,6 +27,13 @@ public class FormEntity {
      * rows written before this WO (or without an id) resolve by {@code formKey} as before.
      */
     private String formId;
+    /**
+     * WO-C8-23: batch id stamped when the row is laid down together with a process
+     * ({@code POST /deployments} via {@code DeploymentArtifactRegistrar}). Nullable:
+     * singly-deployed rows keep null (WO-C8-18 decision, mirrored) — a
+     * {@code bindingType="deployment"} resolve never matches them, it 404s instead.
+     */
+    private UUID deploymentId;
     private int version;
     @Column(columnDefinition = "text")
     private String schemaJson;

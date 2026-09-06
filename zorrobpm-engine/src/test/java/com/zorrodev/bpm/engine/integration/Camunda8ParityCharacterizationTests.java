@@ -1163,6 +1163,89 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
+    // ==================== WO-C8-23: bindingType="deployment" для форм ====================
+
+    @Test
+    @Transactional
+    void formDeploymentBinding_pinsToBatchVersion_notLatest() throws Exception {
+        // WO-C8-23, критерии 1+2 (POF): процесс и форма v1 выложены одним POST /deployments
+        // (embedded-форма пачки штампуется deployment_id); затем v2 прилетает отдельно.
+        // Задача с bindingType="deployment" отдаёт v1, а не latest-v2.
+        String formId = "pinned-form";
+        String key = uniq("c8fdb");
+        DeploymentItemDTO item = batchItem(bpmn("test-c8-form-deployment-binding.bpmn")
+            .replace("c8-form-deployment-binding", key));
+        DeploymentDTO batch = deploymentService.deployBatch(List.of(item), null, null);
+        UUID parentPdId = batch.getProcesses().stream()
+            .filter(p -> key.equals(p.getKey()))
+            .findFirst().orElseThrow().getProcessDefinitionId();
+
+        // v1 пачки несёт deployment_id батча (опора C8-18); парсинг bindingType — в модели.
+        FormEntity v1 = formRepository.findByFormKeyAndVersion(
+            "camunda-forms:bpmn:userTaskForm_pinned-form", 1).orElseThrow();
+        assertThat(v1.getFormId()).isEqualTo(formId);
+        assertThat(v1.getDeploymentId()).isEqualTo(batch.getId());
+
+        // v2 отдельно (одиночная выкладка, deployment_id = null) — latest уезжает вперёд.
+        deployLinkedForm("camunda-forms:bpmn:userTaskForm_pinned-form", formId,
+            "{\"components\": [],\"label\":\"v2\"}");
+        FormEntity latest = formRepository.findTopByFormIdOrderByVersionDesc(formId).orElseThrow();
+        assertThat(latest.getVersion()).isEqualTo(2);
+        assertThat(latest.getDeploymentId()).isNull();
+
+        UUID piId = start(parentPdId, List.of());
+
+        // Строка задачи пинит bindingType (критерий 1, row-level).
+        UUID taskId = userTasksOfInstance(piId).get(0).getId();
+        assertThat(userTaskRepository.findById(taskId).orElseThrow().getBindingType())
+            .isEqualTo("deployment");
+
+        // Резолв пином, не latest (критерий 2).
+        TaskFormDTO dto = formResolver.resolveTaskFormByFormIdAndDeployment(
+            formId, batch.getId(), null);
+        assertThat(dto.getType()).isEqualTo("embedded");
+        assertThat(dto.getSchema()).contains("\"label\": \"v1\"");
+    }
+
+    @Test
+    @Transactional
+    void formDeploymentBinding_missingPair_explicit404() throws Exception {
+        // WO-C8-23, критерий 3 (п.8): пары нет — явная 404 с внятным текстом
+        // (id + deployment + remedy), а не тихая чужая форма.
+        String formId = uniq("c8fdx");
+        UUID deploymentId = UUID.randomUUID();
+
+        var thrown = catchThrowable(() ->
+            formResolver.resolveTaskFormByFormIdAndDeployment(formId, deploymentId, null));
+
+        assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+        assertThat(((ResponseStatusException) thrown).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(((ResponseStatusException) thrown).getReason())
+            .contains(formId).contains(deploymentId.toString()).contains("POST /deployments");
+    }
+
+    @Test
+    @Transactional
+    void formDeploymentBinding_singlyDeployedForm_explicit404() throws Exception {
+        // WO-C8-23, критерий 3 (п.9): форма выложена одиночно (deployment_id = null) —
+        // тот же 404, а не fallback в неё; null-deployment PD — тоже 404 до запроса
+        // (иначе Spring IS NULL-семантика молча воскресила бы одиночную форму).
+        String formId = uniq("c8fdz");
+        deployLinkedForm("single-key-" + formId, formId, "{\"components\": []}");
+        UUID batchDeployment = UUID.randomUUID();
+
+        var thrown = catchThrowable(() ->
+            formResolver.resolveTaskFormByFormIdAndDeployment(formId, batchDeployment, null));
+        assertThat(thrown).isInstanceOf(ResponseStatusException.class);
+        assertThat(((ResponseStatusException) thrown).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        var thrownNullDeployment = catchThrowable(() ->
+            formResolver.resolveTaskFormByFormIdAndDeployment(formId, null, null));
+        assertThat(thrownNullDeployment).isInstanceOf(ResponseStatusException.class);
+        assertThat(((ResponseStatusException) thrownNullDeployment).getStatusCode())
+            .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
     // ==================== §C.1: formId ====================
 
     /** WO-C8-22: выкладка linked-формы (form_id + версия max+1, как ручная загрузка). */
