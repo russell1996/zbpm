@@ -36,6 +36,7 @@ class IncidentDbOperationsImplTest {
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private DomainEventEmitter domainEventEmitter;
+    @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
     @InjectMocks private IncidentDbOperationsImpl db;
 
     @Test

@@ -37,7 +37,7 @@ class OutboxDeliveryResultListenerTest {
 
     @BeforeEach
     void setUp() {
-        listener = new OutboxDeliveryResultListener(outboxRepository);
+        listener = new OutboxDeliveryResultListener(outboxRepository, new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ReflectionTestUtils.setField(listener, "maxRetries", 5);
     }
 

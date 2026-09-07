@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.OutboxDeliveryResult;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ import java.util.UUID;
 public class OutboxDeliveryResultListener {
 
     private final OutboxRepository outboxRepository;
+    private final BpmMetrics bpmMetrics;
 
     @Value("${zorrobpm.outbox.max-retries:5}")
     private int maxRetries;
@@ -47,6 +49,8 @@ public class OutboxDeliveryResultListener {
 
         if (result.isAcked()) {
             outboxRepository.markPublished(outboxId);
+            // WO-OBS-1: true delivery (broker ACK), not enqueue — the honest published signal.
+            bpmMetrics.outboxPublished();
             log.info("Outbox entry {} confirmed by broker (ACK)", outboxId);
             return;
         }
@@ -60,10 +64,13 @@ public class OutboxDeliveryResultListener {
         String errorSummary = truncate(result.getCause(), 500);
         if (nextAttempt >= maxRetries) {
             outboxRepository.markFailed(outboxId);
+            bpmMetrics.outboxFailed();
             log.error("Outbox entry {} quarantined after {} failed deliveries (max={}): {}",
                 outboxId, nextAttempt, maxRetries, errorSummary);
         } else {
             outboxRepository.recordFailure(outboxId, nextAttempt, errorSummary);
+            // WO-OBS-1: broker-level failure (NACK) — distinct from permanent quarantine above.
+            bpmMetrics.rabbitPublishFailed();
             log.warn("Outbox entry {} delivery failed (attempt {}/{}): {}",
                 outboxId, nextAttempt, maxRetries, errorSummary);
         }

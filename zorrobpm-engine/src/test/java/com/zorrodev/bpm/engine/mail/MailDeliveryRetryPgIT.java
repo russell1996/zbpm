@@ -56,10 +56,10 @@ public class MailDeliveryRetryPgIT extends PostgresIT {
     void setUp() {
         jdbc.execute("TRUNCATE TABLE outbox RESTART IDENTITY");
         publisher = mock(ApplicationEventPublisher.class);
-        processor = new OutboxBatchProcessor(outboxRepository, publisher, new ObjectMapper());
+        processor = new OutboxBatchProcessor(outboxRepository, publisher, new ObjectMapper(), new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ReflectionTestUtils.setField(processor, "batchSize", 10);
         ReflectionTestUtils.setField(processor, "maxRetries", 3);
-        resultListener = new OutboxDeliveryResultListener(outboxRepository);
+        resultListener = new OutboxDeliveryResultListener(outboxRepository, new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         ReflectionTestUtils.setField(resultListener, "maxRetries", 3);
     }
 
