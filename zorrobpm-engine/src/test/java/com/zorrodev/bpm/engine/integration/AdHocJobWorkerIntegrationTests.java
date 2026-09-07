@@ -23,7 +23,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.nio.file.Files;
@@ -265,8 +264,9 @@ public class AdHocJobWorkerIntegrationTests {
 
         assertThatThrownBy(() -> runtimeService.completeAdHocScopeJob(scopeId,
             result(jobToken(pi, scopeId), true, false, activate("taskX"))))
-            .isInstanceOf(ResponseStatusException.class)
-            .matches(e -> ((ResponseStatusException) e).getStatusCode() == HttpStatus.BAD_REQUEST);
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.ApiException.class)
+            .matches(e -> ((com.zorrodev.bpm.contract.exception.ApiException) e).getStatus() == HttpStatus.BAD_REQUEST
+                && "AD_HOC_RESULT_CONTRADICTION".equals(((com.zorrodev.bpm.contract.exception.ApiException) e).getCode()));
     }
 
     @Transactional
@@ -283,8 +283,9 @@ public class AdHocJobWorkerIntegrationTests {
 
         assertThatThrownBy(() -> runtimeService.completeAdHocScopeJob(scopeId,
             result(token1, false, false, activate("taskY"))))
-            .isInstanceOf(ResponseStatusException.class)
-            .matches(e -> ((ResponseStatusException) e).getStatusCode() == HttpStatus.CONFLICT);
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.ApiException.class)
+            .matches(e -> ((com.zorrodev.bpm.contract.exception.ApiException) e).getStatus() == HttpStatus.CONFLICT
+                && "AD_HOC_JOB_STALE".equals(((com.zorrodev.bpm.contract.exception.ApiException) e).getCode()));
         // The stale attempt activated nothing and consumed nothing current.
         assertThat(tasks(pi, "taskY", ActivityStatus.CREATED)).isEmpty();
 

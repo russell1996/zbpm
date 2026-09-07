@@ -745,23 +745,26 @@ public class CompletionService {
             com.zorrodev.bpm.contract.dto.AdHocJobResultDTO result, TokenExecutor executor) {
         Activity scope = elementSupport.lockAndReload(scopeActivityId);
         if (scope.getType() != BpmnElementType.AD_HOC_SUB_PROCESS) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.BAD_REQUEST,
-                "Activity " + scopeActivityId + " is not an ad-hoc sub-process scope");
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "AD_HOC_SCOPE_EXPECTED",
+                "Activity " + scopeActivityId + " is not an ad-hoc sub-process scope",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
         }
         if (scope.getStatus() != ActivityStatus.CREATED && scope.getStatus() != ActivityStatus.IN_PROGRESS) {
             // Finished/cancelled/errored scope: nobody may decide for it anymore.
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.CONFLICT,
-                "Ad-hoc scope job " + scopeActivityId + " is stale (scope " + scope.getStatus() + ")");
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.CONFLICT, "AD_HOC_JOB_STALE",
+                "Ad-hoc scope job " + scopeActivityId + " is stale (scope " + scope.getStatus() + ")",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
         }
         boolean fulfilled = Boolean.TRUE.equals(result.getIsCompletionConditionFulfilled());
         List<com.zorrodev.bpm.contract.dto.AdHocActivateElementDTO> activate =
             result.getActivateElements() == null ? List.of() : result.getActivateElements();
         if (fulfilled && !activate.isEmpty()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.BAD_REQUEST,
-                "Ad-hoc job result cannot fulfill the completion condition and activate elements at the same time");
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "AD_HOC_RESULT_CONTRADICTION",
+                "Ad-hoc job result cannot fulfill the completion condition and activate elements at the same time",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
         }
         UUID processInstanceId = scope.getProcessInstanceId();
         UUID tokenId = scope.getToken();
@@ -772,9 +775,10 @@ public class CompletionService {
             .orElse(null);
         if (currentToken == null || result.getJobToken() == null || !currentToken.equals(result.getJobToken())) {
             // Recreated (or internal-mode) scope: this generation is over, explicitly.
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.CONFLICT,
-                "Ad-hoc scope job " + scopeActivityId + " is stale (job recreated or not job-managed)");
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.CONFLICT, "AD_HOC_JOB_STALE",
+                "Ad-hoc scope job " + scopeActivityId + " is stale (job recreated or not job-managed)",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
         }
         ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
         BpmnProcessDefinitionModel bpmn =

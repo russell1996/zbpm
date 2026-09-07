@@ -2,6 +2,7 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.RuntimeContract;
 import com.zorrodev.bpm.contract.dto.AssignUserTaskDTO;
+import com.zorrodev.bpm.contract.dto.AdHocJobResultDTO;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
@@ -32,6 +33,11 @@ public class RuntimeResource implements RuntimeContract {
     @Override
     public IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
         return serviceTaskRuntimeOperations.completeServiceTask(id, dto);
+    }
+
+    @Override
+    public IdDTO completeAdHocScopeJob(@PathVariable UUID id, @RequestBody AdHocJobResultDTO dto) {
+        return serviceTaskRuntimeOperations.completeAdHocScopeJob(id, dto);
     }
 
     @Override
