@@ -20,6 +20,12 @@ public class BpmnElementExtensionModel {
     private MessageEventExtensionModel messageEventExtension;
     private CallActivityExtensionModel callActivityExtension;
     private SubProcessExtensionModel subProcessExtension;
+    /**
+     * WO-C8-32: ad-hoc subprocess metadata (internal mode). Set only on
+     * {@code AD_HOC_SUB_PROCESS} elements; regular subprocesses keep
+     * {@code subProcessExtension} untouched.
+     */
+    private AdHocSubProcessExtensionModel adHocSubProcessExtension;
     private BoundaryEventExtensionModel boundaryEventExtension;
     private EventDefinitionExtensionModel eventDefinition;
     /**

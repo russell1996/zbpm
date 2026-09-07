@@ -103,7 +103,8 @@ public class ActivityServiceImplTests {
             throw new RuntimeException(e);
         }
         // Create real EventTrigger with mocked dependencies and inject it
-        var flowNavigator = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport);
+        var flowNavigator = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport,
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class));
         var eventTrigger = new com.zorrodev.bpm.engine.handler.EventTrigger(
             dbService, bpmnService, scriptService, flowNavigator, elementSupport,
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.repository.TimerJobRepository.class),
@@ -170,7 +171,8 @@ public class ActivityServiceImplTests {
         // WO-A-08: Register handlers on the mock HandlerRegistry so execute() can resolve them.
         // The real HandlerRegistry auto-discovers @Component handler beans via Spring DI;
         // in this Mockito unit test, we replicate that resolution manually.
-        var flowNav = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport);
+        var flowNav = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport,
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class));
         registerHandler(BpmnElementType.EXCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.PARALLEL_GATEWAY, new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNav, scriptService));
