@@ -27,3 +27,10 @@ zorrobpm:
 
 app:
   filesDir: ${APP_FILES_DIR:/var/lib/zorrobpm/files}
+
+# WO-OBS-1 (G-C approved): mirror of application.properties — authenticated scrape only.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus

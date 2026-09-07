@@ -36,7 +36,7 @@ class ScriptServicePiiLogDebugTest {
     private ScriptService service() {
         ScriptEngine unary = new FeelUnaryTestsScriptEngineFactory().getScriptEngine();
         ScriptEngine expression = new FeelScriptEngineFactory().getScriptEngine();
-        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper(), 10);
+        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper(), new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), 10);
     }
 
     private ProcessVariable var(String name, ProcessVariableType type, String value) {

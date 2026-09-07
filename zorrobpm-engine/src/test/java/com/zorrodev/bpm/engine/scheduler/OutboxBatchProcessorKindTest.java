@@ -50,7 +50,7 @@ class OutboxBatchProcessorKindTest {
 
     @BeforeEach
     void setUp() {
-        processor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper);
+        processor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper, new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "batchSize", 100);
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "maxRetries", 5);
     }

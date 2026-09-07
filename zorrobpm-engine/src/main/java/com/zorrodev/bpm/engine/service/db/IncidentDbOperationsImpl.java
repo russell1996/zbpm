@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
@@ -26,6 +27,7 @@ import java.util.UUID;
 public class IncidentDbOperationsImpl implements IncidentDbOperations {
 
     private final IncidentRepository incidentRepository;
+    private final BpmMetrics bpmMetrics;
     private final ActivityRepository activityRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ServiceTaskRepository serviceTaskRepository;
@@ -54,6 +56,10 @@ public class IncidentDbOperationsImpl implements IncidentDbOperations {
             entity.setCompletedAt(now);
         }
         incidentRepository.saveAll(open);
+        // WO-OBS-1: stuck gauge follows open incidents exactly (closed count, not list size).
+        for (int i = 0; i < open.size(); i++) {
+            bpmMetrics.decrementStuckTokens();
+        }
     }
 
     @Override
@@ -67,6 +73,9 @@ public class IncidentDbOperationsImpl implements IncidentDbOperations {
         entity.setCreatedAt(Instant.now());
         entity.setMessage(message);
         incidentRepository.save(entity);
+        // WO-OBS-1: single choke for every incident path — the engine's failure signal.
+        bpmMetrics.processFailed();
+        bpmMetrics.incrementStuckTokens();
 
         ProcessInstanceEntity pi = processInstanceRepository.findById(activityEntity.getProcessInstanceId()).orElseThrow();
         // WO-EVT-9: service tasks carry their stable job id in the event data.
@@ -91,8 +100,13 @@ public class IncidentDbOperationsImpl implements IncidentDbOperations {
     @Override
     public void completeIncident(UUID incidentId) {
         IncidentEntity entity = incidentRepository.findById(incidentId).orElseThrow();
+        // WO-OBS-1: exact pairing — a re-completed incident must not double-decrement.
+        boolean wasOpen = entity.getCompletedAt() == null;
         entity.setCompletedAt(Instant.now());
         incidentRepository.save(entity);
+        if (wasOpen) {
+            bpmMetrics.decrementStuckTokens();
+        }
 
         ActivityEntity activity = activityRepository.findById(entity.getActivityId()).orElseThrow();
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
