@@ -1,0 +1,24 @@
+databaseChangeLog:
+  - logicalFilePath: 20260908-101
+  - changeSet:
+      id: 20260908-101
+      author: zorrodev
+      changes:
+        # WO-REG-1: case-insensitive уникальность email — фундамент всего эпика
+        # регистрации. PostgreSQL: функциональный индекс по lower(email):
+        # Foo@Bar.com и foo@bar.com — один адрес. Частичный
+        # (WHERE email IS NOT NULL): у SYSTEM-аккаунтов email отсутствует
+        # законно, их не трогаем.
+        # H2 такой синтаксис не тянет (проверено вживую на 2.4.240: function +
+        # partial вместе — syntax error): ему plain UNIQUE — ловит только точные
+        # дубли, регистро-варианты на H2 ловит сервисный уровень, на PG — индекс.
+        # NULL дублируются свободно в обеих СУБД (SYSTEM-аккаунты в порядке).
+        - sql:
+            dbms: postgresql
+            sql: CREATE UNIQUE INDEX idx_ui_users__email_lower ON ui_users (lower(email)) WHERE email IS NOT NULL
+        - sql:
+            dbms: h2
+            sql: CREATE UNIQUE INDEX idx_ui_users__email_lower ON ui_users (email)
+      rollback:
+        - sql:
+            sql: DROP INDEX IF EXISTS idx_ui_users__email_lower
