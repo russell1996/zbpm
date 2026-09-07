@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.service.impl;
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.engine.bpmn.model.BusinessRuleExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.CallActivityExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ConditionalFilter;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ScriptTaskExtensionModel;
@@ -14,6 +15,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskHeadersModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.JobPriorityDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenerModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenersModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ConditionalFilterModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.TaskListenerModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ZeebeScriptModel;
@@ -407,6 +409,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         } else if (conditional != null) {
             def.setType(EventDefinitionType.CONDITIONAL);
             def.setExpression(conditional.getCondition());
+            // WO-C8-29: conditionalFilter narrows re-evaluation (parsed here so the
+            // trigger point only consults the resolved model, never raw XML).
+            if (conditional.getExtensionElements() != null
+                && conditional.getExtensionElements().getConditionalFilter() != null) {
+                ConditionalFilterModel filter = conditional.getExtensionElements().getConditionalFilter();
+                def.setConditionalFilter(ConditionalFilter.parse(
+                    filter.getVariableNames(), filter.getVariableEvents()));
+            }
         } else if (link != null) {
             def.setType(EventDefinitionType.LINK);
             def.setName(link.getName());

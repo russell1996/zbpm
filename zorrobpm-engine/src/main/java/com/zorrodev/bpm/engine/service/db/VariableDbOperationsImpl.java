@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.service.db;
 
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
+import com.zorrodev.bpm.engine.handler.ExecutionContext;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
@@ -11,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -22,6 +24,7 @@ import java.util.UUID;
 public class VariableDbOperationsImpl implements VariableDbOperations {
 
     private final VariableRepository variableRepository;
+    private final ExecutionContext executionContext;
 
     @Override
     public List<ProcessVariable> getVariables(@NonNull UUID processInstanceId) {
@@ -59,10 +62,10 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
     public void setVariables(@NonNull UUID processInstanceId, UUID scopeId, List<ProcessVariable> variables) {
         List<ProcessVariableEntity> entities = new ArrayList<>();
         for (ProcessVariable variable : variables) {
-            ProcessVariableEntity entity = (scopeId == null
+            Optional<ProcessVariableEntity> existing = (scopeId == null
                 ? variableRepository.findByNameAndProcessInstanceIdAndScopeIdIsNull(variable.getName(), processInstanceId)
-                : variableRepository.findByNameAndProcessInstanceIdAndScopeId(variable.getName(), processInstanceId, scopeId))
-                .orElseGet(() -> {
+                : variableRepository.findByNameAndProcessInstanceIdAndScopeId(variable.getName(), processInstanceId, scopeId));
+            ProcessVariableEntity entity = existing.orElseGet(() -> {
                     ProcessVariableEntity ne = new ProcessVariableEntity();
                     ne.setId(UUID.randomUUID());
                     ne.setProcessInstanceId(processInstanceId);
@@ -73,6 +76,9 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
             entity.setType(variable.getType());
             entity.setTextValue(variable.getValue() != null ? variable.getValue() : "");
             entities.add(entity);
+            // WO-C8-29: record for conditionalFilter matching (create vs update is known
+            // exactly here — the row either existed or not).
+            executionContext.recordVariableChange(variable.getName(), existing.isPresent() ? "update" : "create");
         }
         variableRepository.saveAll(entities);
     }
