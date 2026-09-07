@@ -152,6 +152,14 @@ class EventAuthzIntegrationTest {
         emitEvent(pdIdA, UUID.randomUUID(), "process-instance.started");
         emitEvent(pdIdA, UUID.randomUUID(), "process-instance.completed");
         emitEvent(pdIdB, UUID.randomUUID(), "process-instance.started");
+
+        // WO-TEST-8: permanent load guard. Two extra events on top of the 3 above break
+        // every exact-count assertion on the shared corpus (adminSeesAllEvents == 3,
+        // typeFilter == 2, per-process == 2) while all content-based assertions below stay
+        // green on this same corpus — that is the RED/GREEN pair of this WO, kept in the
+        // test forever so the mines cannot come back. Total stays below the page size.
+        emitEvent(pdIdA, UUID.randomUUID(), "process-instance.started");
+        emitEvent(pdIdB, UUID.randomUUID(), "process-instance.started");
     }
 
     private void emitEvent(UUID processDefinitionId, UUID processInstanceId, String type) {
@@ -227,8 +235,11 @@ class EventAuthzIntegrationTest {
     }
 
     private Set<String> eventPdIds(String bearer) throws Exception {
+        // WO-TEST-8: limit=100 (прод клампит к 100 — EventResource:87) держит видимый
+        // корпус целиком на одной странице при росте.
         MvcResult result = mockMvc.perform(get("/events")
-                .header("Authorization", "Bearer " + bearer))
+                .header("Authorization", "Bearer " + bearer)
+                .param("limit", "100"))
             .andExpect(status().isOk())
             .andReturn();
         JsonNode data = new ObjectMapper().readTree(result.getResponse().getContentAsString()).get("data");
@@ -250,16 +261,21 @@ class EventAuthzIntegrationTest {
         mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(3))
             .andExpect(jsonPath("$.data[0].type").isNotEmpty())
             .andExpect(jsonPath("$.data[0].id").isNotEmpty())
             .andExpect(jsonPath("$.data[0].sequence").isNumber());
+        // WO-TEST-8: "admin sees events of both processes" means membership, not an exact
+        // count — the old `$.data.length() == 3` reddened on any corpus growth.
+        assertThat(eventPdIds(adminToken)).contains(pdIdA.toString(), pdIdB.toString());
     }
 
     @Test
     void userWithNoGrantsSeesNoEvents() throws Exception {
+        // WO-TEST-8: the 0 stays, now with an explicit process filter (a grant-less
+        // principal sees nothing for ANY corpus size — deny-filtering, not counting).
         mockMvc.perform(get("/events")
-                .header("Authorization", "Bearer " + userTokenA))
+                .header("Authorization", "Bearer " + userTokenA)
+                .param("processDefinitionKey", "processA"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.length()").value(0));
     }
@@ -281,13 +297,24 @@ class EventAuthzIntegrationTest {
 
     @Test
     void typeFilter_works() throws Exception {
-        mockMvc.perform(get("/events")
+        // WO-TEST-8: "filter returns only the matching type" means every row matches
+        // and both processes are represented — not an exact count (old `== 2`).
+        MvcResult result = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
-                .param("type", "process-instance.started"))
+                .param("type", "process-instance.started")
+                .param("limit", "100"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(2))
-            .andExpect(jsonPath("$.data[0].type").value("process-instance.started"))
-            .andExpect(jsonPath("$.data[1].type").value("process-instance.started"));
+            .andReturn();
+        JsonNode data = new ObjectMapper().readTree(result.getResponse().getContentAsString()).get("data");
+        assertThat(data.size()).isGreaterThanOrEqualTo(2);
+        Set<String> types = new HashSet<>();
+        Set<String> pdIds = new HashSet<>();
+        data.forEach(e -> {
+            types.add(e.get("type").asText());
+            pdIds.add(e.get("processDefinitionId").asText());
+        });
+        assertThat(types).containsExactly("process-instance.started");
+        assertThat(pdIds).contains(pdIdA.toString(), pdIdB.toString());
     }
 
     // --- WO-SEC-54 (CRITICAL S-02): isFull=true on ONE process must NOT grant see-all ---
@@ -326,15 +353,24 @@ class EventAuthzIntegrationTest {
      */
     @Test
     void fullGrant_scopeIsPerProcess_notGlobal() throws Exception {
-        // processA (full grant) — both events visible
-        mockMvc.perform(get("/events")
+        // processA (full grant) — its events visible: every row is processA and the
+        // setup types are present (WO-TEST-8: old exact `== 2`, breaks on corpus growth).
+        MvcResult resultA = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + fullAKey)
-                .param("processDefinitionKey", "processA"))
+                .param("processDefinitionKey", "processA")
+                .param("limit", "100"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(2))
-            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdA.toString()));
+            .andReturn();
+        JsonNode dataA = new ObjectMapper().readTree(resultA.getResponse().getContentAsString()).get("data");
+        assertThat(dataA.size()).isGreaterThanOrEqualTo(2);
+        Set<String> typesA = new HashSet<>();
+        dataA.forEach(e -> {
+            assertThat(e.get("processDefinitionId").asText()).isEqualTo(pdIdA.toString());
+            typesA.add(e.get("type").asText());
+        });
+        assertThat(typesA).contains("process-instance.started", "process-instance.completed");
 
-        // processB — NO grant → empty
+        // processB — NO grant → empty for any corpus (grant-scoped, keep the 0).
         mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + fullAKey)
                 .param("processDefinitionKey", "processB"))
@@ -357,12 +393,16 @@ class EventAuthzIntegrationTest {
      */
     @Test
     void principalWithRealGrantOnPdA_seesOwnEvents_notForeignEvents() throws Exception {
-        mockMvc.perform(get("/events")
-                .header("Authorization", "Bearer " + grantedAKey))
+        // WO-TEST-8: every visible row belongs to the granted process (old exact `== 2`
+        // plus positional data[0]/data[1] — both break on corpus growth).
+        MvcResult result = mockMvc.perform(get("/events")
+                .header("Authorization", "Bearer " + grantedAKey)
+                .param("limit", "100"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(2))
-            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdA.toString()))
-            .andExpect(jsonPath("$.data[1].processDefinitionId").value(pdIdA.toString()));
+            .andReturn();
+        JsonNode data = new ObjectMapper().readTree(result.getResponse().getContentAsString()).get("data");
+        assertThat(data.size()).isGreaterThanOrEqualTo(2);
+        data.forEach(e -> assertThat(e.get("processDefinitionId").asText()).isEqualTo(pdIdA.toString()));
 
         Set<String> pdIds = eventPdIds(grantedAKey);
         // Positive: the grant really grants access to PD-A events (not just "no error").
@@ -373,20 +413,31 @@ class EventAuthzIntegrationTest {
 
     @Test
     void pof_authzIsolation_processDefinitionKeyFilter_works() throws Exception {
-        // Admin can filter by processDefinitionKey
-        mockMvc.perform(get("/events")
+        // Admin can filter by processDefinitionKey (WO-TEST-8: content, not exact counts).
+        MvcResult resultA = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
-                .param("processDefinitionKey", "processA"))
+                .param("processDefinitionKey", "processA")
+                .param("limit", "100"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(2))
-            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdA.toString()));
+            .andReturn();
+        JsonNode dataA = new ObjectMapper().readTree(resultA.getResponse().getContentAsString()).get("data");
+        assertThat(dataA.size()).isGreaterThanOrEqualTo(2);
+        Set<String> typesA = new HashSet<>();
+        dataA.forEach(e -> {
+            assertThat(e.get("processDefinitionId").asText()).isEqualTo(pdIdA.toString());
+            typesA.add(e.get("type").asText());
+        });
+        assertThat(typesA).contains("process-instance.started", "process-instance.completed");
 
-        mockMvc.perform(get("/events")
+        MvcResult resultB = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
-                .param("processDefinitionKey", "processB"))
+                .param("processDefinitionKey", "processB")
+                .param("limit", "100"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.length()").value(1))
-            .andExpect(jsonPath("$.data[0].processDefinitionId").value(pdIdB.toString()));
+            .andReturn();
+        JsonNode dataB = new ObjectMapper().readTree(resultB.getResponse().getContentAsString()).get("data");
+        assertThat(dataB.size()).isGreaterThanOrEqualTo(1);
+        dataB.forEach(e -> assertThat(e.get("processDefinitionId").asText()).isEqualTo(pdIdB.toString()));
 
         // Non-existent key returns empty
         mockMvc.perform(get("/events")
