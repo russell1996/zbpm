@@ -18,4 +18,9 @@ public class EventDefinitionExtensionModel {
     private String code;
     private String name;
     private String expression;
+    /**
+     * WO-C8-29: resolved {@code zeebe:conditionalFilter} (conditional events only).
+     * Null = no filter declared — re-evaluation behavior byte-identical to before.
+     */
+    private ConditionalFilter conditionalFilter;
 }

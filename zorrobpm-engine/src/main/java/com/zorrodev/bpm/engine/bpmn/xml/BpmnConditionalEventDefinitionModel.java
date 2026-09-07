@@ -17,4 +17,7 @@ public class BpmnConditionalEventDefinitionModel {
 
     @XmlElement(name = "condition", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private String condition;
+
+    @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private ExtensionElements extensionElements;
 }
