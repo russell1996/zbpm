@@ -95,12 +95,16 @@ class CancelProcessInstanceTest {
         return mapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
     }
 
-    private UUID findUserTask() throws Exception {
+    private UUID findUserTask(String processInstanceId) throws Exception {
+        // WO-TEST-8: filtered by our own instance — unfiltered data[0] could be any
+        // test's task once the shared corpus grows (wrong task completed/cancelled).
         MvcResult result = mockMvc.perform(get("/user-tasks")
-                        .header("Authorization", "Bearer " + token))
+                        .header("Authorization", "Bearer " + token)
+                        .param("processInstanceId", processInstanceId))
                 .andExpect(status().isOk())
                 .andReturn();
         var tasksPage = mapper.readTree(result.getResponse().getContentAsString());
+        assertThat(tasksPage.get("data").size()).isGreaterThan(0);
         return UUID.fromString(tasksPage.get("data").get(0).get("id").asText());
     }
 
@@ -128,7 +132,7 @@ class CancelProcessInstanceTest {
     @Test
     void criterion1b_afterCancel_taskIsCancelled() throws Exception {
         String processId = startProcess(deployAndGetProcessKey());
-        UUID taskId = findUserTask();
+        UUID taskId = findUserTask(processId);
 
         // Verify task is active before cancel
         mockMvc.perform(get("/user-tasks/" + taskId)
@@ -153,7 +157,7 @@ class CancelProcessInstanceTest {
     @Test
     void criterion2_completedInstance_cancelReturns409() throws Exception {
         String processId = startProcess(deployAndGetProcessKey());
-        UUID taskId = findUserTask();
+        UUID taskId = findUserTask(processId);
         completeTask(taskId);
 
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
