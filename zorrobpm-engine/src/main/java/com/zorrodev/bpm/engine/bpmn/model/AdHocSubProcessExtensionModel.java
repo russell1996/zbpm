@@ -38,4 +38,11 @@ public class AdHocSubProcessExtensionModel {
      * associations are deliberately NOT members (not directly executable).
      */
     private Set<String> innerElementIds = new LinkedHashSet<>();
+    /**
+     * WO-C8-33: per-element metadata for the {@code adHocSubProcessElements} scope
+     * variable (job-worker mode) — harvested at parse time because documentation and
+     * {@code zeebe:properties} do not survive into the resolved element model.
+     * Order follows the container's child lists (stable, declaration order).
+     */
+    private java.util.List<AdHocElementMetadata> elementsMetadata = new java.util.ArrayList<>();
 }

@@ -104,7 +104,7 @@ public class ActivityServiceImplTests {
         }
         // Create real EventTrigger with mocked dependencies and inject it
         var flowNavigator = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport,
-            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class));
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService);
         var eventTrigger = new com.zorrodev.bpm.engine.handler.EventTrigger(
             dbService, bpmnService, scriptService, flowNavigator, elementSupport,
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.repository.TimerJobRepository.class),
@@ -135,11 +135,15 @@ public class ActivityServiceImplTests {
         // WO-C8-21: 9th arg — real UserTaskHandler (creating-phase tail runner in CompletionService)
         // WO-C8-25: 10th arg — mocked phase service (element-listener phases go through
         // CompleteServiceTask phase-first branch, covered by ITs, not here).
+        // WO-C8-33: 11th arg — mocked ad-hoc handler, 12th — mocked mapper (ad-hoc
+        // scope-job completions go through completeAdHocScopeJob, covered by ITs, not here).
         var completionService = new com.zorrodev.bpm.engine.handler.CompletionService(
             dbService, bpmnService, serviceTaskEnqueueService, elementSupport, multiInstanceExecutor,
             flowNavigator, eventTrigger, executionContext,
             new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService),
-            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.ElementListenerPhaseService.class));
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.ElementListenerPhaseService.class),
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.AdHocSubProcessHandler.class),
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class));
         try {
             var csField = ActivityServiceImpl.class.getDeclaredField("completionService");
             csField.setAccessible(true);
@@ -172,7 +176,7 @@ public class ActivityServiceImplTests {
         // The real HandlerRegistry auto-discovers @Component handler beans via Spring DI;
         // in this Mockito unit test, we replicate that resolution manually.
         var flowNav = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport,
-            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class));
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService);
         registerHandler(BpmnElementType.EXCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.PARALLEL_GATEWAY, new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNav, scriptService));

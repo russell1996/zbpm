@@ -83,7 +83,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     @PostConstruct
     void init() {
-        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport, objectMapper);
+        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport, objectMapper, serviceTaskEnqueueService);
     }
 
     /**
@@ -215,6 +215,11 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     @Override
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables) {
         completionService.completeServiceTask(serviceTaskId, variables, this);
+    }
+
+    @Override
+    public void completeAdHocScopeJob(UUID scopeActivityId, com.zorrodev.bpm.contract.dto.AdHocJobResultDTO result) {
+        completionService.completeAdHocScopeJob(scopeActivityId, result, this);
     }
 
 

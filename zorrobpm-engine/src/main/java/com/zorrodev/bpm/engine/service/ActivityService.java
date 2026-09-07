@@ -14,6 +14,13 @@ public interface ActivityService {
     void completeServiceTask(UUID activityId, List<ProcessVariable> variables);
 
     /**
+     * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result
+     * (the typed counterpart of {@link #completeServiceTask} — flat variables cannot
+     * carry activateElements[] + flags).
+     */
+    void completeAdHocScopeJob(UUID scopeActivityId, com.zorrodev.bpm.contract.dto.AdHocJobResultDTO result);
+
+    /**
      * Reports a service-task (job) failure from a worker. {@code retries} follows Camunda {@code failJob}:
      * when non-null the retry budget is set to it ({@code 0} raises the incident immediately); when null the
      * budget is decremented by one. While retries remain the job is re-dispatched; when exhausted the activity
