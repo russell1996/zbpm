@@ -17,7 +17,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -25,6 +24,9 @@ import static org.mockito.Mockito.when;
 class VariableDbOperationsImplTest {
 
     @Mock private VariableRepository variableRepository;
+    // WO-C8-29: запись изменений для conditionalFilter (мок — существующие тесты
+    // трекинг не проверяют; поведение трекера покрыто отдельно).
+    @Mock private com.zorrodev.bpm.engine.handler.ExecutionContext executionContext;
     @InjectMocks private VariableDbOperationsImpl db;
 
     @Test

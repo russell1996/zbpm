@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_cond_filter" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-conditional-filter" name="test-conditional-filter" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="split" />
+
+    <bpmn:parallelGateway id="split" name="split">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flowA</bpmn:outgoing>
+      <bpmn:outgoing>flowB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:sequenceFlow id="flowA" name="flowA" sourceRef="split" targetRef="setFlag" />
+    <bpmn:userTask id="setFlag" name="setFlag">
+      <bpmn:incoming>flowA</bpmn:incoming>
+      <bpmn:outgoing>flowA2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowA2" name="flowA2" sourceRef="setFlag" targetRef="join" />
+
+    <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="split" targetRef="condCatch" />
+    <bpmn:intermediateCatchEvent id="condCatch" name="condCatch">
+      <bpmn:incoming>flowB</bpmn:incoming>
+      <bpmn:outgoing>flowB2</bpmn:outgoing>
+      <bpmn:conditionalEventDefinition id="cond1">
+        <bpmn:condition xsi:type="bpmn:tFormalExpression">approved = true</bpmn:condition>
+        <bpmn:extensionElements>
+          <zeebe:conditionalFilter variableNames="approved" variableEvents="create, update" />
+        </bpmn:extensionElements>
+      </bpmn:conditionalEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="flowB2" name="flowB2" sourceRef="condCatch" targetRef="join" />
+
+    <bpmn:parallelGateway id="join" name="join">
+      <bpmn:incoming>flowA2</bpmn:incoming>
+      <bpmn:incoming>flowB2</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="join" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

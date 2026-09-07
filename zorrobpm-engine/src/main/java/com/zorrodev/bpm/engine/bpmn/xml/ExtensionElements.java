@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.bpmn.xml;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.AssignmentDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledElementModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledDecisionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.ConditionalFilterModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ExecutionListenersModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.FormDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
@@ -60,4 +61,6 @@ public class ExtensionElements {
     private ExecutionListenersModel executionListeners;
     @XmlElement(name = "taskListeners", namespace = "http://camunda.org/schema/zeebe/1.0")
     private TaskListenersModel taskListeners;
+    @XmlElement(name = "conditionalFilter", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private ConditionalFilterModel conditionalFilter;
 }

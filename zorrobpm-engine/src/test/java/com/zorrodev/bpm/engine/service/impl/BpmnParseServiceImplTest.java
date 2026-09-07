@@ -648,6 +648,27 @@ class BpmnParseServiceImplTest {
     }
 
     @Test
+    void testParseConditionalFilter() throws IOException {
+        // WO-C8-29, критерий 2: zeebe:conditionalFilter внутри conditionalEventDefinition
+        // резолвится в eventDefinition-расширение (имена + события); без фильтра — null,
+        // поведение прежнее.
+        BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-conditional-filter.bpmn")));
+        BpmnElementModel condCatch = bpmn.getElement("condCatch");
+        assertThat(condCatch.getType()).isEqualTo(BpmnElementType.CONDITIONAL_CATCH_EVENT);
+        assertThat(condCatch.getExtensions().getEventDefinition().getConditionalFilter()).isNotNull();
+        assertThat(condCatch.getExtensions().getEventDefinition().getConditionalFilter().variableNames())
+            .containsExactly("approved");
+        assertThat(condCatch.getExtensions().getEventDefinition().getConditionalFilter().variableEvents())
+            .containsExactly("create", "update");
+
+        BpmnProcessDefinitionModel legacyBpmn = new BpmnParseServiceImpl()
+            .parse(Files.readString(Path.of("src/test/files/test-conditional-catch.bpmn")));
+        assertThat(legacyBpmn.getElement("condCatch").getExtensions().getEventDefinition()
+            .getConditionalFilter()).isNull();
+    }
+
+    @Test
     void testParseInclusiveGateway() throws IOException {
         BpmnProcessDefinitionModel bpmn = new BpmnParseServiceImpl()
             .parse(Files.readString(Path.of("src/test/files/test-inclusive-gateway.bpmn")));
