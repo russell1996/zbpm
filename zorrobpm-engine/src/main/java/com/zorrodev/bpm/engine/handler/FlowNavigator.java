@@ -46,7 +46,10 @@ public class FlowNavigator {
         // Chained middles (a→b: a HAS outgoing) never reach the dead-end return, yet an
         // activated middle's completion must still count — sequence flows inside ad-hoc are
         // docs-allowed, and a dead-end-only hook would hang such scopes forever (arrival 1
-        // of 2). Dead ends flow through here too, so this one call site covers both.
+        // of 2). HOLD-fix: the middle only RECORDS its arrival — the count is evaluated
+        // solely at chain ends (dead ends) plus token quiescence, so a single root with an
+        // outgoing no longer finishes the scope before its chain runs. Dead ends flow
+        // through here too, so this one call site covers both.
         // Returns true only when a scope finished and consumed the branch.
         if (handleAdHocArrival(processInstanceId, tokenId, bpmn, element, executor)) {
             return;
@@ -103,13 +106,21 @@ public class FlowNavigator {
      * completes on a token that carries a live ad-hoc scope; ordinary completions (no ad-hoc
      * scope on this token, or the element was never activated) fall through untouched.
      * <p>
+     * HOLD-fix (2026-09-07, живой дефект CTO): прибытие корня пишется в момент его
+     * завершения, но подсчёт {@code arrived >= expected} оценивается ТОЛЬКО в тупике
+     * цепочки. Серединка (есть исходящие) обязана сначала протечь дальше обычным путём —
+     * иначе скоуп из одного корня с исходящим на внутренний элемент завершался бы до
+     * того, как цепочка выполнилась (taskChain не создавался вообще). Серединка лишь
+     * проверяет condition (раннее завершение с cancel-семантикой); тупик проверяет
+     * condition ИЛИ (счётчик + тишина на токене — цепочка корня действительно дошла).
+     * <p>
      * Per arrival, in order: output aggregation (mirror of MI, per completed inner flow),
-     * arrival record on the scope's generic-counter key, completion test ({@code arrived >=
-     * expected} when no condition, else the FEEL {@code completionCondition} evaluated
-     * against the live root variables — the completing tail already merged its outputs
-     * there). Unfinished scopes leave the token alone; a finished scope completes its
-     * container activity, cancels the token-mates (unless {@code cancelRemainingInstances}
-     * is false) and continues past the ad-hoc element.
+     * arrival record on the scope's generic-counter key, completion test (see above; the
+     * FEEL {@code completionCondition} is evaluated against the live root variables —
+     * the completing tail already merged its outputs there). Unfinished scopes leave the
+     * token alone; a finished scope completes its container activity, cancels the
+     * token-mates (unless {@code cancelRemainingInstances} is false) and continues past
+     * the ad-hoc element.
      *
      * @return true when a scope finished here and consumed this branch (caller must return
      *         WITHOUT flowing the completing element's own outgoing — the scope took over).
@@ -119,34 +130,84 @@ public class FlowNavigator {
         // One indexed read of the instance's active activities per proceedToOutgoing call
         // (created/in-progress only — usually a handful of rows). No new DB surface: the
         // repository method already exists (cancel paths use it).
-        List<Activity> scopes = dbService.getActiveActivities(processInstanceId).stream()
+        List<Activity> active = dbService.getActiveActivities(processInstanceId);
+        List<Activity> scopes = active.stream()
             .filter(a -> tokenId.equals(a.getToken()) && a.getType() == BpmnElementType.AD_HOC_SUB_PROCESS)
             .toList();
         if (scopes.isEmpty()) {
             return false;
         }
+        boolean isChainMiddle = element.getOutgoing() != null && !element.getOutgoing().isEmpty();
         boolean consumed = false;
         for (Activity scope : scopes) {
             AdHocJoin.ScopeState state = AdHocJoin.resolve(dbService, objectMapper, processInstanceId, scope.getId());
             if (state == null || !state.activatedIds().contains(element.getId())) {
+                if (!isChainMiddle) {
+                    // Chain end of some activated root (or an unrelated dead end on this token):
+                    // the chain settled — evaluate even without an arrival of its own.
+                    if (evaluateScopeDone(processInstanceId, bpmn, scope, state)) {
+                        finishAdHocScope(processInstanceId, tokenId, bpmn, scope,
+                            state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor);
+                        consumed = true;
+                    }
+                }
                 continue;
             }
             aggregateAdHocOutput(processInstanceId, bpmn, scope);
             String key = AdHocJoin.joinKey(scope.getId(), state.batchUuid());
             dbService.recordParallelGatewayArrival(processInstanceId, key, AdHocJoin.arrivalMarker(element.getId()));
-            Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
-            int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, key).size();
-            boolean done = (expected != null && arrived >= expected)
-                || adHocConditionMet(processInstanceId, bpmn, scope);
-            if (!done) {
-                log.info("{}/{}: Ad-hoc subprocess {} not ready: {} of {} inner flows done",
-                    processInstanceId, tokenId, scope.getBpmnElementId(), arrived, expected);
+            if (isChainMiddle) {
+                // The root's own step is done, but its chain is not — flow on, evaluate
+                // only an early completionCondition (whose cancel semantics covers the
+                // not-yet-created downstream: the scope takes over, the chain never runs).
+                if (adHocConditionMet(processInstanceId, bpmn, scope)) {
+                    finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor);
+                    consumed = true;
+                } else {
+                    log.info("{}/{}: Ad-hoc subprocess {} root {} done, chain continues",
+                        processInstanceId, tokenId, scope.getBpmnElementId(), element.getId());
+                }
                 continue;
             }
-            finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor);
-            consumed = true;
+            if (evaluateScopeDone(processInstanceId, bpmn, scope, state)) {
+                finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor);
+                consumed = true;
+            } else {
+                Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
+                int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, key).size();
+                log.info("{}/{}: Ad-hoc subprocess {} not ready: {} of {} inner flows done",
+                    processInstanceId, tokenId, scope.getBpmnElementId(), arrived, expected);
+            }
         }
         return consumed;
+    }
+
+    /**
+     * WO-C8-32 (HOLD-fix): full done-test for a settled chain end — condition, or the
+     * counter plus quiescence. Null state (parked scope without bookkeeping) never finishes.
+     */
+    private boolean evaluateScopeDone(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
+            Activity scope, AdHocJoin.ScopeState state) {
+        if (state == null) {
+            return false;
+        }
+        if (adHocConditionMet(processInstanceId, bpmn, scope)) {
+            return true;
+        }
+        String key = AdHocJoin.joinKey(scope.getId(), state.batchUuid());
+        Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
+        int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, key).size();
+        if (expected == null || arrived < expected) {
+            return false;
+        }
+        // Quiescence: nothing unfinished left on the shared token besides ad-hoc containers
+        // (the completing element itself is already COMPLETED — its tail ran before this
+        // hook). Evaluated ONLY here, never on a middle: a middle's own downstream is not
+        // created yet at hook time, so "quiet" would lie for it.
+        List<Activity> active = dbService.getActiveActivities(processInstanceId);
+        return active.stream()
+            .noneMatch(a -> scope.getToken() != null && scope.getToken().equals(a.getToken())
+                && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS);
     }
 
     /** WO-C8-32: per-completion output aggregation — MI's append step on the ad-hoc trigger. */
