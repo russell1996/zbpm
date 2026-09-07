@@ -142,6 +142,10 @@ public class MetricsWiringIntegrationTests {
         dbService.completeIncidentsByActivityIds(List.of(taskActivity));
         assertThat(gauge("zbpm.tokens.stuck")).isEqualTo(stuckBefore);
 
+        // Double close of the same incident decrements once (wasOpen guard).
+        dbService.completeIncident(incidentId);
+        assertThat(gauge("zbpm.tokens.stuck")).isEqualTo(stuckBefore);
+
         // Balance the active gauge for the next tests.
         dbService.cancelProcessInstance(pi);
     }
