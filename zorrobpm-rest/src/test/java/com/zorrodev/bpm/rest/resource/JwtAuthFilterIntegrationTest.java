@@ -289,4 +289,42 @@ class JwtAuthFilterIntegrationTest {
         mockMvc.perform(get("/actuator/env"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // ==================== WO-OBS-1: /actuator/prometheus authenticated scrape ====================
+
+    @Test
+    void obs1_prometheus_withoutToken_returns401() throws Exception {
+        // Criterion 2: not open anonymously — deny-by-default, no JwtAuthFilter change.
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void obs1_prometheus_withApiKey_returns200WithZbpmMetrics() throws Exception {
+        // Internal scrape uses a service API key (zbpm_sk_ mechanism, no filter bypass).
+        UiUserEntity svcUser = new UiUserEntity();
+        svcUser.setId(UUID.randomUUID());
+        svcUser.setUsername("prom-scraper");
+        svcUser.setPasswordHash(passwordHasher.hash("scrape"));
+        svcUser.setFullName("Prometheus scraper");
+        svcUser.setRole("USER");
+        svcUser.setActive(true);
+        svcUser.setCreatedAt(Instant.now());
+        svcUser.setUpdatedAt(Instant.now());
+        userRepository.save(svcUser);
+
+        MvcResult keyResult = mockMvc.perform(post("/admin/users/" + svcUser.getId() + "/api-key")
+                        .header("Authorization", "Bearer " + validToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        String apiKey = mapper.readTree(keyResult.getResponse().getContentAsString()).get("key").asText();
+
+        MvcResult scrape = mockMvc.perform(get("/actuator/prometheus")
+                        .header("Authorization", "Bearer " + apiKey))
+                .andExpect(status().isOk())
+                .andReturn();
+        String body = scrape.getResponse().getContentAsString();
+        // BpmMetrics meters are registered at context startup — visible even at zero.
+        org.assertj.core.api.Assertions.assertThat(body).contains("zbpm_process_started_total");
+    }
 }
