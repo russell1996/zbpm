@@ -98,17 +98,18 @@ Conditional-события, Transaction-subprocess, Cancel-события. Эт�
 [`zeebe-bpmn-moddle`](https://raw.githubusercontent.com/camunda/zeebe-bpmn-moddle/main/resources/zeebe.json),
 типы с `meta.allowedIn`, наличие в продакшн-коде (комментарии не считаются):
 
-**22 из 26 типов расширений — 85 %.**
+**23 из 26 типов расширений — 88 %.**
 
 | Не поддержано | Причина |
 |---|---|
 | `LinkedResource`, `LinkedResources` | **не берём сознательно** — привязка RPA-ресурсов, у нас нет RPA-раннера |
 | `AgentDefinition` | AI-агенты Camunda 8.8+, вне задач проекта |
-| `AdHoc` | ad-hoc subprocess — новая семантика исполнения, требует отдельного дизайна CTO |
 
-Из четырёх незакрытых **три сознательно не берём** (`LinkedResource`×2, `AgentDefinition`); последний
-(`AdHoc`, ad-hoc subprocess) — самый дорогой пункт эпика, ждёт отдельного дизайн-захода. Остаток и
-его приоритеты — [`governance/workorders/_index.md`](governance/workorders/_index.md).
+`AdHoc` (ad-hoc subprocess) поддержан **частично**: внутренний режим исполнения — да
+(`activeElementsCollection`, `completionCondition`, `cancelRemainingInstances`, output-агрегация);
+режим job-worker — нет, отдельный дизайн-заход, последний пункт эпика. Из трёх незакрытых типов все
+три — сознательный отказ. Остаток и его приоритеты —
+[`governance/workorders/_index.md`](governance/workorders/_index.md).
 
 ### Чего честно нет
 
