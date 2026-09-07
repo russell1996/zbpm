@@ -49,8 +49,22 @@ public class ConditionalEventIntegrationTests {
     @Autowired
     private ActivityRepository activityRepository;
 
+    @Autowired
+    private com.zorrodev.bpm.engine.handler.ExecutionContext executionContext;
+
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private ScriptService scriptService;
+
+    /**
+     * WO-C8-29: hermeticity переменной-трекера. Записи ThreadLocal переживают
+     * rollback транзакций и общий тред surefire — без сброса чужой linger
+     * (например, `approved` из соседнего теста) попал бы в consume моего триггера
+     * и дал бы ложную оценку (только лишнюю, но POF на `never()` требует тишины).
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void discardPendingVariableChanges() {
+        executionContext.consumeVariableChanges();
+    }
 
     private ProcessVariable bool(String name, boolean value) {
         ProcessVariable v = new ProcessVariable();
