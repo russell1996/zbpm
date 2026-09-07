@@ -1,0 +1,950 @@
+databaseChangeLog:
+  - logicalFilePath: 20260908-100
+  - changeSet:
+      id: 20260908-100
+      author: zorrodev
+      changes:
+        - setColumnRemarks:
+            tableName: activities
+            columnName: id
+            remarks: 'Первичный ключ runtime-активности; тот же id переиспользуют строки service_tasks и user_tasks'
+        - setColumnRemarks:
+            tableName: activities
+            columnName: process_instance_id
+            remarks: 'Ссылка на process_instances.id — экземпляр, в котором исполняется активность'
+        - setColumnRemarks:
+            tableName: activities
+            columnName: token
+            remarks: 'Ссылка на tokens.id — токен исполнения, которому принадлежит активность (имя колонки историческое, это не значение токена)'
+        - setColumnRemarks:
+            tableName: activities
+            columnName: bpmn_element_id
+            remarks: 'Id элемента в BPMN-модели — какая нода процесса исполняется этой активностью'
+        - setColumnRemarks:
+            tableName: activities
+            columnName: created_at
+            remarks: 'Момент создания активности движком'
+        - setColumnRemarks:
+            tableName: activities
+            columnName: completed_at
+            remarks: 'Момент завершения или отмены активности; null — активность ещё открыта (состояние ERROR паркуется без этой метки)'
+        - setColumnRemarks:
+            tableName: activities
+            columnName: type
+            remarks: 'Тип BPMN-элемента строкой из BpmnElementType (USER_TASK, SERVICE_TASK, шлюзы, события и прочие)'
+        - setColumnRemarks:
+            tableName: activities
+            columnName: status
+            remarks: 'Стадия жизненного цикла строкой из ActivityStatus: CREATED, IN_PROGRESS, ERROR, COMPLETED, CANCELLED'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: id
+            remarks: 'Первичный ключ сервисного API-ключа'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: owner_user_id
+            remarks: 'Владелец ключа: id пользователя из ui_users, чьи права процесса пересекаются с грантами ключа'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: key_hash
+            remarks: 'Хэш секретной части ключа для проверки запросов; сам секрет нигде не хранится'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: prefix
+            remarks: 'Видимый префикс ключа для опознания в списке без раскрытия секрета'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: created_at
+            remarks: 'Момент выпуска API-ключа'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: last_used_at
+            remarks: 'Момент последнего использования ключа; пусто, если ключ ещё не применялся'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: expires_at
+            remarks: 'Срок действия ключа; после него запросы с ключом отклоняются'
+        - setColumnRemarks:
+            tableName: api_key
+            columnName: revoked_at
+            remarks: 'Момент досрочного отзыва ключа; пусто, пока ключ действует'
+        - setColumnRemarks:
+            tableName: api_key_grant
+            columnName: api_key_id
+            remarks: 'Часть составного ключа: id ключа из api_key, которому выдан грант'
+        - setColumnRemarks:
+            tableName: api_key_grant
+            columnName: process_id
+            remarks: 'Часть составного ключа: id записи реестра процессов (process.id), к которой относится грант'
+        - setColumnRemarks:
+            tableName: api_key_grant
+            columnName: permissions
+            remarks: 'Список действий через запятую, разрешённых ключом на этом процессе; пусто при полном доступе'
+        - setColumnRemarks:
+            tableName: api_key_grant
+            columnName: is_full
+            remarks: 'Флаг полного доступа ключа к процессу без перечисления отдельных действий'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: id
+            remarks: 'Первичный ключ записи журнала аудита'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: principal_type
+            remarks: 'Тип инициатора: USER для человека, API_KEY для сервисного ключа'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: principal_id
+            remarks: 'Идентификатор инициатора: id пользователя из ui_users либо id ключа из api_key'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: owner_user_id
+            remarks: 'Пользователь, чьи права действовали: сам пользователь либо владелец ключа из ui_users'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: action
+            remarks: 'Код зафиксированного действия, например MAIL_SETTINGS_UPDATE'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: process_key
+            remarks: 'Ключ процесса из реестра (definition_key), к которому относится действие; пусто для глобальных действий'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: target_id
+            remarks: 'Объект действия: обычно перечисление изменённых полей или id затронутой сущности'
+        - setColumnRemarks:
+            tableName: audit_log
+            columnName: at
+            remarks: 'Момент фиксации события в журнале'
+        - setColumnRemarks:
+            tableName: bpmn
+            columnName: id
+            remarks: 'Первичный ключ модели BPMN; совпадает с process_definitions.id той версии, чью модель хранит строка'
+        - setColumnRemarks:
+            tableName: bpmn
+            columnName: bpmn
+            remarks: 'Исходный XML модели BPMN для версии определения'
+        - setColumnRemarks:
+            tableName: deployments
+            columnName: id
+            remarks: 'Первичный ключ пачки выкладки; проставляется как deployment_id на все строки, выложенные одним запросом'
+        - setColumnRemarks:
+            tableName: deployments
+            columnName: created_at
+            remarks: 'Момент создания пачки выкладки'
+        - setColumnRemarks:
+            tableName: dmn_definitions
+            columnName: decision_id
+            remarks: 'Бизнес-ключ DMN-решения из DMN XML; в паре с version однозначно задаёт версию решения'
+        - setColumnRemarks:
+            tableName: dmn_definitions
+            columnName: dmn
+            remarks: 'Исходный XML DMN-решения для этой версии'
+        - setColumnRemarks:
+            tableName: dmn_definitions
+            columnName: created_at
+            remarks: 'Момент создания строки версии DMN-решения'
+        - setColumnRemarks:
+            tableName: dmn_definitions
+            columnName: id
+            remarks: 'Суррогатный первичный ключ строки версии DMN-решения'
+        - setColumnRemarks:
+            tableName: dmn_definitions
+            columnName: version
+            remarks: 'Номер версии внутри одного решения; при вычислении используется старшая версия'
+        - setColumnRemarks:
+            tableName: dmn_definitions
+            columnName: process_definition_id
+            remarks: 'Определение из process_definitions.id, вместе с которым выложен DMN; привязка области решения к выложившему его процессу'
+        - setColumnRemarks:
+            tableName: element_artifact_binding
+            columnName: id
+            remarks: 'Первичный ключ привязки элемента к артефакту'
+        - setColumnRemarks:
+            tableName: element_artifact_binding
+            columnName: process_definition_id
+            remarks: 'Версия определения из process_definitions, которой принадлежит привязанный элемент'
+        - setColumnRemarks:
+            tableName: element_artifact_binding
+            columnName: process_definition_version
+            remarks: 'Номер версии определения, продублированный для переноса привязок на новую версию при деплое'
+        - setColumnRemarks:
+            tableName: element_artifact_binding
+            columnName: element_id
+            remarks: 'Id элемента BPMN, обычно пользовательской задачи с вложенной формой'
+        - setColumnRemarks:
+            tableName: element_artifact_binding
+            columnName: artifact_key
+            remarks: 'Ключ артефакта формы из таблицы form'
+        - setColumnRemarks:
+            tableName: element_artifact_binding
+            columnName: artifact_version
+            remarks: 'Версия артефакта формы, закреплённая за элементом на момент деплоя'
+        - setColumnRemarks:
+            tableName: element_artifact_binding
+            columnName: created_at
+            remarks: 'Момент создания привязки при деплое'
+        - setColumnRemarks:
+            tableName: element_listener_phase
+            columnName: process_instance_id
+            remarks: 'Ссылка на process_instances.id — экземпляр, чей токен приостановлен на время фазы listener-ов'
+        - setColumnRemarks:
+            tableName: element_listener_phase
+            columnName: token_id
+            remarks: 'Ссылка на tokens.id — токен, чьё движение приостановлено, пока идут start-listener-ы элемента'
+        - setColumnRemarks:
+            tableName: element_listener_phase
+            columnName: bpmn_element_id
+            remarks: 'Id элемента в BPMN-модели (шлюз или событие), чьи start-listener-ы сейчас исполняются'
+        - setColumnRemarks:
+            tableName: element_listener_phase
+            columnName: created_at
+            remarks: 'Момент открытия фазы listener-ов'
+        - setColumnRemarks:
+            tableName: events
+            columnName: sequence
+            remarks: 'Монотонный первичный ключ append-only ленты событий; курсор для постраничного чтения'
+        - setColumnRemarks:
+            tableName: events
+            columnName: id
+            remarks: 'Бизнес-идентификатор события для дедупликации потребителем при at-least-once доставке'
+        - setColumnRemarks:
+            tableName: events
+            columnName: type
+            remarks: 'Тип события строкой из DomainEventType (например process-instance.started, user-task.created, incident.raised)'
+        - setColumnRemarks:
+            tableName: events
+            columnName: version
+            remarks: 'Версия схемы события; эмиттер всегда пишет 1'
+        - setColumnRemarks:
+            tableName: events
+            columnName: occurred_at
+            remarks: 'Момент наступления доменного события'
+        - setColumnRemarks:
+            tableName: events
+            columnName: process_definition_id
+            remarks: 'Ссылка на process_definitions.id — определение процесса, в котором произошло событие'
+        - setColumnRemarks:
+            tableName: events
+            columnName: process_instance_id
+            remarks: 'Ссылка на process_instances.id — экземпляр, в котором произошло событие'
+        - setColumnRemarks:
+            tableName: events
+            columnName: element_id
+            remarks: 'Id BPMN-элемента — источника события; null для событий уровня экземпляра'
+        - setColumnRemarks:
+            tableName: events
+            columnName: owner_scope
+            remarks: 'Область владельца для authz-фильтрации — строковый processDefinitionId'
+        - setColumnRemarks:
+            tableName: events
+            columnName: data
+            remarks: 'JSON-тело события со строково-санитизированными значениями; сериализация гарантированно не падает'
+        - setColumnRemarks:
+            tableName: form
+            columnName: id
+            remarks: 'Суррогатный первичный ключ строки версии формы'
+        - setColumnRemarks:
+            tableName: form
+            columnName: form_key
+            remarks: 'Адресный ключ формы; в паре с version однозначно задаёт версию'
+        - setColumnRemarks:
+            tableName: form
+            columnName: version
+            remarks: 'Номер версии внутри одного ключа формы; уникален в паре с form_key'
+        - setColumnRemarks:
+            tableName: form
+            columnName: schema_json
+            remarks: 'JSON-схема формы (поля, вёрстка и вложенные id и versionTag)'
+        - setColumnRemarks:
+            tableName: form
+            columnName: created_at
+            remarks: 'Момент создания строки версии формы'
+        - setColumnRemarks:
+            tableName: form
+            columnName: kind
+            remarks: 'Разновидность артефакта: FORM_JS — форма пользовательского шага, VARIABLE_SCHEMA — схема переменных'
+        - setColumnRemarks:
+            tableName: incidents
+            columnName: id
+            remarks: 'Первичный ключ инцидента — зафиксированного сбоя исполнения'
+        - setColumnRemarks:
+            tableName: incidents
+            columnName: message
+            remarks: 'Текст причины сбоя'
+        - setColumnRemarks:
+            tableName: incidents
+            columnName: created_at
+            remarks: 'Момент поднятия инцидента движком'
+        - setColumnRemarks:
+            tableName: incidents
+            columnName: completed_at
+            remarks: 'Момент разрешения инцидента; null — инцидент открыт'
+        - setColumnRemarks:
+            tableName: incidents
+            columnName: activity_id
+            remarks: 'Ссылка на activities.id — активность, на которой поднят инцидент'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: id
+            remarks: 'Первичный ключ; таблица однострочная и всегда использует фиксированный id'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: host
+            remarks: 'Имя SMTP-сервера для исходящей почты'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: port
+            remarks: 'Порт SMTP-сервера'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: username
+            remarks: 'Логин для аутентификации на SMTP-сервере'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: password_encrypted
+            remarks: 'Зашифрованный пароль SMTP; расшифровка требует ключ ZORROBPM_MAIL_PASSWORD_ENCRYPTION_KEY'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: sender
+            remarks: 'Адрес отправителя, подставляемый в поле From исходящих писем'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: allowed_recipients
+            remarks: 'Список разрешённых получателей через запятую; пустой список означает отправку без ограничений'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: created_at
+            remarks: 'Момент первого сохранения почтовых настроек'
+        - setColumnRemarks:
+            tableName: mail_settings
+            columnName: updated_at
+            remarks: 'Момент последнего изменения почтовых настроек'
+        - setColumnRemarks:
+            tableName: message_start_subscriptions
+            columnName: id
+            remarks: 'Первичный ключ стартовой подписки на сообщение'
+        - setColumnRemarks:
+            tableName: message_start_subscriptions
+            columnName: process_key
+            remarks: 'Ключ процесса из реестра, новая версия которого вытесняет эту подписку при деплое'
+        - setColumnRemarks:
+            tableName: message_start_subscriptions
+            columnName: process_definition_id
+            remarks: 'Версия определения из process_definitions, чей экземпляр стартует при получении сообщения'
+        - setColumnRemarks:
+            tableName: message_start_subscriptions
+            columnName: element_id
+            remarks: 'Id стартового элемента BPMN, с которого начинается новый экземпляр'
+        - setColumnRemarks:
+            tableName: message_start_subscriptions
+            columnName: message_name
+            remarks: 'Имя сообщения, получение которого без целевого экземпляра стартует новый процесс'
+        - setColumnRemarks:
+            tableName: message_start_subscriptions
+            columnName: created_at
+            remarks: 'Момент регистрации стартовой подписки при деплое'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: id
+            remarks: 'Первичный ключ подписки на сообщение'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: process_instance_id
+            remarks: 'Экземпляр из process_instances, чей токен ожидает сообщение'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: activity_id
+            remarks: 'Активность из activities, которую нужно сигнализировать при получении сообщения'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: message_name
+            remarks: 'Имя сообщения, которое коррелируется с этой подпиской'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: consumed
+            remarks: 'Флаг поглощения: обработанная подписка больше не участвует в корреляции'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: created_at
+            remarks: 'Момент создания подписки на сообщение'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: boundary_element_id
+            remarks: 'Граничное message-событие для срабатывания вместо обычной точки ожидания; пусто для обычного перехвата'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: correlation_key
+            remarks: 'Вычисленное значение ключа корреляции; пусто, когда сообщение ищется только по имени'
+        - setColumnRemarks:
+            tableName: message_subscriptions
+            columnName: event_subprocess_id
+            remarks: 'Подпроцесс по событию, запускаемый сообщением вместо сигнализации активности; пусто для обычного перехвата'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: id
+            remarks: 'Первичный ключ записи; одновременно стабильный messageId для дедупликации потребителем при at-least-once доставке'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: payload
+            remarks: 'JSON-тело сообщения для очереди; формат зависит от kind (детали job, конверт события, письмо)'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: created_at
+            remarks: 'Момент постановки записи в очередь'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: published
+            remarks: 'Флаг доставки; ставится только после ACK брокера, до этого запись переиздаётся при следующем опросе'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: attempts
+            remarks: 'Число неудачных попыток обработки записи; по достижении лимита запись уходит в карантин'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: last_error
+            remarks: 'Усечённый текст последней ошибки обработки (до 500 символов); null — ошибок ещё не было'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: status
+            remarks: 'Состояние обработки: PENDING — в очереди, FAILED — карантин после исчерпания ретраев'
+        - setColumnRemarks:
+            tableName: outbox
+            columnName: kind
+            remarks: 'Явный тип записи (SERVICE_TASK, DOMAIN_EVENT, EMAIL), задаётся продюсером; маршрутизация идёт по нему, а не по содержимому payload'
+        - setColumnRemarks:
+            tableName: parallel_gateways
+            columnName: id
+            remarks: 'Первичный ключ записи о прибытии одной ветки на шлюз-слияние'
+        - setColumnRemarks:
+            tableName: parallel_gateways
+            columnName: process_instance_id
+            remarks: 'Ссылка на process_instances.id — экземпляр, в котором сошлись ветки'
+        - setColumnRemarks:
+            tableName: parallel_gateways
+            columnName: gateway_element_id
+            remarks: 'Id шлюза-слияния в BPMN-модели, на который прибыла ветка'
+        - setColumnRemarks:
+            tableName: parallel_gateways
+            columnName: entered_flow_id
+            remarks: 'Id входящего sequence flow, по которому ветка пришла на слияние; у маркерной строки inclusive-слияния равен id шлюза'
+        - setColumnRemarks:
+            tableName: parallel_gateways
+            columnName: created_at
+            remarks: 'Момент фиксации прибытия ветки на слияние'
+        - setColumnRemarks:
+            tableName: parallel_gateways
+            columnName: expected_count
+            remarks: 'Сколько веток активировал inclusive-форк и сколько прибытий ждёт слияние; заполнено только на маркерной строке, иначе null'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: id
+            remarks: 'Первичный ключ записи одноразовой ссылки'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: user_id
+            remarks: 'Пользователь из ui_users, для которого выпущена ссылка установки или сброса пароля'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: type
+            remarks: 'Назначение ссылки: INVITE для приглашения либо RESET для сброса пароля'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: token_hash
+            remarks: 'Хэш сырой одноразовой ссылки; само значение ссылки не хранится'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: email
+            remarks: 'Адрес, на который отправлена ссылка; используется для точечного отзыва при повторном приглашении'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: expires_at
+            remarks: 'Срок действия ссылки; после него установить пароль по ней нельзя'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: used
+            remarks: 'Флаг использования: ссылка одноразовая и после применения блокируется'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: consumed_at
+            remarks: 'Момент использования ссылки; пусто, пока ссылка не применена'
+        - setColumnRemarks:
+            tableName: password_tokens
+            columnName: created_at
+            remarks: 'Момент выпуска одноразовой ссылки'
+        - setColumnRemarks:
+            tableName: process
+            columnName: id
+            remarks: 'Первичный ключ строки реестра процессов; на него ссылается process_member.process_id'
+        - setColumnRemarks:
+            tableName: process
+            columnName: definition_key
+            remarks: 'Бизнес-ключ процесса (id процесса из BPMN), уникален'
+        - setColumnRemarks:
+            tableName: process
+            columnName: name
+            remarks: 'Отображаемое имя процесса'
+        - setColumnRemarks:
+            tableName: process
+            columnName: created_at
+            remarks: 'Момент создания строки реестра процесса'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: id
+            remarks: 'Первичный ключ версии определения; на него ссылаются экземпляры и таймерные задачи'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: code
+            remarks: 'Бизнес-ключ процесса (id процесса из BPMN); в паре с version однозначно задаёт версию'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: version
+            remarks: 'Номер версии определения внутри одного ключа; новейшая версия используется по умолчанию'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: name
+            remarks: 'Отображаемое имя определения для этой версии'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: sha256
+            remarks: 'Хэш содержимого BPMN для поиска дублей; повторный деплой того же хэша чинит незавершённую выкладку вместо создания копии'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: created_at
+            remarks: 'Момент создания строки версии определения'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: start_form_key
+            remarks: 'Ключ стартовой формы процесса для стартового события'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: deployment_state
+            remarks: 'Состояние выкладки версии: PENDING — пишется до создания всех артефактов, ACTIVE — выложена полностью, FAILED — попытка не удалась'
+        - setColumnRemarks:
+            tableName: process_definitions
+            columnName: version_tag
+            remarks: 'Тег версии из BPMN (zeebe:versionTag); по нему call activity с привязкой versionTag находит нужную версию, null — версия без тега'
+        - setColumnRemarks:
+            tableName: process_instances
+            columnName: id
+            remarks: 'Первичный ключ экземпляра процесса; на него ссылаются активности, токены и таймеры'
+        - setColumnRemarks:
+            tableName: process_instances
+            columnName: process_definition_id
+            remarks: 'Версия определения из process_definitions.id, по которой запущен экземпляр'
+        - setColumnRemarks:
+            tableName: process_instances
+            columnName: started_at
+            remarks: 'Момент запуска экземпляра процесса'
+        - setColumnRemarks:
+            tableName: process_instances
+            columnName: completed_at
+            remarks: 'Момент завершения экземпляра; null — экземпляр ещё выполняется'
+        - setColumnRemarks:
+            tableName: process_instances
+            columnName: parent_activity_id
+            remarks: 'Активность-родитель из activities.id (вызывающий call activity), через которую запущен этот подпроцесс; null — корневой экземпляр'
+        - setColumnRemarks:
+            tableName: process_instances
+            columnName: cancelled
+            remarks: 'Признак отмены экземпляра; отличает отменённые от нормально завершённых'
+        - setColumnRemarks:
+            tableName: process_member
+            columnName: process_id
+            remarks: 'Процесс из process.id, к которому выдано членство; первая часть составного ключа'
+        - setColumnRemarks:
+            tableName: process_member
+            columnName: user_id
+            remarks: 'Пользователь из ui_users.id, получивший роль на процессе; вторая часть составного ключа'
+        - setColumnRemarks:
+            tableName: process_member
+            columnName: role
+            remarks: 'Роль участника на процессе: OWNER, DESIGNER или VIEWER'
+        - setColumnRemarks:
+            tableName: process_member
+            columnName: added_by
+            remarks: 'Пользователь из ui_users.id, выдавший членство; null — системное назначение'
+        - setColumnRemarks:
+            tableName: process_member
+            columnName: added_at
+            remarks: 'Момент выдачи членства на процессе'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: id
+            remarks: 'Первичный ключ заявки на деплой нового процесса'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: bpmn
+            remarks: 'Исходный BPMN XML заявки; единственная копия до решения рецензента, хранится в БД, а не на диске'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: process_key
+            remarks: 'Бизнес-ключ процесса, на создание которого подана заявка'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: name
+            remarks: 'Отображаемое имя процесса из заявки'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: submitted_by
+            remarks: 'Пользователь из ui_users.id, подавший заявку; при одобрении становится OWNER процесса'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: submitted_at
+            remarks: 'Момент подачи заявки; очередь рецензии идёт от самых старых'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: status
+            remarks: 'Состояние заявки: PENDING, APPROVED, REJECTED или SUPERSEDED'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: reviewed_by
+            remarks: 'Рецензент из ui_users.id, принявший решение по заявке; null — решение ещё не принято'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: reviewed_at
+            remarks: 'Момент решения рецензента по заявке; null — заявка ещё на рассмотрении'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: reject_reason
+            remarks: 'Причина отклонения заявки, указанная рецензентом'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: approved_definition_id
+            remarks: 'Версия из process_definitions.id, созданная одобрением заявки; null — заявка ещё не одобрена'
+        - setColumnRemarks:
+            tableName: process_submission
+            columnName: previous_submission_id
+            remarks: 'Предыдущая заявка из process_submission.id по тому же ключу; цепочка переподач'
+        - setColumnRemarks:
+            tableName: refresh_tokens
+            columnName: id
+            remarks: 'Первичный ключ записи refresh-токена'
+        - setColumnRemarks:
+            tableName: refresh_tokens
+            columnName: user_id
+            remarks: 'Владелец токена: id пользователя из ui_users, чью сессию продлевает токен'
+        - setColumnRemarks:
+            tableName: refresh_tokens
+            columnName: token_hash
+            remarks: 'Хэш refresh-токена для проверки при обновлении сессии; само значение не хранится'
+        - setColumnRemarks:
+            tableName: refresh_tokens
+            columnName: expires_at
+            remarks: 'Срок действия refresh-токена; после него обновление сессии невозможно'
+        - setColumnRemarks:
+            tableName: refresh_tokens
+            columnName: revoked
+            remarks: 'Флаг отзыва: отозванный токен больше не продлевает сессию'
+        - setColumnRemarks:
+            tableName: refresh_tokens
+            columnName: created_at
+            remarks: 'Момент выпуска refresh-токена'
+        - setColumnRemarks:
+            tableName: refresh_tokens
+            columnName: revoked_at
+            remarks: 'Момент отзыва токена; пусто, пока токен активен'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: id
+            remarks: 'Первичный ключ записи; равен activities.id той же активности (отдельной жизни у строки нет)'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: process_instance_id
+            remarks: 'Ссылка на process_instances.id — экземпляр, в котором исполняется service task'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: process_definition_id
+            remarks: 'Ссылка на process_definitions.id — определение процесса, из которого создан service task'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: bpmn_element_id
+            remarks: 'Id элемента service task в BPMN-модели'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: created_at
+            remarks: 'Момент создания runtime-записи service task'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: completed_at
+            remarks: 'Момент завершения service task воркером; null — задача ещё в работе'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: retries_remaining
+            remarks: 'Бюджет ретраев, принадлежащий движку: ошибка воркера декрементит его, при нуле вместо повторной отправки поднимается инцидент'
+        - setColumnRemarks:
+            tableName: service_tasks
+            columnName: job
+            remarks: 'Стабильный идентификатор job-а (аналог типа zeebe:taskDefinition), проставленный из BPMN при создании'
+        - setColumnRemarks:
+            tableName: signal_start_subscriptions
+            columnName: id
+            remarks: 'Первичный ключ стартовой подписки на сигнал'
+        - setColumnRemarks:
+            tableName: signal_start_subscriptions
+            columnName: process_key
+            remarks: 'Ключ процесса из реестра, новая версия которого вытесняет эту подписку при деплое'
+        - setColumnRemarks:
+            tableName: signal_start_subscriptions
+            columnName: process_definition_id
+            remarks: 'Версия определения из process_definitions, чей экземпляр стартует при широковещательном сигнале'
+        - setColumnRemarks:
+            tableName: signal_start_subscriptions
+            columnName: element_id
+            remarks: 'Id стартового элемента BPMN, с которого начинается новый экземпляр'
+        - setColumnRemarks:
+            tableName: signal_start_subscriptions
+            columnName: signal_name
+            remarks: 'Имя сигнала, при котором стартует новый экземпляр'
+        - setColumnRemarks:
+            tableName: signal_start_subscriptions
+            columnName: created_at
+            remarks: 'Момент регистрации стартовой подписки при деплое'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: id
+            remarks: 'Первичный ключ подписки на сигнал'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: process_instance_id
+            remarks: 'Экземпляр из process_instances, чей токен ожидает сигнал'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: activity_id
+            remarks: 'Активность из activities, сигнализируемая при широковещательном сигнале'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: signal_name
+            remarks: 'Имя сигнала; один бросок будит все активные подписки с этим именем'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: consumed
+            remarks: 'Флаг поглощения: обработанная подписка больше не участвует в корреляции'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: created_at
+            remarks: 'Момент создания подписки на сигнал'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: boundary_element_id
+            remarks: 'Граничное signal-событие для срабатывания вместо обычной точки ожидания; пусто для обычного перехвата'
+        - setColumnRemarks:
+            tableName: signal_subscriptions
+            columnName: event_subprocess_id
+            remarks: 'Подпроцесс по событию, запускаемый сигналом вместо сигнализации активности; пусто для обычного перехвата'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: id
+            remarks: 'Первичный ключ таймерной задачи экземпляра'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: activity_id
+            remarks: 'Активность из activities.id, чей токен ждёт срабатывания таймера; null — таймер событийного подпроцесса без host-активности'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: due_at
+            remarks: 'Момент, после которого планировщик должен сработать по таймеру'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: fired
+            remarks: 'Признак того, что таймер уже сработал и обработан планировщиком'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: created_at
+            remarks: 'Момент постановки таймерной задачи'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: boundary_element_id
+            remarks: 'BPMN-id граничного таймера на host-активности; срабатывание отменяет её и продолжает поток от границы, null — обычный промежуточный таймер'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: process_instance_id
+            remarks: 'Экземпляр из process_instances.id для таймера событийного подпроцесса; подлежит запуску при срабатывании'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: event_subprocess_id
+            remarks: 'BPMN-id событийного подпроцесса, запускаемого срабатыванием таймера'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: remaining_count
+            remarks: 'Остаток повторений ограниченного цикла после текущего срабатывания; null — бесконечный цикл, 0 — больше не переставлять'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: attempts
+            remarks: 'Число неудачных попыток срабатывания таймера'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: last_error
+            remarks: 'Текст последней ошибки срабатывания таймера; null — таймер ни разу не падал'
+        - setColumnRemarks:
+            tableName: timer_jobs
+            columnName: expression
+            remarks: 'Исходное выражение цикла timeCycle; по нему вычисляется следующее срабатывание, null — разовый таймер'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: id
+            remarks: 'Первичный ключ таймерного старта определения'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: process_key
+            remarks: 'Бизнес-ключ процесса, новый экземпляр которого запускается срабатыванием; новые версии ключа вытесняют старые задачи'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: process_definition_id
+            remarks: 'Версия определения из process_definitions.id, чей экземпляр запускается срабатыванием'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: element_id
+            remarks: 'BPMN-id стартового таймерного события, от которого заведена задача'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: due_at
+            remarks: 'Момент, после которого планировщик должен запустить новый экземпляр'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: fired
+            remarks: 'Признак того, что таймерный старт уже сработал'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: created_at
+            remarks: 'Момент постановки таймерного старта'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: attempts
+            remarks: 'Число неудачных попыток запуска экземпляра по таймеру'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: last_error
+            remarks: 'Текст последней ошибки запуска экземпляра по таймеру; null — старт ни разу не падал'
+        - setColumnRemarks:
+            tableName: timer_start_jobs
+            columnName: remaining_count
+            remarks: 'Остаток повторений ограниченного стартового цикла после текущего срабатывания; null — бесконечный цикл, 0 — больше не переставлять'
+        - setColumnRemarks:
+            tableName: tokens
+            columnName: id
+            remarks: 'Первичный ключ токена — единицы исполнения, движущейся по графу процесса'
+        - setColumnRemarks:
+            tableName: tokens
+            columnName: parent_id
+            remarks: 'Ссылка на tokens.id родительского токена, от форка которого порождён этот; null — корневой токен'
+        - setColumnRemarks:
+            tableName: tokens
+            columnName: scope_activity_id
+            remarks: 'Id активности (activities.id) объемлющего встроенного подпроцесса; null — корневая область экземпляра'
+        - setColumnRemarks:
+            tableName: tokens
+            columnName: pending_branches
+            remarks: 'Число несведённых веток gateway-форка этого токена; null — линейный процесс без форка, 0 — все ветки сошлись'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: id
+            remarks: 'Первичный ключ учётной записи веб-консоли'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: username
+            remarks: 'Уникальный логин для входа в веб-консоль'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: password_hash
+            remarks: 'Хэш пароля для проверки при входе; сам пароль нигде не хранится'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: full_name
+            remarks: 'Отображаемое имя пользователя в интерфейсе'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: email
+            remarks: 'Адрес электронной почты пользователя для уведомлений и восстановления доступа'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: role
+            remarks: 'Глобальная роль в консоли: SUPER_ADMIN, ADMIN или USER'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: active
+            remarks: 'Флаг активности: неактивный пользователь не может войти'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: created_at
+            remarks: 'Момент создания учётной записи'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: updated_at
+            remarks: 'Момент последнего изменения учётной записи'
+        - setColumnRemarks:
+            tableName: ui_users
+            columnName: force_password_change
+            remarks: 'Флаг обязательной смены пароля: пользователь обязан задать новый пароль при следующем входе'
+        - setColumnRemarks:
+            tableName: user_group
+            columnName: user_id
+            remarks: 'Часть составного ключа: id пользователя из ui_users, входящего в группу'
+        - setColumnRemarks:
+            tableName: user_group
+            columnName: group_name
+            remarks: 'Часть составного ключа: имя кандидатной группы, используемой при назначении пользовательских задач'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: id
+            remarks: 'Первичный ключ записи; равен activities.id той же активности (отдельной жизни у строки нет)'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: process_instance_id
+            remarks: 'Ссылка на process_instances.id — экземпляр, в котором создана задача'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: process_definition_id
+            remarks: 'Ссылка на process_definitions.id — определение процесса, из которого создана задача'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: bpmn_element_id
+            remarks: 'Id элемента user task в BPMN-модели'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: created_at
+            remarks: 'Момент создания задачи'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: completed_at
+            remarks: 'Момент завершения задачи пользователем; null — задача ещё открыта'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: form_key
+            remarks: 'Ключ формы из BPMN-модели; используется после formId, null — задача без формы'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: assignee
+            remarks: 'Текущий исполнитель задачи; null — задача никому не назначена'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: due_date
+            remarks: 'Срок исполнения строкой из zeebe:taskSchedule; информационный, исполнение не блокирует'
+        - setColumnRemarks:
+            tableName: user_tasks
+            columnName: follow_up_date
+            remarks: 'Дата напоминания строкой из zeebe:taskSchedule; информационная, исполнение не блокирует'
+        - setColumnRemarks:
+            tableName: variables
+            columnName: process_instance_id
+            remarks: 'Ссылка на process_instances.id — экземпляр-владелец переменной'
+        - setColumnRemarks:
+            tableName: variables
+            columnName: name
+            remarks: 'Имя переменной, под которым она видна в модели процесса'
+        - setColumnRemarks:
+            tableName: variables
+            columnName: text_value
+            remarks: 'Сериализованное значение переменной; интерпретация зависит от type'
+        - setColumnRemarks:
+            tableName: variables
+            columnName: type
+            remarks: 'Тип переменной строкой из ProcessVariableType: STRING, UUID, LONG, BOOLEAN, DOUBLE, JSON'
+        - setColumnRemarks:
+            tableName: variables
+            columnName: id
+            remarks: 'Суррогатный первичный ключ; введён взамен составного ключа (process_instance_id, name)'
+        - setColumnRemarks:
+            tableName: variables
+            columnName: scope_id
+            remarks: 'Id активности (activities.id) локальной области переменной для IO-mapping и multi-instance; null — корень экземпляра'
