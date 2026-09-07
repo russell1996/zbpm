@@ -328,6 +328,16 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
 
+            // WO-C8-32: ad-hoc subprocesses bind a separate element name, so they never
+            // leak into the regular-subprocess path above (own type + own handler).
+            if (process.getAdHocSubProcesses() != null) {
+                for (BpmnAdHocSubProcessModel adHoc : process.getAdHocSubProcesses()) {
+                    BpmnElementModel element = toAdHocSubProcessElement(adHoc, pd, registry, messageNames, messageKeys);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
+
             if (process.getBoundaryEvents() != null) {
                 for (BpmnBoundaryEventModel boundaryEvent : process.getBoundaryEvents()) {
                     boolean timer = boundaryEvent.getTimerEventDefinition() != null;
@@ -555,6 +565,107 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 pd.addElement(child);
             }
         }
+        flattenSubProcessChildren(sub, pd, registry, messageNames, messageKeys);
+
+        element.setExtensions(new BpmnElementExtensionModel());
+        element.getExtensions().setSubProcessExtension(ext);
+        return element;
+    }
+
+    /**
+     * WO-C8-32: maps {@code <bpmn:adHocSubProcess>} — same shape as
+     * {@link #toSubProcessElement} minus start/end (forbidden: loud
+     * {@code BpmnParseException}, never silent) plus the ad-hoc metadata.
+     */
+    private BpmnElementModel toAdHocSubProcessElement(BpmnAdHocSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(sub.getId());
+        element.setName(sub.getName());
+        element.setType(BpmnElementType.AD_HOC_SUB_PROCESS);
+        if (sub.getIncoming() != null) {
+            element.getIncoming().addAll(sub.getIncoming());
+        }
+        if (sub.getOutgoing() != null) {
+            element.getOutgoing().addAll(sub.getOutgoing());
+        }
+        if ((sub.getStartEvents() != null && !sub.getStartEvents().isEmpty())
+            || (sub.getEndEvents() != null && !sub.getEndEvents().isEmpty())) {
+            throw new BpmnParseException("Ad-hoc subprocess '" + sub.getId()
+                + "' must not contain start or end events (Camunda docs constraint)");
+        }
+        com.zorrodev.bpm.engine.bpmn.model.AdHocSubProcessExtensionModel ext = new com.zorrodev.bpm.engine.bpmn.model.AdHocSubProcessExtensionModel();
+        if (sub.getExtensionElements() != null && sub.getExtensionElements().getAdHoc() != null) {
+            // WO-C8-32: FEEL attributes strip the leading '=' at parse, exactly like the
+            // multi-instance inputCollection/outputElement (attachMultiInstance) — the
+            // expression engine cannot parse it. outputCollection is a variable NAME, kept.
+            ext.setActiveElementsCollection(stripLeadingEquals(sub.getExtensionElements().getAdHoc().getActiveElementsCollection()));
+            ext.setOutputCollection(sub.getExtensionElements().getAdHoc().getOutputCollection());
+            ext.setOutputElement(stripLeadingEquals(sub.getExtensionElements().getAdHoc().getOutputElement()));
+        }
+        if (sub.getCompletionCondition() != null) {
+            ext.setCompletionCondition(stripLeadingEquals(sub.getCompletionCondition()));
+        }
+        ext.setCancelRemainingInstances(sub.getCancelRemainingInstances());
+        collectAdHocInnerIds(sub, ext.getInnerElementIds());
+
+        flattenSubProcessChildren(sub, pd, registry, messageNames, messageKeys);
+
+        element.setExtensions(new BpmnElementExtensionModel());
+        element.getExtensions().setAdHocSubProcessExtension(ext);
+        return element;
+    }
+
+    /**
+     * WO-C8-32: ids of the directly nested executable elements of an ad-hoc
+     * container — the membership set for {@code activeElementsCollection} validation.
+     * Mirrors the child lists flattened by {@link #flattenSubProcessChildren} minus
+     * the non-executable ones (boundary events attach to a host, flows/associations
+     * are not elements to execute, start/end events are forbidden outright).
+     */
+    private void collectAdHocInnerIds(BpmnSubProcessModel sub, java.util.Set<String> ids) {
+        addInnerIds(ids, sub.getServiceTasks());
+        addInnerIds(ids, sub.getScriptTasks());
+        addInnerIds(ids, sub.getUserTasks());
+        addInnerIds(ids, sub.getManualTasks());
+        addInnerIds(ids, sub.getBusinessRuleTasks());
+        addInnerIds(ids, sub.getSendTasks());
+        addInnerIds(ids, sub.getReceiveTasks());
+        addInnerIds(ids, sub.getExclusiveGateways());
+        addInnerIds(ids, sub.getParallelGateways());
+        addInnerIds(ids, sub.getInclusiveGateways());
+        addInnerIds(ids, sub.getEventBasedGateways());
+        addInnerIds(ids, sub.getIntermediateCatchEvents(), BpmnIntermediateCatchEventModel::getId);
+        addInnerIds(ids, sub.getIntermediateThrowEvents(), BpmnIntermediateThrowEventModel::getId);
+        addInnerIds(ids, sub.getCallActivities());
+        addInnerIds(ids, sub.getSubProcesses(), BpmnSubProcessModel::getId);
+        addInnerIds(ids, sub.getTransactions(), BpmnSubProcessModel::getId);
+        addInnerIds(ids, sub.getAdHocSubProcesses(), BpmnSubProcessModel::getId);
+    }
+
+    private void addInnerIds(java.util.Set<String> ids, java.util.List<? extends BpmnBaseElementModel> items) {
+        addInnerIds(ids, items, BpmnBaseElementModel::getId);
+    }
+
+    private <T> void addInnerIds(java.util.Set<String> ids, java.util.List<T> items,
+            java.util.function.Function<T, String> idOf) {
+        if (items == null) {
+            return;
+        }
+        for (T item : items) {
+            if (item != null && idOf.apply(item) != null) {
+                ids.add(idOf.apply(item));
+            }
+        }
+    }
+
+    /**
+     * WO-C8-32: flattens one container’s nested flow nodes/flows into the process
+     * definition — extracted 1:1 from {@link #toSubProcessElement} (no logic changes),
+     * shared by regular subprocesses, transactions and ad-hoc subprocesses so the
+     * three cannot diverge. Start/end events are NOT handled here (regular containers
+     * map them in their own prologue; ad-hoc forbids them outright).
+     */
+    private void flattenSubProcessChildren(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
         if (sub.getServiceTasks() != null) {
             for (BpmnServiceTaskModel serviceTask : sub.getServiceTasks()) {
                 BpmnElementModel child = toElementModel(serviceTask);
@@ -674,7 +785,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
         }
         // WO-C8-14b (A-2, срез 2): вложенные контейнеры и boundary-события — ТЕМИ ЖЕ вызовами,
-        // что верхний уровень. adHoc (zeebe:adHoc) — не здесь (категория 3, отдельный дизайн).
+        // что верхний уровень. WO-C8-32: плюс вложенные adHocSubProcess (та же рекурсия).
         if (sub.getCallActivities() != null) {
             for (BpmnCallActivityModel callActivity : sub.getCallActivities()) {
                 BpmnElementModel child = toElementModel(callActivity);
@@ -692,6 +803,13 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (sub.getTransactions() != null) {
             for (BpmnSubProcessModel transaction : sub.getTransactions()) {
                 BpmnElementModel child = toSubProcessElement(transaction, pd, registry, messageNames, messageKeys);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        if (sub.getAdHocSubProcesses() != null) {
+            for (BpmnAdHocSubProcessModel nested : sub.getAdHocSubProcesses()) {
+                BpmnElementModel child = toAdHocSubProcessElement(nested, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
                 pd.addElement(child);
             }
@@ -741,10 +859,6 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 pd.addFlow(toFlowModel(flow));
             }
         }
-
-        element.setExtensions(new BpmnElementExtensionModel());
-        element.getExtensions().setSubProcessExtension(ext);
-        return element;
     }
 
     private BpmnFlowModel toFlowModel(BpmnSequenceFlowModel flow) {

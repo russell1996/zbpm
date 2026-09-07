@@ -83,7 +83,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     @PostConstruct
     void init() {
-        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport);
+        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport, objectMapper);
     }
 
     /**

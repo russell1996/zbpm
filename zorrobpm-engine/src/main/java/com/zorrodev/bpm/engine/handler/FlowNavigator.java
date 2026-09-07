@@ -33,6 +33,8 @@ public class FlowNavigator {
     private final BpmnService bpmnService;
     private final ScriptService scriptService;
     private final ElementSupport elementSupport;
+    // WO-C8-32: JSON codec for the ad-hoc activated-set variable (same mapper MI uses).
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
     /**
      * Follows every outgoing sequence flow of {@code element} unconditionally and executes the
@@ -40,6 +42,15 @@ public class FlowNavigator {
      * signalled wait states and parent continuation after a subprocess/call activity ends.
      */
     public void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element, TokenExecutor executor) {
+        // WO-C8-32: ad-hoc join arrival pre-check (NOT only the dead-end branch below).
+        // Chained middles (a→b: a HAS outgoing) never reach the dead-end return, yet an
+        // activated middle's completion must still count — sequence flows inside ad-hoc are
+        // docs-allowed, and a dead-end-only hook would hang such scopes forever (arrival 1
+        // of 2). Dead ends flow through here too, so this one call site covers both.
+        // Returns true only when a scope finished and consumed the branch.
+        if (handleAdHocArrival(processInstanceId, tokenId, bpmn, element, executor)) {
+            return;
+        }
         if (element.getOutgoing() == null) {
             return; // a dead end (e.g. a compensation handler off the main flow has no outgoing flow)
         }
@@ -84,6 +95,128 @@ public class FlowNavigator {
 
     private boolean isGateway(BpmnElementType type) {
         return type != null && type.name().endsWith("_GATEWAY");
+    }
+
+    /**
+     * WO-C8-32: ad-hoc subprocess join arrival (internal mode) — the "new separate method
+     * next to proceedToOutgoing" from the design. Fires when an element of an activated set
+     * completes on a token that carries a live ad-hoc scope; ordinary completions (no ad-hoc
+     * scope on this token, or the element was never activated) fall through untouched.
+     * <p>
+     * Per arrival, in order: output aggregation (mirror of MI, per completed inner flow),
+     * arrival record on the scope's generic-counter key, completion test ({@code arrived >=
+     * expected} when no condition, else the FEEL {@code completionCondition} evaluated
+     * against the live root variables — the completing tail already merged its outputs
+     * there). Unfinished scopes leave the token alone; a finished scope completes its
+     * container activity, cancels the token-mates (unless {@code cancelRemainingInstances}
+     * is false) and continues past the ad-hoc element.
+     *
+     * @return true when a scope finished here and consumed this branch (caller must return
+     *         WITHOUT flowing the completing element's own outgoing — the scope took over).
+     */
+    public boolean handleAdHocArrival(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel element, TokenExecutor executor) {
+        // One indexed read of the instance's active activities per proceedToOutgoing call
+        // (created/in-progress only — usually a handful of rows). No new DB surface: the
+        // repository method already exists (cancel paths use it).
+        List<Activity> scopes = dbService.getActiveActivities(processInstanceId).stream()
+            .filter(a -> tokenId.equals(a.getToken()) && a.getType() == BpmnElementType.AD_HOC_SUB_PROCESS)
+            .toList();
+        if (scopes.isEmpty()) {
+            return false;
+        }
+        boolean consumed = false;
+        for (Activity scope : scopes) {
+            AdHocJoin.ScopeState state = AdHocJoin.resolve(dbService, objectMapper, processInstanceId, scope.getId());
+            if (state == null || !state.activatedIds().contains(element.getId())) {
+                continue;
+            }
+            aggregateAdHocOutput(processInstanceId, bpmn, scope);
+            String key = AdHocJoin.joinKey(scope.getId(), state.batchUuid());
+            dbService.recordParallelGatewayArrival(processInstanceId, key, AdHocJoin.arrivalMarker(element.getId()));
+            Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
+            int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, key).size();
+            boolean done = (expected != null && arrived >= expected)
+                || adHocConditionMet(processInstanceId, bpmn, scope);
+            if (!done) {
+                log.info("{}/{}: Ad-hoc subprocess {} not ready: {} of {} inner flows done",
+                    processInstanceId, tokenId, scope.getBpmnElementId(), arrived, expected);
+                continue;
+            }
+            finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor);
+            consumed = true;
+        }
+        return consumed;
+    }
+
+    /** WO-C8-32: per-completion output aggregation — MI's append step on the ad-hoc trigger. */
+    private void aggregateAdHocOutput(UUID processInstanceId, BpmnProcessDefinitionModel bpmn, Activity scope) {
+        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+        AdHocSubProcessExtensionModel ext = Optional.ofNullable(scopeElement)
+            .map(BpmnElementModel::getExtensions)
+            .map(BpmnElementExtensionModel::getAdHocSubProcessExtension)
+            .orElse(null);
+        if (ext == null || ext.getOutputCollection() == null || ext.getOutputCollection().isBlank()
+            || ext.getOutputElement() == null || ext.getOutputElement().isBlank()) {
+            return;
+        }
+        // Root variables: every completion tail merges its outputs to root BEFORE reaching
+        // this hook (and drops its scoped rows), so root is exactly "the completed flow's
+        // output" here. Written root-scoped like MI (shared-token engine has no child scope;
+        // the value is therefore visible outside the ad-hoc when it finishes).
+        Object value = scriptService.evaluateExpression(ext.getOutputElement(), dbService.getVariables(processInstanceId));
+        elementSupport.appendToJsonList(processInstanceId, ext.getOutputCollection(), value);
+    }
+
+    /** WO-C8-32: FEEL completionCondition against the live root variables (raw, '=' kept). */
+    private boolean adHocConditionMet(UUID processInstanceId, BpmnProcessDefinitionModel bpmn, Activity scope) {
+        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+        String expression = Optional.ofNullable(scopeElement)
+            .map(BpmnElementModel::getExtensions)
+            .map(BpmnElementExtensionModel::getAdHocSubProcessExtension)
+            .map(AdHocSubProcessExtensionModel::getCompletionCondition)
+            .orElse(null);
+        if (expression == null || expression.isBlank()) {
+            return false;
+        }
+        // Defensive '=' strip mirroring MultiInstanceExecutor.completionConditionMet (the
+        // parser already strips; this only guards hand-built models in tests).
+        String feel = expression.strip();
+        if (feel.startsWith("=")) {
+            feel = feel.substring(1);
+        }
+        Object result = scriptService.evaluateExpression(feel, dbService.getVariables(processInstanceId));
+        return Boolean.TRUE.equals(result);
+    }
+
+    /** WO-C8-32: scope-done tail — clear bookkeeping, complete the container, cancel the rest, continue. */
+    private void finishAdHocScope(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            Activity scope, String key, TokenExecutor executor) {
+        dbService.clearParallelGatewayArrivals(processInstanceId, key);
+        dbService.completeActivity(scope.getId());
+        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+        boolean cancelRest = Optional.ofNullable(scopeElement)
+            .map(BpmnElementModel::getExtensions)
+            .map(BpmnElementExtensionModel::getAdHocSubProcessExtension)
+            .map(AdHocSubProcessExtensionModel::getCancelRemainingInstances)
+            .map(cancel -> !Boolean.FALSE.equals(cancel))
+            .orElse(true);
+        if (cancelRest) {
+            // The container activity is already COMPLETED above, so it is excluded; other
+            // AD_HOC scope activities on this token are spared too (a nested ad-hoc that
+            // finishes must not wipe its outer scope — only the token-mate elements go).
+            // Approximation, documented in the WO-C8-32 report: an outer scope's unfinished
+            // non-container siblings share this token and are cancelled as well.
+            List<Activity> mates = dbService.getActiveActivities(processInstanceId).stream()
+                .filter(a -> tokenId.equals(a.getToken()) && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS)
+                .toList();
+            for (Activity mate : mates) {
+                dbService.cancelActivity(mate.getId());
+            }
+        }
+        log.info("{}/{}: Completing {}: {}/{} (cancelRemaining={})", processInstanceId, tokenId,
+            scope.getType(), scope.getId(), scope.getBpmnElementId(), cancelRest);
+        proceedToOutgoing(processInstanceId, tokenId, bpmn, scopeElement, executor);
     }
 
     /**

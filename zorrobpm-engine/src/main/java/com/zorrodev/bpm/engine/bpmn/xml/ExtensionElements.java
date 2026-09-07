@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.bpmn.xml;
 
 import com.zorrodev.bpm.engine.bpmn.xml.extension.AssignmentDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.AdHocModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledElementModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.CalledDecisionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.ConditionalFilterModel;
@@ -66,4 +67,6 @@ public class ExtensionElements {
     private TaskListenersModel taskListeners;
     @XmlElement(name = "conditionalFilter", namespace = "http://camunda.org/schema/zeebe/1.0")
     private ConditionalFilterModel conditionalFilter;
+    @XmlElement(name = "adHoc", namespace = "http://camunda.org/schema/zeebe/1.0")
+    private AdHocModel adHoc;
 }

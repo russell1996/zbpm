@@ -65,6 +65,11 @@ public class BpmnProcessDefinitionModel {
     // a <transaction> is an embedded subprocess with cancel semantics; reuse the same POJO/flattening
     @XmlElement(name = "transaction", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnSubProcessModel> transactions;
+    // WO-C8-32: ad-hoc subprocesses share the subprocess POJO shape via inheritance
+    // (BpmnAdHocSubProcessModel extends BpmnSubProcessModel) but bind a separate
+    // element name, so they never leak into the regular-subprocess path.
+    @XmlElement(name = "adHocSubProcess", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnAdHocSubProcessModel> adHocSubProcesses;
     @XmlElement(name = "boundaryEvent", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnBoundaryEventModel> boundaryEvents;
     @XmlElement(name = "association", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
