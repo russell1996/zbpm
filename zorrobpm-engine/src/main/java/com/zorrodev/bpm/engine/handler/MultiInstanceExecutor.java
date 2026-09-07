@@ -141,7 +141,19 @@ public class MultiInstanceExecutor {
                 ? element.getExtensions().getUserTaskExtension().getBindingType() : null;
             String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, element);
             String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, element);
-            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate);
+            // WO-C8-30: same resolve-or-incident as the UserTaskHandler path (mirror it —
+            // MI instances resolve independently; a broken expression halts this
+            // instance with an incident instead of a silent default).
+            final int resolvedPriority;
+            try {
+                resolvedPriority = elementSupport.resolveUserTaskPriorityOrThrow(processInstanceId, element);
+            } catch (EngineException e) {
+                log.warn("{}/{}: {}", processInstanceId, activityId, e.getMessage());
+                dbService.errorActivity(activityId);
+                dbService.createIncident(activityId, e.getMessage());
+                return;
+            }
+            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate, resolvedPriority);
         } else {
             dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(element), elementSupport.serviceTaskJob(element));
             elementSupport.applyIoMappings(processInstanceId, activityId, element, true);

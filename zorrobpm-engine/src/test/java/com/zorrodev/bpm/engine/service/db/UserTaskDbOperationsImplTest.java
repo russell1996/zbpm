@@ -40,7 +40,7 @@ class UserTaskDbOperationsImplTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
         when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
         when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
-        db.createUserTask(activityId, "ivanov", "managers", "form1", null, null, null, null);
+        db.createUserTask(activityId, "ivanov", "managers", "form1", null, null, null, null, null);
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());
         assertThat(captor.getValue().getAssignee()).isEqualTo("ivanov");
@@ -54,10 +54,12 @@ class UserTaskDbOperationsImplTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
         when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
         when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
-        db.createUserTask(activityId, "ivanov", "managers", "form1", null, null, "2030-01-01", "2030-01-05");
+        db.createUserTask(activityId, "ivanov", "managers", "form1", null, null, "2030-01-01", "2030-01-05", 75);
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());
         assertThat(captor.getValue().getDueDate()).isEqualTo("2030-01-01");
+        // WO-C8-30: priority rides the row.
+        assertThat(captor.getValue().getPriority()).isEqualTo(75);
         assertThat(captor.getValue().getFollowUpDate()).isEqualTo("2030-01-05");
     }
 
