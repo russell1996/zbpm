@@ -311,4 +311,22 @@ public class AdHocJobWorkerIntegrationTests {
             .count();
         assertThat(open).isGreaterThanOrEqualTo(1);
     }
+
+    @Transactional
+    @Test
+    void completeAdhocOnNonAdhocActivity_isRejected() throws Exception {
+        // Guard branch: the structured endpoint only serves ad-hoc scopes.
+        UUID pi = start();
+        UUID scopeId = scope(pi).getId();
+
+        runtimeService.completeAdHocScopeJob(scopeId,
+            result(jobToken(pi, scopeId), false, false, activate("taskX")));
+        UUID taskXId = tasks(pi, "taskX", ActivityStatus.CREATED).get(0).getId();
+
+        assertThatThrownBy(() -> runtimeService.completeAdHocScopeJob(taskXId,
+            result("whatever", false, false)))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.ApiException.class)
+            .matches(e -> ((com.zorrodev.bpm.contract.exception.ApiException) e).getStatus() == HttpStatus.BAD_REQUEST
+                && "AD_HOC_SCOPE_EXPECTED".equals(((com.zorrodev.bpm.contract.exception.ApiException) e).getCode()));
+    }
 }

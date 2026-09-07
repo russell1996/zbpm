@@ -129,7 +129,8 @@ class AdHocCompleteEndpointIT {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(result(jobToken(pi, scopeId), true, false, "taskX")))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("AD_HOC_RESULT_CONTRADICTION"));
     }
 
     @Test
