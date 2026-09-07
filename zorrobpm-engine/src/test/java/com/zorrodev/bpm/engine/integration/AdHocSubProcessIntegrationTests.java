@@ -255,4 +255,26 @@ public class AdHocSubProcessIntegrationTests {
         assertThat(openIncidents(pi)).isEqualTo(0);
         assertThat(instanceDone(pi)).isFalse();
     }
+
+    @Transactional
+    @Test
+    void chainSingleRoot_flowsThroughChainBeforeCompleting() throws Exception {
+        // HOLD-regression (CTO, живой прогон): один активированный корень taskX с
+        // собственным исходящим на внутренний taskChain («structured sequence» из доки).
+        // Прибытие корня обязано засчитаться лишь когда его цепочка дошла до тупика:
+        // завершение taskX создаёт taskChain, скоуп жив; завершение taskChain гасит скоуп.
+        UUID pi = start("test-adhoc-chain-single-root.bpmn");
+
+        assertThat(tasks(pi, "taskX", ActivityStatus.CREATED)).hasSize(1);
+        assertThat(tasks(pi, "adhoc", ActivityStatus.CREATED)).hasSize(1);
+
+        runtimeService.completeUserTask(tasks(pi, "taskX", ActivityStatus.CREATED).get(0).getId(), List.of());
+        assertThat(tasks(pi, "taskChain", ActivityStatus.CREATED)).hasSize(1);
+        assertThat(tasks(pi, "adhoc", ActivityStatus.CREATED)).hasSize(1);
+        assertThat(instanceDone(pi)).isFalse();
+
+        runtimeService.completeUserTask(tasks(pi, "taskChain", ActivityStatus.CREATED).get(0).getId(), List.of());
+        assertThat(tasks(pi, "adhoc", ActivityStatus.COMPLETED)).hasSize(1);
+        assertThat(instanceDone(pi)).isTrue();
+    }
 }
