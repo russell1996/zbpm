@@ -32,6 +32,7 @@ class ProcessInstanceDbOperationsImplTest {
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private VariableRepository variableRepository;
     @Mock private DomainEventEmitter domainEventEmitter;
+    @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
     @InjectMocks private ProcessInstanceDbOperationsImpl db;
 
     @Test

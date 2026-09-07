@@ -33,4 +33,11 @@ public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
     @Modifying
     @Query("UPDATE OutboxEntry o SET o.status = 'FAILED' WHERE o.id = :id")
     int markFailed(@Param("id") UUID id);
+
+    // WO-OBS-1: gauge sampling queries (read-only, additive — no behavior change).
+    @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.published = false AND o.status != 'FAILED'")
+    long countPending();
+
+    @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.status = 'FAILED'")
+    long countQuarantined();
 }

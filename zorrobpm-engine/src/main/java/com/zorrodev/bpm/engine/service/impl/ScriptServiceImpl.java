@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.service.impl;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -27,16 +28,19 @@ public class ScriptServiceImpl implements ScriptService {
     private final ScriptEngine scriptEngine;
     private final ScriptEngine feelExpressionScriptEngine;
     private final ObjectMapper objectMapper;
+    private final BpmMetrics bpmMetrics;
     private final long timeoutMs;
     private volatile ThreadPoolExecutor executor;
 
     public ScriptServiceImpl(@Qualifier("feelScriptEngine") ScriptEngine scriptEngine,
                              @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine,
                              ObjectMapper objectMapper,
+                             BpmMetrics bpmMetrics,
                              @Value("${zorrobpm.engine.script-timeout-seconds:10}") long timeoutSeconds) {
         this.scriptEngine = scriptEngine;
         this.feelExpressionScriptEngine = feelExpressionScriptEngine;
         this.objectMapper = objectMapper;
+        this.bpmMetrics = bpmMetrics;
         this.timeoutMs = timeoutSeconds * 1000;
         // WO-A-02: bounded bulkhead — bounded pool + bounded queue + abort policy
         int poolSize = 2; // default: 2 concurrent script evaluations
@@ -73,6 +77,8 @@ public class ScriptServiceImpl implements ScriptService {
         } catch (RejectedExecutionException e) {
             // WO-A-02: pool full — fast rejection instead of infinite queuing
             String codeRef = codeRef(code);
+            bpmMetrics.scriptRejected();
+            bpmMetrics.updateScriptPoolMetrics(executor);
             log.warn("Script rejected (bulkhead full): {} workers active, queue full", executor.getActiveCount());
             throw new EngineException("Script execution rejected: pool full (" + codeRef + ")");
         }
@@ -85,6 +91,8 @@ public class ScriptServiceImpl implements ScriptService {
         } catch (java.util.concurrent.TimeoutException e) {
             // WO-A-02: stuck-worker — cancel and replace the thread
             future.cancel(true);
+            bpmMetrics.scriptTimeout();
+            bpmMetrics.updateScriptPoolMetrics(executor);
             replaceWorker();
             // A-09: no code in exception, correlation via length/hash
             throw new EngineException("Script execution timed out after " + (timeoutMs / 1000) + "s (" + codeRef(code) + ")");
