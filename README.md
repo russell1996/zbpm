@@ -14,7 +14,7 @@
 |---|---|
 | **Обновлено** | 2026-09-07 |
 | **Версия** | 0.8.0-SNAPSHOT |
-| **Стадия** | эпик паритета с Camunda 8: **36 задач смёржено**; активной задачи нет, ждёт дизайна ad-hoc subprocess |
+| **Стадия** | эпик паритета с Camunda 8 **закрыт** — 37 задач смёржено, 88 % расширений `zeebe:*` (остаток — сознательный отказ) |
 | **Задачи** | [`governance/workorders/_index.md`](governance/workorders/_index.md) — единственный актуальный список |
 | **Разбор паритета** | [`docs/analysis/camunda8-parity-audit-2026-09-05.md`](docs/analysis/camunda8-parity-audit-2026-09-05.md) |
 
@@ -105,10 +105,12 @@ Conditional-события, Transaction-subprocess, Cancel-события. Эт�
 | `LinkedResource`, `LinkedResources` | **не берём сознательно** — привязка RPA-ресурсов, у нас нет RPA-раннера |
 | `AgentDefinition` | AI-агенты Camunda 8.8+, вне задач проекта |
 
-`AdHoc` (ad-hoc subprocess) поддержан **частично**: внутренний режим исполнения — да
-(`activeElementsCollection`, `completionCondition`, `cancelRemainingInstances`, output-агрегация);
-режим job-worker — нет, отдельный дизайн-заход, последний пункт эпика. Из трёх незакрытых типов все
-три — сознательный отказ. Остаток и его приоритеты —
+`AdHoc` (ad-hoc subprocess) поддержан **полностью**: и внутренний режим исполнения
+(`activeElementsCollection`, `completionCondition`, `cancelRemainingInstances`, output-агрегация),
+и job-worker режим (`zeebe:taskDefinition` на scope, `adHocSubProcessElements`, типизированный
+результат job'а с `activateElements`/флагами условия и отмены). Из трёх незакрытых типов все три —
+сознательный отказ, не незавершённая работа. **Эпик паритета с Camunda 8 закрыт** — все расширения
+`zeebe:*`, кроме сознательно отклонённых, реализованы. Список решений —
 [`governance/workorders/_index.md`](governance/workorders/_index.md).
 
 ### Чего честно нет
