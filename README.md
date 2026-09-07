@@ -12,9 +12,9 @@
 
 | | |
 |---|---|
-| **Обновлено** | 2026-09-06 |
+| **Обновлено** | 2026-09-07 |
 | **Версия** | 0.8.0-SNAPSHOT |
-| **Стадия** | эпик паритета с Camunda 8: **30 задач смёржено**, 1 в работе, 7 в очереди |
+| **Стадия** | эпик паритета с Camunda 8: **36 задач смёржено**; активной задачи нет, ждёт дизайна ad-hoc subprocess |
 | **Задачи** | [`governance/workorders/_index.md`](governance/workorders/_index.md) — единственный актуальный список |
 | **Разбор паритета** | [`docs/analysis/camunda8-parity-audit-2026-09-05.md`](docs/analysis/camunda8-parity-audit-2026-09-05.md) |
 
@@ -98,18 +98,17 @@ Conditional-события, Transaction-subprocess, Cancel-события. Эт�
 [`zeebe-bpmn-moddle`](https://raw.githubusercontent.com/camunda/zeebe-bpmn-moddle/main/resources/zeebe.json),
 типы с `meta.allowedIn`, наличие в продакшн-коде (комментарии не считаются):
 
-**20 из 26 типов расширений — 77 %.**
+**22 из 26 типов расширений — 85 %.**
 
 | Не поддержано | Причина |
 |---|---|
 | `LinkedResource`, `LinkedResources` | **не берём сознательно** — привязка RPA-ресурсов, у нас нет RPA-раннера |
 | `AgentDefinition` | AI-агенты Camunda 8.8+, вне задач проекта |
-| `AdHoc` | ad-hoc subprocess — новая семантика исполнения, требует отдельного дизайна |
-| `ConditionalFilter` | сузить переоценку условия — задача написана (`WO-C8-29`) |
-| `PriorityDefinition` | приоритет user task — задача написана (`WO-C8-30`) |
+| `AdHoc` | ad-hoc subprocess — новая семантика исполнения, требует отдельного дизайна CTO |
 
-Из шести незакрытых **три сознательно не берём**, три расписаны и стоят в очереди. Остаток и его
-приоритеты — [`governance/workorders/_index.md`](governance/workorders/_index.md).
+Из четырёх незакрытых **три сознательно не берём** (`LinkedResource`×2, `AgentDefinition`); последний
+(`AdHoc`, ad-hoc subprocess) — самый дорогой пункт эпика, ждёт отдельного дизайн-захода. Остаток и
+его приоритеты — [`governance/workorders/_index.md`](governance/workorders/_index.md).
 
 ### Чего честно нет
 
