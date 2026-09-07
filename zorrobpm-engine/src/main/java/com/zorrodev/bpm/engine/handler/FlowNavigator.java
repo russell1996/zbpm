@@ -151,6 +151,7 @@ public class FlowNavigator {
                 // Aggregate per activated completion like internal mode, and recreate the
                 // scope job whenever a chain settles (dead end = "a flow completed").
                 // Never consumes: the flow always continues (middles) or ends (dead ends).
+                // (Scope element is non-null here — isJobModeScope just resolved it.)
                 if (state != null && state.activatedIds().contains(element.getId())) {
                     aggregateAdHocOutput(processInstanceId, bpmn, scope);
                 }
