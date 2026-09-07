@@ -85,26 +85,35 @@ class BpmMetricsTest {
     }
 
     @Test
-    void scriptPoolGauges_reflectExecutorState() {
+    void scriptPoolGauges_reflectExecutorState() throws Exception {
         ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(4), r -> {
                 Thread t = new Thread(r);
                 t.setDaemon(true);
                 return t;
             });
-        executor.submit(() -> {
-            try {
-                Thread.sleep(2000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
-        executor.submit(() -> {
-        });
-        metrics.updateScriptPoolMetrics(executor);
-        assertThat(registry.find("zbpm.script.pool.active").gauge().value()).isEqualTo(1.0);
-        assertThat(registry.find("zbpm.script.pool.queue").gauge().value()).isEqualTo(1.0);
-        executor.shutdownNow();
+        // Deterministic occupancy (no sleeps): worker blocks on a latch, second task queues.
+        java.util.concurrent.CountDownLatch workerStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseWorker = new java.util.concurrent.CountDownLatch(1);
+        try {
+            executor.submit(() -> {
+                workerStarted.countDown();
+                try {
+                    releaseWorker.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertThat(workerStarted.await(10, TimeUnit.SECONDS)).isTrue();
+            executor.submit(() -> {
+            });
+            metrics.updateScriptPoolMetrics(executor);
+            assertThat(registry.find("zbpm.script.pool.active").gauge().value()).isEqualTo(1.0);
+            assertThat(registry.find("zbpm.script.pool.queue").gauge().value()).isEqualTo(1.0);
+        } finally {
+            releaseWorker.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test
