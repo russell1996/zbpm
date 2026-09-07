@@ -606,56 +606,81 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             ext.setCompletionCondition(stripLeadingEquals(sub.getCompletionCondition()));
         }
         ext.setCancelRemainingInstances(sub.getCancelRemainingInstances());
-        collectAdHocInnerIds(sub, ext.getInnerElementIds());
+        collectAdHocInnerElements(sub, ext);
 
         flattenSubProcessChildren(sub, pd, registry, messageNames, messageKeys);
 
         element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setAdHocSubProcessExtension(ext);
+        // WO-C8-33: a taskDefinition on the ad-hoc container switches it to job-worker
+        // mode (schema-legal: ZeebeServiceTask extends bpmn:AdHocSubProcess — verified in
+        // raw zeebe.json). Reuses the shared service-task job attach (job/retries/headers);
+        // all its readers pull single fields, none dispatches on its presence (verified).
+        attachServiceTaskJob(element, sub.getExtensionElements());
         return element;
     }
 
     /**
-     * WO-C8-32: ids of the directly nested executable elements of an ad-hoc
-     * container — the membership set for {@code activeElementsCollection} validation.
-     * Mirrors the child lists flattened by {@link #flattenSubProcessChildren} minus
-     * the non-executable ones (boundary events attach to a host, flows/associations
-     * are not elements to execute, start/end events are forbidden outright).
+     * WO-C8-33: harvests directly nested executable elements of an ad-hoc container —
+     * both the membership ids (C8-32 validation) and the per-element metadata for the
+     * {@code adHocSubProcessElements} scope variable (job-worker mode). Mirrors the child
+     * lists flattened by {@link #flattenSubProcessChildren} minus the non-executable ones
+     * (boundary events attach to a host, flows/associations are not elements to execute,
+     * start/end events are forbidden outright).
      */
-    private void collectAdHocInnerIds(BpmnSubProcessModel sub, java.util.Set<String> ids) {
-        addInnerIds(ids, sub.getServiceTasks());
-        addInnerIds(ids, sub.getScriptTasks());
-        addInnerIds(ids, sub.getUserTasks());
-        addInnerIds(ids, sub.getManualTasks());
-        addInnerIds(ids, sub.getBusinessRuleTasks());
-        addInnerIds(ids, sub.getSendTasks());
-        addInnerIds(ids, sub.getReceiveTasks());
-        addInnerIds(ids, sub.getExclusiveGateways());
-        addInnerIds(ids, sub.getParallelGateways());
-        addInnerIds(ids, sub.getInclusiveGateways());
-        addInnerIds(ids, sub.getEventBasedGateways());
-        addInnerIds(ids, sub.getIntermediateCatchEvents(), BpmnIntermediateCatchEventModel::getId);
-        addInnerIds(ids, sub.getIntermediateThrowEvents(), BpmnIntermediateThrowEventModel::getId);
-        addInnerIds(ids, sub.getCallActivities());
-        addInnerIds(ids, sub.getSubProcesses(), BpmnSubProcessModel::getId);
-        addInnerIds(ids, sub.getTransactions(), BpmnSubProcessModel::getId);
-        addInnerIds(ids, sub.getAdHocSubProcesses(), BpmnSubProcessModel::getId);
+    private void collectAdHocInnerElements(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.AdHocSubProcessExtensionModel ext) {
+        addInnerElements(ext, sub.getServiceTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnServiceTaskModel::getExtensionElements);
+        addInnerElements(ext, sub.getScriptTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnScriptTaskModel::getExtensionElements);
+        addInnerElements(ext, sub.getUserTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnUserTaskModel::getExtensionElements);
+        addInnerElements(ext, sub.getManualTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, null);
+        addInnerElements(ext, sub.getBusinessRuleTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnBusinessRuleTaskModel::getExtensionElements);
+        addInnerElements(ext, sub.getSendTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnSendTaskModel::getExtensionElements);
+        addInnerElements(ext, sub.getReceiveTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, null);
+        addInnerElements(ext, sub.getExclusiveGateways(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnExclusiveGatewayModel::getExtensionElements);
+        addInnerElements(ext, sub.getParallelGateways(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnParallelGatewayModel::getExtensionElements);
+        addInnerElements(ext, sub.getInclusiveGateways(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnInclusiveGatewayModel::getExtensionElements);
+        addInnerElements(ext, sub.getEventBasedGateways(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnEventBasedGatewayModel::getExtensionElements);
+        addInnerElements(ext, sub.getCallActivities(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnCallActivityModel::getExtensionElements);
+        // Intermediate catch/throw events carry no documentation in our XML model.
+        addInnerElements(ext, sub.getIntermediateCatchEvents(), BpmnIntermediateCatchEventModel::getId, BpmnIntermediateCatchEventModel::getName, null, BpmnIntermediateCatchEventModel::getExtensionElements);
+        addInnerElements(ext, sub.getIntermediateThrowEvents(), BpmnIntermediateThrowEventModel::getId, BpmnIntermediateThrowEventModel::getName, null, BpmnIntermediateThrowEventModel::getExtensionElements);
+        // Nested containers: id + name only (no documentation/properties in our XML model).
+        addInnerElements(ext, sub.getSubProcesses(), BpmnSubProcessModel::getId, BpmnSubProcessModel::getName, null, null);
+        addInnerElements(ext, sub.getTransactions(), BpmnSubProcessModel::getId, BpmnSubProcessModel::getName, null, null);
+        addInnerElements(ext, sub.getAdHocSubProcesses(), BpmnSubProcessModel::getId, BpmnSubProcessModel::getName, null, BpmnAdHocSubProcessModel::getExtensionElements);
     }
 
-    private void addInnerIds(java.util.Set<String> ids, java.util.List<? extends BpmnBaseElementModel> items) {
-        addInnerIds(ids, items, BpmnBaseElementModel::getId);
-    }
-
-    private <T> void addInnerIds(java.util.Set<String> ids, java.util.List<T> items,
-            java.util.function.Function<T, String> idOf) {
+    private <T> void addInnerElements(com.zorrodev.bpm.engine.bpmn.model.AdHocSubProcessExtensionModel ext, java.util.List<T> items,
+            java.util.function.Function<T, String> idOf, java.util.function.Function<T, String> nameOf,
+            java.util.function.Function<T, String> docOf, java.util.function.Function<T, ExtensionElements> eeOf) {
         if (items == null) {
             return;
         }
         for (T item : items) {
-            if (item != null && idOf.apply(item) != null) {
-                ids.add(idOf.apply(item));
+            if (item == null || idOf.apply(item) == null) {
+                continue;
+            }
+            ext.getInnerElementIds().add(idOf.apply(item));
+            com.zorrodev.bpm.engine.bpmn.model.AdHocElementMetadata meta = new com.zorrodev.bpm.engine.bpmn.model.AdHocElementMetadata();
+            meta.setElementId(idOf.apply(item));
+            meta.setElementName(nameOf == null ? null : nameOf.apply(item));
+            meta.setDocumentation(docOf == null ? null : docOf.apply(item));
+            meta.setProperties(elementProperties(eeOf == null ? null : eeOf.apply(item)));
+            ext.getElementsMetadata().add(meta);
+        }
+    }
+
+    private java.util.Map<String, String> elementProperties(ExtensionElements ee) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (ee == null || ee.getProperties() == null || ee.getProperties().getProperties() == null) {
+            return out;
+        }
+        for (com.zorrodev.bpm.engine.bpmn.xml.PropertyModel pm : ee.getProperties().getProperties()) {
+            if (pm != null && pm.getName() != null) {
+                out.put(pm.getName(), pm.getValue());
             }
         }
+        return out;
     }
 
     /**

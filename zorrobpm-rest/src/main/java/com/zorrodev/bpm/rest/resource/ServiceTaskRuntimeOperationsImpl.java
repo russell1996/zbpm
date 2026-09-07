@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.rest.resource;
 
+import com.zorrodev.bpm.contract.dto.AdHocJobResultDTO;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
@@ -28,6 +29,16 @@ public class ServiceTaskRuntimeOperationsImpl implements ServiceTaskRuntimeOpera
         runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
         IdDTO result = Optional.ofNullable(runtimeService.completeServiceTask(id, dto.getVariables())).map(runtimeOperationSupport::toDTO).orElseThrow();
         auditLogService.record(runtimeOperationSupport.getPrincipal(), "COMPLETE_SERVICE_TASK", key, id.toString());
+        return result;
+    }
+
+    @Transactional
+    @Override
+    public IdDTO completeAdHocScopeJob(UUID id, AdHocJobResultDTO dto) {
+        String key = runtimeOperationSupport.resolveDefinitionKeyByServiceTask(id);
+        runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
+        IdDTO result = Optional.ofNullable(runtimeService.completeAdHocScopeJob(id, dto)).map(runtimeOperationSupport::toDTO).orElseThrow();
+        auditLogService.record(runtimeOperationSupport.getPrincipal(), "COMPLETE_AD_HOC_SCOPE_JOB", key, id.toString());
         return result;
     }
 

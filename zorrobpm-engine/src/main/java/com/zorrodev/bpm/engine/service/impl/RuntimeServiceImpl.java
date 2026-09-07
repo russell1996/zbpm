@@ -58,6 +58,14 @@ public class RuntimeServiceImpl implements RuntimeService {
     }
 
     @Override
+    public IdDTO completeAdHocScopeJob(UUID id, com.zorrodev.bpm.contract.dto.AdHocJobResultDTO result) {
+        activityService.completeAdHocScopeJob(id, result);
+        IdDTO dto = new IdDTO();
+        dto.setId(id);
+        return dto;
+    }
+
+    @Override
     public IdDTO failServiceTask(UUID id, String errorMessage, Integer retries) {
         activityService.failServiceTask(id, errorMessage, retries);
         IdDTO result = new IdDTO();
