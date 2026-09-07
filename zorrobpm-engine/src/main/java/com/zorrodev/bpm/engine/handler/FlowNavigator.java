@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
+import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
@@ -35,6 +36,8 @@ public class FlowNavigator {
     private final ElementSupport elementSupport;
     // WO-C8-32: JSON codec for the ad-hoc activated-set variable (same mapper MI uses).
     private final tools.jackson.databind.ObjectMapper objectMapper;
+    // WO-C8-33: scope-job (re)issue on inner completions (job-worker mode only).
+    private final ServiceTaskEnqueueService serviceTaskEnqueueService;
 
     /**
      * Follows every outgoing sequence flow of {@code element} unconditionally and executes the
@@ -141,13 +144,32 @@ public class FlowNavigator {
         boolean consumed = false;
         for (Activity scope : scopes) {
             AdHocJoin.ScopeState state = AdHocJoin.resolve(dbService, objectMapper, processInstanceId, scope.getId());
+            if (isJobModeScope(bpmn, scope)) {
+                // WO-C8-33: job-worker mode — the worker decides, never the counter.
+                // No arrivals, no count/condition evaluation here (the native
+                // completionCondition is worker-owned via isCompletionConditionFulfilled).
+                // Aggregate per activated completion like internal mode, and recreate the
+                // scope job whenever a chain settles (dead end = "a flow completed").
+                // Never consumes: the flow always continues (middles) or ends (dead ends).
+                // (Scope element is non-null here — isJobModeScope just resolved it.)
+                if (state != null && state.activatedIds().contains(element.getId())) {
+                    aggregateAdHocOutput(processInstanceId, bpmn, scope);
+                }
+                if (!isChainMiddle) {
+                    AdHocJoin.issueScopeJob(dbService, elementSupport, serviceTaskEnqueueService,
+                        processInstanceId, scope.getId(), bpmn.getElement(scope.getBpmnElementId()));
+                    log.info("{}/{}: Ad-hoc subprocess {} job-worker mode: inner flow settled, scope job recreated",
+                        processInstanceId, tokenId, scope.getBpmnElementId());
+                }
+                continue;
+            }
             if (state == null || !state.activatedIds().contains(element.getId())) {
                 if (!isChainMiddle) {
                     // Chain end of some activated root (or an unrelated dead end on this token):
                     // the chain settled — evaluate even without an arrival of its own.
                     if (evaluateScopeDone(processInstanceId, bpmn, scope, state)) {
                         finishAdHocScope(processInstanceId, tokenId, bpmn, scope,
-                            state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor);
+                            state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor, null);
                         consumed = true;
                     }
                 }
@@ -161,7 +183,7 @@ public class FlowNavigator {
                 // only an early completionCondition (whose cancel semantics covers the
                 // not-yet-created downstream: the scope takes over, the chain never runs).
                 if (adHocConditionMet(processInstanceId, bpmn, scope)) {
-                    finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor);
+                    finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor, null);
                     consumed = true;
                 } else {
                     log.info("{}/{}: Ad-hoc subprocess {} root {} done, chain continues",
@@ -170,7 +192,7 @@ public class FlowNavigator {
                 continue;
             }
             if (evaluateScopeDone(processInstanceId, bpmn, scope, state)) {
-                finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor);
+                finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor, null);
                 consumed = true;
             } else {
                 Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
@@ -208,6 +230,21 @@ public class FlowNavigator {
         return active.stream()
             .noneMatch(a -> scope.getToken() != null && scope.getToken().equals(a.getToken())
                 && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS);
+    }
+
+    /**
+     * WO-C8-33: true when the scope element carries a {@code zeebe:taskDefinition}
+     * (job-worker mode). Same predicate shape as the job-based-event check (non-blank
+     * resolved job type), read off the shared service-task extension the parser
+     * attaches — no new state.
+     */
+    private boolean isJobModeScope(BpmnProcessDefinitionModel bpmn, Activity scope) {
+        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+        if (scopeElement == null) {
+            return false;
+        }
+        String job = elementSupport.serviceTaskJob(scopeElement);
+        return job != null && !job.isBlank();
     }
 
     /** WO-C8-32: per-completion output aggregation — MI's append step on the ad-hoc trigger. */
@@ -250,13 +287,22 @@ public class FlowNavigator {
         return Boolean.TRUE.equals(result);
     }
 
-    /** WO-C8-32: scope-done tail — clear bookkeeping, complete the container, cancel the rest, continue. */
-    private void finishAdHocScope(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
-            Activity scope, String key, TokenExecutor executor) {
-        dbService.clearParallelGatewayArrivals(processInstanceId, key);
+    /**
+     * WO-C8-32: scope-done tail — clear bookkeeping, complete the container, cancel the
+     * rest, continue. Public for the WO-C8-33 worker-driven finish (same tail, the worker
+     * only supplies the decision + its own cancel flag).
+     *
+     * @param cancelRemainingOverride WO-C8-33 worker flag; null = resolve the BPMN
+     *        {@code cancelRemainingInstances} attribute (docs default true), as internal mode does
+     */
+    public void finishAdHocScope(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            Activity scope, String key, TokenExecutor executor, Boolean cancelRemainingOverride) {
+        if (key != null) {
+            dbService.clearParallelGatewayArrivals(processInstanceId, key);
+        }
         dbService.completeActivity(scope.getId());
         BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
-        boolean cancelRest = Optional.ofNullable(scopeElement)
+        boolean cancelRest = cancelRemainingOverride != null ? cancelRemainingOverride : Optional.ofNullable(scopeElement)
             .map(BpmnElementModel::getExtensions)
             .map(BpmnElementExtensionModel::getAdHocSubProcessExtension)
             .map(AdHocSubProcessExtensionModel::getCancelRemainingInstances)

@@ -47,6 +47,8 @@ public class CompletionService {
     private final ExecutionContext executionContext;
     private final UserTaskHandler userTaskHandler;
     private final ElementListenerPhaseService elementListenerPhaseService;
+    private final AdHocSubProcessHandler adHocSubProcessHandler;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
 
     /**
      * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
@@ -724,6 +726,102 @@ public class CompletionService {
         }
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
         triggerConditionalEvents(processInstanceId, executor);
+    }
+
+    /**
+     * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result —
+     * the counterpart of {@link #completeServiceTask} for the FIRST typed job result in
+     * this project. Deliberately NOT routed through the flat tail above (which would
+     * proceed the scope's own outgoing): the worker's decision drives activation and
+     * finishing here.
+     * <p>
+     * Staleness is explicit, never silent (unlike the at-least-once-tolerant flat tail):
+     * unknown id → {@code NoSuchElementException} (REST 404); inactive scope or token
+     * mismatch → 409 CONFLICT (the Zeebe {@code NOT_FOUND}-on-stale-completion analog).
+     * A result that both fulfills the condition AND activates elements violates the raw
+     * schema ("cannot fulfill both at the same time") → 400.
+     */
+    public void completeAdHocScopeJob(UUID scopeActivityId,
+            com.zorrodev.bpm.contract.dto.AdHocJobResultDTO result, TokenExecutor executor) {
+        Activity scope = elementSupport.lockAndReload(scopeActivityId);
+        if (scope.getType() != BpmnElementType.AD_HOC_SUB_PROCESS) {
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "AD_HOC_SCOPE_EXPECTED",
+                "Activity " + scopeActivityId + " is not an ad-hoc sub-process scope",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
+        }
+        if (scope.getStatus() != ActivityStatus.CREATED && scope.getStatus() != ActivityStatus.IN_PROGRESS) {
+            // Finished/cancelled/errored scope: nobody may decide for it anymore.
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.CONFLICT, "AD_HOC_JOB_STALE",
+                "Ad-hoc scope job " + scopeActivityId + " is stale (scope " + scope.getStatus() + ")",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
+        }
+        boolean fulfilled = Boolean.TRUE.equals(result.getIsCompletionConditionFulfilled());
+        List<com.zorrodev.bpm.contract.dto.AdHocActivateElementDTO> activate =
+            result.getActivateElements() == null ? List.of() : result.getActivateElements();
+        if (fulfilled && !activate.isEmpty()) {
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "AD_HOC_RESULT_CONTRADICTION",
+                "Ad-hoc job result cannot fulfill the completion condition and activate elements at the same time",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
+        }
+        UUID processInstanceId = scope.getProcessInstanceId();
+        UUID tokenId = scope.getToken();
+        String currentToken = dbService.getVariables(processInstanceId).stream()
+            .filter(v -> AdHocJoin.jobTokenVariable(scopeActivityId).equals(v.getName()))
+            .findFirst()
+            .map(ProcessVariable::getValue)
+            .orElse(null);
+        if (currentToken == null || result.getJobToken() == null || !currentToken.equals(result.getJobToken())) {
+            // Recreated (or internal-mode) scope: this generation is over, explicitly.
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.CONFLICT, "AD_HOC_JOB_STALE",
+                "Ad-hoc scope job " + scopeActivityId + " is stale (job recreated or not job-managed)",
+                Map.of("scopeActivityId", scopeActivityId.toString()));
+        }
+        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn =
+            bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
+        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+        if (fulfilled) {
+            // Worker-owned finish: its cancel flag decides (schema default false — NOT the
+            // BPMN attribute default true; different sources, implemented exactly).
+            AdHocJoin.ScopeState state =
+                AdHocJoin.resolve(dbService, objectMapper, processInstanceId, scopeActivityId);
+            dbService.completeServiceTask(scopeActivityId);
+            flowNavigator.finishAdHocScope(processInstanceId, tokenId, bpmn, scope,
+                state == null ? null : AdHocJoin.joinKey(scopeActivityId, state.batchUuid()), executor,
+                Boolean.TRUE.equals(result.getIsCancelRemainingInstances()));
+            triggerConditionalEvents(processInstanceId, executor);
+            return;
+        }
+        if (activate.isEmpty()) {
+            // Explicit park (documented): worker decided nothing and did not fulfill.
+            // Consume the job row so it stops being offered; no recreation, no incident.
+            dbService.completeServiceTask(scopeActivityId);
+            log.info("{}/{}: Ad-hoc scope job {} completed with empty activation — scope parked",
+                processInstanceId, tokenId, scopeActivityId);
+            return;
+        }
+        List<AdHocSubProcessHandler.ActivationRequest> requests = new java.util.ArrayList<>();
+        for (com.zorrodev.bpm.contract.dto.AdHocActivateElementDTO item : activate) {
+            requests.add(new AdHocSubProcessHandler.ActivationRequest(item.getElementId(),
+                item.getVariables() == null ? List.of() : item.getVariables()));
+        }
+        ExecutionCtx activationCtx =
+            new ExecutionCtx(processInstanceId, tokenId, executor, executionContext);
+        if (!adHocSubProcessHandler.activateInnerElements(activationCtx, bpmn, scopeElement,
+                scopeActivityId, requests, false)) {
+            // Invalid element id: incident raised inside (mirrors internal mode), the
+            // consumed job is NOT recreated — operator recovery, same posture as entry.
+            dbService.completeServiceTask(scopeActivityId);
+            return;
+        }
+        // Consume this generation (row upsert inside issueScopeJob resets it) and offer
+        // exactly one current job: at most one VALID generation, older ones go 409.
+        AdHocJoin.issueScopeJob(dbService, elementSupport, serviceTaskEnqueueService,
+            processInstanceId, scopeActivityId, scopeElement);
     }
 
     /**

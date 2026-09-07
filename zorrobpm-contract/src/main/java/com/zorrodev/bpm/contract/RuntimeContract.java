@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.contract;
 
+import com.zorrodev.bpm.contract.dto.AdHocJobResultDTO;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
@@ -19,6 +20,13 @@ public interface RuntimeContract {
 
     @PostExchange("/service-tasks/{id}/complete")
     IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto);
+
+    /**
+     * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result
+     * (activateElements[] + flags). Additive — the flat complete above is untouched.
+     */
+    @PostExchange("/service-tasks/{id}/complete-adhoc")
+    IdDTO completeAdHocScopeJob(@PathVariable UUID id, @RequestBody AdHocJobResultDTO dto);
 
     /** Reports a service-task failure: decrements retries; raises an incident with {@code message} at 0. */
     @PostExchange("/service-tasks/{id}/fail")

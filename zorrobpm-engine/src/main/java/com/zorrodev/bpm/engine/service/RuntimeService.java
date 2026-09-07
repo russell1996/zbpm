@@ -16,6 +16,12 @@ public interface RuntimeService {
 
     IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables);
 
+    /**
+     * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result.
+     * Additive (the flat {@link #completeServiceTask} is untouched).
+     */
+    IdDTO completeAdHocScopeJob(UUID id, com.zorrodev.bpm.contract.dto.AdHocJobResultDTO result);
+
     /** Reports a service-task failure (retries → incident); see {@link ActivityService#failServiceTask}.
      *  {@code retries} is optional (Camunda {@code failJob} semantics): null decrements by one. */
     IdDTO failServiceTask(UUID id, String errorMessage, Integer retries);

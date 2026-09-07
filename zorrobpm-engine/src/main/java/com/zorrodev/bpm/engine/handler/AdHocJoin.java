@@ -26,6 +26,11 @@ public final class AdHocJoin {
         return "_adhoc_batch_" + adHocActivityId;
     }
 
+    /** WO-C8-33: root variable holding the current job generation token of a job-mode scope. */
+    public static String jobTokenVariable(UUID adHocActivityId) {
+        return "_adhoc_job_" + adHocActivityId;
+    }
+
     /** Root JSON variable holding the activated inner-element ids of one ad-hoc scope. */
     public static String activatedVariable(UUID adHocActivityId) {
         return "_adhoc_activated_" + adHocActivityId;
@@ -39,6 +44,29 @@ public final class AdHocJoin {
     /** Unique arrival marker (arrivals are a set — the marker must differ per arrival). */
     public static String arrivalMarker(String bpmnElementId) {
         return bpmnElementId + "::" + UUID.randomUUID();
+    }
+
+    /**
+     * WO-C8-33: (re)issues the scope job — fresh generation token, service-task row
+     * upsert (same PK by design: exactly one CURRENT generation, older ones go stale
+     * by token), enqueue. Single implementation shared by entry
+     * ({@code AdHocSubProcessHandler}) and recreation ({@code FlowNavigator}).
+     */
+    public static void issueScopeJob(
+            com.zorrodev.bpm.engine.service.DBService dbService,
+            ElementSupport elementSupport,
+            com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService serviceTaskEnqueueService,
+            UUID processInstanceId, UUID scopeActivityId,
+            com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel scopeElement) {
+        String jobToken = UUID.randomUUID().toString();
+        com.zorrodev.bpm.contract.model.ProcessVariable tokenVar = new com.zorrodev.bpm.contract.model.ProcessVariable();
+        tokenVar.setName(jobTokenVariable(scopeActivityId));
+        tokenVar.setType(com.zorrodev.bpm.contract.model.ProcessVariableType.STRING);
+        tokenVar.setValue(jobToken);
+        dbService.setVariables(processInstanceId, List.of(tokenVar));
+        dbService.createServiceTask(scopeActivityId, elementSupport.serviceTaskRetries(scopeElement),
+            elementSupport.serviceTaskJob(scopeElement));
+        serviceTaskEnqueueService.enqueueAfterCommit(scopeActivityId);
     }
 
     /**
