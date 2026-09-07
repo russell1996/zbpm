@@ -301,9 +301,19 @@ public class MetricsWiringIntegrationTests {
         });
         long before = meterRegistry.find("zbpm.timer.lag").timer().count();
 
-        timerJobExecutor.fire(dto);
+        try {
+            timerJobExecutor.fire(dto);
 
-        assertThat(meterRegistry.find("zbpm.timer.lag").timer().count() - before).isEqualTo(1);
+            assertThat(meterRegistry.find("zbpm.timer.lag").timer().count() - before).isEqualTo(1);
+        } finally {
+            // No @Transactional here (Rel4-style setup commits via transactionTemplate) —
+            // wipe our rows so classes sharing H2 never see them (pending listings count).
+            transactionTemplate.executeWithoutResult(status -> {
+                timerJobRepository.deleteById(jobId);
+                processInstanceRepository.deleteById(pi);
+                processDefinitionRepository.deleteById(pdId);
+            });
+        }
     }
 
     @Test
