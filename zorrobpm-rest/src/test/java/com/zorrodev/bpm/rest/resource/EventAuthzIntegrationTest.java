@@ -235,10 +235,11 @@ class EventAuthzIntegrationTest {
     }
 
     private Set<String> eventPdIds(String bearer) throws Exception {
-        // WO-TEST-8: limit=200 keeps the whole visible corpus on one page even as it grows.
+        // WO-TEST-8: limit=100 (прод клампит к 100 — EventResource:87) держит видимый
+        // корпус целиком на одной странице при росте.
         MvcResult result = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + bearer)
-                .param("limit", "200"))
+                .param("limit", "100"))
             .andExpect(status().isOk())
             .andReturn();
         JsonNode data = new ObjectMapper().readTree(result.getResponse().getContentAsString()).get("data");
@@ -301,7 +302,7 @@ class EventAuthzIntegrationTest {
         MvcResult result = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
                 .param("type", "process-instance.started")
-                .param("limit", "200"))
+                .param("limit", "100"))
             .andExpect(status().isOk())
             .andReturn();
         JsonNode data = new ObjectMapper().readTree(result.getResponse().getContentAsString()).get("data");
@@ -357,7 +358,7 @@ class EventAuthzIntegrationTest {
         MvcResult resultA = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + fullAKey)
                 .param("processDefinitionKey", "processA")
-                .param("limit", "200"))
+                .param("limit", "100"))
             .andExpect(status().isOk())
             .andReturn();
         JsonNode dataA = new ObjectMapper().readTree(resultA.getResponse().getContentAsString()).get("data");
@@ -396,7 +397,7 @@ class EventAuthzIntegrationTest {
         // plus positional data[0]/data[1] — both break on corpus growth).
         MvcResult result = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + grantedAKey)
-                .param("limit", "200"))
+                .param("limit", "100"))
             .andExpect(status().isOk())
             .andReturn();
         JsonNode data = new ObjectMapper().readTree(result.getResponse().getContentAsString()).get("data");
@@ -416,7 +417,7 @@ class EventAuthzIntegrationTest {
         MvcResult resultA = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
                 .param("processDefinitionKey", "processA")
-                .param("limit", "200"))
+                .param("limit", "100"))
             .andExpect(status().isOk())
             .andReturn();
         JsonNode dataA = new ObjectMapper().readTree(resultA.getResponse().getContentAsString()).get("data");
@@ -431,7 +432,7 @@ class EventAuthzIntegrationTest {
         MvcResult resultB = mockMvc.perform(get("/events")
                 .header("Authorization", "Bearer " + adminToken)
                 .param("processDefinitionKey", "processB")
-                .param("limit", "200"))
+                .param("limit", "100"))
             .andExpect(status().isOk())
             .andReturn();
         JsonNode dataB = new ObjectMapper().readTree(resultB.getResponse().getContentAsString()).get("data");
