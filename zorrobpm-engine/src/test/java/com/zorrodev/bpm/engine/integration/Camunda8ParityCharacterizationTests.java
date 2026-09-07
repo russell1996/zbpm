@@ -1909,6 +1909,106 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
+    // ==================== WO-C8-30: zeebe:priorityDefinition на user task ====================
+
+    @Test
+    @Transactional
+    void userTaskPriority_parsedAndDeliveredToDTO() throws Exception {
+        // WO-C8-30, критерии 1+2 (POF): priority="75" парсится из user task и доезжает
+        // до DTO задачи (не путать с jobPriorityDefinition C8-13 — другой тип, там).
+        String key = uniq("c8utp");
+        String xml = bpmn("test-c8-user-task-priority.bpmn").replace("c8-user-task-priority", key);
+
+        assertThat(bpmnParseService.parse(xml).getElement("review").getExtensions()
+            .getUserTaskExtension().getPriority())
+            .isEqualTo("75");
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        UUID piId = start(model.getId(), List.of());
+        UUID taskId = userTasksOfInstance(piId).get(0).getId();
+
+        assertThat(queryService.getUserTask(taskId).getPriority()).isEqualTo(75);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void userTaskPriority_feelExpression_resolvesToInteger() throws Exception {
+        // WO-C8-30, критерий 3: `=priorityVar` вычисляется тем же resolveExpression,
+        // что C8-13 (переиспользование, не второй механизм); выражение считается
+        // при активации задачи.
+        String key = uniq("c8utpf");
+        String xml = bpmn("test-c8-user-task-priority.bpmn")
+            .replace("c8-user-task-priority", key)
+            .replace("priority=\"75\"", "priority=\"=priorityVar\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of(var("priorityVar", ProcessVariableType.LONG, "75")));
+        UUID taskId = userTasksOfInstance(piId).get(0).getId();
+
+        assertThat(queryService.getUserTask(taskId).getPriority()).isEqualTo(75);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void userTaskPriority_brokenExpression_raisesIncidentInsteadOfSilentDefault() throws Exception {
+        // WO-C8-30, критерий 4 (п.8): битое выражение — инцидент с внятным текстом
+        // (элемент + значение + диапазон), задача не создаётся. НЕ тихий дефолт 50
+        // и НЕ политика C8-13 (там null для job-хинта; здесь WO требует инцидент).
+        String key = uniq("c8utpb");
+        String xml = bpmn("test-c8-user-task-priority.bpmn")
+            .replace("c8-user-task-priority", key)
+            .replace("priority=\"75\"", "priority=\"high\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+        assertThat(incidentsOfInstance(piId)).isNotEmpty();
+        assertThat(incidentsOfInstance(piId).get(0).getMessage())
+            .contains("review").contains("priority").contains("0 and 100");
+    }
+
+    @Test
+    @Transactional
+    void userTaskPriority_outOfRange_raisesIncident() throws Exception {
+        // WO-C8-30, критерий 4: значение вне 0-100 — тот же инцидент, не обрезка.
+        String key = uniq("c8utpr");
+        String xml = bpmn("test-c8-user-task-priority.bpmn")
+            .replace("c8-user-task-priority", key)
+            .replace("priority=\"75\"", "priority=\"150\"");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(userTasksOfInstance(piId)).isEmpty();
+        assertThat(incidentsOfInstance(piId)).isNotEmpty();
+        assertThat(incidentsOfInstance(piId).get(0).getMessage()).contains("0 and 100");
+    }
+
+    @Test
+    @Transactional
+    void userTaskPriority_absentAttribute_defaultsTo50() throws Exception {
+        // WO-C8-30, критерии 5+6: без атрибута — дефолт 50 из доки
+        // (user-tasks#Define-user-task-priority), путь прежний: задача живёт и
+        // завершается штатно.
+        String key = uniq("c8utpd");
+        String xml = bpmn("test-c8-user-task-priority.bpmn")
+            .replace("c8-user-task-priority", key)
+            .replace("        <zeebe:priorityDefinition priority=\"75\" />\n", "");
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+        UUID taskId = userTasksOfInstance(piId).get(0).getId();
+
+        assertThat(queryService.getUserTask(taskId).getPriority()).isEqualTo(50);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+
+        completeUserTask(piId, "review");
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+    }
+
     // ==================== §C.1: zeebe:versionTag ====================
 
     @Test

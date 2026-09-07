@@ -21,6 +21,11 @@ public class UserTask {
     private String followUpDate;
     /** Activity lifecycle status: CREATED / IN_PROGRESS / COMPLETED / CANCELLED / ERROR. */
     private String status;
+    /**
+     * WO-C8-30: task priority 0-100 for the task list (docs default 50).
+     * Additive response field — pre-existing consumers ignore unknown fields.
+     */
+    private Integer priority;
     private Instant createdAt;
     private Instant completedAt;
 }
