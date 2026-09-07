@@ -1,5 +1,4 @@
 package com.zorrodev.bpm.engine.handler;
-
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
@@ -51,7 +50,11 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         // statement order (row → input mappings → boundaries) is preserved exactly.
         List<ListenerModel> creatingListeners = elementSupport.userTaskCreatingListeners(bpmnElement);
         if (creatingListeners.isEmpty()) {
-            createTaskRow(processInstanceId, activityId, bpmnElement);
+            // WO-C8-30: broken priorityDefinition halts activation here (incident, no
+            // row) — the tail below runs only on a created row.
+            if (!createTaskRow(processInstanceId, activityId, bpmnElement)) {
+                return;
+            }
             elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
             postCreation(processInstanceId, token, activityId, bpmnElement);
             // WO-C8-28: a parked assignment (see createTaskRow) opens its own phase
@@ -76,11 +79,15 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
      * immediate path above and the phased path (via {@link CompletionService}) both call
      * it, so the two cannot diverge.
      *
+     * <p>Returns false when activation must halt: WO-C8-30 broken
+     * {@code priorityDefinition} raises an incident (activity ERROR, no task row) instead
+     * of a silent default. Callers must skip their tail on false.
+     *
      * <p>Public so that {@link CompletionService} can run it when the last creating
      * listener completes (precedent: {@code ServiceTaskHandler.enter} is public for
      * {@code ActivityService} delegation).
      */
-    public void createTaskRow(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement) {
+    public boolean createTaskRow(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement) {
         String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
         String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
         String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, bpmnElement);
@@ -102,10 +109,23 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         List<ListenerModel> assigningListeners = elementSupport.userTaskAssigningListeners(bpmnElement);
         String parkedAssignee = (!assigningListeners.isEmpty() && resolvedAssignee != null && !resolvedAssignee.isBlank())
             ? resolvedAssignee : null;
-        dbService.createUserTask(activityId, parkedAssignee != null ? null : resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate);
+        // WO-C8-30: priority resolves here, in BOTH paths at once (see javadoc above).
+        // Broken/out-of-range expression halts activation with an incident (activity
+        // ERROR, no row) — never a silent default. Absent attribute → docs default 50.
+        final int resolvedPriority;
+        try {
+            resolvedPriority = elementSupport.resolveUserTaskPriorityOrThrow(processInstanceId, bpmnElement);
+        } catch (com.zorrodev.bpm.contract.exception.EngineException e) {
+            log.warn("{}/{}: {}", processInstanceId, activityId, e.getMessage());
+            dbService.errorActivity(activityId);
+            dbService.createIncident(activityId, e.getMessage());
+            return false;
+        }
+        dbService.createUserTask(activityId, parkedAssignee != null ? null : resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate, resolvedPriority);
         if (parkedAssignee != null) {
             dbService.setPendingAssignee(activityId, parkedAssignee);
         }
+        return true;
     }
 
     /**

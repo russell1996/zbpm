@@ -383,7 +383,11 @@ public class CompletionService {
                     }
                     dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
                     dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
-                    userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement);
+                    // WO-C8-30: broken priorityDefinition halts here (incident, no row) —
+                    // same guard as the immediate path above.
+                    if (!userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement)) {
+                        return;
+                    }
                     userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
                     log.info("{}/{}: Last creating listener done, task created: {}/{}", processInstanceId, tokenId,
                         serviceTaskId, activity.getBpmnElementId());
@@ -402,7 +406,10 @@ public class CompletionService {
                 // fail-open below). A null index is NOT this case — see below.
                 dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
                 dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
-                userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement);
+                // WO-C8-30: same halt-on-broken-priority guard as the normal tail above.
+                if (!userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement)) {
+                    return;
+                }
                 userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
                 log.info("{}/{}: Out-of-bounds creating listener index, task created fail-open: {}/{}",
                     processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());

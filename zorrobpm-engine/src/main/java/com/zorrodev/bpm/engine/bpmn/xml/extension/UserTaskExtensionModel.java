@@ -29,6 +29,12 @@ public class UserTaskExtensionModel {
      * выяснено; реализация запрещена, находка — в отчёт).
      */
     private String versionTag;
+    /**
+     * WO-C8-30: raw {@code zeebe:priorityDefinition/@priority} — static integer or
+     * FEEL expression, resolved at activation (default 50 per docs when absent).
+     * Never the service-task {@code jobPriorityDefinition} (different type, C8-13).
+     */
+    private String priority;
     private String externalReference;
     private String dueDate;
     private String followUpDate;
