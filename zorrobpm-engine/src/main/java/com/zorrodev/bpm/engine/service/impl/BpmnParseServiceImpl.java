@@ -1098,6 +1098,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 element.getExtensions().getUserTaskExtension().setDueDate(userTask.getExtensionElements().getTaskSchedule().getDueDate());
                 element.getExtensions().getUserTaskExtension().setFollowUpDate(userTask.getExtensionElements().getTaskSchedule().getFollowUpDate());
             }
+            // WO-C8-30: priorityDefinition rides its own field (never the service-task
+            // jobPriorityDefinition — different type, C8-13, untouched). Raw string,
+            // resolved at activation (static integer or FEEL).
+            if (userTask.getExtensionElements().getPriorityDefinition() != null
+                && userTask.getExtensionElements().getPriorityDefinition().getPriority() != null) {
+                element.getExtensions().getUserTaskExtension().setPriority(
+                    userTask.getExtensionElements().getPriorityDefinition().getPriority());
+            }
+
             if (userTask.getExtensionElements().getFormDefinition() != null) {
                 if (userTask.getExtensionElements().getFormDefinition().getFormKey() != null) {
                     element.getExtensions().getUserTaskExtension().setFormKey(userTask.getExtensionElements().getFormDefinition().getFormKey());

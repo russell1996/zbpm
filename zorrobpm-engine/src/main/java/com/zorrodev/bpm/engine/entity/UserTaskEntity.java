@@ -40,4 +40,10 @@ public class UserTaskEntity {
     private String assignee;
     /** Comma-separated resolved candidate groups (WO-INT-1). */
     private String candidateGroups;
+    /**
+     * WO-C8-30: task priority 0-100 resolved at activation from
+     * {@code zeebe:priorityDefinition} (static integer or FEEL, docs default 50 when
+     * absent). Nullable for pre-WO rows — readers map null to 50.
+     */
+    private Integer priority;
 }

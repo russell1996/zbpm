@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-099
+  - changeSet:
+      id: 20260905-099
+      author: zorrodev
+      changes:
+        # WO-C8-30: приоритет задачи из zeebe:priorityDefinition — резолвится при
+        # активации (число или FEEL, дефолт 50 по доке) и виден в списке задач.
+        # Nullable: строки, созданные до WO, хранят null — чтение маппит null в 50.
+        - addColumn:
+            tableName: user_tasks
+            columns:
+              - column:
+                  name: priority
+                  type: integer
+                  remarks: 'Приоритет задачи 0-100 (WO-C8-30); null — дефолт 50'

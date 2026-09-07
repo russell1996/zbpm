@@ -58,6 +58,8 @@ public class UserTaskMapper {
         dto.setFormKey(entity.getFormKey());
         dto.setDueDate(entity.getDueDate());
         dto.setFollowUpDate(entity.getFollowUpDate());
+        // WO-C8-30: effective priority, pre-WO null rows read as the docs default 50.
+        dto.setPriority(entity.getPriority() != null ? entity.getPriority() : 50);
         // task id == activity id: expose the authoritative lifecycle status for the UI
         if (activity != null) {
             dto.setStatus(activity.getStatus() == null ? null : activity.getStatus().name());

@@ -137,6 +137,44 @@ public class ElementSupport {
         }
     }
 
+    /**
+     * WO-C8-30: resolves {@code zeebe:priorityDefinition/@priority} of a user task to
+     * an Integer task priority, evaluated at activation (docs: "Expressions are
+     * evaluated when the user task is activated"). Absent/blank → docs default 50
+     * ("If no value is provided, the default value is {@code 50}").
+     *
+     * <p>Unlike {@link #resolvePriority} (job dispatch hint — broken values resolve
+     * to null, never an incident), a broken/out-of-range user-task priority THROWS
+     * {@code EngineException} with the element, the raw value and the valid range:
+     * WO-C8-30 demands an explicit incident, never a silent default. Callers turn
+     * this into {@code errorActivity + createIncident} and halt activation.
+     */
+    public int resolveUserTaskPriorityOrThrow(UUID processInstanceId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getPriority)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) {
+            return 50;
+        }
+        String resolved = resolveExpression(raw, processInstanceId);
+        Integer value = null;
+        if (resolved != null && !resolved.isBlank()) {
+            try {
+                value = Integer.parseInt(resolved.trim());
+            } catch (NumberFormatException e) {
+                value = null;
+            }
+        }
+        if (value == null || value < 0 || value > 100) {
+            throw new com.zorrodev.bpm.contract.exception.EngineException(
+                "User task '" + element.getId() + "' has a broken priorityDefinition '" + raw + "'"
+                    + (resolved != null && !resolved.equals(raw) ? " (resolved to '" + resolved + "')" : "")
+                    + " — priority must be an integer between 0 and 100");
+        }
+        return value;
+    }
+
     // ─── Expression resolution ──────────────────────────────────────────
 
     /**
