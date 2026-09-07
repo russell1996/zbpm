@@ -40,7 +40,7 @@ public class MultiInstanceExecutor {
 
     @PostConstruct
     void init() {
-        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport);
+        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport, objectMapper);
     }
 
     public boolean isMultiInstance(BpmnElementModel element) {
@@ -228,22 +228,9 @@ public class MultiInstanceExecutor {
     }
 
     private void appendToJsonList(UUID processInstanceId, String name, Object value) {
-        List<Object> list = new ArrayList<>();
-        ProcessVariable existing = dbService.getVariables(processInstanceId).stream()
-            .filter(v -> v.getName().equals(name))
-            .findFirst().orElse(null);
-        if (existing != null && existing.getType() == ProcessVariableType.JSON
-            && existing.getValue() != null && !existing.getValue().isBlank()
-            && objectMapper.readValue(existing.getValue(), Object.class) instanceof List<?> current) {
-            list.addAll(current);
-        }
-        list.add(elementSupport.toJavaStructure(value));
-
-        ProcessVariable out = new ProcessVariable();
-        out.setName(name);
-        out.setType(ProcessVariableType.JSON);
-        out.setValue(objectMapper.writeValueAsString(list));
-        dbService.setVariables(processInstanceId, List.of(out));
+        // WO-C8-32: single shared mechanism in ElementSupport (ad-hoc output aggregation
+        // reuses it); this delegate keeps MI behaviour byte-identical.
+        elementSupport.appendToJsonList(processInstanceId, name, value);
     }
 
     private Object collectionElement(Object collection, int index) {
