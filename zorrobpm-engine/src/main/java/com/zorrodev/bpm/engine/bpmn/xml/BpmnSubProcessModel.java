@@ -95,6 +95,10 @@ public class BpmnSubProcessModel {
     @XmlElement(name = "transaction", namespace = NS)
     private List<BpmnSubProcessModel> transactions;
 
+    // WO-C8-32: ad-hoc nested in (ad-hoc)subprocess — same flattening, own handler.
+    @XmlElement(name = "adHocSubProcess", namespace = NS)
+    private List<BpmnAdHocSubProcessModel> adHocSubProcesses;
+
     @XmlElement(name = "boundaryEvent", namespace = NS)
     private List<BpmnBoundaryEventModel> boundaryEvents;
 
