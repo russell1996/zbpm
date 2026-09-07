@@ -29,6 +29,7 @@ class RuntimeServiceImplTest {
     @Mock private DBService dbService;
     @Mock private ActivityService activityService;
     @Mock private BpmnService bpmnService;
+    @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
 
     @InjectMocks
     private RuntimeServiceImpl runtimeService;

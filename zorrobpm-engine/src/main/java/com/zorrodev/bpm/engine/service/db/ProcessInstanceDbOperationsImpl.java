@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.mapper.ProcessInstanceMapper;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,7 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
 
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessInstanceMapper processInstanceMapper;
+    private final BpmMetrics bpmMetrics;
     private final VariableRepository variableRepository;
     private final DomainEventEmitter domainEventEmitter;
 
@@ -70,6 +72,9 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
         domainEventEmitter.emitProcessInstanceCompleted(processInstanceId, pi.getProcessDefinitionId());
+        // WO-OBS-1: single choke for every completion path (normal end, escalation end).
+        bpmMetrics.processCompleted();
+        bpmMetrics.decrementActiveInstances();
     }
 
     @Override
@@ -78,5 +83,7 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         processInstanceRepository.setCancelled(processInstanceId, true);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
         domainEventEmitter.emitProcessInstanceCancelled(processInstanceId, pi.getProcessDefinitionId());
+        // WO-OBS-1: cancel ends the instance too (gauge must not leak); not a failure.
+        bpmMetrics.decrementActiveInstances();
     }
 }

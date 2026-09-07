@@ -33,6 +33,7 @@ public class TimerJobExecutor {
     private final DBService dbService;
     private final ActivityService activityService;
     private final ProcessInstanceRepository processInstanceRepository;
+    private final com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
 
     // WO-ENG-4 / WO-REL-14: explicit business zone for timer cycle/cron re-arm resolution
     @Value("${zorrobpm.business-timezone:Asia/Almaty}")
@@ -42,6 +43,10 @@ public class TimerJobExecutor {
     public void fire(TimerJob job) {
         if (!dbService.claimTimerJob(job.getId())) {
             return; // Already claimed by another node
+        }
+        // WO-OBS-1: lag between due and actual fire, sampled at claim (floored at zero inside).
+        if (job.getDueAt() != null) {
+            bpmMetrics.recordTimerLag(java.time.Duration.between(job.getDueAt(), java.time.Instant.now()));
         }
         if (job.getEventSubprocessId() != null) {
             // timer-started event sub-process: no host activity

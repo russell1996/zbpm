@@ -103,11 +103,15 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- WO-OPS-1: actuator for /actuator/health integration test -->
+        <!-- WO-OPS-1 was actuator test-scope for the /actuator/health test; WO-OBS-1
+             promotes it to compile (prometheus scrape) + adds the prometheus registry -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
-            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
     </dependencies>

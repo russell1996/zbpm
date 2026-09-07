@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.dto.IdDTO;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -22,6 +23,7 @@ public class RuntimeServiceImpl implements RuntimeService {
     private final DBService dbService;
     private final ActivityService activityService;
     private final BpmnService bpmnService;
+    private final BpmMetrics bpmMetrics;
 
     @Override
     public IdDTO startProcessInstance(StartProcessInstanceDTO dto) {
@@ -43,6 +45,8 @@ public class RuntimeServiceImpl implements RuntimeService {
         List<ProcessVariable> variables = dto.getVariables();
 
         UUID processInstanceId = activityService.startProcessInstance(parentProcessInstanceId, processDefinitionId, variables);
+        bpmMetrics.processStarted();
+        bpmMetrics.incrementActiveInstances();
 
         IdDTO result = new IdDTO();
         result.setId(processInstanceId);

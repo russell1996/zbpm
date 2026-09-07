@@ -39,7 +39,7 @@ class OutboxPollerServiceTest {
 
     @BeforeEach
     void setUp() {
-        batchProcessor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper);
+        batchProcessor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper, new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         poller = new OutboxPollerService(batchProcessor);
         org.springframework.test.util.ReflectionTestUtils.setField(batchProcessor, "batchSize", 100);
         org.springframework.test.util.ReflectionTestUtils.setField(batchProcessor, "maxRetries", 5);

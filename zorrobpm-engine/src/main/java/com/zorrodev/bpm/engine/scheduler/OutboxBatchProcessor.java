@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.DomainEventPublished;
 import com.zorrodev.bpm.exchange.JobDetailModel;
@@ -40,6 +41,7 @@ public class OutboxBatchProcessor {
     private final OutboxRepository outboxRepository;
     private final ApplicationEventPublisher publisher;
     private final ObjectMapper objectMapper;
+    private final BpmMetrics bpmMetrics;
 
     @Value("${zorrobpm.outbox.batch-size:100}")
     private int batchSize;
@@ -50,6 +52,9 @@ public class OutboxBatchProcessor {
     @Transactional
     public void processBatch() {
         var pending = outboxRepository.findPendingBatch(batchSize);
+        // WO-OBS-1: gauges sampled per batch (read-only, no behavior change).
+        bpmMetrics.setOutboxBacklog(outboxRepository.countPending());
+        bpmMetrics.setOutboxQuarantine(outboxRepository.countQuarantined());
         for (OutboxEntry entry : pending) {
             try {
                 OutboxKind kind = entry.getKind() != null ? entry.getKind() : OutboxKind.SERVICE_TASK;
@@ -79,6 +84,7 @@ public class OutboxBatchProcessor {
                 String errorSummary = truncate(e.getMessage(), 500);
                 if (nextAttempt >= maxRetries) {
                     outboxRepository.markFailed(entry.getId());
+                    bpmMetrics.outboxFailed();
                     log.error("Outbox entry {} quarantined after {} attempts (max={}): {}",
                         entry.getId(), nextAttempt, maxRetries, errorSummary);
                 } else {
