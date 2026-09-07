@@ -2,8 +2,10 @@ package com.zorrodev.bpm.engine.handler;
 
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
+import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.dto.Activity;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -934,6 +937,11 @@ public class CompletionService {
      * whose condition is now true is signalled, and any conditional boundary on an active host whose
      * condition is now true is fired. A thread-local guard stops a fired event's own continuation (which
      * runs through {@link #signal}/{@link EventTrigger#fireBoundary}) from recursively re-triggering this pass.
+     *
+     * <p>WO-C8-29: subscriptions declaring {@code zeebe:conditionalFilter} are re-evaluated
+     * only when a recorded change matches the filter (see {@code ConditionalFilter});
+     * subscriptions without a filter — and passes with no recorded change on this thread
+     * (trigger without a preceding write) — evaluate exactly as before.
      */
     public void triggerConditionalEvents(UUID processInstanceId, TokenExecutor executor) {
         if (executionContext.isEvaluatingConditionals()) {
@@ -947,18 +955,25 @@ public class CompletionService {
             }
             BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
             List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            Map<String, String> changes = executionContext.consumeVariableChanges();
             for (Activity activity : dbService.getActiveActivities(processInstanceId)) {
                 BpmnElementModel element = bpmn.getElement(activity.getBpmnElementId());
                 if (element == null) {
                     continue;
                 }
                 if (element.getType() == BpmnElementType.CONDITIONAL_CATCH_EVENT) {
+                    if (!conditionalFilterMatches(element, changes)) {
+                        continue;
+                    }
                     if (eventTrigger.conditionHolds(element, variables)) {
                         log.info("{}: Conditional catch {} satisfied, firing", processInstanceId, element.getId());
                         signal(activity.getId(), List.of(), executor);
                     }
                 } else {
                     for (BpmnElementModel boundary : eventTrigger.findConditionalBoundaries(bpmn, element.getId())) {
+                        if (!conditionalFilterMatches(boundary, changes)) {
+                            continue;
+                        }
                         if (eventTrigger.conditionHolds(boundary, variables)) {
                             log.info("{}: Conditional boundary {} satisfied, firing on host {}", processInstanceId, boundary.getId(), element.getId());
                             if (eventTrigger.fireBoundary(activity.getId(), boundary.getId(), List.of(), executor)) {
@@ -971,5 +986,18 @@ public class CompletionService {
         } finally {
             executionContext.setEvaluatingConditionals(false);
         }
+    }
+
+    /**
+     * WO-C8-29: consults the resolved {@code zeebe:conditionalFilter} of a conditional
+     * element against the changes recorded since the last trigger pass. No filter, or
+     * no recorded changes, means evaluate (current behavior — fail-open, never skips).
+     */
+    private boolean conditionalFilterMatches(BpmnElementModel element, Map<String, String> changes) {
+        var filter = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getConditionalFilter)
+            .orElse(null);
+        return filter == null || filter.matches(changes);
     }
 }
