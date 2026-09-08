@@ -21,6 +21,9 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
 
     boolean existsByUsername(String username);
 
+    /** WO-REG-1: exact-match existence check (stored emails are normalized lowercase). */
+    boolean existsByEmail(String email);
+
     long countByRoleAndActive(String role, boolean active);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
