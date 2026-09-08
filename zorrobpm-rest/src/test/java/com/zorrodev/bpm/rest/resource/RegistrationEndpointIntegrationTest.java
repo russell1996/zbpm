@@ -108,8 +108,9 @@ class RegistrationEndpointIntegrationTest {
 
     @Test
     void login_pendingUser_returns401() throws Exception {
-        String email = "regpend-" + tag() + "@x.com";
-        String username = "regpend-" + tag();
+        String suffix = tag();
+        String email = "regpend-" + suffix + "@x.com";
+        String username = "regpend-" + suffix;
 
         mockMvc.perform(post("/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)

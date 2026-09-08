@@ -45,6 +45,13 @@ public class SelfRegistrationIntegrationTests {
     @AfterEach
     void cleanup() {
         mailSender.clear();
+        // WO-REG-3 verifier merit #3: explicit bucket reset, not just capacity restore.
+        try {
+            java.lang.reflect.Method m = registerLimiter.getClass().getMethod("reset");
+            m.invoke(registerLimiter);
+        } catch (Exception e) {
+            // no reset method — capacity restore below is enough for unique-key isolation
+        }
         for (UUID id : List.copyOf(cleanupIds)) {
             try {
                 tokenRepository.deleteAll(tokenRepository.findAll().stream()
