@@ -23,7 +23,7 @@ public class PasswordTokenEntity {
     @Id
     private UUID id;
     private UUID userId;
-    /** "INVITE" or "RESET". */
+    /** "INVITE", "RESET" or "EMAIL_VERIFY" (WO-REG-2: email-ownership proof, no password inside). */
     private String type;
     /** SHA-256 (base64) of the raw token — the raw value is never persisted (criterion 8). */
     private String tokenHash;

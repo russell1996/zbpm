@@ -1,0 +1,65 @@
+databaseChangeLog:
+  - logicalFilePath: 20260908-102
+  - changeSet:
+      id: 20260908-102
+      author: zorrodev
+      comment: WO-REG-2 — состояние самостоятельной регистрации на ui_users. Все колонки
+        nullable, кроме registration_status (NOT NULL DEFAULT ACTIVE — существующие
+        админ-созданные и bootstrap-аккаунты остаются активными, ничего не ломается).
+        Значения статуса проверяются в Java (PENDING_EMAIL_VERIFICATION,
+        PENDING_APPROVAL, ACTIVE, REJECTED), не DB-констрейнтом — как role/user_type.
+      changes:
+        - addColumn:
+            tableName: ui_users
+            columns:
+              - column:
+                  name: registration_status
+                  type: varchar(32)
+                  defaultValue: ACTIVE
+                  constraints:
+                    nullable: false
+                  remarks: 'Стадия самостоятельной регистрации: PENDING_EMAIL_VERIFICATION — ждёт подтверждения почты, PENDING_APPROVAL — ждёт решения SUPER_ADMIN, ACTIVE — полный доступ, REJECTED — отклонена; все досаморегистрационные аккаунты ACTIVE по дефолту'
+              - column:
+                  name: email_verified_at
+                  type: datetime with timezone
+                  remarks: 'Момент подтверждения владения почтой по одноразовой ссылке; null — почта не подтверждена'
+              - column:
+                  name: approved_at
+                  type: datetime with timezone
+                  remarks: 'Момент одобрения регистрации живым SUPER_ADMIN; null — решение ещё не принято'
+              - column:
+                  name: approved_by
+                  type: uuid
+                  constraints:
+                    nullable: true
+                    foreignKeyName: fk_ui_users__approved_by
+                    referencedTableName: ui_users
+                    referencedColumnNames: id
+                  remarks: 'Id SUPER_ADMIN из ui_users, одобрившего регистрацию (видно прямо на юзере для аудита, не только в audit_log); null — решения не было'
+              - column:
+                  name: rejected_at
+                  type: datetime with timezone
+                  remarks: 'Момент отклонения регистрации SUPER_ADMIN; null — не отклонена'
+              - column:
+                  name: rejected_reason
+                  type: text
+                  remarks: 'Свободный текст причины отклонения от админа, внутренний — пользователю в письме не уходит'
+      rollback:
+        - dropColumn:
+            tableName: ui_users
+            columnName: rejected_reason
+        - dropColumn:
+            tableName: ui_users
+            columnName: rejected_at
+        - dropColumn:
+            tableName: ui_users
+            columnName: approved_by
+        - dropColumn:
+            tableName: ui_users
+            columnName: approved_at
+        - dropColumn:
+            tableName: ui_users
+            columnName: email_verified_at
+        - dropColumn:
+            tableName: ui_users
+            columnName: registration_status
