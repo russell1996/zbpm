@@ -191,8 +191,8 @@ public class RegistrationAdminIntegrationTests {
     }
 
     @Test
-    void listPending_onlyPendingApproval() {
-        // Create 4 users in different states
+    void listPending_onlyPendingApproval() throws Exception {
+        // Create 4 users in different states + 2 pending approvals to check ordering
         String emailPendingVerify = "list-pv-" + UUID.randomUUID().toString().substring(0, 8) + "@x.com";
         RegisterDTO dtoPv = new RegisterDTO();
         dtoPv.setUsername("list-pv-" + UUID.randomUUID().toString().substring(0, 8));
@@ -202,10 +202,15 @@ public class RegistrationAdminIntegrationTests {
         registrationService.register(dtoPv, "10.0.0.4");
         UiUserEntity pv = onlyUserWithEmail(emailPendingVerify);
 
-        String emailPendingApproval = "list-pa-" + UUID.randomUUID().toString().substring(0, 8) + "@x.com";
-        String rawPa = registerAndExtractToken("list-pa", emailPendingApproval);
-        UiUserEntity pa = onlyUserWithEmail(emailPendingApproval);
-        registrationService.verifyEmail(rawPa);
+        String emailPa1 = "list-pa1-" + UUID.randomUUID().toString().substring(0, 8) + "@x.com";
+        String rawPa1 = registerAndExtractToken("list-pa1", emailPa1);
+        UiUserEntity pa1 = onlyUserWithEmail(emailPa1);
+        registrationService.verifyEmail(rawPa1);
+        Thread.sleep(10);
+        String emailPa2 = "list-pa2-" + UUID.randomUUID().toString().substring(0, 8) + "@x.com";
+        String rawPa2 = registerAndExtractToken("list-pa2", emailPa2);
+        UiUserEntity pa2 = onlyUserWithEmail(emailPa2);
+        registrationService.verifyEmail(rawPa2);
 
         String emailActive = "list-active-" + UUID.randomUUID().toString().substring(0, 8) + "@x.com";
         String rawActive = registerAndExtractToken("list-active", emailActive);
@@ -226,9 +231,11 @@ public class RegistrationAdminIntegrationTests {
 
         List<UiUser> pending = adminService.listPendingRegistrations();
         List<UUID> ids = pending.stream().map(UiUser::getId).toList();
-        assertThat(ids).contains(pa.getId());
+        assertThat(ids).contains(pa1.getId(), pa2.getId());
         assertThat(ids).doesNotContain(pv.getId());
         assertThat(ids).doesNotContain(activeUser.getId());
         assertThat(ids).doesNotContain(rej.getId());
+        // Order: oldest first (created_at asc) — pa1 before pa2
+        assertThat(ids.indexOf(pa1.getId())).isLessThan(ids.indexOf(pa2.getId()));
     }
 }

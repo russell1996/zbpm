@@ -112,6 +112,12 @@ class RegistrationAdminEndpointIntegrationTest {
         // 401 without token
         mockMvc.perform(get("/admin/registrations"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/admin/registrations/" + UUID.randomUUID() + "/approve"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/admin/registrations/" + UUID.randomUUID() + "/reject")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"spam\"}".getBytes(StandardCharsets.UTF_8)))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
