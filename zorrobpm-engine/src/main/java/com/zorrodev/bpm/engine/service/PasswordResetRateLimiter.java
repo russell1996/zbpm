@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.service;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
@@ -15,6 +16,10 @@ import java.util.concurrent.TimeUnit;
  * the window).
  */
 @Component
+// WO-REG-3: default choice now that a second bean of this class exists
+// ("registrationRateLimiter", own quotas). Existing single-injection points
+// keep resolving here, unchanged; the new bean is only ever referenced by qualifier.
+@Primary
 public class PasswordResetRateLimiter {
 
     @Value("${zorrobpm.security.rate-limit.reset-email-capacity:5}")
