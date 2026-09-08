@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
 import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,7 @@ class FormOperationsImplTest {
     private ObjectMapper objectMapper;
     private JsonSchemaValidator jsonSchemaValidator;
     private FormAccessSupport formAccessSupport;
+    private AdvisoryDeployLock advisoryDeployLock;
     private FormOperationsImpl impl;
 
     private final Principal admin =
@@ -56,8 +58,10 @@ class FormOperationsImplTest {
         objectMapper = mock(ObjectMapper.class);
         jsonSchemaValidator = mock(JsonSchemaValidator.class);
         formAccessSupport = mock(FormAccessSupport.class);
+        advisoryDeployLock = mock(AdvisoryDeployLock.class);
         impl = new FormOperationsImpl(
-            formRepository, bindingRepository, objectMapper, jsonSchemaValidator, formAccessSupport);
+            formRepository, bindingRepository, objectMapper, jsonSchemaValidator, formAccessSupport,
+            advisoryDeployLock);
     }
 
     private static FormEntity form(String key, int version) {
