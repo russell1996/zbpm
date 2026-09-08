@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -9,10 +10,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import javax.sql.DataSource;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,13 +34,10 @@ class ProcessDefinitionVersioningTest {
     private ProcessDefinitionRepository processDefinitionRepository;
 
     @Mock
-    private JdbcTemplate jdbcTemplate;
-
-    @Mock
     private TransactionTemplate transactionTemplate;
 
     @Mock
-    private DataSource dataSource;
+    private AdvisoryDeployLock advisoryDeployLock;
 
     private ProcessDefinitionVersioning versioning;
 
@@ -54,26 +50,9 @@ class ProcessDefinitionVersioningTest {
         });
         versioning = new ProcessDefinitionVersioning(
             processDefinitionRepository,
-            jdbcTemplate,
             transactionTemplate,
-            dataSource
+            advisoryDeployLock
         );
-    }
-
-    private static void pgProduct(DataSource dataSource) throws Exception {
-        java.sql.Connection mockConn = org.mockito.Mockito.mock(java.sql.Connection.class);
-        java.sql.DatabaseMetaData mockMeta = org.mockito.Mockito.mock(java.sql.DatabaseMetaData.class);
-        org.mockito.Mockito.when(mockMeta.getDatabaseProductName()).thenReturn("PostgreSQL");
-        org.mockito.Mockito.when(mockConn.getMetaData()).thenReturn(mockMeta);
-        when(dataSource.getConnection()).thenReturn(mockConn);
-    }
-
-    private static void h2Product(DataSource dataSource) throws Exception {
-        java.sql.Connection mockConn = org.mockito.Mockito.mock(java.sql.Connection.class);
-        java.sql.DatabaseMetaData mockMeta = org.mockito.Mockito.mock(java.sql.DatabaseMetaData.class);
-        org.mockito.Mockito.when(mockMeta.getDatabaseProductName()).thenReturn("H2");
-        org.mockito.Mockito.when(mockConn.getMetaData()).thenReturn(mockMeta);
-        when(dataSource.getConnection()).thenReturn(mockConn);
     }
 
     /**
@@ -81,16 +60,14 @@ class ProcessDefinitionVersioningTest {
      * the transaction must ROLLBACK — version is NOT created.
      * RED (before fix): broad catch swallows exception, version created without lock.
      * GREEN (after fix): exception propagates, save() never called.
-     * (Moved verbatim from ProcessDefinitionServiceImplTest — body unchanged.)
+     * (Moved verbatim from ProcessDefinitionServiceImplTest — body unchanged,
+     * WO-SCALE-1: lock mock throws instead of jdbcTemplate, same contract.)
      */
     @Test
     void advisoryLockFailure_propagatesAndNoVersionCreated() throws Exception {
-        // Simulate PostgreSQL: dataSource returns a connection whose meta says "PostgreSQL"
-        pgProduct(dataSource);
-
-        // Advisory lock will fail — simulate by making execute throw
-        when(jdbcTemplate.execute(any(org.springframework.jdbc.core.ConnectionCallback.class)))
-            .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("lock failed", new java.sql.SQLException("lock timeout")));
+        // Advisory lock will fail — simulate by making the shared component throw
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("lock failed", new java.sql.SQLException("lock timeout")))
+            .when(advisoryDeployLock).acquireForKey(any(String.class));
 
         String key = "test-key";
         UUID id = UUID.randomUUID();
@@ -106,7 +83,6 @@ class ProcessDefinitionVersioningTest {
 
     @Test
     void pgLockSuccess_createsActiveVersionWithNextNumber() throws Exception {
-        pgProduct(dataSource);
         UUID id = UUID.randomUUID();
         when(processDefinitionRepository.findMaxByKey("k")).thenReturn(Optional.of(2));
         when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
@@ -119,14 +95,16 @@ class ProcessDefinitionVersioningTest {
         assertThat(entity.getDeploymentState()).isEqualTo(ProcessDefinitionEntity.STATE_ACTIVE);
         assertThat(entity.getId()).isEqualTo(id);
         assertThat(entity.getStartFormKey()).isEqualTo("sfk");
-        // Lock was actually attempted on PG
-        verify(jdbcTemplate).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        // Lock was actually attempted via the shared component
+        verify(advisoryDeployLock).acquireForKey("k");
         verify(processDefinitionRepository).save(any(ProcessDefinitionEntity.class));
     }
 
     @Test
     void h2Product_lockSkippedStillCreatesVersion() throws Exception {
-        h2Product(dataSource);
+        // WO-SCALE-1: dialect skip now lives inside AdvisoryDeployLock (covered by
+        // AdvisoryDeployLockTest); versioning always delegates — the shared mock
+        // no-ops here, mirroring the H2 skip, and the version is still created.
         UUID id = UUID.randomUUID();
         when(processDefinitionRepository.findMaxByKey("k")).thenReturn(Optional.empty());
         when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class)))
@@ -137,13 +115,12 @@ class ProcessDefinitionVersioningTest {
 
         assertThat(entity.getVersion()).isEqualTo(1);
         assertThat(entity.getDeploymentState()).isEqualTo(ProcessDefinitionEntity.STATE_ACTIVE);
-        // H2: lock function not supported — skipped, never attempted
-        verify(jdbcTemplate, never()).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        // Delegation happened (the component decides PG vs H2 internally)
+        verify(advisoryDeployLock).acquireForKey("k");
     }
 
     @Test
     void createNewVersionEntity_returnsUnsavedEntityWithNextNumber() throws Exception {
-        h2Product(dataSource);
         UUID id = UUID.randomUUID();
         when(processDefinitionRepository.findMaxByKey("k")).thenReturn(Optional.of(4));
 
