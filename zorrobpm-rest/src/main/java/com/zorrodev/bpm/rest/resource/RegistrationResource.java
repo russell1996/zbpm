@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.NoSuchElementException;
+
 /**
  * WO-REG-3/4: public, unauthenticated self-registration + email verification
  * (both paths whitelisted in {@code JwtAuthFilter.isPublicPath}).
@@ -43,6 +45,9 @@ public class RegistrationResource implements RegistrationContract {
         } catch (com.zorrodev.bpm.contract.exception.EngineException e) {
             throw new org.springframework.web.server.ResponseStatusException(
                 org.springframework.http.HttpStatus.BAD_REQUEST, e.getMessage(), e);
+        } catch (NoSuchElementException e) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "Invalid or expired token", e);
         }
     }
 }
