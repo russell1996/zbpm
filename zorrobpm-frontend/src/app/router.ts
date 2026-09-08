@@ -37,6 +37,16 @@ const router = createRouter({
       component: () => import('@/pages/AcceptInvitation.vue'),
     },
     {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/pages/Register.vue'),
+    },
+    {
+      path: '/verify-email',
+      name: 'verify-email',
+      component: () => import('@/pages/VerifyEmail.vue'),
+    },
+    {
       path: '/change-password',
       name: 'change-password',
       component: () => import('@/pages/ChangePassword.vue'),
@@ -154,6 +164,12 @@ const router = createRouter({
           name: 'admin-submissions',
           component: () => import('@/pages/admin/SubmissionQueue.vue'),
           meta: { titleKey: 'submissionQueue', requiresSuperAdmin: true },
+        },
+        {
+          path: 'admin/registrations',
+          name: 'admin-registrations',
+          component: () => import('@/pages/admin/RegistrationQueue.vue'),
+          meta: { titleKey: 'registrationQueue', requiresSuperAdmin: true },
         },
         {
           path: 'admin/forms',

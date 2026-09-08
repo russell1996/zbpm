@@ -57,6 +57,7 @@ describe('SidebarNavShadcn', () => {
     // admin items NOT visible
     expect(labels).not.toContain('users')
     expect(labels).not.toContain('submissionQueue')
+    expect(labels).not.toContain('registrationQueue')
   })
 
   it('super-admin sees the consolidated admin item (WO-UI-10: one hub instead of three)', () => {
@@ -66,18 +67,20 @@ describe('SidebarNavShadcn', () => {
     const labels = buttons.map(b => b.text())
     // Phase 3 consolidation: a single "adminSettings" hub replaces the three
     // separate users/submissions/mail-settings sidebar items (those are now tabs inside it).
+    // WO-REG-6: registrationQueue is a separate SUPER_ADMIN item alongside the hub.
     expect(labels).toContain('adminSettings')
+    expect(labels).toContain('registrationQueue')
     expect(labels).not.toContain('users')
     expect(labels).not.toContain('submissionQueue')
     expect(labels).not.toContain('mailSettings')
-    expect(labels.length).toBe(11)
+    expect(labels.length).toBe(12)
   })
 
   it('non-super-admin does NOT see admin items', () => {
     const wrapper = mount(SidebarNavShadcn)
     const buttons = wrapper.findAll('button')
     const labels = buttons.map(b => b.text())
-    expect(labels.some(l => l === 'users' || l === 'submissionQueue')).toBe(false)
+    expect(labels.some(l => l === 'users' || l === 'submissionQueue' || l === 'registrationQueue')).toBe(false)
   })
 
   it('has 5 domain group labels + admin group when super-admin', () => {

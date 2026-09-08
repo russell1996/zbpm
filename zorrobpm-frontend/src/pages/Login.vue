@@ -91,6 +91,15 @@ async function submit() {
       >
         {{ t('forgotPasswordTitle') }}
       </button>
+
+      <button
+        type="button"
+        class="w-full text-sm text-primary hover:underline"
+        data-testid="register-link"
+        @click="router.push('/register')"
+      >
+        {{ t('noAccountRegister') }}
+      </button>
     </form>
   </div>
 </template>
