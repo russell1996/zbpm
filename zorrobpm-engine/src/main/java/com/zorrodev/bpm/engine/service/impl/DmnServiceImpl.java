@@ -50,13 +50,16 @@ public class DmnServiceImpl implements DmnService {
     private final FeelEngineApi feelEngineApi;
     private final DmnDefinitionRepository dmnDefinitionRepository;
     private final ObjectMapper objectMapper;
+    private final com.zorrodev.bpm.engine.service.AdvisoryDeployLock advisoryDeployLock;
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void deploy(String dmnXml) {
         deploy(dmnXml, null);
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void deploy(String dmnXml, UUID processDefinitionId) {
         deploy(dmnXml, processDefinitionId, null);
     }
@@ -66,12 +69,17 @@ public class DmnServiceImpl implements DmnService {
      * created rows (batch deploys). Null keeps single-deploy behaviour byte-identical.
      */
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void deploy(String dmnXml, UUID processDefinitionId, UUID deploymentId) {
         DmnDefinitionsModel model = SecureXmlParser.unmarshal(dmnXml, DmnDefinitionsModel.class);
         if (model.getDecisions() == null || model.getDecisions().isEmpty()) {
             throw new EngineException("DMN resource has no decisions");
         }
         for (DmnDecisionModel decision : model.getDecisions()) {
+            // WO-SCALE-1: serialize concurrent deploys of the same decisionId on the same
+            // PG xact — the lock lives and dies with this deploy transaction, like the
+            // original BPMN path (ProcessDefinitionVersioning).
+            advisoryDeployLock.acquireForKey("dmn:" + decision.getId());
             int version = dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decision.getId())
                 .map(e -> e.getVersion() + 1)
                 .orElse(1);
