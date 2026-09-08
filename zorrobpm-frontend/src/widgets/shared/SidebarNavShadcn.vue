@@ -86,6 +86,7 @@ const navGroups = computed<NavGroup[]>(() => [
 // WO-UI-10: consolidated admin hub with tabs (mail-settings / users / submissions).
 const adminItems: NavItem[] = [
   { labelKey: 'adminSettings', icon: Settings, to: '/admin/settings' },
+  { labelKey: 'registrationQueue', icon: Users, to: '/admin/registrations' },
 ]
 
 // WO-ACL-8 criteria 1-2: adminOnly filtering preserved.
