@@ -34,6 +34,8 @@ public class UserInvitationService {
 
     public static final String TYPE_INVITE = "INVITE";
     public static final String TYPE_RESET = "RESET";
+    /** WO-REG-2: email-ownership proof for self-registration (no password inside). */
+    public static final String TYPE_EMAIL_VERIFY = "EMAIL_VERIFY";
 
     private final UiUserRepository userRepository;
     private final PasswordTokenRepository tokenRepository;
@@ -158,7 +160,34 @@ public class UserInvitationService {
                 userId, TYPE_INVITE, Instant.now());
     }
 
-    private String issueToken(UUID userId, String type, String email, int ttlHours) {
+    /**
+     * WO-REG-2: consumes an EMAIL_VERIFY token — same validation + atomic single-use
+     * consume as the password flow, but WITHOUT setting a password (the registrant
+     * already chose one at registration). Returns the verified user id for the caller
+     * (WO-REG-4) to stamp {@code emailVerifiedAt}. RESET/INVITE tokens are refused
+     * here even if valid — different meaning, must not double as email proof.
+     */
+    public UUID consumeEmailVerifyToken(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) throw new EngineException("Token is required");
+        String hash = tokenService.hashToken(rawToken);
+        PasswordTokenEntity token = tokenRepository.findByTokenHashAndUsedFalse(hash)
+            .filter(t -> TYPE_EMAIL_VERIFY.equals(t.getType()))
+            .orElseThrow(() -> new EngineException("Invalid or expired token"));
+        if (token.getExpiresAt().isBefore(Instant.now())) {
+            throw new EngineException("Invalid or expired token");
+        }
+        UUID userId = token.getUserId();
+        int consumed = tokenRepository.consumeByTokenHash(hash, Instant.now());
+        if (consumed == 0) {
+            throw new EngineException("Invalid or expired token");
+        }
+        return userId;
+    }
+
+    // WO-REG-2: package-visible for the future SelfRegistrationService (WO-REG-3) —
+    // same-package reuse without duplicating token generation/hashing. Least privilege:
+    // not public API, not protected (no subclassing planned).
+    String issueToken(UUID userId, String type, String email, int ttlHours) {
         String raw = tokenService.generateRefreshToken();
         PasswordTokenEntity token = new PasswordTokenEntity();
         token.setId(UUID.randomUUID());
@@ -174,7 +203,8 @@ public class UserInvitationService {
         return raw;
     }
 
-    private void invalidatePriorTokens(UUID userId, String type) {
+    // WO-REG-2: same visibility note as issueToken above.
+    void invalidatePriorTokens(UUID userId, String type) {
         tokenRepository.invalidateByUserAndType(userId, type, Instant.now());
     }
 }
