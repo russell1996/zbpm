@@ -21,8 +21,12 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -42,6 +46,7 @@ public class UiUserServiceImpl implements UiUserService {
     private final TokenService tokenService;
     private final RefreshTokenRepository refreshTokenRepository;
     private final com.zorrodev.bpm.engine.repository.PasswordTokenRepository passwordTokenRepository;
+    private final PlatformTransactionManager transactionManager;
 
     @Override
     @Transactional(readOnly = true)
@@ -106,16 +111,23 @@ public class UiUserServiceImpl implements UiUserService {
         if (repository.existsByUsername(dto.getUsername())) throw new EngineException("Username already exists");
 
         boolean system = "SYSTEM".equalsIgnoreCase(dto.getUserType());
+        // WO-REG-1: canonical form BEFORE validation/storage (same transform the
+        // readers apply — UserInvitationService.requestReset looks up lowercased).
+        String normalizedEmail = normalizeEmail(dto.getEmail());
         // WO-ACL-19 (P2): a HUMAN account MUST have a valid email — every password-reset path
         // (public forgot-password, admin reset, invitation) is email-driven and silently no-ops
         // when email is missing, which is worse than a clear 400 at creation time.
         if (!system) {
-            if (dto.getEmail() == null || dto.getEmail().isBlank()) {
+            if (normalizedEmail == null || normalizedEmail.isBlank()) {
                 throw new EngineException("Email is required for HUMAN users");
             }
-            if (!isValidEmail(dto.getEmail())) {
+            if (!isValidEmail(normalizedEmail)) {
                 throw new EngineException("Email format is invalid");
             }
+            if (repository.existsByEmail(normalizedEmail)) throw new EngineException("Email already exists");
+        } else if (normalizedEmail != null && !normalizedEmail.isBlank()
+            && repository.existsByEmail(normalizedEmail)) {
+            throw new EngineException("Email already exists");
         }
         // WO-ACL-18: INVITE mode creates the account WITHOUT a usable password — the user
         // receives a one-time link to set it. SYSTEM accounts are never invited.
@@ -141,14 +153,25 @@ public class UiUserServiceImpl implements UiUserService {
             ? passwordHasher.hash(UUID.randomUUID().toString())
             : passwordHasher.hash(dto.getPassword()));
         entity.setFullName(dto.getFullName());
-        entity.setEmail(dto.getEmail());
+        entity.setEmail(normalizedEmail);
         entity.setRole(normalizeRole(dto.getRole()));
         entity.setActive(dto.getActive() == null || dto.getActive());
         entity.setUserType(system ? "SYSTEM" : "HUMAN");
         entity.setForcePasswordChange(false);
         entity.setCreatedAt(Instant.now());
         entity.setUpdatedAt(Instant.now());
-        repository.save(entity);
+        try {
+            repository.save(entity);
+            // flush (not deferred to commit): the race window between the existsByEmail
+            // check above and the INSERT must surface INSIDE this method to be
+            // translated. save() stays (existing tests verify it), flush forces timing.
+            repository.flush();
+        } catch (DataAccessException e) {
+            // WO-REG-1: PG+Hibernate surfaces this race NOT as DataIntegrityViolation
+            // but as JpaSystemException(25P02) (proven live: two threads racing one
+            // address) — so catch the parent. Precision kept by the re-check below.
+            throw translateEmailConflict(normalizedEmail, e);
+        }
         return entity.getId();
     }
 
@@ -206,17 +229,29 @@ public class UiUserServiceImpl implements UiUserService {
         }
         if (dto.getFullName() != null) entity.setFullName(dto.getFullName());
         if (dto.getEmail() != null) {
+            // WO-REG-1: normalize everywhere an address enters from input (both paths).
+            String normalizedEmail = normalizeEmail(dto.getEmail());
             // WO-ACL-19 (P2): a HUMAN account cannot be left without a valid email.
             if (system) {
-                entity.setEmail(dto.getEmail());
+                entity.setEmail(normalizedEmail);
             } else {
-                if (dto.getEmail().isBlank()) {
+                if (normalizedEmail == null || normalizedEmail.isBlank()) {
                     throw new EngineException("Email is required for HUMAN users");
                 }
-                if (!isValidEmail(dto.getEmail())) {
+                if (!isValidEmail(normalizedEmail)) {
                     throw new EngineException("Email format is invalid");
                 }
-                entity.setEmail(dto.getEmail());
+                // WO-REG-1: skip the check when the address does not really change;
+                // compare by id (not text) so a legacy mixed-case row never conflicts
+                // with its own normalized form.
+                if (!normalizedEmail.equals(entity.getEmail())) {
+                    repository.findByEmail(normalizedEmail)
+                        .filter(u -> !u.getId().equals(entity.getId()))
+                        .ifPresent(u -> {
+                            throw new EngineException("Email already exists");
+                        });
+                    entity.setEmail(normalizedEmail);
+                }
             }
         }
         if (dto.getRole() != null) entity.setRole(newRole);
@@ -234,8 +269,47 @@ public class UiUserServiceImpl implements UiUserService {
             refreshTokenRepository.revokeAllByUserId(id);
         }
         entity.setUpdatedAt(Instant.now());
-        repository.save(entity);
+        try {
+            repository.save(entity);
+            // flush: same race reasoning as create() — surface here, translate below.
+            repository.flush();
+        } catch (DataAccessException e) {
+            throw translateEmailConflict(entity.getEmail(), e);
+        }
         return entity.getId();
+    }
+
+    /**
+     * WO-REG-1: canonical email form — trimmed + lowercased. Plain
+     * {@code toLowerCase()} (not ROOT) ON PURPOSE: readers query lowercased the same
+     * way ({@code UserInvitationService.requestReset}), so write and read agree
+     * byte-for-byte under any default locale.
+     */
+    static String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase();
+    }
+
+    /**
+     * WO-REG-1: translates a unique-violation into the domain conflict. The catching
+     * transaction is already aborted (PG aborts on the first error), so the re-check
+     * MUST run outside it — a SELECT here would fail the same way. Fresh read-only
+     * REQUIRES_NEW template per call (a shared bean's propagation must never be
+     * mutated — not thread-safe); the violation path is rare, allocation is free.
+     * Under READ_COMMITTED a concurrent uncommitted rival is invisible, so a taken
+     * address here means OUR constraint fired — anything else rethrows as-is
+     * (e.g. a simultaneous username race keeps its original error).
+     */
+    private EngineException translateEmailConflict(String normalizedEmail,
+            DataAccessException cause) {
+        TransactionTemplate tpl = new TransactionTemplate(transactionManager);
+        tpl.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        tpl.setReadOnly(true);
+        Boolean taken = tpl.execute(status ->
+            normalizedEmail != null && !normalizedEmail.isBlank() && repository.existsByEmail(normalizedEmail));
+        if (Boolean.TRUE.equals(taken)) {
+            return new EngineException("Email already exists");
+        }
+        throw cause;
     }
 
     private static String normalizeRole(String role) {
