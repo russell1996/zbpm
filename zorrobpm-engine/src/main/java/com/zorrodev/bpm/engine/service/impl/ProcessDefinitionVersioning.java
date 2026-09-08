@@ -2,13 +2,11 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
-
-import javax.sql.DataSource;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -24,16 +22,12 @@ import java.util.UUID;
 public class ProcessDefinitionVersioning {
 
     private final ProcessDefinitionRepository processDefinitionRepository;
-    private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
-    private final DataSource dataSource;
-
-    /** Cached database product name — detected once on first use. */
-    private volatile String databaseProduct;
+    private final AdvisoryDeployLock advisoryDeployLock;
 
     /**
      * WO-ARCH-2 + WO-A-03: Creates a new process definition version inside a transaction
-     * protected by pg_advisory_xact_lock(key.hashCode()).
+     * protected by advisory lock (PG xact-scoped, see AdvisoryDeployLock).
      * Uses TransactionTemplate (not @Transactional) to avoid self-invocation proxy bypass.
      * Lock auto-released on commit/rollback. Different keys → different locks.
      *
@@ -60,8 +54,8 @@ public class ProcessDefinitionVersioning {
      */
     public ProcessDefinitionEntity createNewVersionEntity(
             String key, String name, String sha256, UUID id, String startFormKey, String versionTag) {
-        // WO-A-03: acquire advisory lock based on database dialect
-        acquireAdvisoryLock(key);
+        // WO-A-03 / WO-SCALE-1: single place for dialect-aware lock (fail-closed, H2 skip)
+        advisoryDeployLock.acquireForKey(key);
         Integer maxVersion = processDefinitionRepository.findMaxByKey(key).orElse(0);
         ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
         entity.setId(id);
@@ -73,40 +67,5 @@ public class ProcessDefinitionVersioning {
         entity.setStartFormKey(startFormKey);
         entity.setVersionTag(versionTag);
         return entity;
-    }
-
-    /**
-     * WO-A-03: DB-dialect-aware advisory lock.
-     * - PG: execute pg_advisory_xact_lock; ANY exception propagates (fail-closed, rollback).
-     * - H2: skip (function not supported), log once.
-     */
-    private void acquireAdvisoryLock(String key) {
-        String product = getDatabaseProduct();
-        if ("PostgreSQL".equals(product)) {
-            long lockKey = key.hashCode();
-            jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) conn -> {
-                try (var ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
-                    ps.setLong(1, lockKey);
-                    ps.execute();
-                }
-                return null;
-            });
-            // WO-A-03: no catch — any exception propagates and rolls back the transaction
-        } else {
-            log.debug("Advisory lock skipped for database product: {}", product);
-        }
-    }
-
-    /** Detect and cache database product name once. */
-    private String getDatabaseProduct() {
-        if (databaseProduct == null) {
-            try {
-                databaseProduct = dataSource.getConnection().getMetaData().getDatabaseProductName();
-            } catch (Exception e) {
-                log.warn("Could not detect database product, assuming PostgreSQL", e);
-                databaseProduct = "PostgreSQL";
-            }
-        }
-        return databaseProduct;
     }
 }

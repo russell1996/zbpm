@@ -39,6 +39,7 @@ public class FormOperationsImpl implements FormOperations {
     private final ObjectMapper objectMapper;
     private final JsonSchemaValidator jsonSchemaValidator;
     private final FormAccessSupport formAccessSupport;
+    private final com.zorrodev.bpm.engine.service.AdvisoryDeployLock advisoryDeployLock;
 
     @Override
     public List<FormDTO> listForms() {
@@ -115,6 +116,8 @@ public class FormOperationsImpl implements FormOperations {
             }
         }
 
+        // WO-SCALE-1: serialize concurrent deploys of the same formKey on the same PG xact
+        advisoryDeployLock.acquireForKey("form:" + dto.getKey());
         // Versioning: version = max + 1
         int maxVersion = formRepository.findMaxVersionByFormKey(dto.getKey());
         FormEntity entity = new FormEntity();
