@@ -2,9 +2,11 @@ package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.contract.dto.CreateUiUserDTO;
 import com.zorrodev.bpm.contract.dto.RegisterDTO;
+import com.zorrodev.bpm.contract.dto.VerifyEmailDTO;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.service.AuditLogService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,6 +41,7 @@ public class SelfRegistrationService {
     private final UserInvitationService invitationService;
     private final UiUserRepository userRepository;
     private final MailSender mailSender;
+    private final AuditLogService auditLogService;
     private final PasswordResetRateLimiter registrationRateLimiter;
 
     // Explicit constructor (not Lombok): the @Qualifier below is load-bearing —
@@ -49,11 +52,13 @@ public class SelfRegistrationService {
             UserInvitationService invitationService,
             UiUserRepository userRepository,
             MailSender mailSender,
+            AuditLogService auditLogService,
             @Qualifier("registrationRateLimiter") PasswordResetRateLimiter registrationRateLimiter) {
         this.uiUserService = uiUserService;
         this.invitationService = invitationService;
         this.userRepository = userRepository;
         this.mailSender = mailSender;
+        this.auditLogService = auditLogService;
         this.registrationRateLimiter = registrationRateLimiter;
     }
 
@@ -95,5 +100,52 @@ public class SelfRegistrationService {
         mailSender.send(entity.getEmail(), "ZBPM: подтверждение почты",
             "Подтвердите почту по ссылке: " + link);
         log.info("Self-registration {} created, verification email queued", userId);
+    }
+
+    @Transactional
+    public void verifyEmail(String rawToken) {
+        // 1. Same atomic single-use consume as INVITE/RESET (consumeByTokenHash + race).
+        // Invalid/expired/already-used → one phrasing, no enumeration.
+        UUID userId = invitationService.consumeEmailVerifyToken(rawToken);
+        UiUserEntity user = userRepository.findById(userId)
+            .orElseThrow(() -> new NoSuchElementException("User not found"));
+
+        // 2. Idempotent status transition: only PENDING_EMAIL_VERIFICATION moves forward.
+        // If already PENDING_APPROVAL/ACTIVE/REJECTED (repeat click, or admin raced ahead),
+        // leave state as is — already verified is not an error to be rolled back.
+        if (!"PENDING_EMAIL_VERIFICATION".equals(user.getRegistrationStatus())) {
+            log.info("Verify email idempotent for {}: status {} already beyond PENDING_EMAIL_VERIFICATION",
+                userId, user.getRegistrationStatus());
+            return;
+        }
+        user.setEmailVerifiedAt(java.time.Instant.now());
+        user.setRegistrationStatus("PENDING_APPROVAL");
+        userRepository.save(user);
+        auditLogService.record(null, "USER_EMAIL_VERIFIED", null, userId.toString());
+
+        // 3. Notify every live SUPER_ADMIN (active=true, role SUPER_ADMIN). No live ones
+        // must not fail the user's own verification — log warn, continue (criterion 5).
+        try {
+            java.util.List<UiUserEntity> supers = userRepository.findByRoleAndActive("SUPER_ADMIN", true);
+            if (supers.isEmpty()) {
+                log.warn("No active SUPER_ADMIN to notify for verified user {}", userId);
+            } else {
+                String adminLink = linkBaseUrl + "/ui/admin/registrations";
+                for (UiUserEntity admin : supers) {
+                    if (admin.getEmail() == null || admin.getEmail().isBlank()) {
+                        log.warn("SUPER_ADMIN {} has no email, skip notify", admin.getId());
+                        continue;
+                    }
+                    try {
+                        mailSender.send(admin.getEmail(), "ZBPM: новая заявка на регистрацию",
+                            "Пользователь " + user.getUsername() + " (" + user.getEmail() + ") подтвердил почту. Очередь: " + adminLink);
+                    } catch (Exception e) {
+                        log.warn("Failed to notify SUPER_ADMIN {} for verified user {}: {}", admin.getId(), userId, e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("SUPER_ADMIN notify failed for verified user {}: {}", userId, e.getMessage());
+        }
     }
 }

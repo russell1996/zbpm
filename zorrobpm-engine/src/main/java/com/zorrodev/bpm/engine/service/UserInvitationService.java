@@ -167,6 +167,7 @@ public class UserInvitationService {
      * (WO-REG-4) to stamp {@code emailVerifiedAt}. RESET/INVITE tokens are refused
      * here even if valid — different meaning, must not double as email proof.
      */
+    @Transactional
     public UUID consumeEmailVerifyToken(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) throw new EngineException("Token is required");
         String hash = tokenService.hashToken(rawToken);
