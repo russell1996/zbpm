@@ -27,6 +27,9 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
     /** WO-REG-4: live SUPER_ADMINs for verification notification. */
     List<UiUserEntity> findByRoleAndActive(String role, boolean active);
 
+    /** WO-REG-5: pending approvals queue, oldest first. */
+    List<UiUserEntity> findByRegistrationStatusOrderByCreatedAtAsc(String registrationStatus);
+
     long countByRoleAndActive(String role, boolean active);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
