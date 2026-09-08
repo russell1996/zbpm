@@ -135,6 +135,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             || "/auth/forgot-password".equals(path)
             || "/auth/reset-password".equals(path)
             || "/auth/accept-invitation".equals(path)
+            || "/auth/register".equals(path)
             || "/error".equals(path)
             || path.startsWith("/actuator/health");
     }
