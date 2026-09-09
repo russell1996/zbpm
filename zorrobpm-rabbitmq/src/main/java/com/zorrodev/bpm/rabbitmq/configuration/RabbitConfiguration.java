@@ -8,8 +8,13 @@ import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
+import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
+import org.springframework.amqp.rabbit.connection.Connection;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.connection.ConnectionListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.boot.amqp.autoconfigure.RabbitTemplateConfigurer;
@@ -122,6 +127,37 @@ public class RabbitConfiguration {
             }
         });
         return template;
+    }
+
+    /**
+     * WO-REL-20: opt-in AMQP connection tracing. OFF by default (zero overhead —
+     * the listener is never registered). Enable with
+     * {@code zorrobpm.rabbitmq.trace-connections=true} to log every physical
+     * connection open (with the caller stacktrace — shows exactly which code
+     * path creates connections) and every close. Diagnostic tool for the
+     * connection-churn failure class; not part of the steady-state path.
+     */
+    @Bean
+    public ApplicationRunner traceAmqpConnections(
+            @Value("${zorrobpm.rabbitmq.trace-connections:false}") boolean enabled,
+            CachingConnectionFactory connectionFactory) {
+        return args -> {
+            if (!enabled) {
+                return;
+            }
+            connectionFactory.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void onCreate(Connection connection) {
+                    log.warn("AMQP TRACE connection OPENED", new Exception("connection-open-trace"));
+                }
+
+                @Override
+                public void onClose(Connection connection) {
+                    log.warn("AMQP TRACE connection CLOSED");
+                }
+            });
+            log.warn("AMQP TRACE connection tracing ENABLED (open stacktraces + closes)");
+        };
     }
 
 }
