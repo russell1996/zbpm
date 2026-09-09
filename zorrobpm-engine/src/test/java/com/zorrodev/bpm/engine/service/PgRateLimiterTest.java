@@ -91,8 +91,34 @@ class PgRateLimiterTest {
     }
 
     @Test
-    void deleteExpired_removesOnlyStaleRows() {
-        String stale = "stale-" + UUID.randomUUID();
+    void namespacedBeans_sharingOneLimiter_keepSeparateQuotas() {
+        // WO-REG-3 invariant under WO-SCALE-2, end to end through real SQL:
+        // the forgot-password bean and the registration bean share one
+        // PgRateLimiter/table but must not share bucket rows.
+        PgRateLimiter shared = new PgRateLimiter(jdbc);
+        PasswordResetRateLimiter reset = new PasswordResetRateLimiter(shared);
+        reset.setEmailCapacity(1);
+        reset.setEmailWindowSeconds(3600);
+        PasswordResetRateLimiter register = new PasswordResetRateLimiter(shared);
+        register.setKeyPrefix("register:");
+        register.setEmailCapacity(1);
+        register.setEmailWindowSeconds(3600);
+
+        String victim = "victim-" + UUID.randomUUID() + "@x.y";
+        assertThat(reset.tryAcquireForEmail(victim)).isTrue();
+        assertThat(reset.tryAcquireForEmail(victim)).isFalse();
+        // Registration budget for the same address is untouched.
+        assertThat(register.tryAcquireForEmail(victim)).isTrue();
+        assertThat(register.tryAcquireForEmail(victim)).isFalse();
+        // And the reverse: registration storm does not eat reset budget.
+        String other = "other-" + UUID.randomUUID() + "@x.y";
+        assertThat(register.tryAcquireForEmail(other)).isTrue();
+        assertThat(register.tryAcquireForEmail(other)).isFalse();
+        assertThat(reset.tryAcquireForEmail(other)).isTrue();
+    }
+
+    @Test
+    void deleteExpired_removesOnlyStaleRows() {        String stale = "stale-" + UUID.randomUUID();
         String fresh = "fresh-" + UUID.randomUUID();
         Instant now = Instant.now();
         jdbc.update("INSERT INTO rate_limit_bucket (bucket_key, window_start, tokens, updated_at) VALUES (?, ?, ?, ?)",

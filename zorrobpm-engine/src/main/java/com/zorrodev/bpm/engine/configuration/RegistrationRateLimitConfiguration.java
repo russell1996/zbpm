@@ -25,6 +25,10 @@ public class RegistrationRateLimitConfiguration {
             @Value("${zorrobpm.security.rate-limit.register-ip-capacity:20}") int registerIpCapacity,
             @Value("${zorrobpm.security.rate-limit.register-ip-window-seconds:3600}") int registerIpWindowSeconds) {
         PasswordResetRateLimiter limiter = new PasswordResetRateLimiter(pgRateLimiter);
+        // WO-SCALE-2: separate namespace in the shared rate_limit_bucket table —
+        // the WO-REG-3 "separate quotas from forgot-password" invariant survives
+        // the move from per-bean Caffeine fields to one shared PgRateLimiter.
+        limiter.setKeyPrefix("register:");
         limiter.setEmailCapacity(emailCapacity);
         limiter.setEmailWindowSeconds(emailWindowSeconds);
         limiter.setIpCapacity(registerIpCapacity);

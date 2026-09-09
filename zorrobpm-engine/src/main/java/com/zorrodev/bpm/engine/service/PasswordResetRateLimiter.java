@@ -10,6 +10,16 @@ import org.springframework.stereotype.Component;
  * budget. Now backed by PostgreSQL (cluster-safe) via {@code PgRateLimiter}, replacing the
  * per-instance Caffeine caches that were also used by the original {@code RateLimitFilter}.
  * Configurable capacities/windows via setters (used by tests to shrink the window).
+ *
+ * <p>WO-SCALE-2: both beans of this class (the {@code @Primary} forgot-password
+ * one and the {@code registrationRateLimiter} one) share a single
+ * {@code PgRateLimiter} — and therefore a single table. Quota separation
+ * between them (the WO-REG-3 invariant: "its own bean and keys, separate
+ * quotas from forgot-password") is preserved by the {@code keyPrefix}:
+ * {@code "reset:"} by default, {@code "register:"} on the registration bean
+ * (see {@code RegistrationRateLimitConfiguration}). Without it a
+ * forgot-password storm on one address would eat the registration budget
+ * for the same address and vice versa.
  */
 @Component
 // WO-REG-3: default choice now that a second bean of this class exists
@@ -29,6 +39,8 @@ public class PasswordResetRateLimiter {
     @Value("${zorrobpm.security.rate-limit.reset-ip-window-seconds:3600}")
     private int ipWindowSeconds = 3600;
 
+    private String keyPrefix = "reset:";
+
     public PasswordResetRateLimiter(PgRateLimiter pgRateLimiter) {
         this.pgRateLimiter = pgRateLimiter;
     }
@@ -37,15 +49,16 @@ public class PasswordResetRateLimiter {
     public void setEmailWindowSeconds(int windowSeconds) { this.emailWindowSeconds = windowSeconds; }
     public void setIpCapacity(int capacity) { this.ipCapacity = capacity; }
     public void setIpWindowSeconds(int windowSeconds) { this.ipWindowSeconds = windowSeconds; }
+    public void setKeyPrefix(String keyPrefix) { this.keyPrefix = keyPrefix; }
 
     public boolean tryAcquireForEmail(String email) {
         if (email == null) return true;
-        return pgRateLimiter.tryConsume(email.toLowerCase(), emailCapacity, emailWindowSeconds) == 0;
+        return pgRateLimiter.tryConsume(keyPrefix + "email:" + email.toLowerCase(), emailCapacity, emailWindowSeconds) == 0;
     }
 
     public boolean tryAcquireForIp(String ip) {
         if (ip == null) return true;
-        return pgRateLimiter.tryConsume(ip, ipCapacity, ipWindowSeconds) == 0;
+        return pgRateLimiter.tryConsume(keyPrefix + "ip:" + ip, ipCapacity, ipWindowSeconds) == 0;
     }
 
     public void reset() {

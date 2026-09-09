@@ -12,22 +12,27 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-SEC-22: POF for RateBucket.tryConsume() race condition.
+ * WO-SEC-22: concurrency guard for the login throttle, kept through WO-SCALE-2.
  *
- * Before fix: window reset (CAS + tokens.set) and tokens.decrementAndGet() were not atomic.
- * At window boundary, multiple threads could see elapsed >= windowMillis, all pass CAS
- * (only one wins the reset), but the others still call tokens.decrementAndGet() which
- * decrements from the reset value → more tokens consumed than capacity allows.
+ * Before fix (Caffeine era): window reset (CAS + tokens.set) and
+ * tokens.decrementAndGet() were not atomic — at the window boundary more
+ * tokens than capacity could be consumed. After fix: synchronized
+ * tryConsume() made reset + consumption atomic.
  *
- * After fix: synchronized tryConsume() makes reset + consumption atomic.
+ * WO-SCALE-2: the bucket now lives in the shared table behind
+ * PgRateLimiter (guarded single-statement UPDATE); this test hammers the
+ * real filter path from 50 threads and asserts allowed <= capacity. The
+ * precise window-boundary shape is covered by
+ * RateLimitClusterPgIT.criterion3 on real PG; here the window (1s) is
+ * longer than the pre-sleep, so this is a burst-contention test, not a
+ * boundary test.
  */
 class RateBucketConcurrencyTest {
 
     /**
-     * POF: 50 threads hit tryConsume() simultaneously at window boundary.
-     * Capacity=5, window=100ms. After 100ms, window resets.
-     * With race: >5 tokens consumed in the window.
-     * Without race: exactly 5 tokens consumed.
+     * 50 threads hit the login path simultaneously on one IP.
+     * Capacity=5: at most 5 requests may pass, the rest get 429 —
+     * through the real filter → PgRateLimiter path.
      */
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)

@@ -40,7 +40,7 @@ import java.time.Instant;
  * {@code bucket_key} instead (changeset 103 comment records this).
  * The guarded-UPDATE form above is byte-identical SQL on both databases,
  * and the no-extra-pass property it exists for is proven by
- * {@code RateLimitBucketRacePgIT} on real PostgreSQL (criterion 3),
+ * {@code RateLimitClusterPgIT} on real PostgreSQL (criteria 1 and 3),
  * not by reasoning.
  *
  * <p>Window boundaries are computed in Java ({@link Instant}) and bound as

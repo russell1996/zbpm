@@ -1,7 +1,6 @@
 package com.zorrodev.bpm.engine.mail;
 
 import com.zorrodev.bpm.engine.service.PgRateLimiter;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -16,7 +15,6 @@ import java.util.UUID;
  * to that server, not which button sent them. Now backed by PostgreSQL (cluster-safe) via
  * {@code PgRateLimiter}, replacing the per-instance Caffeine bucket.
  */
-@Slf4j
 @Component
 public class MailActionRateLimiter {
 
@@ -36,7 +34,7 @@ public class MailActionRateLimiter {
 
     public boolean tryAcquire(UUID userId) {
         if (userId == null) return true;
-        return pgRateLimiter.tryConsume(userId.toString(), capacity, windowSeconds) == 0;
+        return pgRateLimiter.tryConsume("mail:action:" + userId, capacity, windowSeconds) == 0;
     }
 
     public void reset() {

@@ -13,9 +13,8 @@ import java.util.UUID;
  * with full state isolation between tests.
  *
  * <p>Cluster-safety and race-freedom themselves are proven on real
- * PostgreSQL ({@code RateLimitClusterPgIT}/{@code RateLimitBucketRacePgIT}
- * in zorrobpm-engine); this helper only keeps the pre-existing
- * limit-semantics corpus green (criterion 2).
+ * PostgreSQL ({@code RateLimitClusterPgIT} in zorrobpm-engine); this helper
+ * only keeps the pre-existing limit-semantics corpus green (criterion 2).
  */
 final class TestRateLimitBuckets {
 
