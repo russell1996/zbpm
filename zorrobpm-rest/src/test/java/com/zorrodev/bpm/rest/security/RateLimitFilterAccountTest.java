@@ -18,6 +18,7 @@ class RateLimitFilterAccountTest {
     @BeforeEach
     void setUp() {
         filter = new RateLimitFilter();
+        filter.setPgRateLimiter(TestRateLimitBuckets.create());
         filter.setCapacity(5);
         filter.setWindowSeconds(3600);
         filter.setAccountCapacity(5);

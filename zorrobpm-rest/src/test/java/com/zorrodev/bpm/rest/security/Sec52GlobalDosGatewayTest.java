@@ -31,6 +31,7 @@ class Sec52GlobalDosGatewayTest {
     @BeforeEach
     void setUp() {
         filter = new RateLimitFilter();
+        filter.setPgRateLimiter(TestRateLimitBuckets.create());
         filter.setRateLimitEnabled(true);
         filter.setCapacity(5);
         filter.setWindowSeconds(3600);
