@@ -41,4 +41,13 @@ public interface PasswordTokenRepository extends JpaRepository<PasswordTokenEnti
     /** WO-ACL-18 criterion 5: true while an unexpired invitation token is outstanding. */
     boolean existsByUserIdAndTypeAndUsedFalseAndExpiresAtAfter(
             @Param("userId") UUID userId, @Param("type") String type, @Param("expiresAt") Instant now);
+
+    /**
+     * WO-REG-7: delete all token rows of a user whose stale registration is
+     * being cleaned up (password_tokens.user_id has no FK to ui_users, so no
+     * cascade — explicit delete, before the user row goes).
+     */
+    @Modifying
+    @Transactional
+    void deleteByUserId(@Param("userId") UUID userId);
 }
