@@ -30,6 +30,10 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
     /** WO-REG-5: pending approvals queue, oldest first. */
     List<UiUserEntity> findByRegistrationStatusOrderByCreatedAtAsc(String registrationStatus);
 
+    /** WO-REG-7: stale unverified registrations eligible for TTL cleanup. */
+    List<UiUserEntity> findByRegistrationStatusAndCreatedAtBefore(
+        String registrationStatus, java.time.Instant cutoff);
+
     long countByRoleAndActive(String role, boolean active);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
