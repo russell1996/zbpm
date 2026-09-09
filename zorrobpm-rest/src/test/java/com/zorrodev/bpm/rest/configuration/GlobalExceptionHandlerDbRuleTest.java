@@ -25,8 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * <p>Proven through a real DispatcherServlet + advice wiring (standalone
  * MockMvc), not by calling handler methods directly: the negative cases
- * specifically prove the rethrow path still lands in
- * {@code handleGenericRuntime}.
+ * specifically prove the non-P0001 path still lands in the generic
+ * {@code 500 INTERNAL_ERROR} response.
  */
 class GlobalExceptionHandlerDbRuleTest {
 
