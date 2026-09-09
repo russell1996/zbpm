@@ -134,8 +134,9 @@ public class GlobalExceptionHandler {
      * SQLState {@code P0001} — it is a deliberate, human-readable rule text, not a
      * raw error, so it surfaces as {@code 409 DATABASE_RULE_VIOLATION} with that
      * text instead of vanishing into the generic 500 below. Anything else (other
-     * SQLStates, no {@code PSQLException} in the chain) is rethrown untouched to
-     * the pre-existing catch-all — WO-SEC-17 M6 stays in force for all of it.
+     * SQLStates, no {@code PSQLException} in the chain) is delegated to the
+     * same generic response the pre-existing catch-all produces — WO-SEC-17 M6
+     * stays in force for all of it.
      */
     @ExceptionHandler(JpaSystemException.class)
     public ResponseEntity<Map<String, String>> handleJpaSystem(JpaSystemException ex) {
