@@ -27,6 +27,7 @@ class PasswordResetRateLimiterTest {
     }
 
 
+    @Test
     void allowsUpToCapacityThenRejects_perEmail() {
         PasswordResetRateLimiter limiter = limiter(2, 3600, 20, 3600);
         when(pgRateLimiter.tryConsume(eq("a@b.c"), eq(2), eq(3600)))
