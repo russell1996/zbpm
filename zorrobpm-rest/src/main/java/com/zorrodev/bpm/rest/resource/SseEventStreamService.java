@@ -20,7 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -263,11 +262,39 @@ public class SseEventStreamService {
      */
     private void ensureBridgeStarted() {
         synchronized (bridgeLock) {
-            if ((listenerContainer == null || !listenerContainer.isRunning())
-                    && bridgeStarting.compareAndSet(false, true)) {
-                Thread.ofVirtual().name("sse-bridge-starter").start(this::startBridgeLoop);
-            }
+            spawnStarterIfNeededLocked();
         }
+    }
+
+    /**
+     * Must hold {@link #bridgeLock}. Spawns at most one background starter:
+     * only with waiting clients, a DOWN bridge, no attempt in flight — and
+     * never when there is no broker to talk to ({@code rabbitAdmin == null}
+     * is static wiring, not a transient failure; spinning attempts on it
+     * would burn a thread forever, while a later registration re-arms
+     * anyway if wiring ever changes).
+     */
+    private void spawnStarterIfNeededLocked() {
+        if (rabbitAdmin == null || clients.isEmpty()
+                || (listenerContainer != null && listenerContainer.isRunning())
+                || !bridgeStarting.compareAndSet(false, true)) {
+            return;
+        }
+        Thread.ofVirtual().name("sse-bridge-starter").start(() -> {
+            try {
+                startBridgeLoop();
+            } finally {
+                synchronized (bridgeLock) {
+                    bridgeStarting.set(false);
+                    // Re-arm in the same critical section: a registration
+                    // landing between the loop's last check and this clear
+                    // would otherwise strand waiting clients with no attempt
+                    // in flight. Single-flight holds — this can only spawn,
+                    // never duplicate.
+                    spawnStarterIfNeededLocked();
+                }
+            }
+        });
     }
 
     /**
@@ -353,21 +380,29 @@ public class SseEventStreamService {
             throw e;
         }
         boolean assigned = false;
+        SimpleMessageListenerContainer previous = null;
         synchronized (bridgeLock) {
             if (!clients.isEmpty() && (listenerContainer == null || !listenerContainer.isRunning())) {
-                destroyContainerLocked();
-                this.listenerContainer = container;
+                // Null-out under the lock, stop outside it: even a stale
+                // stopped container's shutdown path must never run under
+                // bridgeLock (verifier round 2 — stop()/destroy() are
+                // broker RPCs and would re-serialize registrations).
+                previous = listenerContainer;
+                listenerContainer = container;
                 assigned = true;
             }
         }
-        if (!assigned) {
-            // Nobody to serve (all left while starting), or a newer
-            // container won the race: take ours down, keep exactly one.
-            stopAndDestroy(container);
-            log.info("SSE bridge: starter finished with no live bridge to publish — stopped immediately");
+        if (assigned) {
+            // `previous` here is never running (checked above under the lock),
+            // so this is fast local teardown, not a broker stall.
+            stopAndDestroy(previous);
+            log.info("SSE bridge: started RabbitMQ listener on queue {}", queueName);
             return;
         }
-        log.info("SSE bridge: started RabbitMQ listener on queue {}", queueName);
+        // Nobody to serve (all left while starting), or a newer container won
+        // the race: take ours down, keep exactly one.
+        stopAndDestroy(container);
+        log.info("SSE bridge: starter finished with no live bridge to publish — stopped immediately");
     }
 
     private void stopRabbitMqListenerIfNoClients() {
@@ -387,17 +422,7 @@ public class SseEventStreamService {
         }
     }
 
-    /** Must hold {@link #bridgeLock}. Stops + destroys the current container, if any. */
-    private void destroyContainerLocked() {
-        SimpleMessageListenerContainer container = listenerContainer;
-        listenerContainer = null;
-        stopAndDestroy(container);
-    }
-
-    /**
-     * Stops + destroys a container owned solely by the caller (a failed local
-     * start that was never published). No lock needed — nobody else can see it.
-     */
+    /** Stops + destroys a container. Call outside {@link #bridgeLock}. */
     private void stopAndDestroy(SimpleMessageListenerContainer container) {
         if (container == null) {
             return;
@@ -415,11 +440,6 @@ public class SseEventStreamService {
                 log.warn("SSE bridge: error destroying listener container", e);
             }
         }
-    }
-
-    /** Must hold {@link #bridgeLock}. */
-    private void stopAndDestroyLocked(SimpleMessageListenerContainer container) {
-        stopAndDestroy(container);
     }
 
     private void deleteQueueQuietly(String queueName) {
