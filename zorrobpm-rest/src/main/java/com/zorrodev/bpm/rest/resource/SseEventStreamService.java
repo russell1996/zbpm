@@ -308,33 +308,31 @@ public class SseEventStreamService {
      */
     private void startBridgeLoop() {
         boolean first = true;
-        try {
-            while (true) {
-                synchronized (bridgeLock) {
-                    if (clients.isEmpty()
-                            || (listenerContainer != null && listenerContainer.isRunning())) {
-                        return;
-                    }
-                }
-                if (!first) {
-                    log.warn("SSE bridge: retrying start ({} waiting clients)", clients.size());
-                }
-                first = false;
-                try {
-                    startBridgeNow();
-                    return;
-                } catch (Exception e) {
-                    log.error("SSE bridge: failed to start RabbitMQ listener, retrying", e);
-                }
-                try {
-                    Thread.sleep(retryIntervalMs);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+        // NOTE: no try/finally flag clear here — the single clear + re-arm
+        // lives in the spawner's finally (single-flight must be atomic).
+        while (true) {
+            synchronized (bridgeLock) {
+                if (clients.isEmpty()
+                        || (listenerContainer != null && listenerContainer.isRunning())) {
                     return;
                 }
             }
-        } finally {
-            bridgeStarting.set(false);
+            if (!first) {
+                log.warn("SSE bridge: retrying start ({} waiting clients)", clients.size());
+            }
+            first = false;
+            try {
+                startBridgeNow();
+                return;
+            } catch (Exception e) {
+                log.error("SSE bridge: failed to start RabbitMQ listener, retrying", e);
+            }
+            try {
+                Thread.sleep(retryIntervalMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
