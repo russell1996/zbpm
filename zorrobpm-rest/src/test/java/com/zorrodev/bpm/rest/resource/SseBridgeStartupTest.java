@@ -103,27 +103,29 @@ class SseBridgeStartupTest {
     }
 
     @Test
-    void failedStart_retriesOnNextRegistration() throws Exception {
-        // Deterministic sequencing: attempt #1 must fully FAIL before
-        // register #2 (the flag blocks concurrent duplicates by design).
-        // The binding stub signals arrival; the 50ms after covers
-        // throw → catch → deleteQueue → finally(flag reset), nanoseconds
-        // of real work.
-        CountDownLatch attemptReachedBinding = new CountDownLatch(1);
+    void failedStart_retriesWhileClientsRemain_stopsWhenTheyLeave() throws Exception {
         doAnswer(inv -> ((Queue) inv.getArgument(0)).getName()).when(rabbitAdmin).declareQueue(any(Queue.class));
         doAnswer(inv -> {
-            attemptReachedBinding.countDown();
             throw new AmqpIllegalStateException("boom");
         }).when(rabbitAdmin).declareBinding(any());
 
         SseEventStreamService service = service();
-        service.registerClient(new SseEmitter(0L), admin(), null, null, null);
-        assertThat(attemptReachedBinding.await(5, TimeUnit.SECONDS)).isTrue();
-        Thread.sleep(50);
-        service.registerClient(new SseEmitter(0L), admin(), null, null, null);
-        // Both registrations trigger an attempt (the first failed) — the
-        // bridge self-heals instead of staying DOWN silently.
-        verify(rabbitAdmin, timeout(5000).times(2)).declareQueue(any(Queue.class));
+        // Shrink the retry backoff for test speed (prod default 10s).
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "retryIntervalMs", 150L);
+        String client = service.registerClient(new SseEmitter(0L), admin(), null, null, null);
+        // The loop keeps retrying while the client waits: at least 2 declares.
+        verify(rabbitAdmin, timeout(5000).atLeast(2)).declareQueue(any(Queue.class));
+        // Once the client leaves, the loop must stop: count goes flat.
+        service.removeClient(client);
+        long countAfterLeave = declareCount();
+        Thread.sleep(450);
+        assertThat(declareCount()).isEqualTo(countAfterLeave);
+    }
+
+    private long declareCount() {
+        return org.mockito.Mockito.mockingDetails(rabbitAdmin).getInvocations().stream()
+            .filter(m -> m.getMethod().getName().equals("declareQueue"))
+            .count();
     }
 
     @Test
