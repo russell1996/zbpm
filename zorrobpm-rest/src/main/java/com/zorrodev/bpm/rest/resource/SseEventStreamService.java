@@ -59,6 +59,18 @@ public class SseEventStreamService {
     /** RabbitMQ listener container for this instance */
     private volatile SimpleMessageListenerContainer listenerContainer;
 
+    /**
+     * Guards bridge lifecycle transitions (start/stop/replace). The lock is
+     * only ever held for fast local work (flag checks, declares, assign) —
+     * never for {@code container.start()}, which may block up to the
+     * consumer-start timeout on a sick broker.
+     */
+    private final Object bridgeLock = new Object();
+
+    /** A bridge start is in flight on a background thread (at most one). */
+    private final java.util.concurrent.atomic.AtomicBoolean bridgeStarting =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+
     /** Functional interface for test event capture: receives clientId + envelope. */
     @FunctionalInterface
     public interface EventDispatchListener {
@@ -106,10 +118,12 @@ public class SseEventStreamService {
             stopRabbitMqListenerIfNoClients();
         });
 
-        // If this is the first client, start RabbitMQ subscription
-        if (clients.size() == 1) {
-            startRabbitMqListener();
-        }
+        // If this is the first client, start RabbitMQ subscription.
+        // Never on the HTTP thread: declares + container.start() are blocking
+        // broker RPCs (consumer start waits up to 60s on a sick broker), and a
+        // stalled broker once hung GET /events/stream with zero response
+        // (WO-REL-20). The stream opens immediately; events flow once ready.
+        ensureBridgeStarted();
 
         log.info("SSE client {} registered: type={}, processInstanceId={}, processDefinitionKey={}",
             clientId, typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
@@ -235,10 +249,31 @@ public class SseEventStreamService {
         }
     }
 
-    private void startRabbitMqListener() {
-        if (listenerContainer != null && listenerContainer.isRunning()) {
-            return;
+    /**
+     * Triggers a bridge start unless one is already running or starting.
+     * Returns immediately — the start itself runs on a background thread.
+     * Safe to call from every registration (not just the first client): the
+     * flag makes concurrent/duplicate starts impossible, and a failed start
+     * simply leaves the bridge DOWN so the next registration retries.
+     */
+    private void ensureBridgeStarted() {
+        synchronized (bridgeLock) {
+            if ((listenerContainer == null || !listenerContainer.isRunning())
+                    && bridgeStarting.compareAndSet(false, true)) {
+                Thread.ofVirtual().name("sse-bridge-starter").start(() -> {
+                    try {
+                        startBridgeNow();
+                    } catch (Exception e) {
+                        log.error("SSE bridge: failed to start RabbitMQ listener (next registration retries)", e);
+                    } finally {
+                        bridgeStarting.set(false);
+                    }
+                });
+            }
         }
+    }
+
+    private void startBridgeNow() {
         if (rabbitAdmin == null) {
             log.warn("RabbitAdmin not available — SSE bridge not started (no RabbitMQ)");
             return;
@@ -246,13 +281,21 @@ public class SseEventStreamService {
 
         String queueName = "zorrobpm.sse-bridge." + UUID.randomUUID();
         Queue queue = new Queue(queueName, false, true, true); // exclusive, auto-delete
-        rabbitAdmin.declareQueue(queue);
-
-        Binding binding = BindingBuilder.bind(queue)
-            .to(new TopicExchange(RabbitConfiguration.EVENTS_EXCHANGE, true, false))
-            .with("#");
-        rabbitAdmin.declareBinding(binding);
-
+        // Blocking broker RPCs run WITHOUT holding bridgeLock: a stalled
+        // broker must not serialize registrations (or stop()) behind them —
+        // holding the lock across declares reintroduced the very
+        // request pile-up WO-REL-20 removes (caught by SseBridgeStartupTest).
+        try {
+            rabbitAdmin.declareQueue(queue);
+            Binding binding = BindingBuilder.bind(queue)
+                .to(new TopicExchange(RabbitConfiguration.EVENTS_EXCHANGE, true, false))
+                .with("#");
+            rabbitAdmin.declareBinding(binding);
+        } catch (RuntimeException e) {
+            // Partial declare must not leave an orphan queue behind.
+            deleteQueueQuietly(queueName);
+            throw e;
+        }
         SimpleMessageListenerContainer container = new SimpleMessageListenerContainer();
         container.setConnectionFactory(rabbitAdmin.getRabbitTemplate().getConnectionFactory());
         container.setQueueNames(queueName);
@@ -260,17 +303,87 @@ public class SseEventStreamService {
             String body = new String(message.getBody());
             onDomainEvent(body);
         });
-        container.start();
-
-        this.listenerContainer = container;
+        // Outside the lock as well: may block up to the consumer-start
+        // timeout on a sick broker.
+        try {
+            container.start();
+        } catch (RuntimeException e) {
+            stopAndDestroy(container);
+            deleteQueueQuietly(queueName);
+            throw e;
+        }
+        synchronized (bridgeLock) {
+            if (clients.isEmpty()) {
+                // Everyone left while we were starting: stop immediately
+                // instead of leaking a running bridge nobody consumes.
+                stopAndDestroyLocked(container);
+                log.info("SSE bridge: starter finished with no clients left — stopped immediately");
+                return;
+            }
+            // A newer container may have been assigned concurrently (stop+start
+            // race): keep exactly one — the running one wins, ours goes down.
+            if (listenerContainer != null && listenerContainer.isRunning()) {
+                stopAndDestroyLocked(container);
+                return;
+            }
+            destroyContainerLocked();
+            this.listenerContainer = container;
+        }
         log.info("SSE bridge: started RabbitMQ listener on queue {}", queueName);
     }
 
     private void stopRabbitMqListenerIfNoClients() {
-        if (clients.isEmpty() && listenerContainer != null && listenerContainer.isRunning()) {
-            listenerContainer.stop();
+        synchronized (bridgeLock) {
+            if (!clients.isEmpty()) {
+                return;
+            }
+            SimpleMessageListenerContainer container = listenerContainer;
             listenerContainer = null;
+            stopAndDestroyLocked(container);
             log.info("SSE bridge: stopped RabbitMQ listener (no clients)");
+        }
+    }
+
+    /** Must hold {@link #bridgeLock}. Stops + destroys the current container, if any. */
+    private void destroyContainerLocked() {
+        SimpleMessageListenerContainer container = listenerContainer;
+        listenerContainer = null;
+        stopAndDestroy(container);
+    }
+
+    /**
+     * Stops + destroys a container owned solely by the caller (a failed local
+     * start that was never published). No lock needed — nobody else can see it.
+     */
+    private void stopAndDestroy(SimpleMessageListenerContainer container) {
+        if (container == null) {
+            return;
+        }
+        try {
+            if (container.isRunning()) {
+                container.stop();
+            }
+        } catch (Exception e) {
+            log.warn("SSE bridge: error stopping listener container", e);
+        } finally {
+            try {
+                container.destroy();
+            } catch (Exception e) {
+                log.warn("SSE bridge: error destroying listener container", e);
+            }
+        }
+    }
+
+    /** Must hold {@link #bridgeLock}. */
+    private void stopAndDestroyLocked(SimpleMessageListenerContainer container) {
+        stopAndDestroy(container);
+    }
+
+    private void deleteQueueQuietly(String queueName) {
+        try {
+            rabbitAdmin.deleteQueue(queueName);
+        } catch (Exception cleanupEx) {
+            log.warn("SSE bridge: failed to clean up queue {} after failed start", queueName, cleanupEx);
         }
     }
 
