@@ -31,10 +31,10 @@ databaseChangeLog:
                     nullable: false
         - sql:
             dbms: postgresql
-            sql: CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_window ON rate_limit_bucket (window_start)
+            sql: CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_updated_at ON rate_limit_bucket (updated_at)
         - sql:
             dbms: h2
-            sql: CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_window ON rate_limit_bucket (window_start)
+            sql: CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_updated_at ON rate_limit_bucket (updated_at)
         - sql:
             dbms: postgresql
             sql: >-
