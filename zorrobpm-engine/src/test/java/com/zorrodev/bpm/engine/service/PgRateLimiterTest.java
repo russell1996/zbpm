@@ -118,7 +118,8 @@ class PgRateLimiterTest {
     }
 
     @Test
-    void deleteExpired_removesOnlyStaleRows() {        String stale = "stale-" + UUID.randomUUID();
+    void deleteExpired_removesOnlyStaleRows() {
+        String stale = "stale-" + UUID.randomUUID();
         String fresh = "fresh-" + UUID.randomUUID();
         Instant now = Instant.now();
         jdbc.update("INSERT INTO rate_limit_bucket (bucket_key, window_start, tokens, updated_at) VALUES (?, ?, ?, ?)",
