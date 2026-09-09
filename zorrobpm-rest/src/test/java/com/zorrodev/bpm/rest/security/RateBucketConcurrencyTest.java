@@ -12,38 +12,46 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-SEC-22: POF for RateBucket.tryConsume() race condition.
+ * WO-SEC-22: concurrency guard for the login throttle, kept through WO-SCALE-2.
  *
- * Before fix: window reset (CAS + tokens.set) and tokens.decrementAndGet() were not atomic.
- * At window boundary, multiple threads could see elapsed >= windowMillis, all pass CAS
- * (only one wins the reset), but the others still call tokens.decrementAndGet() which
- * decrements from the reset value → more tokens consumed than capacity allows.
+ * Before fix (Caffeine era): window reset (CAS + tokens.set) and
+ * tokens.decrementAndGet() were not atomic — at the window boundary more
+ * tokens than capacity could be consumed. After fix: synchronized
+ * tryConsume() made reset + consumption atomic.
  *
- * After fix: synchronized tryConsume() makes reset + consumption atomic.
+ * WO-SCALE-2: the bucket now lives in the shared table behind
+ * PgRateLimiter (guarded single-statement UPDATE); this test hammers the
+ * real filter path from 50 threads and asserts allowed <= capacity. The
+ * precise window-boundary shape is covered by
+ * RateLimitClusterPgIT.criterion3 on real PG; here the window (1s) is
+ * longer than the pre-sleep, so this is a burst-contention test, not a
+ * boundary test.
  */
 class RateBucketConcurrencyTest {
 
     /**
-     * POF: 50 threads hit tryConsume() simultaneously at window boundary.
-     * Capacity=5, window=100ms. After 100ms, window resets.
-     * With race: >5 tokens consumed in the window.
-     * Without race: exactly 5 tokens consumed.
+     * 50 threads hit the login path simultaneously on one IP.
+     * Capacity=5: at most 5 requests may pass, the rest get 429 —
+     * through the real filter → PgRateLimiter path.
      */
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void tryConsume_atWindowBoundary_neverExceedsCapacity() throws Exception {
         int capacity = 5;
-        int windowMs = 100;
+        int preSleepMs = 150;
         int threads = 50;
 
-        // Create bucket and exhaust initial tokens
+        // Create the shared bucket row with one warm-up request (window is 1s,
+        // the sleep below is shorter — the window does NOT expire; the race
+        // is burst contention on the remaining tokens, not a boundary reset).
         RateLimitFilter filter = new RateLimitFilter();
+        filter.setPgRateLimiter(TestRateLimitBuckets.create());
         filter.setCapacity(capacity);
         filter.setWindowSeconds(1);
         filter.setRateLimitEnabled(true);
 
-        // Use the internal RateBucket via the filter's computeIfAbsent
-        // First, create the bucket by making one request
+        // First request warms the shared bucket (consumes 1 of 5 tokens);
+        // the 50 racing threads below then contend for the remaining 4.
         var createReq = new org.springframework.mock.web.MockHttpServletRequest("POST", "/auth/login");
         createReq.setRemoteAddr("test-ip");
         var createResp = new org.springframework.mock.web.MockHttpServletResponse();
@@ -53,8 +61,8 @@ class RateBucketConcurrencyTest {
         filter.setRateLimitEnabled(true);
         filter.doFilterInternal(createReq, createResp, chain);
 
-        // Wait for window to expire
-        Thread.sleep(windowMs + 50);
+        // Short settle sleep (window is 1s — it does NOT expire here).
+        Thread.sleep(preSleepMs);
 
         // Now launch 50 threads simultaneously
         AtomicInteger allowedCount = new AtomicInteger(0);

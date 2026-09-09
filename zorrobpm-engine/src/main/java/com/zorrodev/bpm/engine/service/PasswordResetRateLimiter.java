@@ -1,19 +1,25 @@
 package com.zorrodev.bpm.engine.service;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.TimeUnit;
-
 /**
  * WO-ACL-18 criterion 13: throttles password-reset REQUESTS per email address AND per client IP,
  * so an attacker cannot flood reset emails to a victim (or enumerate) without burning their own
- * budget. Pure in-memory, per-instance — consistent with the existing {@code RateLimitFilter}
- * which is also in-memory. Configurable capacities/windows via setters (used by tests to shrink
- * the window).
+ * budget. Now backed by PostgreSQL (cluster-safe) via {@code PgRateLimiter}, replacing the
+ * per-instance Caffeine caches that were also used by the original {@code RateLimitFilter}.
+ * Configurable capacities/windows via setters (used by tests to shrink the window).
+ *
+ * <p>WO-SCALE-2: both beans of this class (the {@code @Primary} forgot-password
+ * one and the {@code registrationRateLimiter} one) share a single
+ * {@code PgRateLimiter} — and therefore a single table. Quota separation
+ * between them (the WO-REG-3 invariant: "its own bean and keys, separate
+ * quotas from forgot-password") is preserved by the {@code keyPrefix}:
+ * {@code "reset:"} by default, {@code "register:"} on the registration bean
+ * (see {@code RegistrationRateLimitConfiguration}). Without it a
+ * forgot-password storm on one address would eat the registration budget
+ * for the same address and vice versa.
  */
 @Component
 // WO-REG-3: default choice now that a second bean of this class exists
@@ -21,6 +27,8 @@ import java.util.concurrent.TimeUnit;
 // keep resolving here, unchanged; the new bean is only ever referenced by qualifier.
 @Primary
 public class PasswordResetRateLimiter {
+
+    private final PgRateLimiter pgRateLimiter;
 
     @Value("${zorrobpm.security.rate-limit.reset-email-capacity:5}")
     private int emailCapacity = 5;
@@ -31,65 +39,29 @@ public class PasswordResetRateLimiter {
     @Value("${zorrobpm.security.rate-limit.reset-ip-window-seconds:3600}")
     private int ipWindowSeconds = 3600;
 
-    private final Cache<String, Bucket> emailBuckets = Caffeine.newBuilder()
-        .maximumSize(100_000)
-        .expireAfterAccess(1, TimeUnit.HOURS)
-        .build();
-    private final Cache<String, Bucket> ipBuckets = Caffeine.newBuilder()
-        .maximumSize(100_000)
-        .expireAfterAccess(1, TimeUnit.HOURS)
-        .build();
+    private String keyPrefix = "reset:";
+
+    public PasswordResetRateLimiter(PgRateLimiter pgRateLimiter) {
+        this.pgRateLimiter = pgRateLimiter;
+    }
 
     public void setEmailCapacity(int capacity) { this.emailCapacity = capacity; }
     public void setEmailWindowSeconds(int windowSeconds) { this.emailWindowSeconds = windowSeconds; }
     public void setIpCapacity(int capacity) { this.ipCapacity = capacity; }
     public void setIpWindowSeconds(int windowSeconds) { this.ipWindowSeconds = windowSeconds; }
+    public void setKeyPrefix(String keyPrefix) { this.keyPrefix = keyPrefix; }
 
     public boolean tryAcquireForEmail(String email) {
         if (email == null) return true;
-        return acquire(emailBuckets, email.toLowerCase(), emailCapacity, emailWindowSeconds);
+        return pgRateLimiter.tryConsume(keyPrefix + "email:" + email.toLowerCase(), emailCapacity, emailWindowSeconds) == 0;
     }
 
     public boolean tryAcquireForIp(String ip) {
         if (ip == null) return true;
-        return acquire(ipBuckets, ip, ipCapacity, ipWindowSeconds);
-    }
-
-    private synchronized boolean acquire(Cache<String, Bucket> cache, String key, int capacity, int windowSeconds) {
-        long now = System.currentTimeMillis();
-        Bucket bucket = cache.get(key, k -> new Bucket(capacity, windowSeconds));
-        return bucket.tryConsume(now);
+        return pgRateLimiter.tryConsume(keyPrefix + "ip:" + ip, ipCapacity, ipWindowSeconds) == 0;
     }
 
     public void reset() {
-        emailBuckets.invalidateAll();
-        ipBuckets.invalidateAll();
-    }
-
-    static class Bucket {
-        private final int capacity;
-        private final long windowMillis;
-        private long windowStart;
-        private int tokens;
-
-        Bucket(int capacity, int windowSeconds) {
-            this.capacity = capacity;
-            this.windowMillis = (long) windowSeconds * 1000L;
-            this.tokens = capacity;
-            this.windowStart = System.currentTimeMillis();
-        }
-
-        synchronized boolean tryConsume(long now) {
-            long elapsed = now - windowStart;
-            if (elapsed >= windowMillis) {
-                windowStart = now;
-                tokens = capacity;
-            }
-            if (tokens > 0) {
-                tokens--;
-                return true;
-            }
-            return false;
-        }
+        pgRateLimiter.reset();
     }
 }
