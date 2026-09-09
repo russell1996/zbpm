@@ -39,7 +39,7 @@ databaseChangeLog:
             dbms: postgresql
             sql: >-
               COMMENT ON TABLE rate_limit_bucket IS 'Общий кластерный счётчик rate-лимитов (WO-SCALE-2): один ряд на namespace-ключ, все реплики делят счётчик';
-              COMMENT ON COLUMN rate_limit_bucket.bucket_key IS 'Namespace-ключ корзины (login:ip:.., login:account:.., refresh:.., reset:email:..), PK';
+              COMMENT ON COLUMN rate_limit_bucket.bucket_key IS 'Namespace-ключ корзины (login:ip:, login:account:, refresh:, me-password:, data:, reset:email:, reset:ip:, register:email:, register:ip:, mail:action:), PK';
               COMMENT ON COLUMN rate_limit_bucket.window_start IS 'Начало текущего fixed-окна корзины';
               COMMENT ON COLUMN rate_limit_bucket.tokens IS 'Остаток токенов текущего окна';
               COMMENT ON COLUMN rate_limit_bucket.updated_at IS 'Последнее касание корзины (для TTL-чистки)';
