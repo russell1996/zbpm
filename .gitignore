@@ -43,3 +43,4 @@ zorrobpm-frontend/dist/
 # false-positives ci/sync-dispatch.sh's "исполнитель работает, не трогаю" check (a merged, clean
 # branch reads as dirty just because this file exists), blocking --fix after every merge.
 .opencode-serve.log
+ci/soak/out/
