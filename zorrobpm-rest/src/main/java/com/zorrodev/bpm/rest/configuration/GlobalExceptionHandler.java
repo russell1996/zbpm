@@ -4,9 +4,12 @@ import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.exception.FormValidationException;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -126,8 +129,49 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    /**
+     * WO-DB-1: a human-written {@code RAISE EXCEPTION} from a DB trigger carries
+     * SQLState {@code P0001} — it is a deliberate, human-readable rule text, not a
+     * raw error, so it surfaces as {@code 409 DATABASE_RULE_VIOLATION} with that
+     * text instead of vanishing into the generic 500 below. Anything else (other
+     * SQLStates, no {@code PSQLException} in the chain) is rethrown untouched to
+     * the pre-existing catch-all — WO-SEC-17 M6 stays in force for all of it.
+     */
+    @ExceptionHandler(JpaSystemException.class)
+    public ResponseEntity<Map<String, String>> handleJpaSystem(JpaSystemException ex) {
+        Throwable cause = ex.getCause();
+        while (cause != null) {
+            if (cause instanceof PSQLException psql && "P0001".equals(psql.getSQLState())) {
+                ServerErrorMessage serverError = psql.getServerErrorMessage();
+                String message = serverError != null ? serverError.getMessage() : null;
+                if (message == null) {
+                    message = psql.getMessage();
+                }
+                if (message == null) {
+                    return genericInternalError(ex);
+                }
+                log.warn("Database rule violation (RAISE EXCEPTION): {}", message);
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                    "code", "DATABASE_RULE_VIOLATION",
+                    "message", message
+                ));
+            }
+            cause = cause.getCause();
+        }
+        // NOT rethrown: a throw from an @ExceptionHandler method does not
+        // re-dispatch to handleGenericRuntime — it escapes as a bare
+        // ServletException (proven by GlobalExceptionHandlerDbRuleTest RED).
+        // Delegating directly keeps the observable behavior byte-identical
+        // to "falling into the catch-all" (same 500 + INTERNAL_ERROR body).
+        return genericInternalError(ex);
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleGenericRuntime(RuntimeException ex) {
+        return genericInternalError(ex);
+    }
+
+    private ResponseEntity<Map<String, String>> genericInternalError(RuntimeException ex) {
         // WO-SEC-17 M6: log full details internally, return generic message to client
         log.error("Unhandled runtime exception", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
