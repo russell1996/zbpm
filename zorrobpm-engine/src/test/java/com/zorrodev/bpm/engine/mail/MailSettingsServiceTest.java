@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.repository.MailSettingsRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -29,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -49,9 +51,16 @@ class MailSettingsServiceTest {
     @Mock JavaMailSenderImpl javaMailSender;
     @Mock MailHealthService mailHealthService;
     @Mock MailConfigResolver configResolver;
+    @Mock com.zorrodev.bpm.engine.service.PgRateLimiter pgRateLimiter;
 
-    private final MailSettingsCrypto crypto = new MailSettingsCrypto(KEY_HEX);
-    private final MailActionRateLimiter rateLimiter = new MailActionRateLimiter();
+    private MailSettingsCrypto crypto;
+    private MailActionRateLimiter rateLimiter;
+
+    @BeforeEach
+    void setupRateLimiter() {
+        crypto = new MailSettingsCrypto(KEY_HEX);
+        rateLimiter = new MailActionRateLimiter(pgRateLimiter);
+    }
 
     private MailSettingsService service() {
         return new MailSettingsService(settingsRepository, crypto, uiUserRepository, auditLogService,
@@ -208,6 +217,8 @@ class MailSettingsServiceTest {
         UUID selfId = UUID.randomUUID();
         Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
         rateLimiter.setCapacity(1);
+        when(pgRateLimiter.tryConsume(anyString(), eq(1), eq(3600)))
+            .thenReturn(0L).thenReturn(3600L);
         UiUserEntity self = new UiUserEntity();
         self.setEmail("admin@corp.kz");
         when(uiUserRepository.findById(selfId)).thenReturn(Optional.of(self));
@@ -283,6 +294,8 @@ class MailSettingsServiceTest {
         UUID selfId = UUID.randomUUID();
         Principal.UserPrincipal admin = new Principal.UserPrincipal(selfId, "admin", "SUPER_ADMIN");
         rateLimiter.setCapacity(1);
+        when(pgRateLimiter.tryConsume(anyString(), eq(1), eq(3600)))
+            .thenReturn(0L).thenReturn(3600L);
         MailSettingsDTO in = new MailSettingsDTO();
         in.setHost("smtp.x");
         when(mailHealthService.probeReachable(any(), any(), any(), any())).thenReturn(true);

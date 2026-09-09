@@ -1,0 +1,45 @@
+databaseChangeLog:
+  - logicalFilePath: 20260908-103
+  - changeSet:
+      id: 20260908-103
+      author: zorrodev
+      comment: "Cluster-safe rate-limit bucket — Postgres-backed shared counter replacing per-instance Caffeine caches (WO-SCALE-2). NOTE: WO text names the PK 'key', but KEY is a reserved word in H2 (our unit-test DB): Liquibase silently creates it as quoted uppercase KEY there while PostgreSQL folds it to lowercase key, so the same SQL cannot address the column on both DBs. Renamed to bucket_key — documented deviation, see WO-SCALE-2 report."
+      changes:
+        - createTable:
+            tableName: rate_limit_bucket
+            columns:
+              - column:
+                  name: bucket_key
+                  type: varchar(255)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: window_start
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+              - column:
+                  name: tokens
+                  type: int
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+        - sql:
+            dbms: postgresql
+            sql: CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_updated_at ON rate_limit_bucket (updated_at)
+        - sql:
+            dbms: h2
+            sql: CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_updated_at ON rate_limit_bucket (updated_at)
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON TABLE rate_limit_bucket IS 'Общий кластерный счётчик rate-лимитов (WO-SCALE-2): один ряд на namespace-ключ, все реплики делят счётчик';
+              COMMENT ON COLUMN rate_limit_bucket.bucket_key IS 'Namespace-ключ корзины (login:ip:, login:account:, refresh:, me-password:, data:, reset:email:, reset:ip:, register:email:, register:ip:, mail:action:), PK';
+              COMMENT ON COLUMN rate_limit_bucket.window_start IS 'Начало текущего fixed-окна корзины';
+              COMMENT ON COLUMN rate_limit_bucket.tokens IS 'Остаток токенов текущего окна';
+              COMMENT ON COLUMN rate_limit_bucket.updated_at IS 'Последнее касание корзины (для TTL-чистки)';

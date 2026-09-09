@@ -25,6 +25,7 @@ class RateLimitFilterBodyBufferingTest {
     @BeforeEach
     void setUp() {
         filter = new RateLimitFilter();
+        filter.setPgRateLimiter(TestRateLimitBuckets.create());
         filter.setRateLimitEnabled(true);
         filter.setCapacity(10);      // generous IP limit for multi-request tests
         filter.setWindowSeconds(3600);
@@ -82,6 +83,7 @@ class RateLimitFilterBodyBufferingTest {
     @Test
     void ipExhausted_bodyNotRead() throws Exception {
         RateLimitFilter smallFilter = new RateLimitFilter();
+        smallFilter.setPgRateLimiter(TestRateLimitBuckets.create());
         smallFilter.setRateLimitEnabled(true);
         smallFilter.setCapacity(1);
         smallFilter.setWindowSeconds(3600);
@@ -173,6 +175,7 @@ class RateLimitFilterBodyBufferingTest {
     @Test
     void accountLimitDisabled_onlyIPLimitApplies() throws Exception {
         RateLimitFilter noAcctFilter = new RateLimitFilter();
+        noAcctFilter.setPgRateLimiter(TestRateLimitBuckets.create());
         noAcctFilter.setRateLimitEnabled(true);
         noAcctFilter.setCapacity(2);
         noAcctFilter.setWindowSeconds(3600);
@@ -230,6 +233,7 @@ class RateLimitFilterBodyBufferingTest {
     @Test
     void accountRejection_rollsBackIpToken() throws Exception {
         RateLimitFilter tightFilter = new RateLimitFilter();
+        tightFilter.setPgRateLimiter(TestRateLimitBuckets.create());
         tightFilter.setRateLimitEnabled(true);
         tightFilter.setCapacity(3);
         tightFilter.setWindowSeconds(3600);
