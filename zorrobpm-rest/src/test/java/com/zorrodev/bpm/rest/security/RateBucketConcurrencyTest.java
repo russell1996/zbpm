@@ -38,6 +38,7 @@ class RateBucketConcurrencyTest {
 
         // Create bucket and exhaust initial tokens
         RateLimitFilter filter = new RateLimitFilter();
+        filter.setPgRateLimiter(TestRateLimitBuckets.create());
         filter.setCapacity(capacity);
         filter.setWindowSeconds(1);
         filter.setRateLimitEnabled(true);

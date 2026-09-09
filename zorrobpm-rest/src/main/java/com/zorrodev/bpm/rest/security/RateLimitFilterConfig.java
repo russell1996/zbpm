@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rest.security;
 
 import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
+import com.zorrodev.bpm.engine.service.PgRateLimiter;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -18,6 +19,9 @@ import java.util.stream.Collectors;
  * Auth endpoints: /auth/login (per-IP + per-account), /auth/refresh (per-user).
  * Data endpoints: /events, /variables, /process-instances, /user-tasks,
  *                 /service-tasks, /incidents (per-IP generous limit).
+ *
+ * WO-SCALE-2: rate-limit state is stored in PostgreSQL via {@code PgRateLimiter}
+ * (cluster-safe), not in per-instance Caffeine caches.
  */
 @Configuration
 public class RateLimitFilterConfig {
@@ -51,7 +55,8 @@ public class RateLimitFilterConfig {
 
     @Bean
     public RateLimitFilter rateLimitFilter(ApiKeyRepository apiKeyRepository,
-                                           com.zorrodev.bpm.engine.security.TokenService tokenService) {
+                                            com.zorrodev.bpm.engine.security.TokenService tokenService,
+                                            PgRateLimiter pgRateLimiter) {
         RateLimitFilter filter = new RateLimitFilter();
         filter.setRateLimitEnabled(enabled);
         filter.setCapacity(capacity);
@@ -65,6 +70,8 @@ public class RateLimitFilterConfig {
         filter.setApiKeyRepository(apiKeyRepository);
         // WO-SEC-58 HOLD-fix: /me/password bucket keyed on the JWT user, not client IP.
         filter.setTokenService(tokenService);
+        // WO-SCALE-2: cluster-safe PG-backed rate limiter.
+        filter.setPgRateLimiter(pgRateLimiter);
 
         Set<String> proxies = parseTrustedProxies(trustedProxiesRaw);
         filter.setTrustedProxies(proxies);

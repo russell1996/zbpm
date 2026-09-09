@@ -1,11 +1,10 @@
 package com.zorrodev.bpm.rest.security;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
 import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.security.KeyHasher;
 import com.zorrodev.bpm.engine.security.TokenService;
+import com.zorrodev.bpm.engine.service.PgRateLimiter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ReadListener;
@@ -27,7 +26,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 /**
  * WO-SEC-44/45: Rate-limits auth + data endpoints.
@@ -55,6 +53,9 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Runs with {@code HIGHEST_PRECEDENCE + 1} — before Spring's {@code ForwardedHeaderFilter}
  * ({@code HIGHEST_PRECEDENCE + 5}) to capture IP before XFF rewriting.
+ *
+ * <p>Cluster-safe: rate-limit state is stored in PostgreSQL via {@code PgRateLimiter}
+ * (WO-SCALE-2), not in per-instance Caffeine caches.
  */
 @Slf4j
 public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
@@ -62,22 +63,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     /** Maximum bytes buffered from login request body (login JSON is ~100 bytes). */
     static final int MAX_LOGIN_BODY_BYTES = 16_384;
 
-    private final Cache<String, RateBucket> ipBuckets = Caffeine.newBuilder()
-        .maximumSize(100_000)
-        .expireAfterAccess(10, TimeUnit.MINUTES)
-        .build();
-    private final Cache<String, RateBucket> accountBuckets = Caffeine.newBuilder()
-        .maximumSize(100_000)
-        .expireAfterAccess(10, TimeUnit.MINUTES)
-        .build();
-    private final Cache<String, RateBucket> refreshBuckets = Caffeine.newBuilder()
-        .maximumSize(100_000)
-        .expireAfterAccess(10, TimeUnit.MINUTES)
-        .build();
-    private final Cache<String, RateBucket> dataEndpointBuckets = Caffeine.newBuilder()
-        .maximumSize(100_000)
-        .expireAfterAccess(10, TimeUnit.MINUTES)
-        .build();
+    private PgRateLimiter pgRateLimiter;
 
     private boolean enabled;
     private int capacity;
@@ -100,6 +86,8 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
     private TokenService tokenService;
 
     void setTokenService(TokenService tokenService) { this.tokenService = tokenService; }
+
+    void setPgRateLimiter(PgRateLimiter pgRateLimiter) { this.pgRateLimiter = pgRateLimiter; }
 
     void setRateLimitEnabled(boolean enabled) { this.enabled = enabled; }
     void setCapacity(int capacity) { this.capacity = capacity; }
@@ -135,8 +123,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             // STEP 1: per-IP check — CHEAP, no body read, no memory allocation.
             // This MUST run before any body buffering (HOLD-fix: memory-exhaustion DoS).
             String ipKey = "login:ip:" + clientIp;
-            RateBucket ipBucket = ipBuckets.get(ipKey, k -> new RateBucket(capacity, windowSeconds));
-            long ipRetryAfter = ipBucket.tryConsume();
+            long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, capacity, windowSeconds);
             if (ipRetryAfter > 0) {
                 send429(response, ipRetryAfter);
                 return;
@@ -168,11 +155,10 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             String username = extractUsername(wrappedRequest);
             if (accountCapacity > 0 && username != null && !username.isBlank()) {
                 String acctKey = "login:account:" + username.toLowerCase();
-                RateBucket acctBucket = accountBuckets.get(acctKey, k -> new RateBucket(accountCapacity, windowSeconds));
-                long acctRetryAfter = acctBucket.tryConsume();
+                long acctRetryAfter = pgRateLimiter.tryConsume(acctKey, accountCapacity, windowSeconds);
                 if (acctRetryAfter > 0) {
                     // Rollback IP bucket token — request rejected by account limit, not IP limit
-                    ipBucket.rollback();
+                    pgRateLimiter.rollback(ipKey, capacity);
                     send429(response, acctRetryAfter);
                     return;
                 }
@@ -202,8 +188,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             // for everyone anyway — "anon" makes the shared-bucket nature explicit
             // and keeps G13 honest (no hidden per-IP bucket behind a proxy).
             String key = (userId != null) ? "me-password:user:" + userId : "me-password:anon";
-            RateBucket bucket = ipBuckets.get(key, k -> new RateBucket(capacity, windowSeconds));
-            long retryAfter = bucket.tryConsume();
+            long retryAfter = pgRateLimiter.tryConsume(key, capacity, windowSeconds);
             if (retryAfter > 0) {
                 send429(response, retryAfter);
                 return;
@@ -217,8 +202,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             String userId = extractUserIdFromRefreshCookie(request);
             if (userId != null) {
                 String refreshKey = "refresh:" + userId;
-                RateBucket refreshBucket = refreshBuckets.get(refreshKey, k -> new RateBucket(refreshCapacity, refreshWindowSeconds));
-                long retryAfter = refreshBucket.tryConsume();
+                long retryAfter = pgRateLimiter.tryConsume(refreshKey, refreshCapacity, refreshWindowSeconds);
                 if (retryAfter > 0) {
                     send429(response, retryAfter);
                     return;
@@ -234,8 +218,7 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
             // integration BFF calling from one address must not be throttled by another
             // BFF on the same address (and must not exhaust the shared per-IP quota).
             String key = resolveDataBucketKey(request, clientIp);
-            RateBucket bucket = dataEndpointBuckets.get(key, k -> new RateBucket(dataCapacity, dataWindowSeconds));
-            long retryAfter = bucket.tryConsume();
+            long retryAfter = pgRateLimiter.tryConsume(key, dataCapacity, dataWindowSeconds);
             if (retryAfter > 0) {
                 send429(response, retryAfter);
                 return;
@@ -432,12 +415,9 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         }
     }
 
-    /** Clears all buckets — for tests only. */
+    /** Clears all bucket state — for tests only. Delegates to PgRateLimiter. */
     public void reset() {
-        ipBuckets.invalidateAll();
-        accountBuckets.invalidateAll();
-        refreshBuckets.invalidateAll();
-        dataEndpointBuckets.invalidateAll();
+        pgRateLimiter.reset();
     }
 
     /**
@@ -506,38 +486,4 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
         }
     }
 
-    static class RateBucket {
-        private final int capacity;
-        private final long windowMillis;
-        private long windowStart;
-        private int tokens;
-
-        RateBucket(int capacity, int windowSeconds) {
-            this.capacity = capacity;
-            this.windowMillis = windowSeconds * 1000L;
-            this.tokens = capacity;
-            this.windowStart = System.currentTimeMillis();
-        }
-
-        /** @return 0 if allowed, else seconds to wait */
-        synchronized long tryConsume() {
-            long now = System.currentTimeMillis();
-            long elapsed = now - windowStart;
-            if (elapsed >= windowMillis) {
-                windowStart = now;
-                tokens = capacity;
-            }
-            if (tokens > 0) {
-                tokens--;
-                return 0;
-            }
-            long waitMillis = windowMillis - (now - windowStart);
-            return Math.max(1, waitMillis / 1000);
-        }
-
-        /** WO-SEC-44: roll back one token (when per-account limit rejects after IP limit passed). */
-        synchronized void rollback() {
-            tokens = Math.min(tokens + 1, capacity);
-        }
-    }
 }
