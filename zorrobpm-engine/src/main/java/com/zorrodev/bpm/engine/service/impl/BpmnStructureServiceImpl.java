@@ -95,6 +95,12 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         addDocs(process.getExclusiveGateways(), docs);
         addDocs(process.getParallelGateways(), docs);
         addDocs(process.getCallActivities(), docs);
+        addDocs(process.getManualTasks(), docs);
+        addDocs(process.getScriptTasks(), docs);
+        addDocs(process.getBusinessRuleTasks(), docs);
+        addDocs(process.getInclusiveGateways(), docs);
+        addDocs(process.getEventBasedGateways(), docs);
+        addDocs(process.getTransactions(), docs);
         addDocs(process.getIntermediateCatchEvents(), docs);
         addDocs(process.getIntermediateThrowEvents(), docs);
         addDocs(process.getSubProcesses(), docs);
@@ -112,6 +118,7 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
                 addDocs(s.getCallActivities(), docs);
                 addDocs(s.getIntermediateCatchEvents(), docs);
                 addDocs(s.getIntermediateThrowEvents(), docs);
+                addDocs(s.getTransactions(), docs);
                 addDocs(s.getBoundaryEvents(), docs);
             }
         }

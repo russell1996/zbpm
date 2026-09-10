@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ProcessDefinitionDetail from './ProcessDefinitionDetail.vue'
+import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({
@@ -139,5 +140,17 @@ describe('ProcessDefinitionDetail — structure navigator (WO-ENG-15)', () => {
     await flowBtn!.trigger('click')
     await flushPromises()
     expect(wrapper.html()).toContain('=x &gt; 1')
+  })
+
+  it('nine input mappings render collapsed to 5 rows with showMore', async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => ({ source: `=v${i}`, target: `t${i}` }))
+    const table = mount(IoMappingTable, {
+      props: { titleKey: 'inputMappings', mappings: nine },
+    })
+    expect(table.findAll('tbody tr')).toHaveLength(5)
+    expect(table.text()).toContain('showMore')
+    await table.find('button').trigger('click')
+    expect(table.findAll('tbody tr')).toHaveLength(9)
+    expect(table.text()).toContain('showLess')
   })
 })

@@ -180,6 +180,16 @@ const selectedNodeProps = computed(() =>
         .filter(([k]) => k !== 'inputMappings' && k !== 'outputMappings')
     : [])
 
+// WO-ENG-15: the "no configuration" fallback must account for the mapping
+// tables (a node with ONLY mappings is configured, not empty).
+function hasMappingsList(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0
+}
+const selectedNodeHasMappings = computed(() => {
+  const p = selectedNode.value?.properties || {}
+  return hasMappingsList(p['inputMappings']) || hasMappingsList(p['outputMappings'])
+})
+
 // WO-ENG-15: structure-tab tree — flattened nodes with depth for indent;
 // boundary events ride one level under their host.
 interface TreeRow {
@@ -408,7 +418,7 @@ async function downloadBpmn() {
                   <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('requirements') }}</h4>
                   <p class="text-xs whitespace-pre-wrap break-words">{{ selectedNode.documentation }}</p>
                 </div>
-                <div v-if="!selectedNodeProps.length && !selectedNode.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('noConfiguration') }}</div>
+                <div v-if="!selectedNodeProps.length && !selectedNodeHasMappings && !selectedNode.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('noConfiguration') }}</div>
               </template>
 
               <!-- sequence flow -->
@@ -512,7 +522,7 @@ async function downloadBpmn() {
                   <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('requirements') }}</h4>
                   <p class="text-xs whitespace-pre-wrap break-words">{{ selectedNode.documentation }}</p>
                 </div>
-                <div v-if="!selectedNodeProps.length && !selectedNode.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('noConfiguration') }}</div>
+                <div v-if="!selectedNodeProps.length && !selectedNodeHasMappings && !selectedNode.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('noConfiguration') }}</div>
               </template>
               <template v-else-if="selectedFlow">
                 <div class="text-sm space-y-1">
