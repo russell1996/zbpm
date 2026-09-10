@@ -12,7 +12,7 @@ import java.util.List;
 @Getter
 @Setter
 @XmlAccessorType(XmlAccessType.FIELD)
-public class BpmnIntermediateCatchEventModel {
+public class BpmnIntermediateCatchEventModel implements Documented {
     @XmlAttribute
     private String id;
 
@@ -43,4 +43,8 @@ public class BpmnIntermediateCatchEventModel {
     /** WO-C8-25: {@code zeebe:executionListeners} live here (start phase on events). */
     @XmlElement(name = "extensionElements", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private ExtensionElements extensionElements;
+
+    /** BPMN <documentation> text — surfaced in the UI as element "requirements". */
+    @XmlElement(name = "documentation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private String documentation;
 }
