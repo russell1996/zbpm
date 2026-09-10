@@ -32,12 +32,23 @@
       <bpmn:incoming>flow3</bpmn:incoming>
       <bpmn:outgoing>flow4</bpmn:outgoing>
     </bpmn:callActivity>
-    <bpmn:endEvent id="endEvent">
+    <bpmn:userTask id="mappedUser" name="Mapped user">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=claimId" target="claimId" />
+          <zeebe:output source="=approved" target="approved" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
       <bpmn:incoming>flow4</bpmn:incoming>
+      <bpmn:outgoing>flow5</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="endEvent">
+      <bpmn:incoming>flow5</bpmn:incoming>
     </bpmn:endEvent>
     <bpmn:sequenceFlow id="flow1" sourceRef="startEvent" targetRef="mappedTask" />
     <bpmn:sequenceFlow id="flow2" sourceRef="mappedTask" targetRef="plainTask" />
     <bpmn:sequenceFlow id="flow3" sourceRef="plainTask" targetRef="callChild" />
-    <bpmn:sequenceFlow id="flow4" sourceRef="callChild" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="flow4" sourceRef="callChild" targetRef="mappedUser" />
+    <bpmn:sequenceFlow id="flow5" sourceRef="mappedUser" targetRef="endEvent" />
   </bpmn:process>
 </bpmn:definitions>
