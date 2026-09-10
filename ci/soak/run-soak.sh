@@ -58,9 +58,10 @@ log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$OUT_DIR/run.log" >&2; }
 # ---- auth: one token per replica (they don't share an in-JVM session, JWT
 # is stateless, but logging in against each keeps replica identity clear in
 # the rate-limit test below) ----
+COOKIE_JAR="$OUT_DIR/cookies.txt"
 login() {
     local base="$1"
-    curl -sS -X POST "$base/auth/login" \
+    curl -sS -c "$COOKIE_JAR" -X POST "$base/auth/login" \
         -H 'Content-Type: application/json' \
         -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}"
 }
@@ -156,7 +157,43 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 BOUNDARY_BPMN="$(dirname "${BASH_SOURCE[0]}")/soak-boundary.bpmn"
-BOUNDARY_CONTENT=$(python3 -c "import json,sys; print(json.dumps(open(sys.argv[1]).read()))" "$BOUNDARY_BPMN")
+BOUNDARY_RAW=$(cat "$BOUNDARY_BPMN")
+
+# Per-round the deploy-race must push content that DIFFERS from the last
+# round (otherwise an identical-content deploy is idempotent and just
+# returns the existing version — no version-number race to test), while
+# staying byte-identical across the 3 concurrent calls WITHIN a round (so
+# they genuinely race for the same next version). Vary a harmless
+# attribute — the process id (= the key) stays "soak-boundary".
+round_boundary_content() {
+    local r="$1"
+    python3 -c "import json,sys; print(json.dumps(sys.argv[1].replace('name=\"soak-boundary\"', 'name=\"soak-boundary r'+sys.argv[2]+'\"')))" "$BOUNDARY_RAW" "$r"
+}
+
+# The JWT access token expires (~30 min observed). Renew it periodically —
+# well inside the TTL — via POST /auth/refresh with the refresh cookie from
+# login. Refresh uses its OWN rate-limit bucket (refresh:), NOT login:ip:,
+# so the rate-limit probe (which hammers login:ip: on a throwaway account)
+# can never starve token renewal. Falls back to a full re-login if refresh
+# fails (e.g. refresh token itself aged out).
+relogin() {
+    local j t
+    j=$(curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X POST "$NGINX_BASE/auth/refresh" \
+        -H 'Content-Type: application/json')
+    t=$(echo "$j" | jq -r '.token // empty')
+    if [ -z "$t" ]; then
+        log "WARNING: /auth/refresh gave no token ($j) — falling back to full login"
+        j=$(login "$NGINX_BASE")
+        t=$(echo "$j" | jq -r '.token // empty')
+    fi
+    if [ -n "$t" ]; then
+        TOKEN="$t"
+        AUTH=(-H "Authorization: Bearer $TOKEN")
+    else
+        log "WARNING: token renewal failed entirely, keeping old token: $j"
+    fi
+}
+RELOGIN_EVERY_ROUNDS="${RELOGIN_EVERY_ROUNDS:-180}"
 
 START_TIME=$(date +%s)
 END_TIME=$((START_TIME + DURATION_SECONDS))
@@ -169,22 +206,33 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
     round=$((round + 1))
     now=$(date +%s)
 
+    if [ $((round % RELOGIN_EVERY_ROUNDS)) -eq 0 ]; then
+        relogin
+        log "round $round: refreshed access token"
+    fi
+
     # --- criterion 1: concurrent deploy race of soak-boundary against 3
     # different replicas at once, every DEPLOY_RACE_INTERVAL seconds ---
     if [ $((now - last_deploy_race)) -ge "$DEPLOY_RACE_INTERVAL" ]; then
         last_deploy_race=$now
         race_out="$OUT_DIR/deploy-race-round-$round.jsonl"
+        round_content=$(round_boundary_content "$round")
         pids=()
         for base in "${REPLICAS[@]}"; do
             (curl -sS -X POST "$base/deployments" "${AUTH[@]}" \
                 -H 'Content-Type: application/json' \
-                -d "{\"description\":\"soak-boundary race round $round\",\"resources\":[{\"type\":\"BPMN\",\"content\":${BOUNDARY_CONTENT}}]}" \
+                -d "{\"description\":\"soak-boundary race round $round\",\"resources\":[{\"type\":\"BPMN\",\"content\":${round_content}}]}" \
                 >> "$race_out" 2>&1; echo >> "$race_out") &
             pids+=($!)
         done
         for p in "${pids[@]}"; do wait "$p"; done
         versions=$(jq -r '.processes[]?.version // empty' "$race_out" 2>/dev/null | sort -n | tr '\n' ',')
-        log "round $round: deploy race versions=[$versions] (expect 3 distinct, no gaps within this round's slice, no error bodies)"
+        # Within one round the 3 concurrent deploys race for the same next
+        # version: correct outcomes are all-same (dedup won — one physically
+        # committed, the other two saw it and returned it) OR distinct
+        # consecutive (each committed) — NEVER a duplicate NON-existing
+        # version pair with a gap, and NEVER a 500 / constraint-violation body.
+        log "round $round: deploy race versions=[$versions] (all-same or consecutive OK; a 500 body or a duplicated fresh version is the bug)"
     fi
 
     # --- criterion 2: start soak-boundary via nginx round-robin ---
@@ -214,16 +262,17 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
         fi
     fi
 
-    # --- criterion 6: a deliberately-wrong-password login aimed at all 3
-    # replicas directly, same account, to build up the shared attempt
-    # count; every Nth round also checks that the lockout response
-    # (429/423, whichever the API returns) is consistent no matter which
-    # replica answers it ---
+    # --- criterion 6: repeated failed logins aimed at ALL THREE replicas
+    # directly, to build up the shared attempt count. Uses a THROWAWAY
+    # username (never admin) so it exercises the cluster-wide login:ip: and
+    # login:account:<probe> buckets WITHOUT locking out admin's own token
+    # refresh. A per-replica-consistent lockout status (429/423) proves the
+    # bucket is shared, not per-JVM. ---
     if [ $((round % 5)) -eq 0 ]; then
         for base in "${REPLICAS[@]}"; do
             code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$base/auth/login" \
                 -H 'Content-Type: application/json' \
-                -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"wrong-on-purpose-soak\"}")
+                -d '{"username":"soak-ratelimit-probe","password":"wrong-on-purpose-soak"}')
             echo "{\"round\":$round,\"replica\":\"$base\",\"status\":$code}" >> "$OUT_DIR/ratelimit-probe.jsonl"
         done
     fi
