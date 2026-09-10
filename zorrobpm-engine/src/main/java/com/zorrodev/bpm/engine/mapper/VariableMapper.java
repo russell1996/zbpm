@@ -12,6 +12,7 @@ public class VariableMapper {
         pv.setName(entity.getName());
         pv.setType(entity.getType());
         pv.setValue(entity.getTextValue());
+        pv.setActivityId(entity.getScopeId());
         return pv;
     }
 

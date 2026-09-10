@@ -45,6 +45,13 @@ public class VariableQueryOperationsImpl implements VariableQueryOperations {
         if (query.getValue() != null) {
             specifications.add(VariableRepository.byValue(query.getValue()));
         }
+        // WO-ENG-14: activity-scoped ioMapping variables must not leak into
+        // the process variable list — default is root scope only.
+        if (query.getActivityId() != null) {
+            specifications.add(VariableRepository.byScopeId(query.getActivityId()));
+        } else {
+            specifications.add(VariableRepository.byRootScope());
+        }
         Specification<ProcessVariableEntity> all = Specification.allOf(specifications);
         return queryPaginationSupport.toDTO(variableRepository.findAll(all, queryPaginationSupport.clampedPage(query.getPageIndex(), query.getPageSize(), Sort.unsorted())), variableMapper::toDTO);
     }

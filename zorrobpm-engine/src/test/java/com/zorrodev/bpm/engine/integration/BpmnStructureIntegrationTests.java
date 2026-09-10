@@ -14,6 +14,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -76,5 +77,64 @@ public class BpmnStructureIntegrationTests {
     @Test
     void getStructure_returnsEmptyForUnknownDefinition() {
         assertThat(bpmnStructureService.getStructure(UUID.randomUUID())).isEmpty();
+    }
+
+    // --- WO-ENG-14: static zeebe:ioMapping declaration ---
+
+    @Test
+    void getStructure_serviceTaskWithIoMapping_exposesInputAndOutputMappings() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-io-mapping-visibility.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnNode mapped = node(bpmnStructureService.getStructure(def.getId()).orElseThrow().getNodes(), "mappedTask");
+
+        assertThat(mapped.getType()).isEqualTo("serviceTask");
+        assertThat(mapped.getProperties()).containsKey("inputMappings");
+        assertThat(mapped.getProperties()).containsKey("outputMappings");
+        List<Map<String, String>> inputs = (List<Map<String, String>>) mapped.getProperties().get("inputMappings");
+        assertThat(inputs).containsExactly(Map.of("source", "=orderId", "target", "orderId"));
+        List<Map<String, String>> outputs = (List<Map<String, String>>) mapped.getProperties().get("outputMappings");
+        assertThat(outputs).containsExactly(Map.of("source", "=result", "target", "orderResult"));
+    }
+
+    @Test
+    void getStructure_callActivityWithIoMapping_exposesInputMappings() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-io-mapping-visibility.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnNode call = node(bpmnStructureService.getStructure(def.getId()).orElseThrow().getNodes(), "callChild");
+
+        assertThat(call.getType()).isEqualTo("callActivity");
+        assertThat(call.getProperties()).containsKey("calledProcessId");
+        List<Map<String, String>> inputs = (List<Map<String, String>>) call.getProperties().get("inputMappings");
+        assertThat(inputs).containsExactly(Map.of("source", "=parentVar", "target", "childVar"));
+        assertThat(call.getProperties()).doesNotContainKey("outputMappings");
+    }
+
+    @Test
+    void getStructure_userTaskWithIoMapping_exposesInputAndOutputMappings() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-io-mapping-visibility.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnNode user = node(bpmnStructureService.getStructure(def.getId()).orElseThrow().getNodes(), "mappedUser");
+
+        assertThat(user.getType()).isEqualTo("userTask");
+        List<Map<String, String>> inputs = (List<Map<String, String>>) user.getProperties().get("inputMappings");
+        assertThat(inputs).containsExactly(Map.of("source", "=claimId", "target", "claimId"));
+        List<Map<String, String>> outputs = (List<Map<String, String>>) user.getProperties().get("outputMappings");
+        assertThat(outputs).containsExactly(Map.of("source", "=approved", "target", "approved"));
+    }
+
+    @Test
+    void getStructure_elementWithoutIoMapping_hasNoMappingKeys() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-io-mapping-visibility.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnNode plain = node(bpmnStructureService.getStructure(def.getId()).orElseThrow().getNodes(), "plainTask");
+
+        assertThat(plain.getType()).isEqualTo("serviceTask");
+        assertThat(plain.getProperties()).containsKey("job");
+        assertThat(plain.getProperties()).doesNotContainKey("inputMappings");
+        assertThat(plain.getProperties()).doesNotContainKey("outputMappings");
     }
 }
