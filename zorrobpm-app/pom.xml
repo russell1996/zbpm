@@ -68,6 +68,20 @@
             <version>0.8.0-SNAPSHOT</version>
         </dependency>
 
+        <!-- WO-AUDIT-1: first test in this module (prometheus exposure on the app
+             context) — mirrors zorrobpm-rest test deps -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
