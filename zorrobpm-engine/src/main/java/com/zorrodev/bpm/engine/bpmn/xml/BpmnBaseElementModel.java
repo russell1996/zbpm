@@ -12,7 +12,7 @@ import java.util.List;
 @Getter
 @Setter
 @XmlAccessorType(XmlAccessType.FIELD)
-public class BpmnBaseElementModel {
+public class BpmnBaseElementModel implements Documented {
     @XmlAttribute
     private String id;
     @XmlAttribute

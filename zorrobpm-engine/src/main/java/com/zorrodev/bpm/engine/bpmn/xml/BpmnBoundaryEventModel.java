@@ -16,7 +16,7 @@ import java.util.List;
 @Getter
 @Setter
 @XmlAccessorType(XmlAccessType.FIELD)
-public class BpmnBoundaryEventModel {
+public class BpmnBoundaryEventModel implements Documented {
 
     private static final String NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
 
@@ -61,4 +61,8 @@ public class BpmnBoundaryEventModel {
 
     @XmlElement(name = "cancelEventDefinition", namespace = NS)
     private BpmnCancelEventDefinitionModel cancelEventDefinition;
+
+    /** BPMN <documentation> text — surfaced in the UI as element "requirements". */
+    @XmlElement(name = "documentation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private String documentation;
 }
