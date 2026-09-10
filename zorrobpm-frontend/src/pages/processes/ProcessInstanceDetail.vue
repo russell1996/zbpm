@@ -15,6 +15,7 @@ import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import { isTaskActive } from '@/shared/lib/utils'
 import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
 import { Button } from '@/components/ui/button'
@@ -107,22 +108,6 @@ const selectedNodeProps = computed(() =>
         // block below, not as raw JSON in the generic properties list.
         .filter(([k]) => k !== 'inputMappings' && k !== 'outputMappings')
     : [])
-
-interface IoMappingRow { source: string; target: string }
-
-// WO-ENG-14: static zeebe:ioMapping declaration from the BPMN (BpmnNode.properties).
-const selectedNodeInputMappings = computed<IoMappingRow[]>(() => {
-  const raw = selectedNode.value?.properties.inputMappings
-  if (!Array.isArray(raw)) return []
-  return raw.filter((m): m is IoMappingRow =>
-    !!m && typeof (m as IoMappingRow).source === 'string' && typeof (m as IoMappingRow).target === 'string')
-})
-const selectedNodeOutputMappings = computed<IoMappingRow[]>(() => {
-  const raw = selectedNode.value?.properties.outputMappings
-  if (!Array.isArray(raw)) return []
-  return raw.filter((m): m is IoMappingRow =>
-    !!m && typeof (m as IoMappingRow).source === 'string' && typeof (m as IoMappingRow).target === 'string')
-})
 
 // WO-ENG-14: resolved runtime input variables of the selected activity.
 // View-local ref (not the store): only this panel needs them, and the store's
@@ -510,19 +495,9 @@ watch(activeTab, onTabChange)
                 </div>
               </div>
 
-              <!-- WO-ENG-14: static ioMapping declaration, one source → target per row -->
-              <div v-if="selectedNodeInputMappings.length" class="pt-2 border-t border-border space-y-1">
-                <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('inputMappings') }}</h4>
-                <div v-for="(m, i) in selectedNodeInputMappings" :key="i" class="text-xs font-mono break-all">
-                  {{ m.source }} → {{ m.target }}
-                </div>
-              </div>
-              <div v-if="selectedNodeOutputMappings.length" class="pt-2 border-t border-border space-y-1">
-                <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('outputMappings') }}</h4>
-                <div v-for="(m, i) in selectedNodeOutputMappings" :key="i" class="text-xs font-mono break-all">
-                  {{ m.source }} → {{ m.target }}
-                </div>
-              </div>
+              <!-- WO-ENG-14/15: static ioMapping declaration as a table -->
+              <IoMappingTable title-key="inputMappings" :mappings="selectedNode?.properties['inputMappings']" />
+              <IoMappingTable title-key="outputMappings" :mappings="selectedNode?.properties['outputMappings']" />
 
               <!-- WO-ENG-14: resolved runtime input variables of this activity run -->
               <div v-if="selectedActivityVariables.length" class="pt-2 border-t border-border space-y-1">

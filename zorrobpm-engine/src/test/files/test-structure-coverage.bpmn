@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_cov" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-structure-coverage" name="test-structure-coverage" isExecutable="true">
+    <bpmn:startEvent id="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:scriptTask id="scriptTask1" name="Script it">
+      <bpmn:documentation>Run the script</bpmn:documentation>
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:manualTask id="manualTask1" name="Manual it">
+      <bpmn:incoming>flow2</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+    </bpmn:manualTask>
+    <bpmn:businessRuleTask id="ruleTask1" name="Rule it">
+      <bpmn:incoming>flow3</bpmn:incoming>
+      <bpmn:outgoing>flow4</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+    <bpmn:inclusiveGateway id="incGateway" name="Inc" default="flow5">
+      <bpmn:documentation>Either branch</bpmn:documentation>
+      <bpmn:incoming>flow4</bpmn:incoming>
+      <bpmn:outgoing>flow5</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:subProcess id="sub1" name="Nested">
+      <bpmn:documentation>Nested scope docs</bpmn:documentation>
+      <bpmn:incoming>flow5</bpmn:incoming>
+      <bpmn:outgoing>flow6</bpmn:outgoing>
+      <bpmn:callActivity id="nestedCall" name="Nested call">
+        <bpmn:extensionElements>
+          <zeebe:calledElement processId="childProcess" propagateAllChildVariables="false" propagateAllParentVariables="false" />
+          <zeebe:ioMapping>
+            <zeebe:input source="=x" target="y" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:outgoing>subFlow2</bpmn:outgoing>
+      </bpmn:callActivity>
+      <bpmn:intermediateCatchEvent id="nestedCatch" name="Nested catch">
+        <bpmn:documentation>Wait for the message</bpmn:documentation>
+        <bpmn:incoming>subFlow2</bpmn:incoming>
+        <bpmn:outgoing>subFlow3</bpmn:outgoing>
+        <bpmn:messageEventDefinition messageRef="msg1" />
+      </bpmn:intermediateCatchEvent>
+      <bpmn:sequenceFlow id="subFlow1" sourceRef="nestedCall" targetRef="nestedCatch" />
+      <bpmn:sequenceFlow id="subFlow2" sourceRef="nestedCall" targetRef="nestedCatch" />
+      <bpmn:sequenceFlow id="subFlow3" sourceRef="nestedCatch" targetRef="sub1" />
+      <bpmn:boundaryEvent id="nestedBoundary" name="Nested timer" attachedToRef="nestedCall">
+        <bpmn:documentation>Ping on stall</bpmn:documentation>
+        <bpmn:outgoing>subFlow4</bpmn:outgoing>
+        <bpmn:timerEventDefinition>
+          <bpmn:timeDuration>PT5M</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:intermediateThrowEvent id="nestedThrow" name="Nested throw">
+        <bpmn:documentation>Fire the signal</bpmn:documentation>
+        <bpmn:incoming>subFlow4</bpmn:incoming>
+        <bpmn:outgoing>subFlow5</bpmn:outgoing>
+        <bpmn:signalEventDefinition signalRef="sig1" />
+      </bpmn:intermediateThrowEvent>
+    </bpmn:subProcess>
+    <bpmn:transaction id="tx1" name="Tx">
+      <bpmn:documentation>Transactional scope</bpmn:documentation>
+      <bpmn:incoming>flow7</bpmn:incoming>
+      <bpmn:outgoing>flow8</bpmn:outgoing>
+      <bpmn:serviceTask id="txTask" name="Tx task">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="srvTx" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>txFlow1</bpmn:incoming>
+        <bpmn:outgoing>txFlow2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="txFlow1" sourceRef="txTask" targetRef="txTask" />
+      <bpmn:sequenceFlow id="txFlow2" sourceRef="txTask" targetRef="txTask" />
+    </bpmn:transaction>
+    <bpmn:eventBasedGateway id="eventGateway" name="Event race">
+      <bpmn:incoming>flow9</bpmn:incoming>
+      <bpmn:outgoing>flow10</bpmn:outgoing>
+    </bpmn:eventBasedGateway>
+    <bpmn:endEvent id="endEvent">
+      <bpmn:incoming>flow6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow1" sourceRef="startEvent" targetRef="scriptTask1" />
+    <bpmn:sequenceFlow id="flow2" sourceRef="scriptTask1" targetRef="manualTask1" />
+    <bpmn:sequenceFlow id="flow3" sourceRef="manualTask1" targetRef="ruleTask1" />
+    <bpmn:sequenceFlow id="flow4" sourceRef="ruleTask1" targetRef="incGateway" />
+    <bpmn:sequenceFlow id="flow5" sourceRef="incGateway" targetRef="sub1" />
+    <bpmn:sequenceFlow id="flow6" sourceRef="sub1" targetRef="endEvent" />
+  </bpmn:process>
+</bpmn:definitions>

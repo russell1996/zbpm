@@ -17,7 +17,7 @@ import java.util.List;
 @Getter
 @Setter
 @XmlAccessorType(XmlAccessType.FIELD)
-public class BpmnSubProcessModel {
+public class BpmnSubProcessModel implements Documented {
 
     private static final String NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
 
@@ -104,4 +104,8 @@ public class BpmnSubProcessModel {
 
     @XmlElement(name = "association", namespace = NS)
     private List<BpmnAssociationModel> associations;
+
+    /** BPMN <documentation> text — surfaced in the UI as element "requirements". */
+    @XmlElement(name = "documentation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private String documentation;
 }
