@@ -2,8 +2,10 @@ package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.contract.dto.RegisterDTO;
 import com.zorrodev.bpm.engine.TestMain;
+import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.mail.StubMailSender;
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.repository.PasswordTokenRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.service.PasswordResetRateLimiter;
@@ -39,15 +41,24 @@ public class RegistrationCleanupJobTest {
     @Autowired private SelfRegistrationService registrationService;
     @Autowired private UiUserRepository userRepository;
     @Autowired private PasswordTokenRepository tokenRepository;
+    @Autowired private ApiKeyRepository apiKeyRepository;
     @Autowired private StubMailSender mailSender;
     @Autowired @Qualifier("registrationRateLimiter") private PasswordResetRateLimiter registerLimiter;
 
     private final List<UUID> cleanupIds = new ArrayList<>();
+    private final List<UUID> cleanupKeyIds = new ArrayList<>();
 
     @AfterEach
     void cleanup() {
         mailSender.clear();
         registerLimiter.reset();
+        for (UUID id : List.copyOf(cleanupKeyIds)) {
+            try {
+                apiKeyRepository.deleteById(id);
+            } catch (Exception e) {
+                // already gone — best effort
+            }
+        }
         for (UUID id : List.copyOf(cleanupIds)) {
             try {
                 tokenRepository.deleteByUserId(id);
@@ -57,6 +68,7 @@ public class RegistrationCleanupJobTest {
             }
         }
         cleanupIds.clear();
+        cleanupKeyIds.clear();
     }
 
     private RegisterDTO dto(String username, String email) {
@@ -154,8 +166,7 @@ public class RegistrationCleanupJobTest {
     }
 
     @Test
-    void staleUserWithoutTokens_deletedAnyway() {
-        UiUserEntity orphan = new UiUserEntity();
+    void staleUserWithoutTokens_deletedAnyway() {        UiUserEntity orphan = new UiUserEntity();
         orphan.setId(UUID.randomUUID());
         orphan.setUsername("orphan-" + UUID.randomUUID().toString().substring(0, 8));
         orphan.setPasswordHash("$dummy-hash-for-not-null");
@@ -170,5 +181,51 @@ public class RegistrationCleanupJobTest {
 
         assertThat(cleanupJob.cleanExpired()).isEqualTo(1);
         assertThat(userRepository.findById(orphan.getId())).isEmpty();
+    }
+
+    /**
+     * WO-AUDIT-5 item 1: FK-blocker (api_key row referencing the user) makes
+     * {@code userRepository.delete} fail AFTER {@code tokenRepository.deleteByUserId}.
+     * Without per-user transactions the token delete commits alone (tokens gone, user
+     * stuck); with them, BOTH roll back.
+     */
+    private void blockUserDeletion(UUID userId) {
+        ApiKeyEntity key = new ApiKeyEntity();
+        key.setId(UUID.randomUUID());
+        key.setOwnerUserId(userId);
+        key.setKeyHash("blocker-" + UUID.randomUUID());
+        key.setPrefix("zbpm_test_");
+        key.setCreatedAt(Instant.now());
+        apiKeyRepository.saveAndFlush(key);
+        cleanupKeyIds.add(key.getId());
+    }
+
+    @Test
+    void audit5_failedUserDelete_rollsBackTokenDelete() {
+        UUID id = registeredStale("blocked", "blocked-clean@x.y", 25);
+        assertThat(tokenCount(id)).isGreaterThan(0);
+        blockUserDeletion(id);
+
+        assertThat(cleanupJob.cleanExpired()).isEqualTo(0);
+
+        // Rollback proof: the token row deleted first is still there, user too.
+        // (Without per-user tx: tokens gone here → RED.)
+        assertThat(userRepository.findById(id)).isPresent();
+        assertThat(tokenCount(id)).isGreaterThan(0);
+    }
+
+    @Test
+    void audit5_oneBadRow_doesNotFailThePass() {
+        UUID good = registeredStale("good", "good-clean@x.y", 25);
+        UUID bad = registeredStale("bad", "bad-clean@x.y", 25);
+        blockUserDeletion(bad);
+
+        assertThat(cleanupJob.cleanExpired()).isEqualTo(1);
+
+        // Clean row fully gone (user + tokens), blocked row fully kept (user + tokens).
+        assertThat(userRepository.findById(good)).isEmpty();
+        assertThat(tokenCount(good)).isEqualTo(0);
+        assertThat(userRepository.findById(bad)).isPresent();
+        assertThat(tokenCount(bad)).isGreaterThan(0);
     }
 }
