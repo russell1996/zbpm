@@ -118,4 +118,17 @@ public class BpmnStructureCoverageTest {
         assertThat(nestedBoundary).isNotNull();
         assertThat(nestedBoundary.getType()).isEqualTo("boundaryEvent");
     }
+
+    @Test
+    void getStructure_documentation_reachesCatchEventAndSubProcess() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-structure-coverage.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnProcessStructure structure = bpmnStructureService.getStructure(def.getId()).orElseThrow();
+
+        assertThat(node(structure.getNodes(), "nestedCatch").getDocumentation())
+            .isEqualTo("Wait for the message");
+        assertThat(node(structure.getNodes(), "sub1").getDocumentation())
+            .isEqualTo("Nested scope docs");
+    }
 }
