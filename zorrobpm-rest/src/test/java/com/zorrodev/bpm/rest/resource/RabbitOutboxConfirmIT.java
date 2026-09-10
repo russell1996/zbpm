@@ -44,10 +44,13 @@ import static org.assertj.core.api.Assertions.fail;
 @Tag("rabbit")
 @ActiveProfiles("test")
 @SpringBootTest(classes = TestMain.class, properties = {
-    "spring.rabbitmq.host=localhost",
-    "spring.rabbitmq.port=5672",
-    "spring.rabbitmq.username=zorrodev",
-    "spring.rabbitmq.password=zorrodev",
+    // WO-AUDIT-1: host/port env-driven (defaults = historic localhost:5672) so the
+    // CI/local rabbit script (ci/run-rabbit-tests.sh, P-23 non-standard host port)
+    // can point the test at its own broker without touching the test body.
+    "spring.rabbitmq.host=${RABBITMQ_HOST:localhost}",
+    "spring.rabbitmq.port=${RABBITMQ_PORT:5672}",
+    "spring.rabbitmq.username=${RABBITMQ_USER:zorrodev}",
+    "spring.rabbitmq.password=${RABBITMQ_PASSWORD:zorrodev}",
     "spring.rabbitmq.publisher-confirm-type=correlated",
     "spring.rabbitmq.publisher-returns=true"
 })
