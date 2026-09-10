@@ -1,0 +1,13 @@
+services:
+  rabbitmq:
+    # WO-AUDIT-1: pinned broker for the test:rabbit CI job (same image as the
+    # project's docker-compose.yml — identical broker semantics in CI and prod).
+    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER:-zorrodev}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-zorrodev}
+    ports:
+      - "${RABBIT_PORT:-5673}:5672"
+    # NO docker healthcheck on purpose: it would exec rabbitmq-diagnostics as root from
+    # second ~3, racing the broker for .erlang.cookie ownership (see run-rabbit-tests.sh
+    # note) — readiness is owned by the script's -u rabbitmq wait loop instead.
