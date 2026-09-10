@@ -112,6 +112,20 @@ public class BpmnStructureIntegrationTests {
     }
 
     @Test
+    void getStructure_userTaskWithIoMapping_exposesInputAndOutputMappings() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-io-mapping-visibility.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnNode user = node(bpmnStructureService.getStructure(def.getId()).orElseThrow().getNodes(), "mappedUser");
+
+        assertThat(user.getType()).isEqualTo("userTask");
+        List<Map<String, String>> inputs = (List<Map<String, String>>) user.getProperties().get("inputMappings");
+        assertThat(inputs).containsExactly(Map.of("source", "=claimId", "target", "claimId"));
+        List<Map<String, String>> outputs = (List<Map<String, String>>) user.getProperties().get("outputMappings");
+        assertThat(outputs).containsExactly(Map.of("source", "=approved", "target", "approved"));
+    }
+
+    @Test
     void getStructure_elementWithoutIoMapping_hasNoMappingKeys() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/test-io-mapping-visibility.bpmn"));
         ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
