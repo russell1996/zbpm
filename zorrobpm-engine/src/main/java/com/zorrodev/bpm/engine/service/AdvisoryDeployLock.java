@@ -71,7 +71,8 @@ public class AdvisoryDeployLock {
         return hash;
     }
 
-    private String getDatabaseProduct() {        String cached = databaseProduct;
+    private String getDatabaseProduct() {
+        String cached = databaseProduct;
         if (cached != null) {
             return cached;
         }
