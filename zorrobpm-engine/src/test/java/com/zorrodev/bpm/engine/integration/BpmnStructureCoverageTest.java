@@ -120,6 +120,26 @@ public class BpmnStructureCoverageTest {
     }
 
     @Test
+    void getStructure_transactionAndEventBasedGateway_areMapped() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-structure-coverage.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnProcessStructure structure = bpmnStructureService.getStructure(def.getId()).orElseThrow();
+
+        BpmnNode tx = node(structure.getNodes(), "tx1");
+        assertThat(tx).isNotNull();
+        assertThat(tx.getType()).isEqualTo("subProcess");
+        assertThat(tx.getDocumentation()).isEqualTo("Transactional scope");
+        BpmnNode txTask = node(structure.getNodes(), "txTask");
+        assertThat(txTask).isNotNull();
+        assertThat(txTask.getType()).isEqualTo("serviceTask");
+
+        BpmnNode gateway = node(structure.getNodes(), "eventGateway");
+        assertThat(gateway).isNotNull();
+        assertThat(gateway.getType()).isEqualTo("eventBasedGateway");
+    }
+
+    @Test
     void getStructure_documentation_reachesCatchEventAndSubProcess() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/test-structure-coverage.bpmn"));
         ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
@@ -130,5 +150,13 @@ public class BpmnStructureCoverageTest {
             .isEqualTo("Wait for the message");
         assertThat(node(structure.getNodes(), "sub1").getDocumentation())
             .isEqualTo("Nested scope docs");
+        assertThat(node(structure.getNodes(), "nestedThrow").getDocumentation())
+            .isEqualTo("Fire the signal");
+        assertThat(node(structure.getNodes(), "nestedBoundary").getDocumentation())
+            .isEqualTo("Ping on stall");
+        assertThat(node(structure.getNodes(), "scriptTask1").getDocumentation())
+            .isEqualTo("Run the script");
+        assertThat(node(structure.getNodes(), "incGateway").getDocumentation())
+            .isEqualTo("Either branch");
     }
 }
