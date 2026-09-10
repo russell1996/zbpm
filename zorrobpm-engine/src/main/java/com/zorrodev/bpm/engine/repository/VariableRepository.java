@@ -32,6 +32,16 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
         return ((root, query, criteriaBuilder) ->  criteriaBuilder.equal(root.get("value"), value));
     }
 
+    /** WO-ENG-14: root scope only (process-instance variables, not activity-local ones). */
+    static Specification<ProcessVariableEntity> byRootScope() {
+        return ((root, query, criteriaBuilder) -> criteriaBuilder.isNull(root.get("scopeId")));
+    }
+
+    /** WO-ENG-14: variables of one activity scope (e.g. its ioMapping inputs). */
+    static Specification<ProcessVariableEntity> byScopeId(UUID scopeId) {
+        return ((root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("scopeId"), scopeId));
+    }
+
     boolean existsByNameAndProcessInstanceId(String name, UUID processInstanceId);
 
     Optional<ProcessVariableEntity> findByNameAndProcessInstanceId(String name, UUID processInstanceId);

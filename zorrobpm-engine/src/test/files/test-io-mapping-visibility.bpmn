@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_io" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-io-mapping" name="test-io-mapping" isExecutable="true">
+    <bpmn:startEvent id="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="mappedTask" name="Mapped task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvMapped" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=orderId" target="orderId" />
+          <zeebe:output source="=result" target="orderResult" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="plainTask" name="Plain task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvPlain" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow2</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:callActivity id="callChild" name="Call child">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="childProcess" propagateAllChildVariables="false" propagateAllParentVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=parentVar" target="childVar" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow3</bpmn:incoming>
+      <bpmn:outgoing>flow4</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:userTask id="mappedUser" name="Mapped user">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=claimId" target="claimId" />
+          <zeebe:output source="=approved" target="approved" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow4</bpmn:incoming>
+      <bpmn:outgoing>flow5</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="endEvent">
+      <bpmn:incoming>flow5</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow1" sourceRef="startEvent" targetRef="mappedTask" />
+    <bpmn:sequenceFlow id="flow2" sourceRef="mappedTask" targetRef="plainTask" />
+    <bpmn:sequenceFlow id="flow3" sourceRef="plainTask" targetRef="callChild" />
+    <bpmn:sequenceFlow id="flow4" sourceRef="callChild" targetRef="mappedUser" />
+    <bpmn:sequenceFlow id="flow5" sourceRef="mappedUser" targetRef="endEvent" />
+  </bpmn:process>
+</bpmn:definitions>

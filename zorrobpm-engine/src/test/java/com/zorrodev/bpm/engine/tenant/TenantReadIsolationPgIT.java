@@ -143,11 +143,14 @@ public class TenantReadIsolationPgIT extends PostgresIT {
         jdbc.update("INSERT INTO message_subscriptions (id,process_instance_id,activity_id,message_name,consumed,created_at) VALUES (?,?,?,?,?,?)",
             UUID.randomUUID(), piIdB, actB, "msgB", false, Timestamp.from(Instant.now()));
 
-        // Variables (linked via processInstanceId)
+        // Variables (linked via processInstanceId).
+        // WO-ENG-14: root-scope rows (scope_id NULL) — these tests assert
+        // tenant isolation of PROCESS variables; activity-scoped rows are
+        // excluded from the default root list by design.
         jdbc.update("INSERT INTO variables (id,process_instance_id,scope_id,name,type,text_value) VALUES (?,?,?,?,?,?)",
-            UUID.randomUUID(), piIdA, actA, "varA", "STRING", "a");
+            UUID.randomUUID(), piIdA, null, "varA", "STRING", "a");
         jdbc.update("INSERT INTO variables (id,process_instance_id,scope_id,name,type,text_value) VALUES (?,?,?,?,?,?)",
-            UUID.randomUUID(), piIdB, actB, "varB", "STRING", "b");
+            UUID.randomUUID(), piIdB, null, "varB", "STRING", "b");
     }
 
     // ===== ServiceTasks =====
