@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 
 /**
  * WO-SCALE-1: single place for DB-dialect-aware advisory-lock acquisition.
@@ -40,7 +41,7 @@ public class AdvisoryDeployLock {
     public void acquireForKey(String key) {
         String product = getDatabaseProduct();
         if ("PostgreSQL".equals(product)) {
-            long lockKey = key.hashCode();
+            long lockKey = fnv1a64(key);
             jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) conn -> {
                 try (var ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
                     ps.setLong(1, lockKey);
@@ -54,8 +55,23 @@ public class AdvisoryDeployLock {
         }
     }
 
-    private String getDatabaseProduct() {
-        String cached = databaseProduct;
+    /**
+     * WO-AUDIT-5: 64-bit FNV-1a hash of the deploy key for
+     * {@code pg_advisory_xact_lock(bigint)}. The previous {@code key.hashCode()}
+     * used only 32 bits — two different keys could collide and get falsely
+     * serialized against each other. 64 bits make that class negligible, with
+     * stdlib only (no new dependency for a lock key). Deterministic per key.
+     */
+    static long fnv1a64(String key) {
+        long hash = 0xcbf29ce484222325L;
+        for (byte b : key.getBytes(StandardCharsets.UTF_8)) {
+            hash ^= (b & 0xFF);
+            hash *= 0x100000001b3L;
+        }
+        return hash;
+    }
+
+    private String getDatabaseProduct() {        String cached = databaseProduct;
         if (cached != null) {
             return cached;
         }

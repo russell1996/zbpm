@@ -112,8 +112,14 @@ public class ScriptServiceImpl implements ScriptService {
      * WO-A-02: Replace the worker thread after a stuck expression.
      * cancel(true) doesn't always work (thread may ignore interrupt).
      * So we shut down the old executor and create a fresh one.
+     *
+     * WO-AUDIT-5: synchronized — two concurrent FEEL timeouts must not replace
+     * the pool twice (the loser's fresh pool would leak un-shut-down while the
+     * winner's replacement is discarded, and submits landing between shutdownNow
+     * and reassignment would hit a dead pool). Mutual exclusion makes replacement
+     * atomic: at most one live pool, always shut down before replacing.
      */
-    private void replaceWorker() {
+    private synchronized void replaceWorker() {
         log.warn("Replacing script worker pool after stuck expression (active={}, queued={})",
             executor.getActiveCount(), executor.getQueue().size());
         executor.shutdownNow();
