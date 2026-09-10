@@ -3,7 +3,7 @@
 Лёгкий движок бизнес-процессов BPMN 2.0 на Spring Boot с **высокой совместимостью с Camunda 8** (реальные C8-BPMN-модели исполняются без правок файлов). Деплой BPMN-процессов, запуск экземпляров, выполнение внешней работы через брокер сообщений и управление пользовательскими задачами — через REST API и единый **SPA** (Operate/Tasklist/Cockpit в одном приложении, `zorrobpm-frontend`).
 
 > ⚠️ **Статус — ранняя стадия.**
-> Рабочий одноузловой движок с хорошим покрытием happy-path тестами. **Ещё не готов к промышленной эксплуатации:** рассчитан на запуск в **одном экземпляре** (in-memory rate-лимиты — HTTP, сброса пароля, тестовых писем — пока небезопасны при нескольких репликах; таймеры, версионирование BPMN-процессов и деплой DMN/форм уже cluster-safe — см. ниже). JWT-аутентификация для UI и Data-API встроена; обязательно смените JWT-секрет и пароль admin перед выходом в прод. См. [Ограничения](#ограничения-и-замечания-по-проду).
+> Рабочий движок с хорошим покрытием happy-path тестами. Multi-instance готовность **протестирована под нагрузкой** — 4 часа непрерывного прогона на 3 репликах за round-robin nginx без sticky session ([`governance/reports/WO-SCALE-3.md`](governance/reports/WO-SCALE-3.md)): таймеры и джобы срабатывают ровно один раз на кластер, SSE-события долетают до всех реплик (AMQP fan-out), rate-лимиты держатся глобально (Postgres-backed, WO-SCALE-2), версионирование деплоя не бьётся под конкуренцией. Остаётся **один известный gap** — конкурентный batch-деплой (`POST /deployments`) идентичного контента отдаёт 500 вместо чистого дедупа (P2, редкая SUPER_ADMIN-операция, [WO-SCALE-4](governance/workorders/WO-SCALE-4-batch-deploy-advisory-lock.md)). JWT-аутентификация для UI и Data-API встроена; обязательно смените JWT-секрет и пароль admin перед выходом в прод. См. [Ограничения](#ограничения-и-замечания-по-проду).
 
 ## Текущее состояние
 
@@ -115,9 +115,10 @@ Conditional-события, Transaction-subprocess, Cancel-события. Эт�
 
 ### Чего честно нет
 
-- **Кластеризация.** Camunda 8 — распределённый брокер с партициями; ZorroBPM рассчитан на **один
-  экземпляр** (in-memory rate-лимиты небезопасны при нескольких репликах; таймеры, версионирование
-  определений и деплой DMN/форм уже cluster-safe — см. «Масштабирование» ниже).
+- **Кластеризация как у Camunda 8.** Camunda 8 — распределённый брокер с партициями; ZorroBPM —
+  один PostgreSQL, несколько stateless-реплик приложения за балансировщиком. Multi-instance работа
+  протестирована под нагрузкой (см. «Масштабирование» ниже и [`governance/reports/WO-SCALE-3.md`](governance/reports/WO-SCALE-3.md));
+  партиционирования/шардинга нет.
 - **gRPC-API Zeebe.** У нас REST + RabbitMQ для воркеров, а не протокол Zeebe. Готовые C8-клиенты
   не подключатся — воркеры пишутся под наш контракт (см. «Сервис-задачи: написание воркера»).
 - **Экосистема.** Operate/Tasklist/Optimize заменены одним встроенным SPA; Optimize-аналитики нет.
@@ -161,7 +162,7 @@ Java 21 · Spring Boot 4.0.5 · PostgreSQL 16 · RabbitMQ 3.13 · Liquibase · C
 
 ## Требования
 
-- **JDK 21** (Docker-сборка использует Temurin 21). *Примечание: в POM движка `java.version=17`, но собирать/запускать нужно на 21.*
+- **JDK 21** (`java.version=21` во всех 9 POM; Docker-сборка — Temurin 21).
 - Maven 3.9+
 - Docker + Docker Compose (для быстрого старта)
 
@@ -393,7 +394,7 @@ curl -X POST http://localhost:8080/service-tasks/<SERVICE_TASK_ID>/fail \
 
 - **JWT-авторизация включена по умолчанию** для всех эндпоинтов (`require-api-auth=true`). В прод-профиле приложение **не стартует** с дефолтным `jwt-secret` — задайте `ZORROBPM_JWT_SECRET`. Смените пароль `admin`.
 - **Модель авторизации внедрена.** Multi-tenant RBAC (владение процессом: `OWNER`/`DESIGNER`, service accounts с правами, `SUPER_ADMIN`) — см. `docs/adr/ADR-1-multi-tenant-authorization.md`. Чтение открыто любому аутентифицированному; запись энфорсится по владельцу процесса (WO-MT-3/3b/7 — чужое правится только своим или админом, доказано `WriteEnforcementIntegrationTest`).
-- **Масштабирование (scale-out).** Таймеры (`timer_jobs`/`timer_start_jobs`) безопасны при нескольких репликах: атомарный захват задач через `SELECT … FOR UPDATE SKIP LOCKED` — только один экземпляр обрабатывает каждую задачу (WO-REL-6/7, доказано PG-IT на реальном PostgreSQL); очистка ретенции безопасна как идемпотентные батч-удаления в своих транзакциях (WO-REL-7). Версионирование BPMN-процессов безопасно: `pg_advisory_xact_lock` на стороне PostgreSQL, виден всем репликам, не JVM-лок (WO-A-03, доказано `ProcessDefinitionPgIT`). Деплой DMN и форм безопасен тем же приёмом через общий `AdvisoryDeployLock` (ключи `dmn:`/`form:`, WO-SCALE-1, доказано `DmnDeployConcurrencyPgIT`/`FormDeployConcurrencyPgIT` на реальном PostgreSQL). **Остаются** на одном экземпляре: in-memory rate-лимиты (`RateLimitFilter`, лимитеры сброса пароля и тестовых писем — эффективный лимит умножается на число реплик, WO-SCALE-2 в очереди). Разрешение инцидентов идемпотентно (WO-REL-5).
+- **Масштабирование (scale-out).** Таймеры (`timer_jobs`/`timer_start_jobs`) безопасны при нескольких репликах: атомарный захват задач через `SELECT … FOR UPDATE SKIP LOCKED` — только один экземпляр обрабатывает каждую задачу (WO-REL-6/7, доказано PG-IT на реальном PostgreSQL); очистка ретенции безопасна как идемпотентные батч-удаления в своих транзакциях (WO-REL-7). Версионирование BPMN-процессов безопасно: `pg_advisory_xact_lock` на стороне PostgreSQL, виден всем репликам, не JVM-лок (WO-A-03, доказано `ProcessDefinitionPgIT`). Деплой DMN и форм безопасен тем же приёмом через общий `AdvisoryDeployLock` (ключи `dmn:`/`form:`, WO-SCALE-1, доказано `DmnDeployConcurrencyPgIT`/`FormDeployConcurrencyPgIT` на реальном PostgreSQL). Rate-лимиты (`RateLimitFilter`, сброс пароля, тестовые письма) — общий Postgres-backed счётчик, лимит держится глобально независимо от числа реплик (WO-SCALE-2, `PgRateLimiter`, `RateLimitClusterPgIT`). SSE-события долетают до клиентов на всех репликах через RabbitMQ fan-out (ADR-7). Всё вышеперечисленное подтверждено 4-часовым нагрузочным прогоном на 3 репликах ([`governance/reports/WO-SCALE-3.md`](governance/reports/WO-SCALE-3.md)). Разрешение инцидентов идемпотентно (WO-REL-5). **Известный gap:** конкурентный batch-деплой `POST /deployments` идентичного контента отдаёт 500 вместо дедупа ([WO-SCALE-4](governance/workorders/WO-SCALE-4-batch-deploy-advisory-lock.md)).
 - **Ретенция.** Очистка терминальных (завершённых/отменённых) инстансов — fail-safe каскад, **выключена по умолчанию** (`RETENTION_TTL_DAYS=0`). Задайте число дней, чтобы включить автоудаление старых инстансов.
 - **CORS** ограничивается allowlist'ом в прод-профиле (`ZORROBPM_CORS_ORIGINS`, по умолчанию домен прода); в dev — открыт. Доступ в проде идёт через nginx reverse proxy.
 - **Сборка требует JDK 21** (объявлено `java.version=21` во всех POM — WO-SCALE-0).
