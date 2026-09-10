@@ -88,9 +88,11 @@ describe('ProcessInstanceDetail — ioMapping visibility (WO-ENG-14)', () => {
     await flushPromises()
 
     const html = wrapper.html()
-    // readable rows, not a JSON blob
-    expect(html).toContain('=orderId → orderId')
-    expect(html).toContain('=result → orderResult')
+    // readable table cells, not a JSON blob
+    expect(html).toContain('=orderId')
+    expect(html).toContain('>orderId</td>')
+    expect(html).toContain('=result')
+    expect(html).toContain('>orderResult</td>')
     // generic properties block still shows job but not the raw mapping arrays
     expect(html).toContain('job')
     expect(html).not.toContain('"inputMappings"')

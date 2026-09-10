@@ -95,16 +95,34 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         addDocs(process.getExclusiveGateways(), docs);
         addDocs(process.getParallelGateways(), docs);
         addDocs(process.getCallActivities(), docs);
-        // catch/throw/sub-process/boundary models don't share BpmnBaseElementModel; documentation on
-        // those element kinds is not collected (tasks/events/gateways/call activities are the common carriers)
+        addDocs(process.getIntermediateCatchEvents(), docs);
+        addDocs(process.getIntermediateThrowEvents(), docs);
+        addDocs(process.getSubProcesses(), docs);
+        addDocs(process.getBoundaryEvents(), docs);
+        // nested elements inside sub-processes share the same models, so one
+        // pass over children covers them (no separate nested collection needed
+        // for documentation: setDocs below recurses into children anyway, and
+        // the docs map is keyed by element id globally).
+        if (process.getSubProcesses() != null) {
+            for (BpmnSubProcessModel s : process.getSubProcesses()) {
+                addDocs(s.getStartEvents(), docs);
+                addDocs(s.getEndEvents(), docs);
+                addDocs(s.getServiceTasks(), docs);
+                addDocs(s.getUserTasks(), docs);
+                addDocs(s.getCallActivities(), docs);
+                addDocs(s.getIntermediateCatchEvents(), docs);
+                addDocs(s.getIntermediateThrowEvents(), docs);
+                addDocs(s.getBoundaryEvents(), docs);
+            }
+        }
         setDocs(nodes, docs);
     }
 
-    private void addDocs(List<? extends BpmnBaseElementModel> list, Map<String, String> docs) {
+    private void addDocs(List<? extends Documented> list, Map<String, String> docs) {
         if (list == null) {
             return;
         }
-        for (BpmnBaseElementModel e : list) {
+        for (Documented e : list) {
             if (e.getId() != null && e.getDocumentation() != null && !e.getDocumentation().isBlank()) {
                 docs.put(e.getId(), e.getDocumentation().trim());
             }
@@ -148,15 +166,21 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         forEach(process.getStartEvents(), s -> nodes.add(mapStartEvent(s, refs)));
         forEach(process.getEndEvents(), e -> nodes.add(mapEndEvent(e, refs)));
         forEach(process.getServiceTasks(), t -> nodes.add(mapServiceTask(t)));
+        forEach(process.getManualTasks(), t -> nodes.add(simpleNode(t.getId(), t.getName(), "manualTask", t.getIncoming(), t.getOutgoing())));
+        forEach(process.getScriptTasks(), t -> nodes.add(simpleNode(t.getId(), t.getName(), "scriptTask", t.getIncoming(), t.getOutgoing())));
+        forEach(process.getBusinessRuleTasks(), t -> nodes.add(simpleNode(t.getId(), t.getName(), "businessRuleTask", t.getIncoming(), t.getOutgoing())));
         forEach(process.getSendTasks(), t -> nodes.add(mapMessageTask(t.getId(), t.getName(), "sendTask", t.getIncoming(), t.getOutgoing(), t.getMessageRef(), refs)));
         forEach(process.getReceiveTasks(), t -> nodes.add(mapMessageTask(t.getId(), t.getName(), "receiveTask", t.getIncoming(), t.getOutgoing(), t.getMessageRef(), refs)));
         forEach(process.getUserTasks(), t -> nodes.add(mapUserTask(t)));
         forEach(process.getExclusiveGateways(), g -> nodes.add(mapExclusiveGateway(g)));
+        forEach(process.getInclusiveGateways(), g -> nodes.add(mapInclusiveGateway(g)));
+        forEach(process.getEventBasedGateways(), g -> nodes.add(simpleNode(g.getId(), g.getName(), "eventBasedGateway", g.getIncoming(), g.getOutgoing())));
         forEach(process.getParallelGateways(), g -> nodes.add(simpleNode(g.getId(), g.getName(), "parallelGateway", g.getIncoming(), g.getOutgoing())));
         forEach(process.getIntermediateCatchEvents(), e -> nodes.add(mapCatchEvent(e, refs)));
         forEach(process.getIntermediateThrowEvents(), e -> nodes.add(mapThrowEvent(e, refs)));
         forEach(process.getCallActivities(), c -> nodes.add(mapCallActivity(c)));
         forEach(process.getSubProcesses(), s -> nodes.add(mapSubProcess(s, refs)));
+        forEach(process.getTransactions(), s -> nodes.add(mapSubProcess(s, refs)));
     }
 
     private <T> void forEach(List<T> list, Consumer<T> consumer) {
@@ -236,6 +260,12 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         return node;
     }
 
+    private BpmnNode mapInclusiveGateway(BpmnInclusiveGatewayModel g) {
+        BpmnNode node = simpleNode(g.getId(), g.getName(), "inclusiveGateway", g.getIncoming(), g.getOutgoing());
+        put(node, "defaultFlow", g.getDefaultFlow());
+        return node;
+    }
+
     private BpmnNode mapCallActivity(BpmnCallActivityModel c) {
         BpmnNode node = simpleNode(c.getId(), c.getName(), "callActivity", c.getIncoming(), c.getOutgoing());
         if (c.getExtensionElements() != null && c.getExtensionElements().getCalledElement() != null) {
@@ -252,9 +282,13 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         forEach(s.getEndEvents(), e -> children.getNodes().add(mapEndEvent(e, refs)));
         forEach(s.getServiceTasks(), t -> children.getNodes().add(mapServiceTask(t)));
         forEach(s.getUserTasks(), t -> children.getNodes().add(mapUserTask(t)));
+        forEach(s.getCallActivities(), c -> children.getNodes().add(mapCallActivity(c)));
+        forEach(s.getIntermediateCatchEvents(), e -> children.getNodes().add(mapCatchEvent(e, refs)));
+        forEach(s.getIntermediateThrowEvents(), e -> children.getNodes().add(mapThrowEvent(e, refs)));
         forEach(s.getExclusiveGateways(), g -> children.getNodes().add(mapExclusiveGateway(g)));
         forEach(s.getParallelGateways(), g -> children.getNodes().add(simpleNode(g.getId(), g.getName(), "parallelGateway", g.getIncoming(), g.getOutgoing())));
         children.setFlows(mapFlows(s.getFlows()));
+        attachBoundaryEvents(s.getBoundaryEvents(), refs, children.getNodes());
         node.setChildren(children);
         return node;
     }

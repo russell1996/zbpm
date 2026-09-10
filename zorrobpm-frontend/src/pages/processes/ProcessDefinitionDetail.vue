@@ -14,6 +14,7 @@ import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/shared/lib/utils'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
 import MemberAddDialog from '@/widgets/processes/MemberAddDialog.vue'
 import { ArrowLeft, Download, Calendar } from 'lucide-vue-next'
@@ -172,7 +173,32 @@ const allNodes = computed(() => (store.currentStructure ? flatten(store.currentS
 const selectedNode = computed<BpmnNode | null>(() =>
   selectedElement.value && store.currentStructure ? findNode(store.currentStructure.nodes, selectedElement.value) : null)
 const selectedNodeProps = computed(() =>
-  selectedNode.value ? Object.entries(selectedNode.value.properties || {}) : [])
+  selectedNode.value
+    ? Object.entries(selectedNode.value.properties || {})
+        // WO-ENG-15: ioMapping declarations render in IoMappingTable below,
+        // not as a raw JSON blob in the generic list.
+        .filter(([k]) => k !== 'inputMappings' && k !== 'outputMappings')
+    : [])
+
+// WO-ENG-15: structure-tab tree — flattened nodes with depth for indent;
+// boundary events ride one level under their host.
+interface TreeRow {
+  node: BpmnNode
+  depth: number
+}
+function flattenDepth(nodes: BpmnNode[], depth: number, out: TreeRow[]): void {
+  for (const n of nodes) {
+    out.push({ node: n, depth })
+    for (const b of n.boundaryEvents || []) out.push({ node: b, depth: depth + 1 })
+    if (n.children) flattenDepth(n.children.nodes, depth + 1, out)
+  }
+}
+const structureRows = computed<TreeRow[]>(() => {
+  if (!store.currentStructure) return []
+  const out: TreeRow[] = []
+  flattenDepth(store.currentStructure.nodes, 0, out)
+  return out
+})
 // clicking a sequence flow (arrow) -> show its FEEL condition / source / target
 const selectedFlow = computed<BpmnFlow | null>(() =>
   selectedElement.value && !selectedNode.value && store.currentStructure
@@ -376,6 +402,8 @@ async function downloadBpmn() {
                     <span class="ml-1 font-mono break-all">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
                   </div>
                 </div>
+                <IoMappingTable title-key="inputMappings" :mappings="selectedNode?.properties['inputMappings']" />
+                <IoMappingTable title-key="outputMappings" :mappings="selectedNode?.properties['outputMappings']" />
                 <div v-if="selectedNode.documentation" class="pt-2 border-t border-border space-y-1">
                   <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('requirements') }}</h4>
                   <p class="text-xs whitespace-pre-wrap break-words">{{ selectedNode.documentation }}</p>
@@ -416,23 +444,93 @@ async function downloadBpmn() {
         </div>
       </div>
 
-      <!-- Tab: Structure -->
+      <!-- Tab: Structure — WO-ENG-15: clickable tree (nested children +
+           boundary events carry their depth), flows section, properties
+           panel reusing the shared selectedElement machinery. -->
       <div v-if="activeTab === 'structure'">
         <div class="border border-border rounded-lg bg-card">
           <div class="px-4 py-3 border-b border-border">
             <h2 class="text-lg font-bold">{{ t('bpmnStructure') }}</h2>
           </div>
-          <div v-if="store.currentStructure" class="p-4">
-            <div class="space-y-2">
-              <div v-for="node in store.currentStructure.nodes" :key="node.id" class="flex items-center gap-3 text-sm">
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ node.type }}</span>
-                <span class="font-mono">{{ node.id }}</span>
-                <span v-if="node.name" class="text-muted-foreground">— {{ node.name }}</span>
+          <div v-if="store.currentStructure" class="flex">
+            <div class="flex-1 min-w-0 p-4">
+              <div class="space-y-1">
+                <button
+                  v-for="row in structureRows"
+                  :key="row.node.id"
+                  :style="{ paddingLeft: `${row.depth * 16}px` }"
+                  class="flex items-center gap-3 text-sm w-full text-left rounded px-2 py-1 hover:bg-muted/50"
+                  :class="{ 'bg-muted': selectedElement === row.node.id }"
+                  @click="selectedElement = row.node.id"
+                >
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted shrink-0">{{ row.node.type }}</span>
+                  <span class="font-mono truncate">{{ row.node.id }}</span>
+                  <span v-if="row.node.name" class="text-muted-foreground truncate">— {{ row.node.name }}</span>
+                </button>
+              </div>
+              <p v-if="!store.currentStructure.nodes.length" class="text-sm text-muted-foreground">
+                {{ t('noDataYet') }}
+              </p>
+              <div v-if="store.currentStructure.flows.length" class="mt-4 pt-2 border-t border-border space-y-1">
+                <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('flows') }}</h4>
+                <button
+                  v-for="f in store.currentStructure.flows"
+                  :key="f.id"
+                  class="flex items-center gap-3 text-sm w-full text-left rounded px-2 py-1 hover:bg-muted/50"
+                  :class="{ 'bg-muted': selectedElement === f.id }"
+                  @click="selectedElement = f.id"
+                >
+                  <span class="font-mono truncate">{{ f.id }}</span>
+                  <span class="text-xs text-muted-foreground font-mono truncate">{{ f.sourceRef }} → {{ f.targetRef }}</span>
+                </button>
               </div>
             </div>
-            <p v-if="!store.currentStructure.nodes.length" class="text-sm text-muted-foreground">
-              {{ t('noDataYet') }}
-            </p>
+            <div v-if="selectedElement" class="w-80 border-l border-border p-4 space-y-3 bg-muted/30 overflow-y-auto shrink-0">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-bold">{{ selectedFlow ? t('sequenceFlow') : t('element') }}</h3>
+                <button class="text-xs text-muted-foreground hover:text-foreground" @click="selectedElement = null">{{ t('close') }}</button>
+              </div>
+              <template v-if="selectedNode">
+                <div class="text-sm space-y-1">
+                  <div v-if="selectedNode.name"><span class="text-muted-foreground">{{ t('name') }}:</span> {{ selectedNode.name }}</div>
+                  <div v-if="selectedNode.type">
+                    <span class="text-muted-foreground">{{ t('type') }}:</span>
+                    <span class="ml-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-muted">{{ selectedNode.type }}<template v-if="selectedNode.eventDefinition">/{{ selectedNode.eventDefinition }}</template></span>
+                  </div>
+                  <div><span class="text-muted-foreground">ID:</span> <CopyableId :value="selectedElement" /></div>
+                </div>
+                <div v-if="selectedNodeProps.length" class="pt-2 border-t border-border space-y-1.5">
+                  <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('configuration') }}</h4>
+                  <div v-for="[k, v] in selectedNodeProps" :key="k" class="text-xs">
+                    <span class="text-muted-foreground font-mono">{{ k }}:</span>
+                    <span class="ml-1 font-mono break-all">{{ typeof v === 'object' ? JSON.stringify(v) : v }}</span>
+                  </div>
+                </div>
+                <IoMappingTable title-key="inputMappings" :mappings="selectedNode?.properties['inputMappings']" />
+                <IoMappingTable title-key="outputMappings" :mappings="selectedNode?.properties['outputMappings']" />
+                <div v-if="selectedNode.documentation" class="pt-2 border-t border-border space-y-1">
+                  <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('requirements') }}</h4>
+                  <p class="text-xs whitespace-pre-wrap break-words">{{ selectedNode.documentation }}</p>
+                </div>
+                <div v-if="!selectedNodeProps.length && !selectedNode.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('noConfiguration') }}</div>
+              </template>
+              <template v-else-if="selectedFlow">
+                <div class="text-sm space-y-1">
+                  <div v-if="selectedFlow.name"><span class="text-muted-foreground">{{ t('name') }}:</span> {{ selectedFlow.name }}</div>
+                  <div><span class="text-muted-foreground">ID:</span> <CopyableId :value="selectedElement" /></div>
+                  <div class="text-xs text-muted-foreground font-mono">{{ selectedFlow.sourceRef }} → {{ selectedFlow.targetRef }}</div>
+                </div>
+                <div class="pt-2 border-t border-border space-y-1">
+                  <h4 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('conditionFeel') }}</h4>
+                  <p v-if="selectedFlow.conditionExpression" class="text-xs font-mono break-all bg-muted rounded px-2 py-1">{{ selectedFlow.conditionExpression }}</p>
+                  <p v-else class="text-xs text-muted-foreground">{{ t('noConditionFlow') }}</p>
+                </div>
+              </template>
+              <div v-else class="text-xs text-muted-foreground">
+                <div><span class="text-muted-foreground">ID:</span> {{ selectedElement }}</div>
+                <p class="mt-1">{{ t('noDetailsForElement') }}</p>
+              </div>
+            </div>
           </div>
           <p v-else class="p-4 text-sm text-muted-foreground">{{ t('loading') }}</p>
         </div>
