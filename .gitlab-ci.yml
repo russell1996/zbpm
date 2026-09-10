@@ -154,6 +154,28 @@ test:pg:
     - bash ci/run-pg-tests.sh
   rules: *rules-code-changes
 
+# ---------------------------------------------------------------------------
+# Rabbit-IT — runs @Tag("rabbit") tests against a real rabbitmq:3.13 sidecar.
+# WO-AUDIT-1 (TD8): RabbitOutboxConfirmIT (at-least-once outbox proof) ran nowhere
+# in CI — this job runs it via ci/run-rabbit-tests.sh (mirror of run-pg-tests.sh).
+# ---------------------------------------------------------------------------
+
+test:rabbit:
+  stage: test
+  tags: [zbpm]
+  artifacts:
+    paths:
+      - "**/failsafe-reports/"
+    expire_in: 3 days
+    when: always
+  variables:
+    # Non-standard host port so the ephemeral CI broker never collides with any
+    # 5672 already bound on the shared runner (same premise as PG_PORT, P-23).
+    RABBIT_PORT: "5673"
+  script:
+    - bash ci/run-rabbit-tests.sh
+  rules: *rules-code-changes
+
 test:frontend:
   stage: test
   tags: [zbpm]
@@ -169,15 +191,20 @@ test:frontend:
   rules: *rules-code-changes
 
 # ---------------------------------------------------------------------------
-# Security — CVE scan (WO-SEC-32)
-# Runs OWASP dependency-check (NVD) + npm audit separately from main verify.
-# allow_failure while baseline is established; remove once clean.
+# Security — CVE scan (WO-SEC-32), blocking gate on CVSS>=9 (WO-AUDIT-1 S6).
+# Runs OWASP dependency-check (NVD) with a hard fail threshold of 9.0: any KNOWN
+# CRITICAL stops the pipeline. WO-AUDIT-1 verified pre-flip that the tree carries
+# nothing >=9 (OSV cross-check over all 162 compile+runtime deps: max numeric CVSS
+# 7.5, zero critical; 39 test-scope deps: zero advisories; npm audit: 1 high +
+# 1 moderate, zero critical — see WO-AUDIT-1 report; NVD itself needs $NVD_API_KEY
+# and cannot run keyless locally, so the first CI run of THIS job is the final
+# arbiter — if it goes red, upgrade deps first per WO-AUDIT-1 fallback).
 # ---------------------------------------------------------------------------
 
 cve:scan:
   stage: security
   tags: [zbpm]
-  allow_failure: true
+  allow_failure: false
   cache:
     # WO-SEC-32 FIX: fixed key so NVD DB persists across pipelines.
     # dependency-check updates incrementally — no full re-download.
@@ -188,6 +215,45 @@ cve:scan:
     # NVD cache — dependency-check stores DB in its data dir; map to runner cache
     - mkdir -p .nvd-cache
     # Backend CVE scan: OWASP dependency-check against the built JARs
+    - >-
+      docker run --rm
+      -v "$CI_PROJECT_DIR":/build -w /build
+      -v "$CI_PROJECT_DIR/.nvd-cache":/root/.m2/repository/org/owasp/dependency-check-data
+      -v zbpm_m2:/root/.m2
+      maven:3.9.9-eclipse-temurin-21
+      sh -c "mvn -B -ntp install -DskipTests -q && mvn -B -ntp org.owasp:dependency-check-maven:check
+      -DfailBuildOnCVSS=9
+      -DsuppressionFile=owasp-suppressions.xml
+      -DnvdApiKey=$NVD_API_KEY
+      -DossindexAnalyzerEnabled=false
+      -DnodeAuditSkipDevDependencies=true
+      --no-transfer-progress"
+    - echo "Backend CVE scan complete (CVSS>=9 = fail)"
+  rules: *rules-code-changes
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-rest/target/dependency-check-report.html
+      - zorrobpm-engine/target/dependency-check-report.html
+    expire_in: 30 days
+    name: cve-reports-$CI_COMMIT_SHORT_SHA
+
+# ---------------------------------------------------------------------------
+# Security — CVE report (advisory). Same scans at the informative threshold
+# (backend CVSS>=7, npm audit high+) with allow_failure: true — signal without
+# blocking while the >=9 gate above is the hard bar.
+# ---------------------------------------------------------------------------
+
+cve:report:
+  stage: security
+  tags: [zbpm]
+  allow_failure: true
+  cache:
+    key: nvd-db
+    paths:
+      - .nvd-cache
+  script:
+    - mkdir -p .nvd-cache
     - >-
       docker run --rm
       -v "$CI_PROJECT_DIR":/build -w /build
@@ -216,7 +282,7 @@ cve:scan:
       - zorrobpm-rest/target/dependency-check-report.html
       - zorrobpm-engine/target/dependency-check-report.html
     expire_in: 30 days
-    name: cve-reports-$CI_COMMIT_SHORT_SHA
+    name: cve-advisory-$CI_COMMIT_SHORT_SHA
 
 # ---------------------------------------------------------------------------
 # Build — versioned runtime images (commit SHA + latest)
