@@ -17,4 +17,11 @@ public class VariableQuery {
     private String name;
     private ProcessVariableType type;
     private String value;
+    /**
+     * WO-ENG-14: фильтр scope. Не задан → только root-scope переменные
+     * (scopeId IS NULL); задан → переменные именно этого scope
+     * (scopeId = activityId). Отдельного «дай вообще всё» режима нет —
+     * он воспроизвёл бы баг подмешивания scoped-переменных в общий список.
+     */
+    private UUID activityId;
 }

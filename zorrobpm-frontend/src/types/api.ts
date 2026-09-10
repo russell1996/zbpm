@@ -107,6 +107,7 @@ export interface ProcessVariable {
   name: string
   value: string
   type: ProcessVariableType
+  activityId?: string | null
 }
 
 export interface BpmnNode {
@@ -197,6 +198,7 @@ export interface VariableQuery {
   name?: string
   type?: ProcessVariableType
   value?: string
+  activityId?: string
 }
 
 export interface TimerJobQuery {
