@@ -33,9 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code uk_process_definitions__sha256} → raw 500. The fix acquires the key lock BEFORE
  * the check (double-checked dedup): losers see the winner's row and return it.
  *
- * <p>The fixture carries message-start + timer-start + embedded user-task form so the same
- * race also exercises the registrar paths (criterion 5): subscriptions and form rows must
- * exist exactly once afterwards.
+ * <p>The fixture carries message-start + signal-start + timer-start + embedded user-task
+ * form so the same race also exercises the registrar paths (criterion 5): subscriptions
+ * and form rows must exist exactly once afterwards.
  *
  * <p>POF (G-N): commenting out the {@code acquireForKey} line in
  * {@code ProcessDefinitionServiceImpl.addProcessDefinition} → RED (500/unique violation
@@ -67,6 +67,7 @@ public class BatchDeployConcurrencyPgIT extends PostgresIT {
     private void cleanup() {
         // Children first (FK-safe order, mirrors DeploymentAtomicityPgIT).
         jdbc.update("DELETE FROM message_start_subscriptions WHERE process_key = ?", KEY);
+        jdbc.update("DELETE FROM signal_start_subscriptions WHERE process_key = ?", KEY);
         jdbc.update("DELETE FROM timer_start_jobs WHERE process_key = ?", KEY);
         jdbc.update("DELETE FROM element_artifact_binding WHERE process_definition_id IN (SELECT id FROM process_definitions WHERE code = ?)", KEY);
         jdbc.update("DELETE FROM bpmn WHERE id IN (SELECT id FROM process_definitions WHERE code = ?)", KEY);
@@ -120,6 +121,9 @@ public class BatchDeployConcurrencyPgIT extends PostgresIT {
             .isEqualTo(1);
         assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM timer_start_jobs WHERE process_key = ?", Integer.class, KEY))
+            .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM signal_start_subscriptions WHERE process_key = ?", Integer.class, KEY))
             .isEqualTo(1);
         assertThat(jdbc.queryForObject(
             "SELECT COUNT(*) FROM form WHERE form_key = ?", Integer.class,
