@@ -166,7 +166,8 @@ public class RegistrationCleanupJobTest {
     }
 
     @Test
-    void staleUserWithoutTokens_deletedAnyway() {        UiUserEntity orphan = new UiUserEntity();
+    void staleUserWithoutTokens_deletedAnyway() {
+        UiUserEntity orphan = new UiUserEntity();
         orphan.setId(UUID.randomUUID());
         orphan.setUsername("orphan-" + UUID.randomUUID().toString().substring(0, 8));
         orphan.setPasswordHash("$dummy-hash-for-not-null");
