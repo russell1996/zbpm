@@ -22,7 +22,7 @@ public class HandlerRegistry {
 
     private final ObjectProvider<TypedElementHandler> typedHandlers;
     @Getter
-    private final Map<BpmnElementType, ElementHandler> handlers;
+    private volatile Map<BpmnElementType, ElementHandler> handlers;
     private volatile boolean beanHandlersResolved = false;
 
     public HandlerRegistry(ObjectProvider<TypedElementHandler> typedHandlers) {
@@ -30,33 +30,42 @@ public class HandlerRegistry {
         this.handlers = new EnumMap<>(BpmnElementType.class);
     }
 
+    /**
+     * WO-AUDIT-5: publish-then-flag. The resolved map is built LOCALLY and
+     * assigned whole; only afterwards is {@code beanHandlersResolved} set.
+     * A concurrent reader that observes {@code true} (volatile) is therefore
+     * guaranteed (happens-before) to observe the fully populated map — never a
+     * half-filled one. Previously the flag was set BEFORE the fill loop.
+     */
     private synchronized void resolveBeanHandlers() {
         if (beanHandlersResolved) {
             return;
         }
-        beanHandlersResolved = true;
+        Map<BpmnElementType, ElementHandler> resolved = new EnumMap<>(BpmnElementType.class);
         for (TypedElementHandler handler : typedHandlers.orderedStream().toList()) {
-            handlers.put(handler.elementType(), handler.handler());
+            resolved.put(handler.elementType(), handler.handler());
             log.info("Registered handler for {}: {}", handler.elementType(), handler.handler().getClass().getSimpleName());
         }
-        registerAliases();
+        registerAliases(resolved);
+        handlers = resolved;
+        beanHandlersResolved = true;
     }
 
     /**
      * WO-A-08: Register element type aliases after bean resolution.
      */
-    private void registerAliases() {
-        putIfPresent(BpmnElementType.MESSAGE_START_EVENT, BpmnElementType.START_EVENT);
-        putIfPresent(BpmnElementType.TIMER_START_EVENT, BpmnElementType.START_EVENT);
-        putIfPresent(BpmnElementType.SIGNAL_START_EVENT, BpmnElementType.START_EVENT);
-        putIfPresent(BpmnElementType.LINK_CATCH_EVENT, BpmnElementType.START_EVENT);
-        putIfPresent(BpmnElementType.RECEIVE_TASK, BpmnElementType.MESSAGE_CATCH_EVENT);
+    private void registerAliases(Map<BpmnElementType, ElementHandler> map) {
+        putIfPresent(map, BpmnElementType.MESSAGE_START_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(map, BpmnElementType.TIMER_START_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(map, BpmnElementType.SIGNAL_START_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(map, BpmnElementType.LINK_CATCH_EVENT, BpmnElementType.START_EVENT);
+        putIfPresent(map, BpmnElementType.RECEIVE_TASK, BpmnElementType.MESSAGE_CATCH_EVENT);
     }
 
-    private void putIfPresent(BpmnElementType alias, BpmnElementType target) {
-        ElementHandler handler = handlers.get(target);
+    private void putIfPresent(Map<BpmnElementType, ElementHandler> map, BpmnElementType alias, BpmnElementType target) {
+        ElementHandler handler = map.get(target);
         if (handler != null) {
-            handlers.putIfAbsent(alias, handler);
+            map.putIfAbsent(alias, handler);
             log.info("Alias {} → {}", alias, target);
         }
     }
