@@ -21,6 +21,7 @@
       <bpmn:outgoing>flow5</bpmn:outgoing>
     </bpmn:inclusiveGateway>
     <bpmn:subProcess id="sub1" name="Nested">
+      <bpmn:documentation>Nested scope docs</bpmn:documentation>
       <bpmn:incoming>flow5</bpmn:incoming>
       <bpmn:outgoing>flow6</bpmn:outgoing>
       <bpmn:callActivity id="nestedCall" name="Nested call">
@@ -34,6 +35,7 @@
         <bpmn:outgoing>subFlow2</bpmn:outgoing>
       </bpmn:callActivity>
       <bpmn:intermediateCatchEvent id="nestedCatch" name="Nested catch">
+        <bpmn:documentation>Wait for the message</bpmn:documentation>
         <bpmn:incoming>subFlow2</bpmn:incoming>
         <bpmn:outgoing>subFlow3</bpmn:outgoing>
         <bpmn:messageEventDefinition messageRef="msg1" />
