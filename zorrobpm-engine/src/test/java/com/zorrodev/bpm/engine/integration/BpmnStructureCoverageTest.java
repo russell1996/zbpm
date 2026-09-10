@@ -90,6 +90,7 @@ public class BpmnStructureCoverageTest {
         BpmnNode gateway = node(structure.getNodes(), "incGateway");
         assertThat(gateway).isNotNull();
         assertThat(gateway.getType()).isEqualTo("inclusiveGateway");
+        assertThat(gateway.getProperties().get("defaultFlow")).isEqualTo("flow5");
     }
 
     @Test

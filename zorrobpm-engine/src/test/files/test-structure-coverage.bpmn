@@ -17,7 +17,7 @@
       <bpmn:incoming>flow3</bpmn:incoming>
       <bpmn:outgoing>flow4</bpmn:outgoing>
     </bpmn:businessRuleTask>
-    <bpmn:inclusiveGateway id="incGateway" name="Inc">
+    <bpmn:inclusiveGateway id="incGateway" name="Inc" default="flow5">
       <bpmn:documentation>Either branch</bpmn:documentation>
       <bpmn:incoming>flow4</bpmn:incoming>
       <bpmn:outgoing>flow5</bpmn:outgoing>
@@ -52,12 +52,6 @@
           <bpmn:timeDuration>PT5M</bpmn:timeDuration>
         </bpmn:timerEventDefinition>
       </bpmn:boundaryEvent>
-      <bpmn:intermediateThrowEvent id="nestedThrow" name="Nested throw">
-        <bpmn:documentation>Fire the signal</bpmn:documentation>
-        <bpmn:incoming>subFlow4</bpmn:incoming>
-        <bpmn:outgoing>subFlow5</bpmn:outgoing>
-        <bpmn:signalEventDefinition signalRef="sig1" />
-      </bpmn:intermediateThrowEvent>
       <bpmn:intermediateThrowEvent id="nestedThrow" name="Nested throw">
         <bpmn:documentation>Fire the signal</bpmn:documentation>
         <bpmn:incoming>subFlow4</bpmn:incoming>
