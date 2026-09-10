@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.UpdateUiUserDTO;
 import com.zorrodev.bpm.contract.dto.query.UiUserQuery;
+import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
@@ -22,6 +23,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -32,6 +34,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.NoSuchElementException;
 import java.util.UUID;
@@ -170,7 +173,13 @@ public class UiUserServiceImpl implements UiUserService {
             // WO-REG-1: PG+Hibernate surfaces this race NOT as DataIntegrityViolation
             // but as JpaSystemException(25P02) (proven live: two threads racing one
             // address) — so catch the parent. Precision kept by the re-check below.
-            throw translateEmailConflict(normalizedEmail, e);
+            // WO-AUDIT-5: email first (existing behavior), then username — a username
+            // race rethrows the raw cause from the email translator, translate it here.
+            try {
+                throw translateEmailConflict(normalizedEmail, e);
+            } catch (DataAccessException stillRaw) {
+                throw translateUsernameConflict(dto.getUsername(), stillRaw);
+            }
         }
         return entity.getId();
     }
@@ -296,8 +305,7 @@ public class UiUserServiceImpl implements UiUserService {
      * REQUIRES_NEW template per call (a shared bean's propagation must never be
      * mutated — not thread-safe); the violation path is rare, allocation is free.
      * Under READ_COMMITTED a concurrent uncommitted rival is invisible, so a taken
-     * address here means OUR constraint fired — anything else rethrows as-is
-     * (e.g. a simultaneous username race keeps its original error).
+     * address here means OUR constraint fired — anything else rethrows as-is.
      */
     private EngineException translateEmailConflict(String normalizedEmail,
             DataAccessException cause) {
@@ -308,6 +316,30 @@ public class UiUserServiceImpl implements UiUserService {
             normalizedEmail != null && !normalizedEmail.isBlank() && repository.existsByEmail(normalizedEmail));
         if (Boolean.TRUE.equals(taken)) {
             return new EngineException("Email already exists");
+        }
+        throw cause;
+    }
+
+    /**
+     * WO-AUDIT-5 (C5): username counterpart of {@link #translateEmailConflict}.
+     * A parallel registration of the same username loses check-then-act and hits
+     * {@code uk_ui_users__username}; without translation the loser gets a raw 500.
+     * Same mechanics: the catching transaction is already aborted, so the re-check
+     * runs in a fresh read-only REQUIRES_NEW transaction. A taken username becomes
+     * a 409 {@code USERNAME_ALREADY_EXISTS} (ApiException pattern per
+     * ProcessSubmissionServiceImpl WO-ACL-12); anything else rethrows as-is.
+     */
+    private ApiException translateUsernameConflict(String username,
+            DataAccessException cause) {
+        TransactionTemplate tpl = new TransactionTemplate(transactionManager);
+        tpl.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        tpl.setReadOnly(true);
+        Boolean taken = tpl.execute(status ->
+            username != null && !username.isBlank() && repository.existsByUsername(username));
+        if (Boolean.TRUE.equals(taken)) {
+            return new ApiException(HttpStatus.CONFLICT, "USERNAME_ALREADY_EXISTS",
+                "Username '" + username + "' is already taken",
+                Map.of("username", username));
         }
         throw cause;
     }
