@@ -7,6 +7,7 @@ import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.BpmnScope;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.bpmn.xml.*;
+import com.zorrodev.bpm.engine.bpmn.xml.extension.IoMappingModel;
 import com.zorrodev.bpm.engine.service.BpmnStructureService;
 import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
@@ -199,6 +200,7 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         if (t.getExtensionElements() != null && t.getExtensionElements().getTaskDefinition() != null) {
             put(node, "job", t.getExtensionElements().getTaskDefinition().getType());
         }
+        putIoMapping(node, t.getExtensionElements());
         return node;
     }
 
@@ -223,6 +225,7 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
                 var f = t.getExtensionElements().getFormDefinition();
                 put(node, "formKey", f.getFormKey() != null ? f.getFormKey() : f.getExternalReference());
             }
+            putIoMapping(node, t.getExtensionElements());
         }
         return node;
     }
@@ -238,6 +241,7 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         if (c.getExtensionElements() != null && c.getExtensionElements().getCalledElement() != null) {
             put(node, "calledProcessId", c.getExtensionElements().getCalledElement().getProcessId());
         }
+        putIoMapping(node, c.getExtensionElements());
         return node;
     }
 
@@ -310,6 +314,28 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
     private void put(BpmnNode node, String key, Object value) {
         if (value != null) {
             node.getProperties().put(key, value);
+        }
+    }
+
+    /**
+     * WO-ENG-14: static ioMapping declaration ({@code source → target} from the
+     * BPMN itself, before any execution). Only non-empty lists are stored —
+     * elements without ioMapping get no keys at all (like other properties here).
+     */
+    private void putIoMapping(BpmnNode node, ExtensionElements ext) {
+        if (ext == null || ext.getIoMapping() == null) {
+            return;
+        }
+        IoMappingModel io = ext.getIoMapping();
+        if (io.getInputs() != null && !io.getInputs().isEmpty()) {
+            put(node, "inputMappings", io.getInputs().stream()
+                .map(m -> Map.of("source", String.valueOf(m.getSource()), "target", String.valueOf(m.getTarget())))
+                .toList());
+        }
+        if (io.getOutputs() != null && !io.getOutputs().isEmpty()) {
+            put(node, "outputMappings", io.getOutputs().stream()
+                .map(m -> Map.of("source", String.valueOf(m.getSource()), "target", String.valueOf(m.getTarget())))
+                .toList());
         }
     }
 
