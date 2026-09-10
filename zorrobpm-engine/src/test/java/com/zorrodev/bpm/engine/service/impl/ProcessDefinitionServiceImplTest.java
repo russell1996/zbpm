@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.FileService;
+import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -69,6 +70,9 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private DeploymentPostCommitActions postCommitActions;
 
+    @Mock
+    private AdvisoryDeployLock advisoryDeployLock;
+
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
@@ -88,7 +92,8 @@ class ProcessDefinitionServiceImplTest {
             transactionTemplate,
             versioning,
             artifactRegistrar,
-            postCommitActions
+            postCommitActions,
+            advisoryDeployLock
         );
     }
 

@@ -8,7 +8,7 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.FileService;
-import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +41,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final ProcessDefinitionVersioning versioning;
     private final DeploymentArtifactRegistrar artifactRegistrar;
     private final DeploymentPostCommitActions postCommitActions;
+    private final AdvisoryDeployLock advisoryDeployLock;
 
     @Override
     public Optional<ProcessDefinition> getProcessDefinitionById(UUID id) {
@@ -100,6 +101,14 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         // The in-memory model cache is filled only in afterCommit (TransactionSynchronization),
         // never inside the tx, so the cache cannot contain a model that is not in the database.
         return transactionTemplate.execute(status -> {
+            // WO-SCALE-4: serialize same-key deploys BEFORE the sha256 dedup check.
+            // The lock used to live only inside createNewVersionEntity (i.e. AFTER the
+            // check) — two racers with identical content both passed findBySha256, then
+            // serialized on the lock, then the loser died on uk_process_definitions__sha256
+            // (raw 500, soak 451/467). Now the check below re-reads UNDER the lock
+            // (double-checked dedup): the loser sees the winner's row and returns it.
+            // xact-scoped: joins the caller's tx (single deploy or batch item alike).
+            advisoryDeployLock.acquireForKey(key);
             Optional<ProcessDefinitionEntity> processDefinitionEntityOptional = processDefinitionRepository.findBySha256(sha256);
 
             ProcessDefinitionEntity processDefinitionEntity;
