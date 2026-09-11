@@ -14,7 +14,6 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.util.ContentCachingRequestWrapper;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
@@ -56,9 +55,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     static final String HEADER = "Idempotency-Key";
     private static final int MAX_KEY_LENGTH = 255;
     /**
-     * Bodies beyond this are executed without idempotency (passthrough): hashing a
-     * truncated prefix could alias different bodies. Admin-scale batches fit easily;
-     * the cap only guards memory (mirrors {@code RateLimitFilter} thinking).
+     * Bodies beyond this get a direct 413 (house precedent: send413) instead of being
+     * hashed — a truncated prefix could alias different bodies to one hash, and
+     * unbounded buffering is a memory-DoS vector. Admin-scale batches fit easily.
      */
     static final int MAX_BODY_BYTES = 5 * 1024 * 1024;
 
