@@ -35,8 +35,6 @@ import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
-import org.camunda.feel.api.FeelEngineApi;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
@@ -63,7 +61,6 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     private final DmnService dmnService;
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
     private final tools.jackson.databind.ObjectMapper objectMapper;
-    private final FeelEngineApi feelEngineApi;
     private final ExecutionContext executionContext;
     private final HandlerRegistry handlerRegistry;
     private final com.zorrodev.bpm.engine.handler.MultiInstanceExecutor multiInstanceExecutor;
@@ -79,12 +76,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * carries 16 dependencies; the alternative was 4 more).
      */
     private final com.zorrodev.bpm.engine.handler.ElementListenerPhaseService elementListenerPhaseService;
-    private FlowNavigator flowNavigator;
-
-    @PostConstruct
-    void init() {
-        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport, objectMapper, serviceTaskEnqueueService);
-    }
+    private final FlowNavigator flowNavigator;
 
     /**
      * Follows every outgoing sequence flow of {@code element} unconditionally and executes the

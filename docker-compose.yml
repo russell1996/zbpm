@@ -155,7 +155,8 @@ services:
     container_name: zorrobpm-frontend
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-8081}:80"
     deploy:

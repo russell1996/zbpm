@@ -8,7 +8,6 @@ import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -36,12 +35,7 @@ public class MultiInstanceExecutor {
     private final ElementSupport elementSupport;
     private final BoundaryScheduler boundaryScheduler;
 
-    private FlowNavigator flowNavigator;
-
-    @PostConstruct
-    void init() {
-        flowNavigator = new FlowNavigator(dbService, bpmnService, scriptService, elementSupport, objectMapper, serviceTaskEnqueueService);
-    }
+    private final FlowNavigator flowNavigator;
 
     public boolean isMultiInstance(BpmnElementModel element) {
         return Optional.ofNullable(element.getExtensions())

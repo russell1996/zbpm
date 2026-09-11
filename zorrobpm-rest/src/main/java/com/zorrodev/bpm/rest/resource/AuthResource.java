@@ -197,6 +197,8 @@ public class AuthResource implements AuthContract {
         clearAccess.setPath("/");
         clearAccess.setMaxAge(0);
         clearAccess.setHttpOnly(true);
+        clearAccess.setSecure(cookieSecure);
+        clearAccess.setAttribute("SameSite", "Strict");
         response.addCookie(clearAccess);
 
         // Clear refresh cookie
@@ -204,6 +206,8 @@ public class AuthResource implements AuthContract {
         clearRefresh.setPath("/");
         clearRefresh.setMaxAge(0);
         clearRefresh.setHttpOnly(true);
+        clearRefresh.setSecure(cookieSecure);
+        clearRefresh.setAttribute("SameSite", "Strict");
         response.addCookie(clearRefresh);
     }
 
