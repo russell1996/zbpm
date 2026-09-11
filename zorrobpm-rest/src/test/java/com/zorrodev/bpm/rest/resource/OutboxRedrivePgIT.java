@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
 import org.junit.jupiter.api.Tag;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -15,6 +16,7 @@ import org.springframework.test.context.DynamicPropertySource;
  */
 @Tag("pg")
 @ActiveProfiles("test")
+@Import(OutboxRedriveIntegrationTest.CaptureConfig.class)
 public class OutboxRedrivePgIT extends OutboxRedriveIntegrationTest {
 
     @DynamicPropertySource
