@@ -264,6 +264,7 @@
   "role": "Роль",
   "password": "Пароль",
   "username": "Имя пользователя",
+  "loginIdentifier": "Имя пользователя или email",
   "signIn": "Войти",
   "signingIn": "Вход…",
   "signInToContinue": "Войдите, чтобы продолжить",
