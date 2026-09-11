@@ -134,7 +134,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         // Auth/rate-limit failures are never cached — the retry must
                         // re-authenticate and re-pass the limiter live. A saved 401/429
                         // would pin the client to failure after fixing its token/quota.
-                        copyBody(cachedResponse, response);
+                        copyBodyOrThrow(cachedResponse, response);
                         return;
                     }
                     try {
@@ -157,7 +157,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         raceLost.set(hash);
                         return;
                     }
-                    copyBody(cachedResponse, response);
+                    copyBodyOrThrow(cachedResponse, response);
                 }
             });
         } catch (FilterChainException e) {
@@ -255,9 +255,18 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         response.getOutputStream().write(body);
     }
 
-    private static void copyBody(ContentCachingResponseWrapper cached,
-                                 HttpServletResponse response) throws IOException {
-        cached.copyBodyToResponse();
+    /**
+     * Copy with unchecked failures, for use inside {@code TransactionCallbackWithoutResult}
+     * (which declares no checked throws): an I/O failure mid-copy rolls our tx back
+     * via the carrier.
+     */
+    private static void copyBodyOrThrow(ContentCachingResponseWrapper cached,
+                                        HttpServletResponse response) {
+        try {
+            cached.copyBodyToResponse();
+        } catch (IOException e) {
+            throw new FilterChainException(e);
+        }
     }
 
     private record Replay(int status, String body, String contentType) {
