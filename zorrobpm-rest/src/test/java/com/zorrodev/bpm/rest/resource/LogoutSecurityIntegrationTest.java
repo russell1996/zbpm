@@ -95,6 +95,37 @@ class LogoutSecurityIntegrationTest {
                 .isTrue();
     }
 
+    // --- WO-AUDIT-4 S2: cleared cookies carry the same flags as set cookies ---
+    //
+    // NOTE: asserted on the Cookie OBJECTS (getCookie/getAttribute), not the rendered
+    // Set-Cookie header — Spring's MockHttpServletResponse does not render
+    // Cookie.setAttribute() entries (e.g. SameSite) into the header string, while a
+    // real container (Tomcat) does. Header-asserting SameSite here would fail even
+    // for the login path, which uses the identical API.
+
+    @Test
+    void audit4s2_logout_clearedCookiesCarrySetFlags() throws Exception {
+        LoginResult login = loginAndExtract();
+
+        MvcResult logoutResult = mockMvc.perform(post("/auth/logout")
+                        .header("Authorization", "Bearer " + login.bearerToken()))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        // Otherwise a stale Secure-cookie may survive clearing (audit §7 S2).
+        for (String name : new String[]{"zbpm_token", "refresh_token"}) {
+            jakarta.servlet.http.Cookie cleared =
+                logoutResult.getResponse().getCookie(name);
+            assertThat(cleared).as(name + " cleared cookie present").isNotNull();
+            assertThat(cleared.getMaxAge()).as(name + " clear Max-Age=0").isZero();
+            assertThat(cleared.isHttpOnly()).as(name + " clear HttpOnly").isTrue();
+            assertThat(cleared.getSecure()).as(name + " clear Secure").isTrue();
+            assertThat(cleared.getAttribute("SameSite"))
+                .as(name + " clear SameSite=Strict").isEqualTo("Strict");
+            assertThat(cleared.getPath()).as(name + " clear Path=/").isEqualTo("/");
+        }
+    }
+
     // --- Criterion #2: after logout, no access cookie → /auth/me = 401 ---
     // (JWT is stateless — can't invalidate server-side. Cookie cleared from response.)
 
