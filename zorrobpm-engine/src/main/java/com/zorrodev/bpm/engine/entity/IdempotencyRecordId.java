@@ -4,7 +4,8 @@ import java.io.Serializable;
 import java.util.Objects;
 
 /**
- * WO-REL-21: composite PK of {@link IdempotencyRecord} (client key + endpoint).
+ * WO-REL-21: composite PK of {@link IdempotencyRecord} (client key + endpoint +
+ * credential hash, round 2 scoping).
  */
 public class IdempotencyRecordId implements Serializable {
 
