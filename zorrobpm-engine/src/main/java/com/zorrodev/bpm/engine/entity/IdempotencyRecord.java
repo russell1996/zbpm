@@ -12,9 +12,9 @@ import java.time.Instant;
 
 /**
  * WO-REL-21: saved response of a create-mutation for {@code Idempotency-Key} replay.
- * Identity = (client key, endpoint). No principal column by design (see WO-REL-21
- * report, threat-model: replaying someone else's key+body gives nothing beyond a
- * plain HTTP replay of the same request, which needs the same knowledge).
+ * Identity = (client key, endpoint, credential hash). Round 2: replay is scoped to
+ * the credential that created it — key+body alone no longer suffice (see
+ * {@code IdempotencyFilter}).
  */
 @Getter
 @Setter
