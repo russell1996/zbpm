@@ -38,6 +38,10 @@ public class MailDeliveryListener {
     private final ApplicationEventPublisher publisher;
     private final MailStatus mailStatus;
 
+    /**
+     * WO-REL-22 (section A decision): NO dedup here — the same {@code MailSendRequested}
+     * delivered twice (redelivery) sends twice, by contract (see {@code MailSender}).
+     */
     @EventListener
     public void on(MailSendRequested event) {
         String outboxId = event.getOutboxId();
