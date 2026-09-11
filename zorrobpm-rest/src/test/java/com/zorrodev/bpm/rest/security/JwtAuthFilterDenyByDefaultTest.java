@@ -30,6 +30,7 @@ class JwtAuthFilterDenyByDefaultTest {
         com.zorrodev.bpm.contract.DeploymentContract.class,
         com.zorrodev.bpm.contract.FormContract.class,
         com.zorrodev.bpm.contract.VariableSchemaContract.class,
+        com.zorrodev.bpm.contract.OutboxAdminContract.class,
     };
 
     @Test
