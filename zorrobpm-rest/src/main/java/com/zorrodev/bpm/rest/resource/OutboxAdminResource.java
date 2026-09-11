@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.security.Principal;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -38,6 +39,7 @@ public class OutboxAdminResource implements OutboxAdminContract {
     }
 
     @Override
+    @Transactional
     public OutboxEntryDTO redriveOutbox(UUID id) {
         requireSuperAdmin();
         OutboxEntry entry = outboxRepository.findById(id).orElse(null);
