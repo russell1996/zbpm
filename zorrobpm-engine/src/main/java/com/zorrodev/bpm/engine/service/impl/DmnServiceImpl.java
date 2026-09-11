@@ -372,7 +372,7 @@ public class DmnServiceImpl implements DmnService {
     public List<DmnDecision> listDecisions(Collection<UUID> allowedPdIds) {
         // WO-AUDIT-3 (P1): projection WITHOUT the TEXT dmn blob — keep the latest
         // version of each decisionId. Visibility semantics byte-identical to before
-        // (same visible() on the same scope column), only the XML stays in the DB
+        // (same visibleMeta() on the same scope column), only the XML stays in the DB
         // until the per-latest-row load below.
         Map<String, DmnDefinitionRepository.DmnDecisionMeta> latest = new LinkedHashMap<>();
         for (DmnDefinitionRepository.DmnDecisionMeta m : dmnDefinitionRepository.findAllMeta()) {
