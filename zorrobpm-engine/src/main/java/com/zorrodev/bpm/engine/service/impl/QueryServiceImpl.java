@@ -36,7 +36,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class QueryServiceImpl implements QueryService {
 
-    private final org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbc;
     private final ActivityQueryOperations activityQueryOperations;
     private final ServiceTaskQueryOperations serviceTaskQueryOperations;
     private final UserTaskQueryOperations userTaskQueryOperations;
