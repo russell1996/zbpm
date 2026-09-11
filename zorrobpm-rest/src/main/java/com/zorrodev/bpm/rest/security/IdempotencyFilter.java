@@ -119,14 +119,22 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             return;
         }
         String hash = sha256Hex(body);
-        // WO-REL-21 раунд 2: скоуп replay на credential — SHA-256 СЫРЫХ байтов
-        // Authorization-заголовка, ровно как его читает сам JwtAuthFilter (не разбираем
-        // и не валидируем токен — только сырые байты как secret для scoping, как тело).
-        // Пустая строка, если заголовка нет (легитимно для /auth/register).
-        // Без этого любой без токена читал бы чужие сохранённые ответы по key+body.
+        // WO-REL-21 раунд 2 (F1 HOLD-fix): скоуп replay на credential — SHA-256
+        // ЭФФЕКТИВНОГО credential, зеркально приоритету JwtAuthFilter (Bearer-заголовок
+        // первее; cookie zbpm_token — только fallback при его отсутствии; иначе —
+        // аноним). Сырые байты как есть: не разбираем и не валидируем токен, только
+        // используем как secret для scoping, ровно как тело. Без этого cookie-юзеров
+        // было не отличить друг от друга и от анонима (все падали в sha256("")) —
+        // тот же auth-bypass классом, что закрывал раунд 2 для Bearer.
         String authorization = request.getHeader("Authorization");
+        String effectiveCredential = (authorization != null && authorization.startsWith("Bearer "))
+            ? authorization
+            : extractCookieToken(request);
+        if (effectiveCredential == null) {
+            effectiveCredential = "";
+        }
         String credentialHash =
-            sha256Hex((authorization != null ? authorization : "").getBytes(StandardCharsets.UTF_8));
+            sha256Hex(effectiveCredential.getBytes(StandardCharsets.UTF_8));
         HttpServletRequest replayableRequest = new CachedBodyRequest(request, body);
 
         AtomicReference<Replay> replay = new AtomicReference<>();
@@ -241,6 +249,20 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         if (replay.get() != null) {
             writeReplay(response, replay.get());
         }
+    }
+
+    /** Raw zbpm_token cookie value (fallback credential mirror of {@code JwtAuthFilter}). */
+    static String extractCookieToken(HttpServletRequest request) {
+        jakarta.servlet.http.Cookie[] cookies = request.getCookies();
+        if (cookies == null) {
+            return null;
+        }
+        for (jakarta.servlet.http.Cookie cookie : cookies) {
+            if ("zbpm_token".equals(cookie.getName())) {
+                return cookie.getValue();
+            }
+        }
+        return null;
     }
 
     /** Constant-time hex-digest comparison (both sides are SHA-256 hex). */

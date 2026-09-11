@@ -421,6 +421,42 @@ class IdempotencyFilterTest {
             .isNotEqualTo(firstId);
     }
 
+    // ==================== WO-REL-21 раунд 2 F1: cookie-скоуп ====================
+
+    @Test
+    void credentialScope_cookieUsers_isolated() throws Exception {
+        // WO-REL-21 раунд 2 F1: два разных cookie-юзера, тот же key+body, БЕЗ Bearer
+        // вообще — второй НЕ получает replay первого (раньше оба падали в sha256("")).
+        String procKey = uniq("cookieproc");
+        deployProcess(procKey);
+        String body = "{\"processDefinitionKey\":\"" + procKey + "\",\"variables\":[]}";
+        String key = UUID.randomUUID().toString();
+
+        String cookieA = memberCookie(procKey);
+        MvcResult callA = mockMvc.perform(post("/process-instances")
+                .cookie(new jakarta.servlet.http.Cookie("zbpm_token", cookieA))
+                .header("Idempotency-Key", key)
+                .content(body)
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+        String idA = mapper.readTree(callA.getResponse().getContentAsString()).get("id").asText();
+
+        String cookieB = memberCookie(procKey);
+        MvcResult callB = mockMvc.perform(post("/process-instances")
+                .cookie(new jakarta.servlet.http.Cookie("zbpm_token", cookieB))
+                .header("Idempotency-Key", key)
+                .content(body)
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+        String idB = mapper.readTree(callB.getResponse().getContentAsString()).get("id").asText();
+
+        assertThat(idB)
+            .as("второй cookie-юзер исполнен заново, не replay первого")
+            .isNotEqualTo(idA);
+    }
+
     // ==================== helpers (proven shapes) ====================
 
     /**
@@ -445,6 +481,40 @@ class IdempotencyFilterTest {
                 .content("{\"userId\":\"" + userId + "\",\"role\":\"OWNER\"}"))
             .andExpect(status().isOk());
         return loginAndGetToken(username, "pass");
+    }
+
+    /**
+     * То же, но возвращает `zbpm_token`-cookie вместо Bearer-токена (паттерн
+     * CookieAuthIntegrationTest: cookie из Set-Cookie ответа логина).
+     */
+    private String memberCookie(String processKey) throws Exception {
+        String username = uniq("idemcookie");
+        UiUserEntity user = new UiUserEntity();
+        user.setId(UUID.randomUUID());
+        user.setUsername(username);
+        user.setPasswordHash(passwordHasher.hash("pass"));
+        user.setFullName(username);
+        user.setRole("USER");
+        user.setActive(true);
+        user.setCreatedAt(Instant.now());
+        user.setUpdatedAt(Instant.now());
+        UUID userId = userRepository.save(user).getId();
+        mockMvc.perform(post("/processes/" + processKey + "/members")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"userId\":\"" + userId + "\",\"role\":\"OWNER\"}"))
+            .andExpect(status().isOk());
+        LoginDTO dto = new LoginDTO();
+        dto.setUsername(username);
+        dto.setPassword("pass");
+        MvcResult login = mockMvc.perform(post("/auth/login")
+                .content(mapper.writeValueAsString(dto))
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+        String setCookie = login.getResponse().getHeader("Set-Cookie");
+        assertThat(setCookie).as("login sets zbpm_token cookie").contains("zbpm_token=");
+        return setCookie.split("zbpm_token=")[1].split(";")[0];
     }
 
     private String loginAndGetToken(String username, String password) throws Exception {
