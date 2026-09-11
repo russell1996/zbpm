@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
+import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.DomainEventPublished;
@@ -42,6 +43,7 @@ public class OutboxBatchProcessor {
     private final ApplicationEventPublisher publisher;
     private final ObjectMapper objectMapper;
     private final BpmMetrics bpmMetrics;
+    private final DomainEventEmitter domainEventEmitter;
 
     @Value("${zorrobpm.outbox.batch-size:100}")
     private int batchSize;
@@ -83,7 +85,11 @@ public class OutboxBatchProcessor {
                 int nextAttempt = entry.getAttempts() + 1;
                 String errorSummary = truncate(e.getMessage(), 500);
                 if (nextAttempt >= maxRetries) {
-                    outboxRepository.markFailed(entry.getId());
+                    // WO-REL-22 (B3): emit only on the FIRST transition (markFailed is
+                    // conditional) — duplicate marks must not re-emit.
+                    if (outboxRepository.markFailed(entry.getId()) == 1) {
+                        emitQuarantined(entry, nextAttempt, errorSummary);
+                    }
                     bpmMetrics.outboxFailed();
                     log.error("Outbox entry {} quarantined after {} attempts (max={}): {}",
                         entry.getId(), nextAttempt, maxRetries, errorSummary);
@@ -99,5 +105,20 @@ public class OutboxBatchProcessor {
     private static String truncate(String s, int maxLen) {
         if (s == null) return null;
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
+    }
+
+    /**
+     * WO-REL-22 (B3): quarantine alert as a regular domain event (same
+     * {@code zorrobpm.events} exchange as all others) — no bespoke alerting infra.
+     */
+    private void emitQuarantined(OutboxEntry entry, int attempts, String errorSummary) {
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("outboxId", entry.getId().toString());
+        data.put("kind", entry.getKind() != null ? entry.getKind().name() : null);
+        data.put("attempts", attempts);
+        data.put("lastError", errorSummary);
+        domainEventEmitter.emit(
+            com.zorrodev.bpm.contract.dto.event.DomainEventType.OUTBOX_QUARANTINED,
+            null, null, null, data);
     }
 }

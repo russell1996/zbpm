@@ -30,9 +30,34 @@ public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
     @Query("UPDATE OutboxEntry o SET o.attempts = :attempts, o.lastError = :error WHERE o.id = :id")
     int recordFailure(@Param("id") UUID id, @Param("attempts") int attempts, @Param("error") String error);
 
-    @Modifying
-    @Query("UPDATE OutboxEntry o SET o.status = 'FAILED' WHERE o.id = :id")
+    /**
+     * WO-REL-22 (B3): conditional — returns 1 only on the FIRST transition to FAILED.
+     * Callers emit {@code outbox.quarantined} only when this returns 1, so a duplicate
+     * mark (e.g. an in-flight delivery result landing after quarantine) cannot emit twice.
+     *
+     * <p>WO-REL-22 HOLD: {@code clearAutomatically} — bulk UPDATE bypasses the
+     * persistence context, so a later {@code findById} in the same transaction would
+     * return the stale managed instance (CTO caught it live: PENDING-in-DB read back
+     * as FAILED). Same precedent as {@code ProcessInstanceRepository} bulk updates.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE OutboxEntry o SET o.status = 'FAILED' WHERE o.id = :id AND o.status != 'FAILED'")
     int markFailed(@Param("id") UUID id);
+
+    /**
+     * WO-REL-22 (B2): re-drive — FAILED → pending with a reset attempt counter.
+     * Returns 1 only if the row was actually FAILED (callers map 0 to 404/409).
+     *
+     * <p>WO-REL-22 HOLD: {@code clearAutomatically} for the same reason — the admin
+     * resource re-reads the row right after this bulk update in one request.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE OutboxEntry o SET o.status = 'PENDING', o.attempts = 0, o.lastError = NULL "
+        + "WHERE o.id = :id AND o.status = 'FAILED'")
+    int redrive(@Param("id") UUID id);
+
+    /** WO-REL-22 (B1): quarantine list for the admin endpoint. */
+    List<OutboxEntry> findByStatusOrderByCreatedAtDesc(String status);
 
     // WO-OBS-1: gauge sampling queries (read-only, additive — no behavior change).
     @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.published = false AND o.status != 'FAILED'")

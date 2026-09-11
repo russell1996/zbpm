@@ -162,7 +162,7 @@ public class MetricsWiringIntegrationTests {
         outboxRepository.save(entry);
         double before = counter("zbpm.outbox.published");
 
-        OutboxDeliveryResultListener listener = new OutboxDeliveryResultListener(outboxRepository, contextMetrics);
+        OutboxDeliveryResultListener listener = new OutboxDeliveryResultListener(outboxRepository, contextMetrics, mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class));
         OutboxDeliveryResult result = new OutboxDeliveryResult();
         result.setOutboxId(entry.getId().toString());
         result.setAcked(true);
@@ -195,7 +195,7 @@ public class MetricsWiringIntegrationTests {
         double rabbitBefore = counter("zbpm.rabbit.publish.failures");
         double failedBefore = counter("zbpm.outbox.failed");
 
-        OutboxDeliveryResultListener listener = new OutboxDeliveryResultListener(outboxRepository, contextMetrics);
+        OutboxDeliveryResultListener listener = new OutboxDeliveryResultListener(outboxRepository, contextMetrics, mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class));
         // Manual construction skips @Value injection (maxRetries would stay 0) — same
         // ReflectionTestUtils trick as OutboxBatchProcessorKindTest.
         org.springframework.test.util.ReflectionTestUtils.setField(listener, "maxRetries", 5);
@@ -242,7 +242,8 @@ public class MetricsWiringIntegrationTests {
         // Real processor + real repo + real metrics; only the event bus is mocked
         // (published events would otherwise fan out into handlers mid-test).
         OutboxBatchProcessor processor = new OutboxBatchProcessor(outboxRepository,
-            mock(ApplicationEventPublisher.class), new tools.jackson.databind.ObjectMapper(), contextMetrics);
+            mock(ApplicationEventPublisher.class), new tools.jackson.databind.ObjectMapper(), contextMetrics,
+            mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class));
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "batchSize", 100);
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "maxRetries", 5);
         processor.processBatch();

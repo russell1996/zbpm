@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.OutboxDeliveryResult;
@@ -32,6 +33,7 @@ public class OutboxDeliveryResultListener {
 
     private final OutboxRepository outboxRepository;
     private final BpmMetrics bpmMetrics;
+    private final DomainEventEmitter domainEventEmitter;
 
     @Value("${zorrobpm.outbox.max-retries:5}")
     private int maxRetries;
@@ -63,7 +65,20 @@ public class OutboxDeliveryResultListener {
         int nextAttempt = entry.getAttempts() + 1;
         String errorSummary = truncate(result.getCause(), 500);
         if (nextAttempt >= maxRetries) {
-            outboxRepository.markFailed(outboxId);
+            // WO-REL-22 (B3): emit only on the FIRST transition — a duplicate delivery
+            // result landing after quarantine re-marks nothing and emits nothing.
+            // Skip already-quarantined rows outright (no pointless update).
+            if (!"FAILED".equals(entry.getStatus())
+                && outboxRepository.markFailed(outboxId) == 1) {
+                java.util.Map<String, Object> data = new java.util.HashMap<>();
+                data.put("outboxId", outboxId.toString());
+                data.put("kind", entry.getKind() != null ? entry.getKind().name() : null);
+                data.put("attempts", nextAttempt);
+                data.put("lastError", errorSummary);
+                domainEventEmitter.emit(
+                    com.zorrodev.bpm.contract.dto.event.DomainEventType.OUTBOX_QUARANTINED,
+                    null, null, null, data);
+            }
             bpmMetrics.outboxFailed();
             log.error("Outbox entry {} quarantined after {} failed deliveries (max={}): {}",
                 outboxId, nextAttempt, maxRetries, errorSummary);
