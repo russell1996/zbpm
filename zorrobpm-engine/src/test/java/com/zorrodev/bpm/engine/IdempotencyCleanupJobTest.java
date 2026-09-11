@@ -35,6 +35,7 @@ class IdempotencyCleanupJobTest {
         IdempotencyRecord r = new IdempotencyRecord();
         r.setIdemKey(key);
         r.setEndpoint("/process-instances");
+        r.setCredentialHash("cred");
         r.setRequestHash("abc");
         r.setResponseStatus(200);
         r.setResponseBody("{}");
@@ -52,7 +53,7 @@ class IdempotencyCleanupJobTest {
 
         assertThat(deleted).isEqualTo(1);
         assertThat(repository.findByIdemKeyAndEndpoint("stale-key", "/process-instances")).isEmpty();
-        assertThat(repository.findByIdemKeyAndEndpoint("fresh-key", "/process-instances")).isPresent();
+        assertThat(repository.findByIdemKeyAndEndpoint("fresh-key", "/process-instances")).isNotEmpty();
     }
 
     @Test
