@@ -51,11 +51,22 @@ public class UiUserServiceImpl implements UiUserService {
     private final com.zorrodev.bpm.engine.repository.PasswordTokenRepository passwordTokenRepository;
     private final PlatformTransactionManager transactionManager;
 
+    /**
+     * WO-AUTH-1: вход по username ИЛИ email в поле {@code LoginDTO.username} (поле НЕ
+     * переименовано — контракт). Порядок: СНАЧАЛА username, потом email. Если чей-то
+     * username буквально совпадает с чужим email — побеждает username-владелец (первым
+     * проверяется); оба уникальны, коллизия крайне маловероятна, явное правило лучше
+     * «угадывания по наличию @». Email на входе нормализуется той же
+     * {@link #normalizeEmail} (stored email всегда lowercase → exact match работает).
+     */
     @Override
     @Transactional(readOnly = true)
     public Optional<AuthResponse> login(LoginDTO dto) {
         if (dto.getUsername() == null || dto.getPassword() == null) return Optional.empty();
         UiUserEntity user = repository.findByUsername(dto.getUsername()).orElse(null);
+        if (user == null) {
+            user = repository.findByEmail(normalizeEmail(dto.getUsername())).orElse(null);
+        }
 
         // WO-SEC-17 M7: constant-time — always compare hash, even for unknown/inactive users
         String dummyHash = user != null ? user.getPasswordHash() : passwordHasher.hash(dto.getPassword());
