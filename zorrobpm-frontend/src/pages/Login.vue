@@ -53,7 +53,7 @@ async function submit() {
 
       <div class="space-y-3">
         <div>
-          <label class="block text-sm font-medium mb-1">{{ t('username') }}</label>
+          <label class="block text-sm font-medium mb-1">{{ t('loginIdentifier') }}</label>
           <input
             v-model="username"
             type="text"
