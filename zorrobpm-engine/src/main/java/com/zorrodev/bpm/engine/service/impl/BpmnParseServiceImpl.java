@@ -1551,7 +1551,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (callActivity.getExtensionElements() != null) {
             element.setExtensions(new BpmnElementExtensionModel());
             element.getExtensions().setCallActivityExtension(new CallActivityExtensionModel());
-            CalledElementModel calledElement = Optional.ofNullable(callActivity.getExtensionElements()).map(ExtensionElements::getCalledElement).orElse(null);;
+            CalledElementModel calledElement = Optional.ofNullable(callActivity.getExtensionElements()).map(ExtensionElements::getCalledElement).orElse(null);
             if (calledElement != null) {
                 element.getExtensions().getCallActivityExtension().setProcessId(calledElement.getProcessId());
                 element.getExtensions().getCallActivityExtension().setBindingType(calledElement.getBindingType());

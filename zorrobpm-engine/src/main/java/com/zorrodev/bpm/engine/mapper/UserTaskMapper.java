@@ -19,6 +19,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class UserTaskMapper {
 
+    /** Документный дефолт приоритета (BPMN без явного приоритета). */
+    public static final int DEFAULT_PRIORITY = 50;
+
     private final BpmnService bpmnService;
     private final ActivityRepository activityRepository;
 
@@ -59,7 +62,7 @@ public class UserTaskMapper {
         dto.setDueDate(entity.getDueDate());
         dto.setFollowUpDate(entity.getFollowUpDate());
         // WO-C8-30: effective priority, pre-WO null rows read as the docs default 50.
-        dto.setPriority(entity.getPriority() != null ? entity.getPriority() : 50);
+        dto.setPriority(entity.getPriority() != null ? entity.getPriority() : DEFAULT_PRIORITY);
         // task id == activity id: expose the authoritative lifecycle status for the UI
         if (activity != null) {
             dto.setStatus(activity.getStatus() == null ? null : activity.getStatus().name());

@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.entity;
 
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -23,8 +24,9 @@ public class ElementListenerPhaseEntity {
     private UUID processInstanceId;
     private UUID tokenId;
     private String bpmnElementId;
-    /** Phase kind — only {@code "start"} in this WO; column reserved for future phases. */
-    private String phase;
+    /** Phase kind — only {@code START} in this WO; column reserved for future phases. */
+    @Convert(converter = ListenerPhaseConverter.class)
+    private ListenerPhase phase;
     /** Index of the in-flight listener; null = no phase (row only exists in flight). */
     private Integer listenerIndex;
     /** Durable retry budget of the in-flight listener job (model value, default 3). */

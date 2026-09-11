@@ -169,8 +169,15 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        // Simulate @PostConstruct — just initialize flowNavigator
-        activityService.init();
+        // WO-AUDIT-4 (A3): flowNavigator is constructor-injected in prod (shared
+        // Spring bean) — inject the same shared instance here via reflection.
+        try {
+            var fnField = ActivityServiceImpl.class.getDeclaredField("flowNavigator");
+            fnField.setAccessible(true);
+            fnField.set(activityService, flowNavigator);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
 
         // WO-A-08: Register handlers on the mock HandlerRegistry so execute() can resolve them.
         // The real HandlerRegistry auto-discovers @Component handler beans via Spring DI;

@@ -14,7 +14,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.Ordered;
 import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -58,7 +57,7 @@ import java.util.Set;
  * (WO-SCALE-2), not in per-instance Caffeine caches.
  */
 @Slf4j
-public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
+public class RateLimitFilter extends OncePerRequestFilter {
 
     /** Maximum bytes buffered from login request body (login JSON is ~100 bytes). */
     static final int MAX_LOGIN_BODY_BYTES = 16_384;
@@ -101,10 +100,9 @@ public class RateLimitFilter extends OncePerRequestFilter implements Ordered {
 
     void setApiKeyRepository(ApiKeyRepository apiKeyRepository) { this.apiKeyRepository = apiKeyRepository; }
 
-    @Override
-    public int getOrder() {
-        return Ordered.HIGHEST_PRECEDENCE + 1;
-    }
+    // WO-AUDIT-4 (S4): order lives ONLY in RateLimitFilterConfig (FilterRegistrationBean).
+    // The old getOrder() here disagreed with it (HIGHEST_PRECEDENCE + 1 vs HIGHEST_PRECEDENCE)
+    // and was dead anyway — a FilterRegistrationBean-registered filter never consults Ordered.
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)

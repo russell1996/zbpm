@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.entity.ElementListenerPhaseEntity;
+import com.zorrodev.bpm.engine.entity.ListenerPhase;
 import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -75,9 +76,9 @@ public class ElementListenerPhaseService {
             phase.setProcessInstanceId(processInstanceId);
             phase.setTokenId(tokenId);
             phase.setBpmnElementId(element.getId());
-            phase.setPhase("start");
+            phase.setPhase(ListenerPhase.START);
             phase.setCreatedAt(Instant.now());
-        } else if ("done".equals(existing.get().getPhase())) {
+        } else if (ListenerPhase.DONE.equals(existing.get().getPhase())) {
             // Incident in the HANDLER after the listeners already ran: resolve re-executes
             // the element — drop the done marker and proceed to the handler WITHOUT
             // re-dispatching listeners (they already ran for this token+element). The row
@@ -91,7 +92,7 @@ public class ElementListenerPhaseService {
             // the failed listener" nuance does not exist in this engine).
             phase = existing.get();
         }
-        phase.setPhase("start");
+        phase.setPhase(ListenerPhase.START);
         phase.setListenerIndex(0);
         phase.setRetriesRemaining(elementSupport.listenerBudget(listeners.get(0)));
         phaseRepository.save(phase);
@@ -116,7 +117,7 @@ public class ElementListenerPhaseService {
         }
         ElementListenerPhaseEntity phase = found.get();
         UUID processInstanceId = phase.getProcessInstanceId();
-        if ("done".equals(phase.getPhase())) {
+        if (ListenerPhase.DONE.equals(phase.getPhase())) {
             log.info("{}/{}: Element listener job of finished phase {} already consumed, ignoring: {}/{}",
                 processInstanceId, phase.getTokenId(), carrierId, processInstanceId, phase.getBpmnElementId());
             return Optional.of(new Resume(false, processInstanceId, phase.getTokenId(), phase.getBpmnElementId()));
@@ -127,7 +128,7 @@ public class ElementListenerPhaseService {
             // Model shrank mid-phase (redeploy): fail-open into normal execution (C8-11
             // spirit) rather than stranding — the element was asked to run, so run it.
             // Marked done (not deleted) so a redelivered completion ignores gracefully.
-            phase.setPhase("done");
+            phase.setPhase(ListenerPhase.DONE);
             phase.setListenerIndex(null);
             phase.setRetriesRemaining(null);
             phaseRepository.save(phase);
@@ -145,7 +146,7 @@ public class ElementListenerPhaseService {
                 index, phase.getBpmnElementId(), carrierId, phase.getBpmnElementId());
             return Optional.of(new Resume(false, processInstanceId, phase.getTokenId(), phase.getBpmnElementId()));
         }
-        phase.setPhase("done");
+        phase.setPhase(ListenerPhase.DONE);
         phase.setListenerIndex(null);
         phase.setRetriesRemaining(null);
         phaseRepository.save(phase);
@@ -167,7 +168,7 @@ public class ElementListenerPhaseService {
         }
         ElementListenerPhaseEntity phase = found.get();
         UUID processInstanceId = phase.getProcessInstanceId();
-        if ("done".equals(phase.getPhase())) {
+        if (ListenerPhase.DONE.equals(phase.getPhase())) {
             // Stale failure for already-consumed work (at-least-once broker): the listeners
             // finished, failing now would raise a false incident — ignore gracefully.
             log.info("{}/{}: Element listener failure for finished phase {} ignored: {}/{}",

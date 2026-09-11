@@ -39,11 +39,14 @@ class TenantSchemaIntegrationTest {
 
     @Test
     void migrationCreatedAllTables() {
-        // If the tables didn't exist, these would throw ExceptionInInitializerError or similar
-        assertThat(processRepository.findAll()).isNotNull();
-        assertThat(processMemberRepository.findAll()).isNotNull();
-        assertThat(apiKeyRepository.findAll()).isNotNull();
-        assertThat(uiUserRepository.findAll()).isNotNull();
+        // WO-AUDIT-4: findAll() never returns null, so the old isNotNull() asserts
+        // proved nothing — assert table existence directly via information_schema
+        // (same idiom as #1b below).
+        Integer present = jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM information_schema.tables WHERE UPPER(table_name) IN "
+                + "('PROCESS', 'PROCESS_MEMBER', 'API_KEY', 'UI_USERS')",
+            Integer.class);
+        assertThat(present).isEqualTo(4);
     }
 
     // --- #1b (WO-INT-4 criterion 11): service_account tables are gone ---
