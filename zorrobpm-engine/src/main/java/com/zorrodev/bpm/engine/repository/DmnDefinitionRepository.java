@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,4 +41,22 @@ public interface DmnDefinitionRepository extends JpaRepository<DmnDefinitionEnti
      */
     @Query("SELECT d.processDefinitionId FROM DmnDefinitionEntity d WHERE d.decisionId = :decisionId ORDER BY d.version DESC LIMIT 1")
     Optional<UUID> findLatestProcessDefinitionId(@Param("decisionId") String decisionId);
+
+    /**
+     * WO-AUDIT-3 (P1): every row WITHOUT the TEXT {@code dmn} blob — {@code listDecisions}
+     * only needs identity/version/scope to pick the latest visible version per decisionId;
+     * the XML is loaded solely for those latest rows (see {@code findAllById} use).
+     */
+    interface DmnDecisionMeta {
+        UUID getId();
+        String getDecisionId();
+        int getVersion();
+        UUID getProcessDefinitionId();
+        Instant getCreatedAt();
+    }
+
+    @Query("SELECT d.id AS id, d.decisionId AS decisionId, d.version AS version, "
+        + "d.processDefinitionId AS processDefinitionId, d.createdAt AS createdAt "
+        + "FROM DmnDefinitionEntity d")
+    List<DmnDecisionMeta> findAllMeta();
 }

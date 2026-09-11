@@ -27,4 +27,10 @@ public interface ElementArtifactBindingRepository extends JpaRepository<ElementA
 
     /** WO-SEC-47: find all bindings for a set of process definition IDs. */
     List<ElementArtifactBindingEntity> findByProcessDefinitionIdIn(Collection<UUID> processDefinitionIds);
+
+    /**
+     * WO-AUDIT-3 (P3): batch variant for the schema-map shared-flag — counts usage of
+     * this page's keys across all PDs in one query instead of {@code findAll()}.
+     */
+    List<ElementArtifactBindingEntity> findByArtifactKeyIn(Collection<String> artifactKeys);
 }

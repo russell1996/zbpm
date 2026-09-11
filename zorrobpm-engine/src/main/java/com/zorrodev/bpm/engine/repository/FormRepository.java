@@ -13,6 +13,13 @@ public interface FormRepository extends JpaRepository<FormEntity, UUID> {
 
     Optional<FormEntity> findTopByFormKeyOrderByVersionDesc(String formKey);
 
+    /**
+     * WO-AUDIT-3 (P3): batch variant of the per-key latest lookup — one query for all
+     * keys of a schema-map page instead of N {@code findTop...} round-trips. Callers
+     * pick the max version per key in memory (same semantics as {@code findTop}).
+     */
+    List<FormEntity> findByFormKeyIn(java.util.Collection<String> formKeys);
+
     /** WO-C8-22: latest deployed version of a Modeler-linked form (binding {@code latest}). */
     Optional<FormEntity> findTopByFormIdOrderByVersionDesc(String formId);
 

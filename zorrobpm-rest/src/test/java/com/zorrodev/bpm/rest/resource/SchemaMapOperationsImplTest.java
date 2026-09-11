@@ -34,10 +34,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -139,7 +141,7 @@ class SchemaMapOperationsImplTest {
         ElementArtifactBindingEntity current = binding(pd.getId(), "start1", "sharedArt", 5);
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(current));
         // The same key is also bound elsewhere → global usage 2 → shared
-        when(bindingRepository.findAll())
+        when(bindingRepository.findByArtifactKeyIn(any()))
             .thenReturn(List.of(current, binding(UUID.randomUUID(), "other", "sharedArt", 1)));
         when(processDefinitionRepository.findAll()).thenReturn(List.of());
         FormEntity art = new FormEntity();
@@ -147,7 +149,7 @@ class SchemaMapOperationsImplTest {
         art.setVersion(5);
         art.setKind(FormArtifactKind.FORM_JS);
         art.setSchemaJson("{\"components\":[]}");
-        when(formRepository.findTopByFormKeyOrderByVersionDesc("sharedArt")).thenReturn(Optional.of(art));
+        when(formRepository.findByFormKeyIn(any())).thenReturn(List.of(art));
 
         SchemaMapDTO result = impl.getSchemaMap("ord");
 
@@ -183,13 +185,13 @@ class SchemaMapOperationsImplTest {
         model.addElement(userTask("task1", "extArt", "https://ext.example/f"));
         when(bpmnService.getProcessDefinitionModelById(eq(pd.getId()))).thenReturn(model);
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of());
-        when(bindingRepository.findAll()).thenReturn(List.of());
+        when(bindingRepository.findByArtifactKeyIn(any())).thenReturn(List.of());
         ProcessDefinitionEntity otherPd = pd("other", 1);
         when(processDefinitionRepository.findAll()).thenReturn(List.of(otherPd));
         BpmnProcessDefinitionModel otherModel = new BpmnProcessDefinitionModel();
         otherModel.addElement(userTask("otask", "extArt", null));
         when(bpmnService.getProcessDefinitionModelById(eq(otherPd.getId()))).thenReturn(otherModel);
-        when(formRepository.findTopByFormKeyOrderByVersionDesc("extArt")).thenReturn(Optional.empty());
+        when(formRepository.findByFormKeyIn(any())).thenReturn(List.of());
 
         SchemaMapDTO result = impl.getSchemaMap("ord");
 
@@ -233,12 +235,47 @@ class SchemaMapOperationsImplTest {
         when(bpmnService.getProcessDefinitionModelById(eq(pd.getId())))
             .thenReturn(new BpmnProcessDefinitionModel());
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of());
-        when(bindingRepository.findAll()).thenReturn(List.of());
+        when(bindingRepository.findByArtifactKeyIn(any())).thenReturn(List.of());
         when(processDefinitionRepository.findAll()).thenReturn(List.of());
 
         SchemaMapDTO result = impl.getSchemaMap("ord");
 
         assertThat(result.getElements()).isEmpty();
+    }
+
+    @Test
+    void getSchemaMap_batchedReads_noFullScansNoPerElementLookups() {
+        // WO-AUDIT-3 (P3): one getSchemaMap must not scan whole tables nor fan out
+        // per-element form lookups — scoped IN-queries only.
+        ProcessDefinitionEntity pd = pd("ord", 3);
+        when(processDefinitionRepository.findMaxByKey("ord")).thenReturn(Optional.of(3));
+        when(processDefinitionRepository.findByKeyAndVersion(eq("ord"), any())).thenReturn(Optional.of(pd));
+        BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
+        model.addElement(startEvent("start1"));
+        model.addElement(userTask("task1", "artA", null));
+        model.addElement(userTask("task2", "artB", null));
+        when(bpmnService.getProcessDefinitionModelById(eq(pd.getId()))).thenReturn(model);
+        when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of());
+        when(bindingRepository.findByArtifactKeyIn(any())).thenReturn(List.of());
+        when(processDefinitionRepository.findAll()).thenReturn(List.of());
+        FormEntity fa = new FormEntity();
+        fa.setFormKey("artA");
+        fa.setVersion(2);
+        fa.setKind(FormArtifactKind.FORM_JS);
+        FormEntity fb = new FormEntity();
+        fb.setFormKey("artB");
+        fb.setVersion(1);
+        fb.setKind(FormArtifactKind.VARIABLE_SCHEMA);
+        when(formRepository.findByFormKeyIn(any())).thenReturn(List.of(fa, fb));
+
+        SchemaMapDTO result = impl.getSchemaMap("ord");
+
+        assertThat(result.getElements()).hasSize(3);
+        verify(formRepository, times(1)).findByFormKeyIn(argThat(keys ->
+            keys.contains("artA") && keys.contains("artB")));
+        verify(formRepository, never()).findTopByFormKeyOrderByVersionDesc(any());
+        verify(bindingRepository, never()).findAll();
+        verify(bindingRepository, times(1)).findByArtifactKeyIn(any());
     }
 
     // ==================== saveElementSchema ====================

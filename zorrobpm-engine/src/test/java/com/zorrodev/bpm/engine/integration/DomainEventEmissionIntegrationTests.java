@@ -40,6 +40,9 @@ class DomainEventEmissionIntegrationTests {
 
     private TransactionTemplate tx;
 
+    /** WO-AUDIT-3 (P4): per-instance reads are bounded — test instances emit a handful. */
+    private static final int INSTANCE_EVENT_CAP = 100;
+
     @BeforeEach
     void setUp() {
         tx = new TransactionTemplate(txManager);
@@ -86,7 +89,7 @@ class DomainEventEmissionIntegrationTests {
 
         UUID piId = startProcess("test1.bpmn");
 
-        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId);
+        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId, INSTANCE_EVENT_CAP);
         assertThat(events).isNotEmpty();
 
         DomainEventEntity started = events.stream()
@@ -106,7 +109,7 @@ class DomainEventEmissionIntegrationTests {
     void processInstanceCompleted_eventEmitted() {
         UUID piId = startProcess("test1.bpmn");
 
-        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId);
+        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId, INSTANCE_EVENT_CAP);
         assertThat(events).isNotEmpty();
 
         DomainEventEntity completed = events.stream()
@@ -123,7 +126,7 @@ class DomainEventEmissionIntegrationTests {
     void activityCompleted_eventEmitted() {
         UUID piId = startProcess("test1.bpmn");
 
-        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId);
+        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId, INSTANCE_EVENT_CAP);
 
         DomainEventEntity activityCompleted = events.stream()
             .filter(e -> "activity.completed".equals(e.getType()))
@@ -139,7 +142,7 @@ class DomainEventEmissionIntegrationTests {
     void userTaskCreated_eventEmitted() {
         UUID piId = startProcess("test4.bpmn");
 
-        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId);
+        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId, INSTANCE_EVENT_CAP);
 
         DomainEventEntity userTaskCreated = events.stream()
             .filter(e -> "user-task.created".equals(e.getType()))
@@ -155,7 +158,7 @@ class DomainEventEmissionIntegrationTests {
     void serviceTaskCreated_eventEmitted() {
         UUID piId = startProcess("test3.bpmn");
 
-        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId);
+        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId, INSTANCE_EVENT_CAP);
 
         DomainEventEntity serviceTaskCreated = events.stream()
             .filter(e -> "service-task.created".equals(e.getType()))
@@ -171,7 +174,7 @@ class DomainEventEmissionIntegrationTests {
     void allEventsHaveMonotonicallyIncreasingSequence() {
         UUID piId = startProcess("test4.bpmn");
 
-        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId);
+        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId, INSTANCE_EVENT_CAP);
         assertThat(events).hasSizeGreaterThan(1);
 
         long prevSequence = 0;
@@ -186,7 +189,7 @@ class DomainEventEmissionIntegrationTests {
         UUID pdId = deploy("test1.bpmn");
         UUID piId = startProcess("test1.bpmn");
 
-        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId);
+        List<DomainEventEntity> events = domainEventRepository.findByProcessInstanceId(piId, INSTANCE_EVENT_CAP);
         for (DomainEventEntity event : events) {
             assertThat(event.getOwnerScope()).isEqualTo(pdId.toString());
         }
