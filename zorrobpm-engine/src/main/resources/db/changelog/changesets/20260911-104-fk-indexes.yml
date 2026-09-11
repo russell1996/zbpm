@@ -1,0 +1,36 @@
+databaseChangeLog:
+  - logicalFilePath: 20260911-104
+  - changeSet:
+      id: 20260911-104
+      author: zorrodev
+      comment: >
+        WO-AUDIT-2 — индексы под FK-колонки без покрытия (§5 аудита).
+        PostgreSQL не индексирует FK-колонки автоматически. variables - удаление
+        переменных скоупа (deleteByProcessInstanceIdAndScopeId) и чтения byScopeId
+        шли через уникальный (process_instance_id, name, scope_id), который паре
+        (process_instance_id, scope_id) помогает слабо. tokens - каждое удаление
+        токена проверяет self-FK fk_tokens__parent_id поиском детей по parent_id.
+        api_key_grant.api_key_id НЕ индексируем отдельно — PK (api_key_id,
+        process_id) уже покрывает префиксом findByApiKeyId/deleteByApiKeyId
+        (дубль, проверено \d на живом PG). process_member.process_definition_id
+        НЕ индексируем — такой колонки нет вообще (сущность - processId+userId,
+        оба пути чтения покрыты PK и idx_process_member_user_id).
+      changes:
+        # VariableRepository.deleteByProcessInstanceIdAndScopeId (+ findBy...AndScopeId,
+        # byScopeId/byRootScope из WO-ENG-14)
+        - createIndex:
+            tableName: variables
+            indexName: idx_variables_process_instance_scope
+            columns:
+              - column:
+                  name: process_instance_id
+              - column:
+                  name: scope_id
+
+        # Self-FK tokens.fk_tokens__parent_id: проверка детей при deleteToken
+        - createIndex:
+            tableName: tokens
+            indexName: idx_tokens_parent_id
+            columns:
+              - column:
+                  name: parent_id
