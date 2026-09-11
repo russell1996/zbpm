@@ -100,8 +100,11 @@ class ScriptServiceTimeoutRaceTest {
      * <ol>
      *   <li>Thread A loops the proven slow expression until one eval outlasts its own
      *   1s deadline (service timeout stays T=1s, exactly as in WO-REL-24).</li>
-     *   <li>Sibling B is submitted to the same pool and blocks on a latch; its start
-     *   latch PROVES it occupies a worker before the kill (no guessing).</li>
+     *   <li>Sibling B is submitted to the same pool FIRST and blocks on a latch; A
+     *   submits only after B's start latch fired — so B-started → A-submit → kill is
+     *   ordered by the latch itself, with no wall-clock pickup assumption at all
+     *   (verifier HOLD #1: without this await, a pathological B-pickup lag past the
+     *   kill would pass vacuously GREEN on fixed code).</li>
      *   <li>Main observes A's timeout return (which strictly follows
      *   {@code replaceWorker()} in code) and asserts B is STILL blocked — so B was
      *   running throughout, including at the kill instant.</li>
@@ -127,8 +130,27 @@ class ScriptServiceTimeoutRaceTest {
         AtomicBoolean aTimedOut = new AtomicBoolean(false);
         List<Throwable> aErrors = Collections.synchronizedList(new ArrayList<>());
         AtomicLong aDoneNanos = new AtomicLong(-1);
+        // Sibling B FIRST: occupies the second pool slot and blocks until released.
+        // Submitted via the pool directly (test-only reflection into the private field;
+        // production submits go through the same ExecutorService.submit path).
+        java.util.concurrent.ExecutorService pool = readPool(service);
+        CountDownLatch bStarted = new CountDownLatch(1);
+        CountDownLatch bRelease = new CountDownLatch(1);
+        java.util.concurrent.Future<Integer> bFuture = pool.submit(() -> {
+            bStarted.countDown();
+            bRelease.await();
+            return 42;
+        });
         Thread stuck = new Thread(() -> {
             try {
+                // Latch ordering (verifier HOLD #1 fix): A submits ONLY after B proved
+                // it occupies a worker — so B-started → A-submit → kill is ordered by
+                // construction, not by pickup-timing luck. Without this, a pathological
+                // B-pickup lag past the kill would pass vacuously GREEN on fixed code.
+                if (!bStarted.await(30, TimeUnit.SECONDS)) {
+                    aErrors.add(new IllegalStateException("sibling never occupied a worker"));
+                    return;
+                }
                 // Loop until an eval outlasts its own 1s deadline (each eval is
                 // deadline-capped, so this always terminates; slowExpr outlasts 1s
                 // on every observed box — dev, CI-slow, docker).
@@ -153,20 +175,7 @@ class ScriptServiceTimeoutRaceTest {
             }
         });
 
-        // Sibling B: occupies the second pool slot and blocks until released.
-        // Submitted via the pool directly (test-only reflection into the private field;
-        // production submits go through the same ExecutorService.submit path).
-        java.util.concurrent.ExecutorService pool = readPool(service);
-        CountDownLatch bStarted = new CountDownLatch(1);
-        CountDownLatch bRelease = new CountDownLatch(1);
-        java.util.concurrent.Future<Integer> bFuture = pool.submit(() -> {
-            bStarted.countDown();
-            bRelease.await();
-            return 42;
-        });
-
         stuck.start();
-        assertThat(bStarted.await(30, TimeUnit.SECONDS)).as("sibling occupies a pool worker").isTrue();
 
         stuck.join(60_000);
         try {
