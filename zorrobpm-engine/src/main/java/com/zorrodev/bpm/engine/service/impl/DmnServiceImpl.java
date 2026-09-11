@@ -404,21 +404,9 @@ public class DmnServiceImpl implements DmnService {
         return result;
     }
 
-    /**
-     * WO-SEC-40: a decision is visible to a principal iff its scoped process definition id is
-     * among the allowed ones. {@code null} allowed = see all (superAdmin / full grant).
-     * Decisions with no process definition scope are only visible to "see all" principals —
-     * a scoped principal cannot see unscoped decisions (DENY by default).
-     */
-    private boolean visible(DmnDefinitionEntity entity, Collection<UUID> allowedPdIds) {
-        if (allowedPdIds == null) {
-            return true;
-        }
-        return entity.getProcessDefinitionId() != null
-            && allowedPdIds.contains(entity.getProcessDefinitionId());
-    }
-
-    /** WO-AUDIT-3 (P1): same rule as {@link #visible} over the TEXT-less projection. */
+    /** WO-AUDIT-3 (P1): visibility rule over the TEXT-less projection (WO-SEC-40:
+     * a decision is visible iff its scoped process definition id is among the allowed
+     * ones; {@code null} allowed = see all; unscoped decisions only for see-all). */
     private boolean visibleMeta(DmnDefinitionRepository.DmnDecisionMeta m, Collection<UUID> allowedPdIds) {
         if (allowedPdIds == null) {
             return true;
