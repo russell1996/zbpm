@@ -1,7 +1,7 @@
 package com.zorrodev.bpm.engine.entity;
 
 /**
- * WO-AUDIT-5 (A5): listener-phase kind as an enum instead of raw strings — a typo
+ * WO-AUDIT-4 (A5): listener-phase kind as an enum instead of raw strings — a typo
  * like {@code "doen"} used to compile and leave a hanging phase; now it does not
  * compile. DB values stay lowercase ({@code "start"}/{@code "done"}) via
  * {@link ListenerPhaseConverter}, so no value migration is needed.

@@ -4,7 +4,7 @@ import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
 /**
- * WO-AUDIT-5 (A5): maps {@link ListenerPhase} to its lowercase DB value and back.
+ * WO-AUDIT-4 (A5): maps {@link ListenerPhase} to its lowercase DB value and back.
  * Explicit (not auto-apply) — bound to the field via {@code @Convert}. Stored
  * strings are unchanged ({@code "start"}/{@code "done"}), so no migration.
  */
