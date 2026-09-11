@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (b) deploy(xml, pdId) persists the scope, (c) listDecisions(allowedPdIds) filters by scope,
  * (d) findProcessDefinitionId resolves the owning process definition.
  *
- * G-N POF: comment the visible() filter in DmnServiceImpl.listDecisions(allowedPdIds) ->
+ * G-N POF: comment the visibleMeta() filter in DmnServiceImpl.listDecisions(allowedPdIds) ->
  * scopedList_allowedOnlyOwnPds shows the foreign decision (RED); with the filter it does not (GREEN).
  */
 @Tag("pg")
