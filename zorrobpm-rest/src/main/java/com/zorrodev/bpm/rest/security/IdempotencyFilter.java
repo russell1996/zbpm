@@ -20,7 +20,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -32,15 +31,27 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code /forms}, {@code /auth/register}. Without the header the request passes
  * through byte-for-byte untouched (no wrapping at all).
  *
- * <p>Semantics per (key, endpoint): same body hash → saved status+body replayed
- * WITHOUT invoking the controller; different hash → 422 (key reuse); absent →
- * execute once and save. Save happens in the SAME transaction the controller joins
+ * <p>Semantics per (key, endpoint, credential): same body hash AND same credential
+ * hash → saved status+body replayed WITHOUT invoking the controller (and WITHOUT
+ * invoking {@code JwtAuthFilter} — the chain is not entered at all, which is exactly
+ * why the replay is scoped); same credential but different hash → 422 (key reuse);
+ * different credential → miss: execute once and save a new row (deliberately NOT
+ * 422 — a rotated token is the same client, not misuse); absent → execute once
+ * and save. Save happens in the SAME transaction the controller joins
  * ({@code REQUIRED}), so effect + record commit atomically: any exception rolls both
- * back and the retry starts clean. 401/403 responses are never saved (auth failures
- * must re-authenticate live on retry — a saved 401 would pin the client to failure
- * after fixing its token). No principal column by design (see WO-REL-21 report,
- * threat-model: replaying a foreign key+body buys nothing over a plain HTTP replay
- * of the same request; keys must be client UUIDs).
+ * back and the retry starts clean. 401/403/429 responses are never saved (auth and
+ * quota failures must be re-decided live on retry — a saved 401 would pin the client
+ * to failure after fixing its token).
+ *
+ * <p>WO-REL-21 раунд 2 (security hole, честно): в раунде 1 скоупом были только
+ * (key, endpoint, body) — replay отдавался БЕЗ аутентификации вообще (цепочка не
+ * вызывалась, токен не требовался, только key+body). Утверждение раунда 1
+ * («эквивалентно прямому HTTP-replay») было неверно: прямой replay несёт исходный
+ * Authorization-заголовок, т.е. работает только с валидным токеном, а наш replay —
+ * безо всякого. Закрыто скоупом на SHA-256 сырых байтов Authorization-заголовка
+ * (как читает сам {@code JwtAuthFilter} — не разбираем и не валидируем токен,
+ * только сырые байты как secret для scoping, ровно как тело): без токена чужой
+ * ответ больше не читается.
  *
  * <p>Race: two concurrent same-key requests serialize on
  * {@code AdvisoryDeployLock} (per-endpoint+key namespace) INSIDE the transaction —
@@ -108,6 +119,14 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             return;
         }
         String hash = sha256Hex(body);
+        // WO-REL-21 раунд 2: скоуп replay на credential — SHA-256 СЫРЫХ байтов
+        // Authorization-заголовка, ровно как его читает сам JwtAuthFilter (не разбираем
+        // и не валидируем токен — только сырые байты как secret для scoping, как тело).
+        // Пустая строка, если заголовка нет (легитимно для /auth/register).
+        // Без этого любой без токена читал бы чужие сохранённые ответы по key+body.
+        String authorization = request.getHeader("Authorization");
+        String credentialHash =
+            sha256Hex((authorization != null ? authorization : "").getBytes(StandardCharsets.UTF_8));
         HttpServletRequest replayableRequest = new CachedBodyRequest(request, body);
 
         AtomicReference<Replay> replay = new AtomicReference<>();
@@ -120,19 +139,32 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                     // Serialize same-key concurrents; the loser waits here, then reads
                     // the winner's committed record below (lock is xact-scoped).
                     advisoryLock.acquireForKey("idempotency:" + endpoint + ":" + key);
-                    Optional<IdempotencyRecord> existing =
-                        repository.findByIdemKeyAndEndpoint(key, endpoint);
-                    if (existing.isPresent()) {
-                        if (!MessageDigest.isEqual(
-                                existing.get().getRequestHash().getBytes(StandardCharsets.UTF_8),
-                                hash.getBytes(StandardCharsets.UTF_8))) {
-                            // Written directly after the tx (below), never thrown:
-                            // exceptions from filters bypass DispatcherServlet advice.
-                            mismatchMessage.set("Idempotency-Key already used with a different request body");
-                            return;
+                    // WO-REL-21 раунд 2: записи под (key, endpoint) может быть несколько
+                    // (по одной на credential). Совпали ОБА хэша — replay; совпал только
+                    // body — это чужой credential (или ротированный токен): miss, обычное
+                    // исполнение + новая запись (умышленно, НЕ 422); совпал только
+                    // credential — классическое переиспользование ключа: 422.
+                    IdempotencyRecord hit = null;
+                    boolean credentialSeen = false;
+                    for (IdempotencyRecord candidate
+                            : repository.findByIdemKeyAndEndpoint(key, endpoint)) {
+                        if (isEqualHex(candidate.getCredentialHash(), credentialHash)) {
+                            credentialSeen = true;
+                            if (isEqualHex(candidate.getRequestHash(), hash)) {
+                                hit = candidate;
+                            }
+                            break;
                         }
-                        replay.set(new Replay(existing.get().getResponseStatus(),
-                            existing.get().getResponseBody(), existing.get().getResponseContentType()));
+                    }
+                    if (credentialSeen && hit == null) {
+                        // Written directly after the tx (below), never thrown:
+                        // exceptions from filters bypass DispatcherServlet advice.
+                        mismatchMessage.set("Idempotency-Key already used with a different request body");
+                        return;
+                    }
+                    if (hit != null) {
+                        replay.set(new Replay(hit.getResponseStatus(),
+                            hit.getResponseBody(), hit.getResponseContentType()));
                         return;
                     }
                     ContentCachingResponseWrapper cachedResponse =
@@ -157,6 +189,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         IdempotencyRecord record = new IdempotencyRecord();
                         record.setIdemKey(key);
                         record.setEndpoint(endpoint);
+                        record.setCredentialHash(credentialHash);
                         record.setRequestHash(hash);
                         record.setResponseStatus(responseStatus);
                         byte[] responseBody = cachedResponse.getContentAsByteArray();
@@ -199,7 +232,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         if (raceLost.get() != null) {
             // Fresh read outside the rolled-back transaction.
             try {
-                replay.set(readFresh(key, endpoint, raceLost.get()));
+                replay.set(readFresh(key, endpoint, raceLost.get(), credentialHash));
             } catch (ErrorSpec e) {
                 writeError(response, e.status(), e.code(), e.getMessage());
                 return;
@@ -210,21 +243,34 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
     }
 
-    /** Fresh (own-transaction) read for the lost-race fallback. */
-    private Replay readFresh(String key, String endpoint, String hash) {
-        Optional<IdempotencyRecord> existing = repository.findByIdemKeyAndEndpoint(key, endpoint);
-        if (existing.isEmpty()) {
-            throw new ErrorSpec(HttpStatus.CONFLICT.value(),
-                "IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key conflict, retry with a new key");
+    /** Constant-time hex-digest comparison (both sides are SHA-256 hex). */
+    private static boolean isEqualHex(String a, String b) {
+        if (a == null || b == null) {
+            return false;
         }
-        if (!MessageDigest.isEqual(
-                existing.get().getRequestHash().getBytes(StandardCharsets.UTF_8),
-                hash.getBytes(StandardCharsets.UTF_8))) {
+        return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8),
+            b.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Fresh (own-transaction) read for the lost-race fallback — same match rules. */
+    private Replay readFresh(String key, String endpoint, String hash, String credentialHash) {
+        boolean credentialSeen = false;
+        for (IdempotencyRecord candidate : repository.findByIdemKeyAndEndpoint(key, endpoint)) {
+            if (isEqualHex(candidate.getCredentialHash(), credentialHash)) {
+                credentialSeen = true;
+                if (isEqualHex(candidate.getRequestHash(), hash)) {
+                    return new Replay(candidate.getResponseStatus(),
+                        candidate.getResponseBody(), candidate.getResponseContentType());
+                }
+                break;
+            }
+        }
+        if (credentialSeen) {
             throw new ErrorSpec(HttpStatus.UNPROCESSABLE_ENTITY.value(),
                 "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key already used with a different request body");
         }
-        return new Replay(existing.get().getResponseStatus(),
-            existing.get().getResponseBody(), existing.get().getResponseContentType());
+        throw new ErrorSpec(HttpStatus.CONFLICT.value(),
+            "IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key conflict, retry with a new key");
     }
 
     /**

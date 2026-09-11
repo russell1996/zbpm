@@ -3,7 +3,7 @@ databaseChangeLog:
   - changeSet:
       id: 20260911-105
       author: zorrodev
-      comment: "WO-REL-21: таблица идемпотентности create-мутаций. Ключ клиента + endpoint (композитный PK). Колонки principal НЕТ сознательно (см. отчёт WO-REL-21). Колонка key названа idem_key: KEY - reserved word в H2 (прецедент WO-SCALE-2)."
+      comment: "WO-REL-21: таблица идемпотентности create-мутаций. Раунд 2: PK расширен до тройки (key, endpoint, credential_hash) - разные credential под одним key живут отдельными записями (ротация токена не затирает чужой replay). Колонка key названа idem_key: KEY - reserved word в H2 (прецедент WO-SCALE-2)."
       changes:
         - createTable:
             tableName: idempotency_record
@@ -17,6 +17,12 @@ databaseChangeLog:
               - column:
                   name: endpoint
                   type: varchar(255)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: credential_hash
+                  type: varchar(64)
                   constraints:
                     primaryKey: true
                     nullable: false
@@ -55,6 +61,7 @@ databaseChangeLog:
               COMMENT ON TABLE idempotency_record IS 'Идемпотентность create-мутаций (WO-REL-21): сохранённые ответы по ключу клиента';
               COMMENT ON COLUMN idempotency_record.idem_key IS 'Ключ клиента Idempotency-Key (часть PK)';
               COMMENT ON COLUMN idempotency_record.endpoint IS 'Путь эндпоинта, напр. /process-instances (часть PK)';
+              COMMENT ON COLUMN idempotency_record.credential_hash IS 'SHA-256 сырых байтов Authorization-заголовка (пусто для анонимных; часть PK, раунд 2: replay скоупирован на credential)';
               COMMENT ON COLUMN idempotency_record.request_hash IS 'SHA-256 тела запроса (hex), защита от переиспользования ключа';
               COMMENT ON COLUMN idempotency_record.response_status IS 'Сохранённый HTTP-статус для replay';
               COMMENT ON COLUMN idempotency_record.response_body IS 'Сохранённое тело ответа для replay';

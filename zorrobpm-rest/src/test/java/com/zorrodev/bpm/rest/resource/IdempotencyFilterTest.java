@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
+import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.security.PasswordHasher;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -19,6 +21,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +41,7 @@ class IdempotencyFilterTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private UiUserRepository userRepository;
+    @Autowired private PasswordHasher passwordHasher;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
     private String adminToken;
@@ -343,7 +347,105 @@ class IdempotencyFilterTest {
             .isEqualTo(first.getResponse().getContentAsString());
     }
 
+    // ==================== WO-REL-21 раунд 2: скоуп replay на credential ====================
+
+    @Test
+    void credentialScope_crossUserSameKeyBody_isolated() throws Exception {
+        // WO-REL-21 раунд 2: второй юзер с тем же key+body НЕ получает ответ первого —
+        // его запрос реально исполняется как новый (другой инстанс).
+        // POF: без credential_hash в сравнении второй видит чужой replay (тот же id).
+        String procKey = uniq("credproc");
+        deployProcess(procKey);
+        String body = "{\"processDefinitionKey\":\"" + procKey + "\",\"variables\":[]}";
+        String key = UUID.randomUUID().toString();
+
+        MvcResult adminCall = mockMvc.perform(post("/process-instances")
+                .header("Authorization", "Bearer " + adminToken)
+                .header("Idempotency-Key", key)
+                .content(body)
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+        String adminId = mapper.readTree(adminCall.getResponse().getContentAsString()).get("id").asText();
+
+        String userToken = memberToken(procKey);
+        MvcResult userCall = mockMvc.perform(post("/process-instances")
+                .header("Authorization", "Bearer " + userToken)
+                .header("Idempotency-Key", key)
+                .content(body)
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+        String userId = mapper.readTree(userCall.getResponse().getContentAsString()).get("id").asText();
+
+        assertThat(userId)
+            .as("чужой credential — не replay: создан свой инстанс")
+            .isNotEqualTo(adminId);
+    }
+
+    @Test
+    void credentialScope_rotatedToken_executesNot422() throws Exception {
+        // WO-REL-21 раунд 2: тот же клиент с ротированным токеном — обычное исполнение
+        // (НЕ replay чужого, НЕ 422 — у него то же тело, credential другой).
+        // JWT меняется только по exp/сек — слип гарантирует разные байты токена.
+        String procKey = uniq("rotproc");
+        deployProcess(procKey);
+        String body = "{\"processDefinitionKey\":\"" + procKey + "\",\"variables\":[]}";
+        String key = UUID.randomUUID().toString();
+
+        MvcResult first = mockMvc.perform(post("/process-instances")
+                .header("Authorization", "Bearer " + adminToken)
+                .header("Idempotency-Key", key)
+                .content(body)
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+        Thread.sleep(1100);
+        String rotatedToken = loginAndGetToken("admin", "admin");
+        assertThat(rotatedToken)
+            .as("предпосылка: токены реально разные (exp/сек)")
+            .isNotEqualTo(adminToken);
+
+        MvcResult second = mockMvc.perform(post("/process-instances")
+                .header("Authorization", "Bearer " + rotatedToken)
+                .header("Idempotency-Key", key)
+                .content(body)
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+
+        String firstId = mapper.readTree(first.getResponse().getContentAsString()).get("id").asText();
+        String secondId = mapper.readTree(second.getResponse().getContentAsString()).get("id").asText();
+        assertThat(secondId)
+            .as("ротированный токен — новое исполнение, не replay и не 422")
+            .isNotEqualTo(firstId);
+    }
+
     // ==================== helpers (proven shapes) ====================
+
+    /**
+     * Второй юзер (USER) с OWNER-мемберством на процесс — второй валидный токен
+     * другого юзера для credential-тестов (паттерн AuditLogIntegrationTest).
+     */
+    private String memberToken(String processKey) throws Exception {
+        String username = uniq("idemmember");
+        UiUserEntity user = new UiUserEntity();
+        user.setId(UUID.randomUUID());
+        user.setUsername(username);
+        user.setPasswordHash(passwordHasher.hash("pass"));
+        user.setFullName(username);
+        user.setRole("USER");
+        user.setActive(true);
+        user.setCreatedAt(Instant.now());
+        user.setUpdatedAt(Instant.now());
+        UUID userId = userRepository.save(user).getId();
+        mockMvc.perform(post("/processes/" + processKey + "/members")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"userId\":\"" + userId + "\",\"role\":\"OWNER\"}"))
+            .andExpect(status().isOk());
+        return loginAndGetToken(username, "pass");
+    }
 
     private String loginAndGetToken(String username, String password) throws Exception {
         LoginDTO dto = new LoginDTO();

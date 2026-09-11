@@ -30,6 +30,16 @@ public class IdempotencyRecord {
     @Id
     private String endpoint;
 
+    /**
+     * WO-REL-21 раунд 2: SHA-256 сырых байтов {@code Authorization}-заголовка
+     * (пустая строка — анонимный вызов, легитимно для {@code /auth/register}).
+     * Часть PK: replay скоупирован на credential — чужой replay без токена
+     * невозможен, ротация токена даёт новую запись вместо чужого ответа.
+     */
+    @Id
+    @Column(name = "credential_hash", nullable = false)
+    private String credentialHash;
+
     @Column(name = "request_hash", nullable = false)
     private String requestHash;
 
