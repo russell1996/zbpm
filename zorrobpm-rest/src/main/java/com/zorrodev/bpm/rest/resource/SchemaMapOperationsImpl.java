@@ -64,13 +64,42 @@ public class SchemaMapOperationsImpl implements SchemaMapOperations {
         Map<String, ElementArtifactBindingEntity> bindingByElement = bindings.stream()
             .collect(java.util.stream.Collectors.toMap(ElementArtifactBindingEntity::getElementId, b -> b, (a, b) -> a));
 
-        // WO-VM-9a fix: shared = GLOBALLY — count ALL bindings across ALL PDs + user-task externalReferences
-        // A key is shared if >1 element (across all processes) uses it
+        // WO-AUDIT-3 (P3): resolve this page's artifact keys FIRST so the DB reads
+        // below are scoped IN-queries — no findAll() scans, no per-element round-trips.
+        // (BPMN models themselves already come from the BpmnServiceImpl Caffeine cache.)
+        java.util.Set<String> pageKeys = new java.util.HashSet<>();
+        for (var el : model.getElements()) {
+            if (el.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK
+                && el.getExtensions() != null && el.getExtensions().getUserTaskExtension() != null
+                && el.getExtensions().getUserTaskExtension().getFormKey() != null) {
+                pageKeys.add(el.getExtensions().getUserTaskExtension().getFormKey());
+            } else if (el.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.START_EVENT) {
+                ElementArtifactBindingEntity b = bindingByElement.get(el.getId());
+                if (b != null && b.getArtifactKey() != null) {
+                    pageKeys.add(b.getArtifactKey());
+                }
+            }
+        }
+        // Latest form per key, one query (same semantics as per-key findTop).
+        Map<String, FormEntity> latestFormByKey = new java.util.HashMap<>();
+        if (!pageKeys.isEmpty()) {
+            for (FormEntity f : formRepository.findByFormKeyIn(pageKeys)) {
+                latestFormByKey.merge(f.getFormKey(), f, (a, b) ->
+                    a.getVersion() >= b.getVersion() ? a : b);
+            }
+        }
+
+        // WO-VM-9a fix: shared = GLOBALLY — count usage of THIS page's keys across ALL
+        // PDs + user-task externalReferences. A key is shared if >1 element (across all
+        // processes) uses it. Counting only page keys gives identical flags (other keys
+        // are never consulted) without scanning whole tables.
         Map<String, Long> globalArtifactUsage = new java.util.HashMap<>();
-        // Count from all bindings (all PDs)
-        bindingRepository.findAll().forEach(b ->
-            globalArtifactUsage.merge(b.getArtifactKey(), 1L, Long::sum));
-        // Count from user-task externalReferences across all PDs
+        // Count from bindings (all PDs, scoped to page keys)
+        if (!pageKeys.isEmpty()) {
+            bindingRepository.findByArtifactKeyIn(pageKeys).forEach(b ->
+                globalArtifactUsage.merge(b.getArtifactKey(), 1L, Long::sum));
+        }
+        // Count from user-task externalReferences across all PDs (cached models, no DB)
         for (ProcessDefinitionEntity allPd : processDefinitionRepository.findAll()) {
             try {
                 var allModel = bpmnService.getProcessDefinitionModelById(allPd.getId());
@@ -78,7 +107,8 @@ public class SchemaMapOperationsImpl implements SchemaMapOperations {
                     .filter(e -> e.getType() == com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK)
                     .forEach(e -> {
                         if (e.getExtensions() != null && e.getExtensions().getUserTaskExtension() != null
-                            && e.getExtensions().getUserTaskExtension().getFormKey() != null) {
+                            && e.getExtensions().getUserTaskExtension().getFormKey() != null
+                            && pageKeys.contains(e.getExtensions().getUserTaskExtension().getFormKey())) {
                             globalArtifactUsage.merge(e.getExtensions().getUserTaskExtension().getFormKey(), 1L, Long::sum);
                         }
                     });
@@ -116,11 +146,12 @@ public class SchemaMapOperationsImpl implements SchemaMapOperations {
                 dto.setArtifactKey(artifactKey);
 
                 if (artifactKey != null) {
-                    // Resolve artifact kind and version
-                    formRepository.findTopByFormKeyOrderByVersionDesc(artifactKey).ifPresent(form -> {
+                    // Resolve artifact kind and version (pre-fetched batch above)
+                    FormEntity form = latestFormByKey.get(artifactKey);
+                    if (form != null) {
                         dto.setKind(form.getKind() != null ? form.getKind().name() : null);
                         dto.setArtifactVersion(form.getVersion());
-                    });
+                    }
                     dto.setShared(globalArtifactUsage.getOrDefault(artifactKey, 0L) > 1);
                 }
 

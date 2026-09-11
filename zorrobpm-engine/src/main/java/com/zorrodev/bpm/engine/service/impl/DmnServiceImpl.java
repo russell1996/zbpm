@@ -21,7 +21,8 @@ import com.zorrodev.bpm.engine.entity.DmnDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.DmnDefinitionRepository;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.xml.SecureXmlParser;
-import lombok.RequiredArgsConstructor;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
 import org.camunda.feel.api.FeelEngineApi;
@@ -44,13 +45,47 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class DmnServiceImpl implements DmnService {
 
     private final FeelEngineApi feelEngineApi;
     private final DmnDefinitionRepository dmnDefinitionRepository;
     private final ObjectMapper objectMapper;
     private final com.zorrodev.bpm.engine.service.AdvisoryDeployLock advisoryDeployLock;
+
+    /**
+     * WO-AUDIT-3 (P1): parsed DMN models by definition-row id — same shape as
+     * {@code BpmnServiceImpl} cache. A definition version is immutable (new version =
+     * new row id), so no invalidation is needed; deploys stamp the cache directly.
+     */
+    private final Cache<UUID, DmnDefinitionsModel> parsedModelCache;
+
+    public DmnServiceImpl(
+        FeelEngineApi feelEngineApi,
+        DmnDefinitionRepository dmnDefinitionRepository,
+        ObjectMapper objectMapper,
+        com.zorrodev.bpm.engine.service.AdvisoryDeployLock advisoryDeployLock,
+        @org.springframework.beans.factory.annotation.Value("${zorrobpm.engine.dmn-cache-max-size:500}") int maxSize,
+        @org.springframework.beans.factory.annotation.Value("${zorrobpm.engine.dmn-cache-ttl-minutes:60}") int ttlMinutes) {
+        this.feelEngineApi = feelEngineApi;
+        this.dmnDefinitionRepository = dmnDefinitionRepository;
+        this.objectMapper = objectMapper;
+        this.advisoryDeployLock = advisoryDeployLock;
+        this.parsedModelCache = Caffeine.newBuilder()
+            .maximumSize(maxSize)
+            .expireAfterWrite(java.time.Duration.ofMinutes(ttlMinutes))
+            .recordStats()
+            .build();
+    }
+
+    /** Test-only accessor for the WO-AUDIT-3 P1 parse-counter POF (same package). */
+    Cache<UUID, DmnDefinitionsModel> parsedModelCache() {
+        return parsedModelCache;
+    }
+
+    private DmnDefinitionsModel parsedModel(UUID id, java.util.function.Supplier<String> xml) {
+        return parsedModelCache.get(id,
+            k -> SecureXmlParser.unmarshal(xml.get(), DmnDefinitionsModel.class));
+    }
 
     @Override
     @org.springframework.transaction.annotation.Transactional
@@ -97,6 +132,8 @@ public class DmnServiceImpl implements DmnService {
             entity.setProcessDefinitionId(processDefinitionId);
             entity.setDeploymentId(deploymentId);
             dmnDefinitionRepository.save(entity);
+            // WO-AUDIT-3 (P1): the first evaluate must already hit — deploy parses once anyway.
+            parsedModelCache.put(entity.getId(), model);
             log.info("Deployed DMN decision '{}' version {}", decision.getId(), version);
         }
     }
@@ -138,7 +175,7 @@ public class DmnServiceImpl implements DmnService {
     }
 
     private Object evaluateEntity(DmnDefinitionEntity entity, String decisionId, List<ProcessVariable> variables) {
-        DmnDefinitionsModel model = SecureXmlParser.unmarshal(entity.getDmn(), DmnDefinitionsModel.class);
+        DmnDefinitionsModel model = parsedModel(entity.getId(), entity::getDmn);
         DmnDecisionModel decision = model.getDecisions().stream()
             .filter(d -> decisionId.equals(d.getId()))
             .findFirst()
@@ -333,20 +370,36 @@ public class DmnServiceImpl implements DmnService {
 
     @Override
     public List<DmnDecision> listDecisions(Collection<UUID> allowedPdIds) {
-        // keep the latest version of each decisionId
-        Map<String, DmnDefinitionEntity> latest = new LinkedHashMap<>();
-        for (DmnDefinitionEntity e : dmnDefinitionRepository.findAll()) {
-            if (!visible(e, allowedPdIds)) {
+        // WO-AUDIT-3 (P1): projection WITHOUT the TEXT dmn blob — keep the latest
+        // version of each decisionId. Visibility semantics byte-identical to before
+        // (same visible() on the same scope column), only the XML stays in the DB
+        // until the per-latest-row load below.
+        Map<String, DmnDefinitionRepository.DmnDecisionMeta> latest = new LinkedHashMap<>();
+        for (DmnDefinitionRepository.DmnDecisionMeta m : dmnDefinitionRepository.findAllMeta()) {
+            if (!visibleMeta(m, allowedPdIds)) {
                 continue;
             }
-            DmnDefinitionEntity current = latest.get(e.getDecisionId());
-            if (current == null || e.getVersion() > current.getVersion()) {
-                latest.put(e.getDecisionId(), e);
+            DmnDefinitionRepository.DmnDecisionMeta current = latest.get(m.getDecisionId());
+            if (current == null || m.getVersion() > current.getVersion()) {
+                latest.put(m.getDecisionId(), m);
             }
         }
+        if (latest.isEmpty()) {
+            return List.of();
+        }
+        // ONE query for the latest rows only (bounded by decision count, not versions).
+        Map<UUID, DmnDefinitionEntity> byId = new java.util.HashMap<>();
+        for (DmnDefinitionEntity e : dmnDefinitionRepository.findAllById(latest.values().stream()
+                .map(DmnDefinitionRepository.DmnDecisionMeta::getId).toList())) {
+            byId.put(e.getId(), e);
+        }
         List<DmnDecision> result = new ArrayList<>();
-        for (DmnDefinitionEntity e : latest.values()) {
-            result.add(toDecisionDTO(e));
+        for (DmnDefinitionRepository.DmnDecisionMeta m : latest.values()) {
+            DmnDefinitionEntity e = byId.get(m.getId());
+            if (e == null) {
+                continue; // deleted between the two reads — next list sees a consistent view
+            }
+            result.add(toDecisionDTO(e, parsedModel(e.getId(), e::getDmn)));
         }
         return result;
     }
@@ -365,6 +418,15 @@ public class DmnServiceImpl implements DmnService {
             && allowedPdIds.contains(entity.getProcessDefinitionId());
     }
 
+    /** WO-AUDIT-3 (P1): same rule as {@link #visible} over the TEXT-less projection. */
+    private boolean visibleMeta(DmnDefinitionRepository.DmnDecisionMeta m, Collection<UUID> allowedPdIds) {
+        if (allowedPdIds == null) {
+            return true;
+        }
+        return m.getProcessDefinitionId() != null
+            && allowedPdIds.contains(m.getProcessDefinitionId());
+    }
+
     @Override
     public Optional<UUID> findProcessDefinitionId(String decisionId) {
         return dmnDefinitionRepository.findLatestProcessDefinitionId(decisionId);
@@ -374,11 +436,10 @@ public class DmnServiceImpl implements DmnService {
     public DmnDecision getDecision(String decisionId) {
         DmnDefinitionEntity entity = dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decisionId)
             .orElseThrow(() -> new EngineException("No deployed DMN decision '" + decisionId + "'"));
-        return toDecisionDTO(entity);
+        return toDecisionDTO(entity, parsedModel(entity.getId(), entity::getDmn));
     }
 
-    private DmnDecision toDecisionDTO(DmnDefinitionEntity entity) {
-        DmnDefinitionsModel model = SecureXmlParser.unmarshal(entity.getDmn(), DmnDefinitionsModel.class);
+    private DmnDecision toDecisionDTO(DmnDefinitionEntity entity, DmnDefinitionsModel model) {
         DmnDecisionModel decision = model.getDecisions().stream()
             .filter(d -> entity.getDecisionId().equals(d.getId()))
             .findFirst()

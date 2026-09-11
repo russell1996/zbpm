@@ -21,8 +21,14 @@ public interface DomainEventRepository
     @Query(value = "SELECT * FROM events WHERE sequence > :since ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
     List<DomainEventEntity> findSince(@Param("since") long since, @Param("limit") int limit);
 
-    @Query(value = "SELECT * FROM events WHERE process_instance_id = :processInstanceId ORDER BY sequence ASC", nativeQuery = true)
-    List<DomainEventEntity> findByProcessInstanceId(@Param("processInstanceId") UUID processInstanceId);
+    /**
+     * WO-AUDIT-3 (P4): the per-instance query is bounded — a long-lived instance must
+     * not materialize its whole history. (Currently no prod caller; the live
+     * instance-scoped path is {@code EventResource} via the windowed {@code findBy}
+     * above. Kept bounded so no unbounded instance query exists in the codebase.)
+     */
+    @Query(value = "SELECT * FROM events WHERE process_instance_id = :processInstanceId ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
+    List<DomainEventEntity> findByProcessInstanceId(@Param("processInstanceId") UUID processInstanceId, @Param("limit") int limit);
 
     @Query(value = "SELECT COALESCE(MAX(sequence), 0) FROM events", nativeQuery = true)
     long getMaxSequence();

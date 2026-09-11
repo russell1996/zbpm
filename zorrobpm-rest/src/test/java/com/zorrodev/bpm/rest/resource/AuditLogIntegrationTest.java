@@ -154,6 +154,67 @@ class AuditLogIntegrationTest {
             .andExpect(status().isForbidden());
     }
 
+    // ==================== WO-AUDIT-3 P2: cursor page over HTTP ====================
+
+    @Test
+    void audit3_cursorPage_windowsAndWalks() throws Exception {
+        // Seed 3 probe rows directly (distinct instants).
+        for (int i = 0; i < 3; i++) {
+            var e = new com.zorrodev.bpm.engine.entity.AuditLogEntity();
+            e.setId(UUID.randomUUID());
+            e.setPrincipalType("USER");
+            e.setPrincipalId("probe");
+            e.setAction("PROBE_" + i);
+            e.setProcessKey("cursor-http-probe");
+            e.setTargetId(UUID.randomUUID().toString());
+            e.setAt(Instant.now().plusSeconds(i));
+            auditLogRepository.save(e);
+        }
+
+        MvcResult first = mockMvc.perform(get("/admin/audit-log")
+                .queryParam("processKey", "cursor-http-probe")
+                .queryParam("limit", "2")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode page1 = mapper.readTree(first.getResponse().getContentAsString());
+        assertEquals(2, page1.get("entries").size(), "window of 2, not the whole journal");
+        assertTrue(page1.get("hasMore").asBoolean(), "hasMore while rows remain");
+        assertFalse(page1.get("nextCursor").asText().isBlank(), "cursor for the next page");
+
+        MvcResult second = mockMvc.perform(get("/admin/audit-log")
+                .queryParam("processKey", "cursor-http-probe")
+                .queryParam("limit", "2")
+                .queryParam("cursor", page1.get("nextCursor").asText())
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode page2 = mapper.readTree(second.getResponse().getContentAsString());
+        assertEquals(1, page2.get("entries").size(), "last window");
+        assertFalse(page2.get("hasMore").asBoolean(), "no more rows");
+
+        var ids = new java.util.HashSet<String>();
+        page1.get("entries").forEach(n -> ids.add(n.get("id").asText()));
+        page2.get("entries").forEach(n -> ids.add(n.get("id").asText()));
+        assertEquals(3, ids.size(), "walk covers all 3 probe rows exactly once");
+    }
+
+    @Test
+    void audit3_invalidCursorAndLimit_rejected400() throws Exception {
+        mockMvc.perform(get("/admin/audit-log")
+                .queryParam("cursor", "not-a-cursor")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/admin/audit-log")
+                .queryParam("limit", "0")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/admin/audit-log")
+                .queryParam("limit", "1001")
+                .header("Authorization", "Bearer " + superAdminToken))
+            .andExpect(status().isBadRequest());
+    }
+
     // ==================== Criterion #4: Reads don't create audit entries ====================
 
     @Test

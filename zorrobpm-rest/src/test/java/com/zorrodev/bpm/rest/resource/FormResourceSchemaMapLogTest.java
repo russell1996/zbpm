@@ -63,7 +63,6 @@ class FormResourceSchemaMapLogTest {
         when(processDefinitionRepository.findMaxByKey("test-form")).thenReturn(java.util.Optional.of(1));
         when(processDefinitionRepository.findByKeyAndVersion("test-form", 1)).thenReturn(java.util.Optional.of(validPd));
         when(bindingRepository.findByProcessDefinitionId(validId)).thenReturn(List.of());
-        when(bindingRepository.findAll()).thenReturn(List.of());
         when(processDefinitionRepository.findAll()).thenReturn(List.of(validPd, brokenPd));
 
         // Valid PD returns a model with a start event

@@ -808,13 +808,11 @@ class FormResourceCharacterizationTest {
         b.setElementId("start1");
         b.setArtifactKey("startArtifact");
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(b));
-        when(bindingRepository.findAll()).thenReturn(List.of());
+        when(bindingRepository.findByArtifactKeyIn(any())).thenReturn(List.of());
         when(processDefinitionRepository.findAll()).thenReturn(List.of());
         FormEntity startForm = form("startArtifact", 7);
-        when(formRepository.findTopByFormKeyOrderByVersionDesc("startArtifact"))
-            .thenReturn(Optional.of(startForm));
-        when(formRepository.findTopByFormKeyOrderByVersionDesc("taskForm"))
-            .thenReturn(Optional.of(form("taskForm", 2)));
+        when(formRepository.findByFormKeyIn(any()))
+            .thenReturn(List.of(startForm, form("taskForm", 2)));
 
         mockMvc.perform(get("/process-definitions/ord/schema-map")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))
@@ -838,7 +836,7 @@ class FormResourceCharacterizationTest {
         when(bpmnService.getProcessDefinitionModelById(eq(pd.getId())))
             .thenReturn(new BpmnProcessDefinitionModel());
         when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of());
-        when(bindingRepository.findAll()).thenReturn(List.of());
+        when(bindingRepository.findByArtifactKeyIn(any())).thenReturn(List.of());
         when(processDefinitionRepository.findAll()).thenReturn(List.of());
 
         mockMvc.perform(get("/process-definitions/ord/schema-map")
