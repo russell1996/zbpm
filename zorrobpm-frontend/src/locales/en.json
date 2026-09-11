@@ -263,6 +263,7 @@
   "editUser": "Edit User",
   "searchByUsername": "Search by username...",
   "username": "Username",
+  "loginIdentifier": "Username or email",
   "signIn": "Sign in",
   "signingIn": "Signing in…",
   "signInToContinue": "Sign in to continue",

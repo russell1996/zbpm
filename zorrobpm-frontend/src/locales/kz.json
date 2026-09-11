@@ -264,6 +264,7 @@
   "role": "Рөлі",
   "password": "Құпиясөз",
   "username": "Пайдаланушы аты",
+  "loginIdentifier": "Пайдаланушы аты немесе email",
   "signIn": "Кіру",
   "signingIn": "Кіру…",
   "signInToContinue": "Жалғастыру үшін кіріңіз",
