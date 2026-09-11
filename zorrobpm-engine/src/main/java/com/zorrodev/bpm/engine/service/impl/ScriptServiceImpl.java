@@ -118,12 +118,26 @@ public class ScriptServiceImpl implements ScriptService {
      * winner's replacement is discarded, and submits landing between shutdownNow
      * and reassignment would hit a dead pool). Mutual exclusion makes replacement
      * atomic: at most one live pool, always shut down before replacing.
+     *
+     * WO-REL-24: the old pool is shut down GRACEFULLY ({@code shutdown()}, not
+     * {@code shutdownNow()}). {@code shutdownNow()} interrupts EVERY worker of the
+     * shared pool — including a neighbour task that is honestly evaluating its own
+     * (not stuck) expression at that moment; it then dies with a confusing
+     * {@code EngineException("...failed...: null")} instead of its result or its own
+     * clean timeout. The stuck task itself was already interrupted precisely by
+     * {@code future.cancel(true)} before this method runs, so the pool-wide
+     * interrupt buys nothing for it. Graceful shutdown still stops new submits to
+     * the old pool (they go to the fresh one) while letting in-flight neighbours —
+     * and already-queued tasks — finish normally. Worst case is unchanged: a task
+     * that ignores interrupts forever pins one thread of a drained pool, exactly
+     * as it would pin a worker after {@code shutdownNow()}.
      */
     private synchronized void replaceWorker() {
         log.warn("Replacing script worker pool after stuck expression (active={}, queued={})",
             executor.getActiveCount(), executor.getQueue().size());
-        executor.shutdownNow();
+        ThreadPoolExecutor old = executor;
         executor = createExecutor();
+        old.shutdown();
     }
 
     private ThreadPoolExecutor createExecutor() {

@@ -15,6 +15,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -76,6 +78,81 @@ class ScriptServiceTimeoutRaceTest {
         assertThat(timeouts).as("both threads hit the timeout path").hasSize(2);
 
         // The pool survived the double replacement: fast evaluation still works.
+        ProcessVariable v = new ProcessVariable();
+        v.setName("x");
+        v.setType(ProcessVariableType.LONG);
+        v.setValue("41");
+        Object result = service.evaluateExpression("x + 1", List.of(v));
+        assertThat(((Number) result).longValue()).isEqualTo(42L);
+    }
+
+    /**
+     * WO-REL-24: a timeout must not kill the NEIGHBOUR task.
+     *
+     * <p>Deterministic by construction (no wall-clock race): thread A hangs on a slow
+     * expression and times out; meanwhile the main thread tiles the whole window with
+     * back-to-back short evaluations. The iteration live at A's {@code replaceWorker()}
+     * instant started before it and finishes after it — on the old code that iteration
+     * eats the pool-wide {@code shutdownNow()} interrupt and fails with a confusing
+     * {@code EngineException("...failed...: null")} instead of its result (RED); with
+     * the fix the old pool drains gracefully and every iteration succeeds (GREEN).
+     *
+     * <p>A {@code RejectedExecution} ("pool full") mid-swap is retried — it is a
+     * transient submit-vs-shutdown race, not a sibling kill, on either code version.
+     */
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void timeoutDoesNotKillSiblingTask() throws Exception {
+        ScriptService service = serviceWithTimeout(1);
+        String slowExpr = "for i in 1..5000 return for j in 1..5000 return i * j";
+        // Warm up the FEEL engine so iteration durations are stable, not class-loading noise.
+        for (int i = 0; i < 3; i++) {
+            service.evaluateExpression("for i in 1..3000 return i", List.of());
+        }
+
+        AtomicBoolean aTimedOut = new AtomicBoolean(false);
+        List<Throwable> aErrors = Collections.synchronizedList(new ArrayList<>());
+        Thread stuck = new Thread(() -> {
+            try {
+                service.evaluateExpression(slowExpr, List.of());
+                aErrors.add(new IllegalStateException("slow expression should have timed out"));
+            } catch (EngineException e) {
+                if (e.getMessage() != null && e.getMessage().contains("timed out")) {
+                    aTimedOut.set(true);
+                } else {
+                    aErrors.add(e);
+                }
+            } catch (Throwable t) {
+                aErrors.add(t);
+            }
+        });
+        stuck.start();
+
+        // Tile A's whole timeout window with short evaluations. The iteration live at
+        // A's replaceWorker() straddles it: started before, finishes after.
+        List<Throwable> siblingErrors = Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger siblingSuccesses = new AtomicInteger(0);
+        int guard = 0;
+        while (!aTimedOut.get() && guard++ < 100_000) {
+            try {
+                Object r = service.evaluateExpression("for i in 1..3000 return i", List.of());
+                assertThat(r).isNotNull();
+                siblingSuccesses.incrementAndGet();
+            } catch (EngineException e) {
+                if (e.getMessage() != null && e.getMessage().contains("pool full")) {
+                    continue; // transient submit-vs-shutdown race — retry, not a sibling kill
+                }
+                siblingErrors.add(e);
+            }
+        }
+        stuck.join(30_000);
+
+        assertThat(aErrors).as("A timed out cleanly: %s", aErrors).isEmpty();
+        assertThat(aTimedOut.get()).as("A hit the timeout path").isTrue();
+        assertThat(siblingSuccesses.get()).as("sibling iterations covered the window").isPositive();
+        assertThat(siblingErrors).as("no sibling task killed by A's timeout: %s", siblingErrors).isEmpty();
+
+        // Pool still serves after everything.
         ProcessVariable v = new ProcessVariable();
         v.setName("x");
         v.setType(ProcessVariableType.LONG);
