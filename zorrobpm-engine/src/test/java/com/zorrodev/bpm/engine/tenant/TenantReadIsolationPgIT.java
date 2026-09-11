@@ -49,6 +49,9 @@ public class TenantReadIsolationPgIT extends PostgresIT {
     @Autowired com.zorrodev.bpm.engine.service.FileService fileService;
 
     private UUID pdIdA, pdIdB, piIdA, piIdB;
+    // WO-AUDIT-6: own activity ids — the null-pdIds (SUPER_ADMIN) test must prove
+    // it sees OUR incidents without assuming the DB holds nothing else.
+    private UUID actA, actB;
 
     @BeforeEach
     void setUp() {
@@ -116,7 +119,7 @@ public class TenantReadIsolationPgIT extends PostgresIT {
             stB, piIdB, pdIdB, "svcB", Timestamp.from(Instant.now()), 0);
 
         // Activities (for incidents)
-        UUID actA = UUID.randomUUID(), actB = UUID.randomUUID();
+        actA = UUID.randomUUID(); actB = UUID.randomUUID();
         UUID tokA = UUID.randomUUID(), tokB = UUID.randomUUID();
         jdbc.update("INSERT INTO activities (id,process_instance_id,bpmn_element_id,created_at,type,status,token) VALUES (?,?,?,?,?,?,?)",
             actA, piIdA, "startA", Timestamp.from(Instant.now()), "START_EVENT", "COMPLETED", tokA);
@@ -198,7 +201,13 @@ public class TenantReadIsolationPgIT extends PostgresIT {
     @Test
     void incidents_nullPdIds_seesAll() {
         var r = queryService.findIncidents(new IncidentQuery(), null);
-        assertThat(r.getData()).hasSize(2);
+        // WO-AUDIT-6: null pdIds = SUPER_ADMIN sees the whole journal — assert OUR two
+        // are visible, not that the DB holds exactly two. An exact hasSize(2) broke
+        // whenever any other PgIT class left an incident behind (order-dependent flake).
+        assertThat(r.getData()).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(r.getData())
+            .filteredOn(i -> actA.equals(i.getActivityId()) || actB.equals(i.getActivityId()))
+            .hasSize(2);
     }
 
     @Test
