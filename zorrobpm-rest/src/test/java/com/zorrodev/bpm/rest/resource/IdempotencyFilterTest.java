@@ -87,7 +87,8 @@ class IdempotencyFilterTest {
     }
 
     private String registerBody(String tag) {
-        return "{\"username\":\"" + tag + "\",\"password\":\"pass12345\","
+        // Password must satisfy complexity (proven value from RegistrationEndpointIntegrationTest).
+        return "{\"username\":\"" + tag + "\",\"password\":\"MyStr0ng!P@ssw0rd\","
             + "\"fullName\":\"" + tag + "\",\"email\":\"" + tag + "@test.com\"}";
     }
 
@@ -169,11 +170,14 @@ class IdempotencyFilterTest {
             .andReturn();
 
         // Master behavior without the header: the duplicate is rejected by REG-domain
-        // validation (whatever exact code — covered by REG tests, not this WO).
-        // This WO's concern is only that the filter does not interfere: no 422.
+        // validation (422 here) — this WO's concern is only that the 422 comes from
+        // REG logic, NOT from this filter (our code would be IDEMPOTENCY_KEY_*).
         assertThat(second.getResponse().getStatus())
-            .as("no 422 without the header (filter not involved)")
-            .isNotEqualTo(422);
+            .as("duplicate without header rejected by domain logic")
+            .isEqualTo(422);
+        assertThat(second.getResponse().getContentAsString())
+            .as("422 is the REG-domain one, not the filter's")
+            .doesNotContain("IDEMPOTENCY_KEY");
     }
 
     // ==================== POST /process-instances ====================

@@ -55,6 +55,12 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     static final String HEADER = "Idempotency-Key";
     private static final int MAX_KEY_LENGTH = 255;
+    /**
+     * Bodies beyond this are executed without idempotency (passthrough): hashing a
+     * truncated prefix could alias different bodies. Admin-scale batches fit easily;
+     * the cap only guards memory (mirrors {@code RateLimitFilter} thinking).
+     */
+    static final int MAX_BODY_BYTES = 5 * 1024 * 1024;
 
     private static final Set<String> PATHS = Set.of(
         "/process-instances",
@@ -90,9 +96,20 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
         String endpoint = PathNormalizer.normalize(request.getRequestURI());
 
-        ContentCachingRequestWrapper cachedRequest = new ContentCachingRequestWrapper(request);
-        byte[] body = cachedRequest.getInputStream().readAllBytes();
+        // Read the body ONCE here (for the hash) and serve it downstream from our own
+        // byte-backed wrapper: pre-reading Spring's ContentCachingRequestWrapper leaves
+        // the downstream read empty in this Spring version (proven by live RED), so the
+        // framework wrapper is used ONLY on the response side. Bounded read — bodies
+        // beyond the cap get a direct 413 (house precedent: send413), never truncated
+        // hashes and never unbounded buffering.
+        byte[] body = readBounded(request.getInputStream(), MAX_BODY_BYTES);
+        if (body == null) {
+            writeError(response, 413, "IDEMPOTENCY_BODY_TOO_LARGE",
+                "Request body exceeds idempotency limit");
+            return;
+        }
         String hash = sha256Hex(body);
+        HttpServletRequest replayableRequest = new CachedBodyRequest(request, body);
 
         AtomicReference<Replay> replay = new AtomicReference<>();
         AtomicReference<String> mismatchMessage = new AtomicReference<>();
@@ -122,7 +139,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                     ContentCachingResponseWrapper cachedResponse =
                         new ContentCachingResponseWrapper(response);
                     try {
-                        chain.doFilter(cachedRequest, cachedResponse);
+                        chain.doFilter(replayableRequest, cachedResponse);
                     } catch (IOException | RuntimeException | jakarta.servlet.ServletException e) {
                         // Effect (if any) rolls back with this tx — retry starts clean.
                         // Deliberately no copyBodyToResponse: the container owns error
@@ -270,6 +287,92 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     }
 
     private record Replay(int status, String body, String contentType) {
+    }
+
+    /**
+     * Re-readable request backed by already-read bytes. Passed downstream instead of
+     * the consumed original.
+     */
+    private static final class CachedBodyRequest extends jakarta.servlet.http.HttpServletRequestWrapper {
+        private final byte[] body;
+
+        CachedBodyRequest(HttpServletRequest request, byte[] body) {
+            super(request);
+            this.body = body;
+        }
+
+        @Override
+        public jakarta.servlet.ServletInputStream getInputStream() {
+            java.io.ByteArrayInputStream in = new java.io.ByteArrayInputStream(body);
+            return new jakarta.servlet.ServletInputStream() {
+                @Override
+                public int read() {
+                    return in.read();
+                }
+
+                @Override
+                public int read(byte[] b, int off, int len) {
+                    return in.read(b, off, len);
+                }
+
+                @Override
+                public boolean isFinished() {
+                    return in.available() == 0;
+                }
+
+                @Override
+                public boolean isReady() {
+                    return true;
+                }
+
+                @Override
+                public void setReadListener(jakarta.servlet.ReadListener readListener) {
+                    throw new UnsupportedOperationException("async not supported");
+                }
+            };
+        }
+
+        @Override
+        public java.io.BufferedReader getReader() throws IOException {
+            String enc = getCharacterEncoding();
+            java.nio.charset.Charset charset;
+            try {
+                charset = enc != null ? java.nio.charset.Charset.forName(enc) : StandardCharsets.UTF_8;
+            } catch (java.nio.charset.UnsupportedCharsetException e) {
+                throw new java.io.UnsupportedEncodingException(enc);
+            }
+            return new java.io.BufferedReader(new java.io.InputStreamReader(getInputStream(), charset));
+        }
+
+        @Override
+        public int getContentLength() {
+            return body.length;
+        }
+
+        @Override
+        public long getContentLengthLong() {
+            return body.length;
+        }
+    }
+
+    /**
+     * Reads at most {@code cap + 1} bytes; returns {@code null} when the stream is
+     * longer (caller rejects oversized bodies instead of hashing a truncated prefix,
+     * which could alias different bodies to one hash).
+     */
+    static byte[] readBounded(java.io.InputStream in, int cap) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int total = 0;
+        int n;
+        while ((n = in.read(buf, 0, Math.min(buf.length, cap + 1 - total))) > 0) {
+            out.write(buf, 0, n);
+            total += n;
+            if (total > cap) {
+                return null;
+            }
+        }
+        return out.toByteArray();
     }
 
     /** Unchecked carrier: exceptions from the downstream chain must roll our tx back. */
