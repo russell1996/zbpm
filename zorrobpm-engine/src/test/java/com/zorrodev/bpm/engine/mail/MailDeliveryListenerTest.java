@@ -153,4 +153,19 @@ class MailDeliveryListenerTest {
         verify(publisher).publishEvent(secondResult.capture());
         assertThat(secondResult.getValue().isAcked()).isTrue();
     }
+
+    @Test
+    void rel22_redeliveredMessageId_sendsTwice_expectedAtLeastOnce() throws Exception {
+        // WO-REL-22 (section A decision, NOT a bug): the same message delivered twice
+        // (RabbitMQ redelivery) sends the letter twice — mail is at-least-once by
+        // contract (see MailSender javadoc), no inbox dedup by design.
+        withConfig();
+        when(javaMailSender.createMimeMessage()).thenReturn(mimeMessage);
+        doNothing().when(javaMailSender).send(any(MimeMessage.class));
+        MailRequest request = new MailRequest("user@test.com", "Subject", "body", false);
+        MailSendRequested redelivered = new MailSendRequested(request, "same-message-id");
+        listener.on(redelivered);
+        listener.on(redelivered);
+        verify(javaMailSender, org.mockito.Mockito.times(2)).send(any(MimeMessage.class));
+    }
 }
