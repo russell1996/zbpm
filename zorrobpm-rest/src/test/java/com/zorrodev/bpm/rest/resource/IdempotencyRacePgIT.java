@@ -57,7 +57,7 @@ class IdempotencyRacePgIT {
     @DynamicPropertySource
     static void pgProperties(DynamicPropertyRegistry registry) {
         String host = cfg("PG_HOST", "127.0.0.1");
-        String port = cfg("PG_PORT", "5432");
+        String port = cfg("PG_PORT", "55432");
         String db = cfg("PG_DB", "zorrobpm-db");
         String user = cfg("PG_USER", "zorrodev");
         String pass = cfg("PG_PASSWORD", "zorrodev");

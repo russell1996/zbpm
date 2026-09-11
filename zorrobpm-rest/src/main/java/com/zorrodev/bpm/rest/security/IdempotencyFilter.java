@@ -9,10 +9,10 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingRequestWrapper;
 import org.springframework.web.util.ContentCachingResponseWrapper;
@@ -82,7 +82,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             return;
         }
         if (key.length() > MAX_KEY_LENGTH) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency-Key too long");
+            // Written directly (never thrown): exceptions from filters bypass the
+            // DispatcherServlet advice and would surface as container 500s.
+            writeError(response, HttpStatus.BAD_REQUEST.value(),
+                "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key too long");
+            return;
         }
         String endpoint = PathNormalizer.normalize(request.getRequestURI());
 
@@ -91,7 +95,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         String hash = sha256Hex(body);
 
         AtomicReference<Replay> replay = new AtomicReference<>();
-        AtomicReference<ResponseStatusException> mismatch = new AtomicReference<>();
+        AtomicReference<String> mismatchMessage = new AtomicReference<>();
         AtomicReference<String> raceLost = new AtomicReference<>();
         try {
             transactionTemplate.execute(new TransactionCallbackWithoutResult() {
@@ -106,8 +110,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         if (!MessageDigest.isEqual(
                                 existing.get().getRequestHash().getBytes(StandardCharsets.UTF_8),
                                 hash.getBytes(StandardCharsets.UTF_8))) {
-                            mismatch.set(new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                                "Idempotency-Key already used with a different request body"));
+                            // Written directly after the tx (below), never thrown:
+                            // exceptions from filters bypass DispatcherServlet advice.
+                            mismatchMessage.set("Idempotency-Key already used with a different request body");
                             return;
                         }
                         replay.set(new Replay(existing.get().getResponseStatus(),
@@ -125,8 +130,10 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         throw new FilterChainException(e);
                     }
                     int responseStatus = cachedResponse.getStatus();
-                    if (responseStatus == 401 || responseStatus == 403) {
-                        // Auth failures are never cached — the retry must re-authenticate live.
+                    if (responseStatus == 401 || responseStatus == 403 || responseStatus == 429) {
+                        // Auth/rate-limit failures are never cached — the retry must
+                        // re-authenticate and re-pass the limiter live. A saved 401/429
+                        // would pin the client to failure after fixing its token/quota.
                         copyBody(cachedResponse, response);
                         return;
                     }
@@ -166,12 +173,21 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             }
             throw new jakarta.servlet.ServletException(cause);
         }
-        if (mismatch.get() != null) {
-            throw mismatch.get();
+        if (mismatchMessage.get() != null) {
+            // Written directly (never thrown): filter exceptions bypass DispatcherServlet
+            // advice and would surface as container 500s. The tx above committed empty.
+            writeError(response, HttpStatus.UNPROCESSABLE_ENTITY.value(),
+                "IDEMPOTENCY_KEY_REUSED", mismatchMessage.get());
+            return;
         }
         if (raceLost.get() != null) {
             // Fresh read outside the rolled-back transaction.
-            replay.set(readFresh(key, endpoint, raceLost.get()));
+            try {
+                replay.set(readFresh(key, endpoint, raceLost.get()));
+            } catch (ErrorSpec e) {
+                writeError(response, e.status(), e.code(), e.getMessage());
+                return;
+            }
         }
         if (replay.get() != null) {
             writeReplay(response, replay.get());
@@ -182,17 +198,51 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private Replay readFresh(String key, String endpoint, String hash) {
         Optional<IdempotencyRecord> existing = repository.findByIdemKeyAndEndpoint(key, endpoint);
         if (existing.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Idempotency-Key conflict, retry with a new key");
+            throw new ErrorSpec(HttpStatus.CONFLICT.value(),
+                "IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key conflict, retry with a new key");
         }
         if (!MessageDigest.isEqual(
                 existing.get().getRequestHash().getBytes(StandardCharsets.UTF_8),
                 hash.getBytes(StandardCharsets.UTF_8))) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "Idempotency-Key already used with a different request body");
+            throw new ErrorSpec(HttpStatus.UNPROCESSABLE_ENTITY.value(),
+                "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key already used with a different request body");
         }
         return new Replay(existing.get().getResponseStatus(),
             existing.get().getResponseBody(), existing.get().getResponseContentType());
+    }
+
+    /**
+     * Error writer for this filter's own rejections (key too long / reuse / conflict).
+     * Written directly, never thrown: exceptions from servlet filters bypass the
+     * DispatcherServlet advice ({@code GlobalExceptionHandler} only sees controller
+     * exceptions) and would surface as container 500s. Shape mirrors neighboring
+     * filters ({@code send429}/{@code send413}).
+     */
+    private void writeError(HttpServletResponse response, int status,
+                            String code, String message) throws IOException {
+        response.setStatus(status);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.getWriter().write("{\"code\":\"" + code + "\",\"message\":\"" + message + "\"}");
+    }
+
+    /** Unchecked error spec for filter-own rejections (written directly, see above). */
+    private static final class ErrorSpec extends RuntimeException {
+        private final int status;
+        private final String code;
+
+        ErrorSpec(int status, String code, String message) {
+            super(message);
+            this.status = status;
+            this.code = code;
+        }
+
+        int status() {
+            return status;
+        }
+
+        String code() {
+            return code;
+        }
     }
 
     private void writeReplay(HttpServletResponse response, Replay replay) throws IOException {

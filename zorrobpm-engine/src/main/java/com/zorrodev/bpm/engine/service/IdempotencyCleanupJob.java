@@ -84,7 +84,9 @@ public class IdempotencyCleanupJob {
             if (pageDeleted == 0) {
                 // No progress on a full page (rows permanently undeletable) — break
                 // instead of hot-looping the same page until the next scheduled pass.
-                log.error("IdempotencyCleanup: no rows deleted from a full page, stopping pass");
+                // Warn, not error: a concurrent cleaner on another replica racing us
+                // to the same rows trips this benignly.
+                log.warn("IdempotencyCleanup: no rows deleted from a full page, stopping pass");
                 return deleted;
             }
         }
