@@ -326,6 +326,83 @@ public class CompletionService {
      * WITHOUT moving the token. Only the real job's completion follows the path below.
      */
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
+        if (resumeElementListenerPhase(serviceTaskId, variables, executor)) {
+            return;
+        }
+        Activity activity = elementSupport.lockAndReload(serviceTaskId);
+        if (!isCompletionAllowed(serviceTaskId, activity)) {
+            return;
+        }
+        UUID processInstanceId = activity.getProcessInstanceId();
+        UUID tokenId = activity.getToken();
+
+        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
+        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
+        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
+
+        if (handleCreatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
+            return;
+        }
+
+        if (handleCompletingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor)) {
+            return;
+        }
+
+        if (handleAssigningListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
+            return;
+        }
+
+        if (handleUpdatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity, executor)) {
+            return;
+        }
+
+        if (handleCancelingListeners(serviceTaskId, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor)) {
+            return;
+        }
+
+        if (rejectPhaseOnlyCompletion(serviceTaskId, bpmnElement)) {
+            return;
+        }
+
+        if (handleStartListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
+            return;
+        }
+
+        if (handleEndListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
+            return;
+        }
+        finishServiceTaskCompletion(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
+    }
+
+    /**
+     * WO-DEBT-6 S1: status guard of {@link #completeServiceTask} (WO-C8-28).
+     * Extracted byte-identical except mechanical return plumbing. Returns true when the completion may proceed.
+     */
+    private boolean isCompletionAllowed(UUID serviceTaskId, Activity activity) {
+        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
+            // WO-C8-28: a CANCELLED activity with an open canceling phase is NOT done —
+            // its listener completions must reach the canceling branch below (the phase
+            // defers the cancellation tail). The extra read runs only for non-active
+            // statuses, so the hot CREATED/IN_PROGRESS path never touches the new state.
+            if (activity.getStatus() != ActivityStatus.CANCELLED
+                || dbService.getPendingCancelingListenerIndex(serviceTaskId) == null) {
+                // only an active task may complete. Ignore anything else to avoid advancing the token twice:
+                // a redelivered/late RabbitMQ completion (broker is at-least-once), a boundary-timer
+                // interruption (CANCELLED), an already-COMPLETED task, or a task parked on an incident
+                // (ERROR) that was superseded by incident-resolve re-execution.
+                log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * WO-DEBT-6 S1: element-listener phase head of {@link #completeServiceTask} (WO-C8-25).
+     * Extracted byte-identical except mechanical return plumbing. Returns true when routed.
+     */
+    private boolean resumeElementListenerPhase(UUID serviceTaskId, List<ProcessVariable> variables,
+            TokenExecutor executor) {
         // WO-C8-25: element-listener phase jobs carry no activity row — route by phase PK
         // FIRST (the lock below would orElseThrow). Absent phase = existing path below,
         // byte-identical (one indexed PK read extra on the completion path).
@@ -339,31 +416,17 @@ public class CompletionService {
                 // handler instead of re-opening (a loop is structurally impossible).
                 executor.execute(resume.processInstanceId(), resume.tokenId(), resume.bpmnElementId());
             }
-            return;
+            return true;
         }
-        Activity activity = elementSupport.lockAndReload(serviceTaskId);
-        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
-            // WO-C8-28: a CANCELLED activity with an open canceling phase is NOT done —
-            // its listener completions must reach the canceling branch below (the phase
-            // defers the cancellation tail). The extra read runs only for non-active
-            // statuses, so the hot CREATED/IN_PROGRESS path never touches the new state.
-            if (activity.getStatus() != ActivityStatus.CANCELLED
-                || dbService.getPendingCancelingListenerIndex(serviceTaskId) == null) {
-                // only an active task may complete. Ignore anything else to avoid advancing the token twice:
-                // a redelivered/late RabbitMQ completion (broker is at-least-once), a boundary-timer
-                // interruption (CANCELLED), an already-COMPLETED task, or a task parked on an incident
-                // (ERROR) that was superseded by incident-resolve re-execution.
-                log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
-                return;
-            }
-        }
-        UUID processInstanceId = activity.getProcessInstanceId();
-        UUID tokenId = activity.getToken();
+        return false;
+    }
 
-        ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
-        BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
-        BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
-
+    /**
+     * WO-DEBT-6 S1: creating-listener dispatcher of {@link #completeServiceTask}.
+     * New seam (leaves hold the verbatim blocks); conditions/comments moved unchanged. Returns true when handled.
+     */
+    private boolean handleCreatingListeners(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement, Activity activity) {
         // WO-C8-21r2: creating-listener completion — the phase index lives on the ACTIVITY
         // row (no user_tasks row exists until the task is really created). A completion means
         // "this listener finished": advance to the next listener (with its own retry budget),
@@ -373,65 +436,94 @@ public class CompletionService {
             Integer pendingCreating = dbService.getPendingCreatingListenerIndex(serviceTaskId);
             if (pendingCreating != null) {
                 if (pendingCreating >= 0 && pendingCreating < creatingListeners.size()) {
-                    dbService.setVariables(processInstanceId, variables);
-                    if (pendingCreating + 1 < creatingListeners.size()) {
-                        dbService.setPendingCreatingListenerIndex(serviceTaskId, pendingCreating + 1);
-                        dbService.setCreatingListenerRetriesRemaining(serviceTaskId,
-                            elementSupport.listenerBudget(creatingListeners.get(pendingCreating + 1)));
-                        serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                        log.info("{}/{}: Completing creating listener {} of {}: {}/{}", processInstanceId, tokenId,
-                            pendingCreating, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-                        return;
-                    }
-                    dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
-                    dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
-                    // WO-C8-30: broken priorityDefinition halts here (incident, no row) —
-                    // same guard as the immediate path above.
-                    if (!userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement)) {
-                        return;
-                    }
-                    userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
-                    log.info("{}/{}: Last creating listener done, task created: {}/{}", processInstanceId, tokenId,
-                        serviceTaskId, activity.getBpmnElementId());
-                    // WO-C8-28: creating runs first; a parked assignment opens its own
-                    // phase now (deterministic order, WO test 8) instead of finishing
-                    // activation while an assigning transition is due.
-                    if (userTaskHandler.openAssigningPhaseAfterCreation(processInstanceId, serviceTaskId, bpmnElement)) {
-                        serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                        log.info("{}/{}: Creating done, opening assigning-listener phase: {}/{}",
-                            processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
-                    }
-                    return;
+                    return advanceCreatingListener(serviceTaskId, variables, processInstanceId, tokenId,
+                        bpmnElement, activity, pendingCreating, creatingListeners);
                 }
                 // Out-of-bounds/foreign index (model redeployed mid-flight, phase MEANT open):
                 // fail-open into task creation rather than stranding (mirror of the C8-11
                 // fail-open below). A null index is NOT this case — see below.
-                dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
-                dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
-                // WO-C8-30: same halt-on-broken-priority guard as the normal tail above.
-                if (!userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement)) {
-                    return;
-                }
-                userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
-                log.info("{}/{}: Out-of-bounds creating listener index, task created fail-open: {}/{}",
-                    processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
-                // WO-C8-28: same assigning hook as the normal tail above (the row was
-                // just written by the same body, so the parked-assignee condition holds
-                // identically) — a corrupt creating index must not swallow a due
-                // assigning transition.
-                if (userTaskHandler.openAssigningPhaseAfterCreation(processInstanceId, serviceTaskId, bpmnElement)) {
-                    serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                    log.info("{}/{}: Fail-open creating done, opening assigning-listener phase: {}/{}",
-                        processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
-                }
-                return;
+                return failOpenCreatingListener(serviceTaskId, processInstanceId, tokenId, bpmnElement, activity);
             }
             // Null index = NO creating phase open: this completion is not a creating-listener
             // completion (e.g. a completing-listener job on an element declaring both kinds) —
             // fall through so the completing branch below sees it. WO-C8-24: the old code
             // fail-opened here and re-created the task on every later completion.
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: in-range creating-listener step of {@link #completeServiceTask}.
+     * Split from {@link #handleCreatingListeners}; verbatim block, mechanical plumbing. Returns true.
+     */
+    private boolean advanceCreatingListener(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement, Activity activity,
+            Integer pendingCreating, List<ListenerModel> creatingListeners) {
+        dbService.setVariables(processInstanceId, variables);
+        if (pendingCreating + 1 < creatingListeners.size()) {
+            dbService.setPendingCreatingListenerIndex(serviceTaskId, pendingCreating + 1);
+            dbService.setCreatingListenerRetriesRemaining(serviceTaskId,
+                elementSupport.listenerBudget(creatingListeners.get(pendingCreating + 1)));
+            serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+            log.info("{}/{}: Completing creating listener {} of {}: {}/{}", processInstanceId, tokenId,
+                pendingCreating, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
+            return true;
+        }
+        dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
+        dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
+        // WO-C8-30: broken priorityDefinition halts here (incident, no row) —
+        // same guard as the immediate path above.
+        if (!userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement)) {
+            return true;
+        }
+        userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
+        log.info("{}/{}: Last creating listener done, task created: {}/{}", processInstanceId, tokenId,
+            serviceTaskId, activity.getBpmnElementId());
+        // WO-C8-28: creating runs first; a parked assignment opens its own
+        // phase now (deterministic order, WO test 8) instead of finishing
+        // activation while an assigning transition is due.
+        if (userTaskHandler.openAssigningPhaseAfterCreation(processInstanceId, serviceTaskId, bpmnElement)) {
+            serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+            log.info("{}/{}: Creating done, opening assigning-listener phase: {}/{}",
+                processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
+        }
+        return true;
+    }
+
+    /**
+     * WO-DEBT-6 S1: out-of-bounds creating-listener tail of {@link #completeServiceTask}.
+     * Split from {@link #handleCreatingListeners}; verbatim block, mechanical plumbing. Returns true.
+     */
+    private boolean failOpenCreatingListener(UUID serviceTaskId, UUID processInstanceId, UUID tokenId,
+            BpmnElementModel bpmnElement, Activity activity) {
+        dbService.setPendingCreatingListenerIndex(serviceTaskId, null);
+        dbService.setCreatingListenerRetriesRemaining(serviceTaskId, null);
+        // WO-C8-30: same halt-on-broken-priority guard as the normal tail above.
+        if (!userTaskHandler.createTaskRow(processInstanceId, serviceTaskId, bpmnElement)) {
+            return true;
+        }
+        userTaskHandler.postCreation(processInstanceId, tokenId, serviceTaskId, bpmnElement);
+        log.info("{}/{}: Out-of-bounds creating listener index, task created fail-open: {}/{}",
+            processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
+        // WO-C8-28: same assigning hook as the normal tail above (the row was
+        // just written by the same body, so the parked-assignee condition holds
+        // identically) — a corrupt creating index must not swallow a due
+        // assigning transition.
+        if (userTaskHandler.openAssigningPhaseAfterCreation(processInstanceId, serviceTaskId, bpmnElement)) {
+            serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+            log.info("{}/{}: Fail-open creating done, opening assigning-listener phase: {}/{}",
+                processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
+        }
+        return true;
+    }
+
+    /**
+     * WO-DEBT-6 S1: completing-listener phase of {@link #completeServiceTask} (WO-C8-24).
+     * Extracted byte-identical except mechanical return plumbing. Returns true when handled.
+     */
+    private boolean handleCompletingListeners(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel bpmnElement, Activity activity, TokenExecutor executor) {
         // WO-C8-24: completing-listener completion — read only for elements that declare
         // completing listeners, so the common path never touches the new state. A completion
         // means "this listener finished": advance to the next listener (with its own retry
@@ -451,14 +543,14 @@ public class CompletionService {
                         serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                         log.info("{}/{}: Completing completing listener {} of {}: {}/{}", processInstanceId, tokenId,
                             pendingCompleting, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-                        return;
+                        return true;
                     }
                     dbService.setPendingCompletingListenerIndex(serviceTaskId, null);
                     dbService.setCompletingListenerRetriesRemaining(serviceTaskId, null);
                     finishUserTaskCompletion(processInstanceId, tokenId, serviceTaskId, variables, bpmn, bpmnElement, executor);
                     log.info("{}/{}: Last completing listener done, task completed: {}/{}", processInstanceId, tokenId,
                         serviceTaskId, activity.getBpmnElementId());
-                    return;
+                    return true;
                 }
                 // Out-of-bounds/foreign index (model redeployed mid-flight, phase MEANT open):
                 // fail-open into the real user-task completion (same spirit as the C8-11
@@ -470,13 +562,21 @@ public class CompletionService {
                 finishUserTaskCompletion(processInstanceId, tokenId, serviceTaskId, variables, bpmn, bpmnElement, executor);
                 log.info("{}/{}: Out-of-bounds completing listener index, task completed fail-open: {}/{}",
                     processInstanceId, tokenId, serviceTaskId, activity.getBpmnElementId());
-                return;
+                return true;
             }
             // Null index = NO completing phase open: fall through (a creating-listener
             // completion on an element declaring both kinds is handled above; anything else
             // reaching the user-task guard below is spurious and ignored there).
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: assigning-listener phase of {@link #completeServiceTask} (WO-C8-28).
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean handleAssigningListeners(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement, Activity activity) {
         // WO-C8-28: assigning-listener completion — read only for elements that declare
         // assigning listeners. A completion means "this listener finished": advance to
         // the next listener (with its own retry budget), or apply the parked assignment
@@ -496,7 +596,7 @@ public class CompletionService {
                         serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                         log.info("{}/{}: Completing assigning listener {} of {}: {}/{}", processInstanceId, tokenId,
                             pendingAssigning, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-                        return;
+                        return true;
                     }
                     String parkedAssignee = dbService.getPendingAssignee(serviceTaskId);
                     dbService.setPendingAssigningListenerIndex(serviceTaskId, null);
@@ -508,20 +608,29 @@ public class CompletionService {
                     }
                     log.info("{}/{}: Last assigning listener done, assignment applied: {}/{}", processInstanceId, tokenId,
                         serviceTaskId, activity.getBpmnElementId());
-                    return;
+                    return true;
                 }
                 // Out-of-bounds/foreign index (model redeployed mid-flight): incident, same
                 // as creating/completing — a user task has no real job to fail open into.
                 dbService.errorActivity(serviceTaskId);
                 dbService.createIncident(serviceTaskId,
                     "User task '" + activity.getBpmnElementId() + "' has out-of-bounds assigning listener index — fix the process model");
-                return;
+                return true;
             }
             // Null index = NO assigning phase open: fall through (a completion for a
             // sibling phase on an element declaring several kinds is handled by its
             // own branch — phases never overlap by construction, see the open sites).
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: updating-listener phase of {@link #completeServiceTask} (WO-C8-28).
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean handleUpdatingListeners(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement, Activity activity,
+            TokenExecutor executor) {
         // WO-C8-28: updating-listener completion — read only for elements that declare
         // updating listeners. Advance like the sibling phases; after the last listener
         // continue EXACTLY as if complete() was just called with no new variables
@@ -542,24 +651,33 @@ public class CompletionService {
                         serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                         log.info("{}/{}: Completing updating listener {} of {}: {}/{}", processInstanceId, tokenId,
                             pendingUpdating, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-                        return;
+                        return true;
                     }
                     dbService.setPendingUpdatingListenerIndex(serviceTaskId, null);
                     dbService.setUpdatingListenerRetriesRemaining(serviceTaskId, null);
                     log.info("{}/{}: Last updating listener done, continuing to completion: {}/{}", processInstanceId, tokenId,
                         serviceTaskId, activity.getBpmnElementId());
                     completeUserTask(serviceTaskId, List.of(), executor);
-                    return;
+                    return true;
                 }
                 // Out-of-bounds/foreign index: incident, same as the sibling phases.
                 dbService.errorActivity(serviceTaskId);
                 dbService.createIncident(serviceTaskId,
                     "User task '" + activity.getBpmnElementId() + "' has out-of-bounds updating listener index — fix the process model");
-                return;
+                return true;
             }
             // Null index = NO updating phase open: fall through.
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: canceling-listener dispatcher of {@link #completeServiceTask}.
+     * New seam (in-range step lives in {@link #advanceOrFinishCanceling}); conditions/comments moved unchanged. Returns true when handled.
+     */
+    private boolean handleCancelingListeners(UUID serviceTaskId, UUID processInstanceId, UUID tokenId,
+            BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement, Activity activity,
+            TokenExecutor executor) {
         // WO-C8-28: canceling-listener completion — read only for elements that declare
         // canceling listeners (reachable on CANCELLED activities via the guard exemption
         // above). Advance like the sibling phases; after the last listener run the
@@ -574,50 +692,69 @@ public class CompletionService {
             Integer pendingCanceling = dbService.getPendingCancelingListenerIndex(serviceTaskId);
             if (pendingCanceling != null) {
                 if (pendingCanceling >= 0 && pendingCanceling < cancelingListenersRt.size()) {
-                    if (pendingCanceling + 1 < cancelingListenersRt.size()) {
-                        dbService.setPendingCancelingListenerIndex(serviceTaskId, pendingCanceling + 1);
-                        dbService.setCancelingListenerRetriesRemaining(serviceTaskId,
-                            elementSupport.listenerBudget(cancelingListenersRt.get(pendingCanceling + 1)));
-                        serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                        log.info("{}/{}: Completing canceling listener {} of {}: {}/{}", processInstanceId, tokenId,
-                            pendingCanceling, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-                        return;
-                    }
-                    String deferredBoundary = dbService.getPendingCancelBoundaryElementId(serviceTaskId);
-                    UUID resumeToken = activity.getToken();
-                    UUID resumePi = activity.getProcessInstanceId();
-                    dbService.setPendingCancelingListenerIndex(serviceTaskId, null);
-                    dbService.setCancelingListenerRetriesRemaining(serviceTaskId, null);
-                    dbService.setPendingCancelBoundaryElementId(serviceTaskId, null);
-                    log.info("{}/{}: Last canceling listener done, running deferred tail: {}/{}", processInstanceId, tokenId,
-                        serviceTaskId, activity.getBpmnElementId());
-                    if (deferredBoundary != null) {
-                        if (!dbService.hasOpenCancelingListenerPhaseOnToken(resumeToken)) {
-                            BpmnElementModel boundaryElement = bpmn.getElement(deferredBoundary);
-                            Token resumeHostToken = dbService.getToken(resumeToken);
-                            if (resumeHostToken.getPendingBranches() != null && resumeHostToken.getPendingBranches() > 0) {
-                                dbService.decrementPendingBranches(resumeToken);
-                            }
-                            flowNavigator.proceedToOutgoing(resumePi, resumeToken, bpmn, boundaryElement, executor);
-                        }
-                    } else {
-                        if (!dbService.hasOpenCancelingListenerPhaseInInstance(resumePi)) {
-                            dbService.deleteTimerJobsByProcessInstanceId(resumePi);
-                            dbService.deleteMessageSubscriptionsByProcessInstanceId(resumePi);
-                            dbService.cancelProcessInstance(resumePi);
-                        }
-                    }
-                    return;
+                    return advanceOrFinishCanceling(serviceTaskId, processInstanceId, tokenId, bpmn,
+                        bpmnElement, activity, executor, pendingCanceling, cancelingListenersRt);
                 }
                 // Out-of-bounds/foreign index: incident, same as the sibling phases.
                 dbService.errorActivity(serviceTaskId);
                 dbService.createIncident(serviceTaskId,
                     "User task '" + activity.getBpmnElementId() + "' has out-of-bounds canceling listener index — fix the process model");
-                return;
+                return true;
             }
             // Null index = NO canceling phase open: fall through.
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: in-range canceling step of {@link #completeServiceTask} — advance to
+     * the next listener, or run the deferred tail after the last one. Verbatim in-range
+     * block with mechanical return plumbing. Returns true.
+     */
+    private boolean advanceOrFinishCanceling(UUID serviceTaskId, UUID processInstanceId, UUID tokenId,
+            BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement, Activity activity,
+            TokenExecutor executor, Integer pendingCanceling, List<ListenerModel> cancelingListenersRt) {
+        if (pendingCanceling + 1 < cancelingListenersRt.size()) {
+            dbService.setPendingCancelingListenerIndex(serviceTaskId, pendingCanceling + 1);
+            dbService.setCancelingListenerRetriesRemaining(serviceTaskId,
+                elementSupport.listenerBudget(cancelingListenersRt.get(pendingCanceling + 1)));
+            serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+            log.info("{}/{}: Completing canceling listener {} of {}: {}/{}", processInstanceId, tokenId,
+                pendingCanceling, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
+            return true;
+        }
+        String deferredBoundary = dbService.getPendingCancelBoundaryElementId(serviceTaskId);
+        UUID resumeToken = activity.getToken();
+        UUID resumePi = activity.getProcessInstanceId();
+        dbService.setPendingCancelingListenerIndex(serviceTaskId, null);
+        dbService.setCancelingListenerRetriesRemaining(serviceTaskId, null);
+        dbService.setPendingCancelBoundaryElementId(serviceTaskId, null);
+        log.info("{}/{}: Last canceling listener done, running deferred tail: {}/{}", processInstanceId, tokenId,
+            serviceTaskId, activity.getBpmnElementId());
+        if (deferredBoundary != null) {
+            if (!dbService.hasOpenCancelingListenerPhaseOnToken(resumeToken)) {
+                BpmnElementModel boundaryElement = bpmn.getElement(deferredBoundary);
+                Token resumeHostToken = dbService.getToken(resumeToken);
+                if (resumeHostToken.getPendingBranches() != null && resumeHostToken.getPendingBranches() > 0) {
+                    dbService.decrementPendingBranches(resumeToken);
+                }
+                flowNavigator.proceedToOutgoing(resumePi, resumeToken, bpmn, boundaryElement, executor);
+            }
+        } else {
+            if (!dbService.hasOpenCancelingListenerPhaseInInstance(resumePi)) {
+                dbService.deleteTimerJobsByProcessInstanceId(resumePi);
+                dbService.deleteMessageSubscriptionsByProcessInstanceId(resumePi);
+                dbService.cancelProcessInstance(resumePi);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * WO-DEBT-6 S1: phase-only element guard of {@link #completeServiceTask} (WO-C8-25).
+     * Verbatim block, mechanical plumbing. Returns true when ignored.
+     */
+    private boolean rejectPhaseOnlyCompletion(UUID serviceTaskId, BpmnElementModel bpmnElement) {
         // WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
         // service_tasks rows have no "real" job — a service-task completion arriving here
         // with no listener phase open on any branch above is spurious (e.g. a redelivered
@@ -634,9 +771,17 @@ public class CompletionService {
             && (elementJob == null || elementJob.isBlank())) {
             log.info("Ignoring service-task completion of {} {} with no listener phase in flight",
                 bpmnElement.getType(), serviceTaskId);
-            return;
+            return true;
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: start-listener phase of {@link #completeServiceTask} (WO-C8-11).
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean handleStartListeners(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement, Activity activity) {
         // WO-C8-11: listener-step completion — read only for elements that declare listeners,
         // so the common path never touches the new state.
         List<ListenerModel> startListeners = elementSupport.serviceTaskStartListeners(bpmnElement);
@@ -660,12 +805,20 @@ public class CompletionService {
                 serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                 log.info("{}/{}: Completing start listener {} of {}: {}/{}", processInstanceId, tokenId,
                     pending, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-                return;
+                return true;
             }
             // Out-of-bounds/foreign index (model redeployed mid-flight): fall through to the
             // normal path below (fail-open, completes and moves the token) rather than stranding.
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: end-listener phase of {@link #completeServiceTask} (WO-C8-11b).
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean handleEndListeners(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement, Activity activity) {
         // WO-C8-11b: end-listener phase — read only for elements that declare end listeners,
         // so the common path never touches the new state.
         List<ListenerModel> endListeners = elementSupport.serviceTaskEndListeners(bpmnElement);
@@ -682,7 +835,7 @@ public class CompletionService {
             serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
             log.info("{}/{}: Real job done, opening end-listener phase of {}: {}/{}", processInstanceId, tokenId,
                 activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-            return;
+            return true;
         }
         if (pendingEnd != null && pendingEnd >= 0 && pendingEnd < endListeners.size()) {
             if (pendingEnd + 1 < endListeners.size()) {
@@ -694,14 +847,22 @@ public class CompletionService {
                 serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
                 log.info("{}/{}: Completing end listener {} of {}: {}/{}", processInstanceId, tokenId,
                     pendingEnd, activity.getBpmnElementId(), serviceTaskId, activity.getBpmnElementId());
-                return;
+                return true;
             }
             dbService.setPendingEndListenerIndex(serviceTaskId, null);
             // Last end listener done → fall through to the real completion tail below
             // (it applies this completion's variables itself).
         }
         // No end phase (or corrupt/foreign end index): fail-open into the normal tail below.
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S1: real completion tail of {@link #completeServiceTask}. Verbatim block (void, zero-touch).
+     */
+    private void finishServiceTaskCompletion(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel bpmnElement, Activity activity, TokenExecutor executor) {
         dbService.setVariables(processInstanceId, variables);
         dbService.completeActivity(serviceTaskId);
         dbService.completeServiceTask(serviceTaskId);
