@@ -68,8 +68,10 @@ run_pg_suite() {
   local module="$1"
   set +e
   docker run --rm \
+    --user "$(id -u):$(id -g)" \
     --network host \
     -v "${BUILD_DIR:-$(pwd)}":/build -w /build \
+    -v zbpm_m2:/tmp/.m2 \
     -e PG_HOST=127.0.0.1 \
     -e PG_PORT="$PG_PORT" \
     -e PG_DB="$PG_DB" \
@@ -77,7 +79,7 @@ run_pg_suite() {
     -e PG_PASSWORD="$PG_PASSWORD" \
     -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
     maven:3.9.9-eclipse-temurin-21 \
-    mvn -B -ntp clean verify \
+    mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
       -pl "$module" \
       -am \
       -Dsurefire.skip=true \
@@ -104,8 +106,10 @@ run_pg_suite() {
 run_rest_suite() {
   set +e
   docker run --rm \
+    --user "$(id -u):$(id -g)" \
     --network host \
     -v "${BUILD_DIR:-$(pwd)}":/build -w /build \
+    -v zbpm_m2:/tmp/.m2 \
     -e PG_HOST=127.0.0.1 \
     -e PG_PORT="$PG_PORT" \
     -e PG_DB="$PG_DB" \
@@ -113,8 +117,8 @@ run_rest_suite() {
     -e PG_PASSWORD="$PG_PASSWORD" \
     -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
     maven:3.9.9-eclipse-temurin-21 \
-    bash -c "mvn -B -ntp install -pl zorrobpm-rest -am -DskipTests -q \
-      && mvn -B -ntp clean verify \
+    bash -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -pl zorrobpm-rest -am -DskipTests -q \
+      && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
         -pl zorrobpm-rest \
         -Dsurefire.skip=true \
         -Dgroups=pg \
