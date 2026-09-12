@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.FormValidator;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import com.zorrodev.bpm.engine.service.RuntimeSupportService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -40,6 +41,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
     @Mock private DBService dbService;
     @Mock private com.zorrodev.bpm.engine.handler.CancelingPhaseService cancelingPhaseService;
     @Mock private AuditLogService auditLogService;
+    @Mock private RuntimeSupportService runtimeSupportService;
     @Mock private RuntimeOperationSupport runtimeOperationSupport;
     @InjectMocks private ProcessInstanceRuntimeOperationsImpl impl;
 
@@ -59,7 +61,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
         // But we already stubbed, let's use doNothing
         // For this test, we will just verify that it doesn't throw
         // Let's set up the rest
-        when(runtimeOperationSupport.resolveTargetDefinition(dto)).thenReturn(targetDef);
+        when(runtimeSupportService.resolveTargetDefinition(dto)).thenReturn(targetDef);
         when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
         Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "user", "USER");
         when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
@@ -75,7 +77,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
 
         assertThat(result).isEqualTo(expected);
         verify(runtimeOperationSupport).requireOperate(definitionKey, AuthorizationService.Action.START);
-        verify(runtimeOperationSupport).resolveTargetDefinition(dto);
+        verify(runtimeSupportService).resolveTargetDefinition(dto);
         verify(runtimeService).startProcessInstance(dto);
         verify(auditLogService).record(principal, "START", definitionKey, id.toString(), null);
     }
@@ -101,7 +103,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
         dto.setProcessDefinitionKey("key");
         ProcessDefinitionEntity targetDef = new ProcessDefinitionEntity();
         targetDef.setStartFormKey("formKey");
-        when(runtimeOperationSupport.resolveTargetDefinition(dto)).thenReturn(targetDef);
+        when(runtimeSupportService.resolveTargetDefinition(dto)).thenReturn(targetDef);
         doNothing().when(runtimeOperationSupport).requireOperate(any(), any());
         when(formArtifactService.validateFormIfApplicable("formKey", dto.getVariables()))
             .thenReturn(List.of(new FormValidator.ValidationError("field", "error")));
