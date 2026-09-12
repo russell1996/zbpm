@@ -369,6 +369,13 @@ deploy:
     - cd "$DEPLOY_DIR"
     - export APP_TAG="$IMAGE_TAG" FRONTEND_TAG="$IMAGE_TAG"
     - docker compose up -d --remove-orphans
+    # WO-REL-23: deploy smoke — wait for app health, fail job if not UP
+    - |
+      for i in $(seq 1 10); do
+        if curl -fsS http://localhost:${APP_PORT:-8080}/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then echo "health UP on attempt $i"; break; fi
+        if [ "$i" -eq 10 ]; then echo "health check failed after 10 attempts"; docker compose ps; docker compose logs app 2>&1 | tail -n 100; exit 1; fi
+        sleep 5
+      done
     - docker compose ps
     - echo "$IMAGE_TAG" > "$DEPLOY_DIR/.current_tag"
     - docker image prune -f
@@ -399,6 +406,13 @@ rollback:
     - export APP_TAG="$(cat .previous_tag)" FRONTEND_TAG="$(cat .previous_tag)"
     - echo "Rolling back to $APP_TAG"
     - docker compose up -d --remove-orphans
+    # WO-REL-23: rollback smoke — same health gate as deploy
+    - |
+      for i in $(seq 1 10); do
+        if curl -fsS http://localhost:${APP_PORT:-8080}/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then echo "health UP on attempt $i"; break; fi
+        if [ "$i" -eq 10 ]; then echo "rollback health check failed after 10 attempts"; docker compose ps; docker compose logs app 2>&1 | tail -n 100; exit 1; fi
+        sleep 5
+      done
     - docker compose ps
     - cp .previous_tag .current_tag
   environment:

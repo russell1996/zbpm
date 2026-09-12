@@ -16,6 +16,7 @@ import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.rabbit.listener.adapter.MessageListenerAdapter;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -34,7 +35,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 @Slf4j
 @Service
-public class SseEventStreamService {
+public class SseEventStreamService implements SmartLifecycle {
 
     private final DomainEventRepository domainEventRepository;
     private final EventAuthzResolver eventAuthzResolver;
@@ -280,17 +281,16 @@ public class SseEventStreamService {
                 || !bridgeStarting.compareAndSet(false, true)) {
             return;
         }
+        // WO-REL-23: propagate MDC traceId to async starter (plain clear() loses it)
+        var parentMdc = org.slf4j.MDC.getCopyOfContextMap();
         Thread.ofVirtual().name("sse-bridge-starter").start(() -> {
+            if (parentMdc != null) org.slf4j.MDC.setContextMap(parentMdc);
             try {
                 startBridgeLoop();
             } finally {
+                org.slf4j.MDC.clear();
                 synchronized (bridgeLock) {
                     bridgeStarting.set(false);
-                    // Re-arm in the same critical section: a registration
-                    // landing between the loop's last check and this clear
-                    // would otherwise strand waiting clients with no attempt
-                    // in flight. Single-flight holds — this can only spawn,
-                    // never duplicate.
                     spawnStarterIfNeededLocked();
                 }
             }
@@ -446,6 +446,64 @@ public class SseEventStreamService {
         } catch (Exception cleanupEx) {
             log.warn("SSE bridge: failed to clean up queue {} after failed start", queueName, cleanupEx);
         }
+    }
+
+    // ---- SmartLifecycle for graceful shutdown (WO-REL-23) ----
+    private final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+    @Override
+    public boolean isAutoStartup() {
+        return true;
+    }
+
+    @Override
+    public void start() {
+        running.set(true);
+    }
+
+    @Override
+    public void stop() {
+        stop(() -> {});
+    }
+
+    @Override
+    public void stop(Runnable callback) {
+        if (!running.compareAndSet(true, false)) {
+            callback.run();
+            return;
+        }
+        log.info("SSE shutdown: completing {} active emitters", clients.size());
+        // Snapshot to avoid concurrent modification; complete outside lock where possible
+        var snapshot = new java.util.ArrayList<>(clients.values());
+        clients.clear();
+        for (var c : snapshot) {
+            try {
+                c.emitter().complete();
+            } catch (Exception e) {
+                log.warn("SSE shutdown: emitter complete failed for {}", c.clientId(), e);
+            }
+        }
+        SimpleMessageListenerContainer doomed;
+        synchronized (bridgeLock) {
+            doomed = listenerContainer;
+            listenerContainer = null;
+        }
+        if (doomed != null) {
+            stopAndDestroy(doomed);
+            log.info("SSE shutdown: listener stopped");
+        }
+        callback.run();
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    @Override
+    public int getPhase() {
+        // Stop early in shutdown order (high phase stops first) — drain SSE before web layer fully closes
+        return Integer.MAX_VALUE - 100;
     }
 
     private record SseClientInfo(
