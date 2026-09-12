@@ -992,18 +992,55 @@ public class CompletionService {
      * is marked ERROR and an incident carrying {@code errorMessage} is raised. The token stays parked.
      */
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries) {
-        // WO-C8-25: element-listener phase jobs carry no activity row — route by phase PK
-        // FIRST (the lock below would orElseThrow). Absent phase = existing path below.
-        if (elementListenerPhaseService.failPhaseListener(serviceTaskId, errorMessage, retries)) {
+        if (failElementListenerPhase(serviceTaskId, errorMessage, retries)) {
             return;
         }
         Activity activity = elementSupport.lockAndReload(serviceTaskId);
-        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
-            // already finished (redelivered failure, or interrupted by a boundary) — ignore
-            log.info("Ignoring failure of service task {} in status {}", serviceTaskId, activity.getStatus());
+        if (!isFailureProcessable(serviceTaskId, activity)) {
             return;
         }
         String message = (errorMessage == null || errorMessage.isBlank()) ? "Service task failed" : errorMessage;
+        if (handleUserTaskListenerFailure(serviceTaskId, retries, message, activity)) {
+            return;
+        }
+        failSharedBudget(serviceTaskId, retries, message, activity);
+    }
+
+    /**
+     * WO-DEBT-6 S2: finished-activity guard of {@link #failServiceTask} — an already
+     * finished task ignores the failure (redelivered failure, boundary interruption).
+     * Verbatim block, mechanical plumbing. Returns true when the failure may proceed.
+     */
+    private boolean isFailureProcessable(UUID serviceTaskId, Activity activity) {
+        if (activity.getStatus() == ActivityStatus.COMPLETED || activity.getStatus() == ActivityStatus.CANCELLED) {
+            // already finished (redelivered failure, or interrupted by a boundary) — ignore
+            log.info("Ignoring failure of service task {} in status {}", serviceTaskId, activity.getStatus());
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * WO-DEBT-6 S2: element-listener phase-fail head of {@link #failServiceTask}.
+     * Verbatim block, mechanical plumbing. Returns true when routed.
+     */
+    private boolean failElementListenerPhase(UUID serviceTaskId, String errorMessage, Integer retries) {
+        // WO-C8-25: element-listener phase jobs carry no activity row — route by phase PK
+        // FIRST (the lock below would orElseThrow). Absent phase = existing path below.
+        if (elementListenerPhaseService.failPhaseListener(serviceTaskId, errorMessage, retries)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * WO-DEBT-6 S2: user-task listener-fail dispatcher of {@link #failServiceTask} — routes
+     * to the per-phase budget leaf whose phase is open. New seam (leaves hold the verbatim
+     * blocks); conditions moved unchanged, phases checked in original order. Returns true
+     * when handled.
+     */
+    private boolean handleUserTaskListenerFailure(UUID serviceTaskId, Integer retries, String message,
+            Activity activity) {
         // WO-C8-21r2: a failing creating-listener job draws from its own durable budget
         // (model value, default 3 — set at phase open/advance; there is no service_tasks
         // row for a user task, so the shared budget path below would orElseThrow).
@@ -1013,130 +1050,195 @@ public class CompletionService {
             ProcessInstance failPi = dbService.getProcessInstance(activity.getProcessInstanceId());
             BpmnProcessDefinitionModel failBpmn = bpmnService.getProcessDefinitionModelById(failPi.getProcessDefinitionId());
             BpmnElementModel failElement = failBpmn.getElement(activity.getBpmnElementId());
-            if (!elementSupport.userTaskCreatingListeners(failElement).isEmpty()
-                && dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {
-                int remaining;
-                if (retries != null) {
-                    // Camunda failJob semantics: explicit value sets the budget (0 → incident now).
-                    dbService.setCreatingListenerRetriesRemaining(serviceTaskId, retries);
-                    remaining = retries;
-                } else {
-                    Integer budget = dbService.getCreatingListenerRetriesRemaining(serviceTaskId);
-                    remaining = (budget == null ? 0 : budget) - 1;
-                    dbService.setCreatingListenerRetriesRemaining(serviceTaskId, remaining);
-                }
-                if (remaining > 0) {
-                    log.info("{}/{}: User task creating listener {} failed ({} retries left), re-dispatching: {}",
-                        activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
-                    serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                    return;
-                }
-                log.info("{}/{}: User task creating listener {} failed, retries exhausted — raising incident: {}",
-                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
-                dbService.errorActivity(serviceTaskId);
-                dbService.createIncident(serviceTaskId, message);
-                return;
+            if (failCreatingListener(serviceTaskId, retries, message, activity, failElement)) {
+                return true;
             }
-            // WO-C8-24: same budget mechanics for an in-flight completing listener — the
-            // task stays uncompleted, the token stays parked (WO step 6). Shared element
-            // load above (failElement) is reused, not reloaded.
-            if (!elementSupport.userTaskCompletingListeners(failElement).isEmpty()
-                && dbService.getPendingCompletingListenerIndex(serviceTaskId) != null) {
-                int remaining;
-                if (retries != null) {
-                    dbService.setCompletingListenerRetriesRemaining(serviceTaskId, retries);
-                    remaining = retries;
-                } else {
-                    Integer budget = dbService.getCompletingListenerRetriesRemaining(serviceTaskId);
-                    remaining = (budget == null ? 0 : budget) - 1;
-                    dbService.setCompletingListenerRetriesRemaining(serviceTaskId, remaining);
-                }
-                if (remaining > 0) {
-                    log.info("{}/{}: User task completing listener {} failed ({} retries left), re-dispatching: {}",
-                        activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
-                    serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                    return;
-                }
-                log.info("{}/{}: User task completing listener {} failed, retries exhausted — raising incident: {}",
-                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
-                dbService.errorActivity(serviceTaskId);
-                dbService.createIncident(serviceTaskId, message);
-                return;
+            if (failCompletingListener(serviceTaskId, retries, message, activity, failElement)) {
+                return true;
             }
-            // WO-C8-28: same budget mechanics for in-flight assigning/updating/canceling
-            // listeners — the parked transition stays parked, the token stays put. One
-            // block per phase (explicit, no loop over phase kinds — a failure must name
-            // the phase it belongs to, never resolve one by elimination).
-            if (!elementSupport.userTaskAssigningListeners(failElement).isEmpty()
-                && dbService.getPendingAssigningListenerIndex(serviceTaskId) != null) {
-                int remaining;
-                if (retries != null) {
-                    dbService.setAssigningListenerRetriesRemaining(serviceTaskId, retries);
-                    remaining = retries;
-                } else {
-                    Integer budget = dbService.getAssigningListenerRetriesRemaining(serviceTaskId);
-                    remaining = (budget == null ? 0 : budget) - 1;
-                    dbService.setAssigningListenerRetriesRemaining(serviceTaskId, remaining);
-                }
-                if (remaining > 0) {
-                    log.info("{}/{}: User task assigning listener {} failed ({} retries left), re-dispatching: {}",
-                        activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
-                    serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                    return;
-                }
-                log.info("{}/{}: User task assigning listener {} failed, retries exhausted — raising incident: {}",
-                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
-                dbService.errorActivity(serviceTaskId);
-                dbService.createIncident(serviceTaskId, message);
-                return;
+            if (failAssigningListener(serviceTaskId, retries, message, activity, failElement)) {
+                return true;
             }
-            if (!elementSupport.userTaskUpdatingListeners(failElement).isEmpty()
-                && dbService.getPendingUpdatingListenerIndex(serviceTaskId) != null) {
-                int remaining;
-                if (retries != null) {
-                    dbService.setUpdatingListenerRetriesRemaining(serviceTaskId, retries);
-                    remaining = retries;
-                } else {
-                    Integer budget = dbService.getUpdatingListenerRetriesRemaining(serviceTaskId);
-                    remaining = (budget == null ? 0 : budget) - 1;
-                    dbService.setUpdatingListenerRetriesRemaining(serviceTaskId, remaining);
-                }
-                if (remaining > 0) {
-                    log.info("{}/{}: User task updating listener {} failed ({} retries left), re-dispatching: {}",
-                        activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
-                    serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                    return;
-                }
-                log.info("{}/{}: User task updating listener {} failed, retries exhausted — raising incident: {}",
-                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
-                dbService.errorActivity(serviceTaskId);
-                dbService.createIncident(serviceTaskId, message);
-                return;
+            if (failUpdatingListener(serviceTaskId, retries, message, activity, failElement)) {
+                return true;
             }
-            if (!elementSupport.userTaskCancelingListeners(failElement).isEmpty()
-                && dbService.getPendingCancelingListenerIndex(serviceTaskId) != null) {
-                int remaining;
-                if (retries != null) {
-                    dbService.setCancelingListenerRetriesRemaining(serviceTaskId, retries);
-                    remaining = retries;
-                } else {
-                    Integer budget = dbService.getCancelingListenerRetriesRemaining(serviceTaskId);
-                    remaining = (budget == null ? 0 : budget) - 1;
-                    dbService.setCancelingListenerRetriesRemaining(serviceTaskId, remaining);
-                }
-                if (remaining > 0) {
-                    log.info("{}/{}: User task canceling listener {} failed ({} retries left), re-dispatching: {}",
-                        activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
-                    serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
-                    return;
-                }
-                log.info("{}/{}: User task canceling listener {} failed, retries exhausted — raising incident: {}",
-                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
-                dbService.errorActivity(serviceTaskId);
-                dbService.createIncident(serviceTaskId, message);
-                return;
+            if (failCancelingListener(serviceTaskId, retries, message, activity, failElement)) {
+                return true;
             }
         }
+        return false;
+    }
+
+    /**
+     * WO-DEBT-6 S2: creating-listener fail budget of {@link #failServiceTask}.
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean failCreatingListener(UUID serviceTaskId, Integer retries, String message,
+            Activity activity, BpmnElementModel failElement) {
+        if (!elementSupport.userTaskCreatingListeners(failElement).isEmpty()
+            && dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {
+            int remaining;
+            if (retries != null) {
+                // Camunda failJob semantics: explicit value sets the budget (0 → incident now).
+                dbService.setCreatingListenerRetriesRemaining(serviceTaskId, retries);
+                remaining = retries;
+            } else {
+                Integer budget = dbService.getCreatingListenerRetriesRemaining(serviceTaskId);
+                remaining = (budget == null ? 0 : budget) - 1;
+                dbService.setCreatingListenerRetriesRemaining(serviceTaskId, remaining);
+            }
+            if (remaining > 0) {
+                log.info("{}/{}: User task creating listener {} failed ({} retries left), re-dispatching: {}",
+                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
+                serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                return true;
+            }
+            log.info("{}/{}: User task creating listener {} failed, retries exhausted — raising incident: {}",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
+            dbService.errorActivity(serviceTaskId);
+            dbService.createIncident(serviceTaskId, message);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * WO-DEBT-6 S2: completing-listener fail budget of {@link #failServiceTask}.
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean failCompletingListener(UUID serviceTaskId, Integer retries, String message,
+            Activity activity, BpmnElementModel failElement) {
+        // WO-C8-24: same budget mechanics for an in-flight completing listener — the
+        // task stays uncompleted, the token stays parked (WO step 6). Shared element
+        // load above (failElement) is reused, not reloaded.
+        if (!elementSupport.userTaskCompletingListeners(failElement).isEmpty()
+            && dbService.getPendingCompletingListenerIndex(serviceTaskId) != null) {
+            int remaining;
+            if (retries != null) {
+                dbService.setCompletingListenerRetriesRemaining(serviceTaskId, retries);
+                remaining = retries;
+            } else {
+                Integer budget = dbService.getCompletingListenerRetriesRemaining(serviceTaskId);
+                remaining = (budget == null ? 0 : budget) - 1;
+                dbService.setCompletingListenerRetriesRemaining(serviceTaskId, remaining);
+            }
+            if (remaining > 0) {
+                log.info("{}/{}: User task completing listener {} failed ({} retries left), re-dispatching: {}",
+                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
+                serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                return true;
+            }
+            log.info("{}/{}: User task completing listener {} failed, retries exhausted — raising incident: {}",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
+            dbService.errorActivity(serviceTaskId);
+            dbService.createIncident(serviceTaskId, message);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * WO-DEBT-6 S2: assigning-listener fail budget of {@link #failServiceTask}.
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean failAssigningListener(UUID serviceTaskId, Integer retries, String message,
+            Activity activity, BpmnElementModel failElement) {
+        if (!elementSupport.userTaskAssigningListeners(failElement).isEmpty()
+            && dbService.getPendingAssigningListenerIndex(serviceTaskId) != null) {
+            int remaining;
+            if (retries != null) {
+                dbService.setAssigningListenerRetriesRemaining(serviceTaskId, retries);
+                remaining = retries;
+            } else {
+                Integer budget = dbService.getAssigningListenerRetriesRemaining(serviceTaskId);
+                remaining = (budget == null ? 0 : budget) - 1;
+                dbService.setAssigningListenerRetriesRemaining(serviceTaskId, remaining);
+            }
+            if (remaining > 0) {
+                log.info("{}/{}: User task assigning listener {} failed ({} retries left), re-dispatching: {}",
+                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
+                serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                return true;
+            }
+            log.info("{}/{}: User task assigning listener {} failed, retries exhausted — raising incident: {}",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
+            dbService.errorActivity(serviceTaskId);
+            dbService.createIncident(serviceTaskId, message);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * WO-DEBT-6 S2: updating-listener fail budget of {@link #failServiceTask}.
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean failUpdatingListener(UUID serviceTaskId, Integer retries, String message,
+            Activity activity, BpmnElementModel failElement) {
+        if (!elementSupport.userTaskUpdatingListeners(failElement).isEmpty()
+            && dbService.getPendingUpdatingListenerIndex(serviceTaskId) != null) {
+            int remaining;
+            if (retries != null) {
+                dbService.setUpdatingListenerRetriesRemaining(serviceTaskId, retries);
+                remaining = retries;
+            } else {
+                Integer budget = dbService.getUpdatingListenerRetriesRemaining(serviceTaskId);
+                remaining = (budget == null ? 0 : budget) - 1;
+                dbService.setUpdatingListenerRetriesRemaining(serviceTaskId, remaining);
+            }
+            if (remaining > 0) {
+                log.info("{}/{}: User task updating listener {} failed ({} retries left), re-dispatching: {}",
+                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
+                serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                return true;
+            }
+            log.info("{}/{}: User task updating listener {} failed, retries exhausted — raising incident: {}",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
+            dbService.errorActivity(serviceTaskId);
+            dbService.createIncident(serviceTaskId, message);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * WO-DEBT-6 S2: canceling-listener fail budget of {@link #failServiceTask}.
+     * Verbatim block, mechanical plumbing. Returns true when handled.
+     */
+    private boolean failCancelingListener(UUID serviceTaskId, Integer retries, String message,
+            Activity activity, BpmnElementModel failElement) {
+        if (!elementSupport.userTaskCancelingListeners(failElement).isEmpty()
+            && dbService.getPendingCancelingListenerIndex(serviceTaskId) != null) {
+            int remaining;
+            if (retries != null) {
+                dbService.setCancelingListenerRetriesRemaining(serviceTaskId, retries);
+                remaining = retries;
+            } else {
+                Integer budget = dbService.getCancelingListenerRetriesRemaining(serviceTaskId);
+                remaining = (budget == null ? 0 : budget) - 1;
+                dbService.setCancelingListenerRetriesRemaining(serviceTaskId, remaining);
+            }
+            if (remaining > 0) {
+                log.info("{}/{}: User task canceling listener {} failed ({} retries left), re-dispatching: {}",
+                    activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), remaining, message);
+                serviceTaskEnqueueService.enqueueAfterCommit(serviceTaskId);
+                return true;
+            }
+            log.info("{}/{}: User task canceling listener {} failed, retries exhausted — raising incident: {}",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), message);
+            dbService.errorActivity(serviceTaskId);
+            dbService.createIncident(serviceTaskId, message);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * WO-DEBT-6 S2: shared retry-budget tail of {@link #failServiceTask} — Camunda failJob
+     * semantics, re-dispatch while retries remain, incident when exhausted. Verbatim block
+     * (void, zero-touch); called last.
+     */
+    private void failSharedBudget(UUID serviceTaskId, Integer retries, String message, Activity activity) {
         // Camunda failJob semantics: an explicit retries value sets the budget (0 -> incident now); otherwise -1
         int remaining;
         if (retries != null) {
