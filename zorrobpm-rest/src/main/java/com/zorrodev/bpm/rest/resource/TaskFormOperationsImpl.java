@@ -3,23 +3,12 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
-import com.zorrodev.bpm.engine.entity.ElementArtifactBindingEntity;
-import com.zorrodev.bpm.engine.entity.FormEntity;
-import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
-import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
-import com.zorrodev.bpm.engine.entity.UserTaskEntity;
-import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
-import com.zorrodev.bpm.engine.repository.FormRepository;
-import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
-import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormResolver;
+import com.zorrodev.bpm.engine.service.TaskFormDataService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,16 +21,14 @@ import java.util.UUID;
  * {@code requirePdAccess} re-pointed at {@link FormAccessSupport}); no
  * {@code @Transactional} — both endpoints are read-only, as in the original.
  * WO-ACL-1 / ADR-6 §D7 / ADR-6 §D8 comments kept verbatim.
+ * WO-DEBT-7 S2 — JPA moved to {@link TaskFormDataService}; this class is a thin
+ * facade (no direct persistence imports), branching on scalar records.
  */
 @Service
 @RequiredArgsConstructor
 public class TaskFormOperationsImpl implements TaskFormOperations {
 
-    private final UserTaskRepository userTaskRepository;
-    private final ProcessInstanceRepository processInstanceRepository;
-    private final ProcessDefinitionRepository processDefinitionRepository;
-    private final ElementArtifactBindingRepository bindingRepository;
-    private final FormRepository formRepository;
+    private final TaskFormDataService taskFormDataService;
     private final FormResolver formResolver;
     private final BpmnService bpmnService;
     private final DBService dbService;
@@ -49,40 +36,35 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
 
     @Override
     public TaskFormDTO getUserTaskForm(UUID id) {
-        UserTaskEntity task = userTaskRepository.findById(id)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found"));
-        ProcessInstanceEntity pi = processInstanceRepository.findById(task.getProcessInstanceId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"));
+        TaskFormDataService.UserTaskFormData data = taskFormDataService.loadUserTaskFormData(id);
         // WO-ACL-1: task form of a concrete instance = runtime read (variables prefill)
-        formAccessSupport.requireRuntimePdAccess(pi.getProcessDefinitionId());
+        formAccessSupport.requireRuntimePdAccess(data.processDefinitionId());
         // WO-C8-22: a linked formId wins over formKey (docs list the reference kinds as
         // mutually exclusive; the specific linked id beats the generic key on invalid
         // models carrying both). formKey/externalReference paths below are untouched.
-        if (task.getFormId() != null && !task.getFormId().isBlank()) {
+        if (data.formId() != null && !data.formId().isBlank()) {
             // WO-C8-23: bindingType="deployment" pins the form version deployed together
             // with this instance's process version; anything else (latest/absent) keeps
             // the C8-22 path byte-identical.
-            if ("deployment".equals(task.getBindingType())) {
-                UUID deploymentId = processDefinitionRepository.findById(pi.getProcessDefinitionId())
-                    .map(ProcessDefinitionEntity::getDeploymentId)
-                    .orElse(null);
+            if ("deployment".equals(data.bindingType())) {
+                UUID deploymentId = taskFormDataService.findDeploymentId(data.processDefinitionId());
                 return formResolver.resolveTaskFormByFormIdAndDeployment(
-                    task.getFormId(), deploymentId, prefillData(task.getProcessInstanceId()));
+                    data.formId(), deploymentId, prefillData(data.processInstanceId()));
             }
             // WO-C8-31: bindingType="versionTag" pins the latest form version carrying
             // the tag from this element's formDefinition (WO-C8-27: top-level .form JSON
             // field). The tag value is static per element — read from the cached model
             // of THIS instance's process version (no new row column, C8-26 pattern);
             // absent tag → explicit 404 from the resolver, never silent latest.
-            if ("versionTag".equals(task.getBindingType())) {
+            if ("versionTag".equals(data.bindingType())) {
                 return formResolver.resolveTaskFormByFormIdAndVersionTag(
-                    task.getFormId(),
-                    userTaskVersionTag(pi.getProcessDefinitionId(), task.getBpmnElementId()),
-                    prefillData(task.getProcessInstanceId()));
+                    data.formId(),
+                    userTaskVersionTag(data.processDefinitionId(), data.bpmnElementId()),
+                    prefillData(data.processInstanceId()));
             }
-            return formResolver.resolveTaskFormByFormId(task.getFormId(), prefillData(task.getProcessInstanceId()));
+            return formResolver.resolveTaskFormByFormId(data.formId(), prefillData(data.processInstanceId()));
         }
-        return resolveForm(task.getFormKey(), task.getProcessInstanceId());
+        return resolveForm(data.formKey(), data.processInstanceId());
     }
 
     /**
@@ -104,12 +86,9 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
 
     @Override
     public TaskFormDTO getStartForm(String key) {
-        Integer maxVersion = processDefinitionRepository.findMaxByKey(key)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
-        ProcessDefinitionEntity pd = processDefinitionRepository.findByKeyAndVersion(key, maxVersion)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
+        TaskFormDataService.StartFormData data = taskFormDataService.loadStartFormData(key);
 
-        formAccessSupport.requirePdAccess(pd.getId());
+        formAccessSupport.requirePdAccess(data.definitionId());
 
         // WO-C8-26: linked formDefinition of the plain start event wins over every
         // legacy path (docs: the Modeler offers one Form type at a time — linked XOR
@@ -119,12 +98,12 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
         // the deployment pin uses this version's deployment_id.
         // ADR-6 §D7 bindings and scalar startFormKey below are byte-identical fallbacks.
         BpmnProcessDefinitionModel startModel =
-            bpmnService.getProcessDefinitionModelById(pd.getId());
+            bpmnService.getProcessDefinitionModelById(data.definitionId());
         String startFormId = startModel.getStartFormId();
         if (startFormId != null && !startFormId.isBlank()) {
             if ("deployment".equals(startModel.getStartFormBindingType())) {
                 return formResolver.resolveTaskFormByFormIdAndDeployment(
-                    startFormId, pd.getDeploymentId(), null);
+                    startFormId, data.deploymentId(), null);
             }
             // WO-C8-31: same versionTag pin for start forms (tag parsed in C8-26,
             // resolver shared — no duplication, boundary of this WO).
@@ -136,15 +115,16 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
         }
 
         // ADR-6 §D7: try element-artifact binding first (per elementId)
-        List<ElementArtifactBindingEntity> bindings = bindingRepository.findByProcessDefinitionId(pd.getId());
+        List<TaskFormDataService.BoundFormRef> bindings =
+            taskFormDataService.findStartBindingRefs(data.definitionId());
         if (!bindings.isEmpty()) {
             // For now, return the first binding's artifact (start event binding)
-            ElementArtifactBindingEntity binding = bindings.get(0);
+            TaskFormDataService.BoundFormRef binding = bindings.get(0);
             return resolveByBinding(binding);
         }
 
         // Fallback to scalar startFormKey (back-compat)
-        return resolveStartForm(pd.getStartFormKey());
+        return resolveStartForm(data.startFormKey());
     }
 
     private TaskFormDTO resolveForm(String formKey, UUID processInstanceId) {
@@ -155,18 +135,18 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
         return formResolver.resolveTaskForm(startFormKey, null);
     }
 
-    private TaskFormDTO resolveByBinding(ElementArtifactBindingEntity binding) {
+    private TaskFormDTO resolveByBinding(TaskFormDataService.BoundFormRef binding) {
         // ADR-6 §D8: pin to artifact_version from binding
-        FormEntity form = formRepository.findByFormKeyAndVersion(binding.getArtifactKey(), binding.getArtifactVersion())
-            .orElse(null);
+        TaskFormDataService.FormData form =
+            taskFormDataService.findFormData(binding.artifactKey(), binding.artifactVersion());
         if (form == null) {
             // Fallback: try latest version
-            return resolveStartForm(binding.getArtifactKey());
+            return resolveStartForm(binding.artifactKey());
         }
         TaskFormDTO dto = new TaskFormDTO();
         dto.setType("embedded");
-        dto.setKind(form.getKind() != null ? form.getKind().name() : null);
-        dto.setSchema(form.getSchemaJson());
+        dto.setKind(form.kind());
+        dto.setSchema(form.schemaJson());
         return dto;
     }
 

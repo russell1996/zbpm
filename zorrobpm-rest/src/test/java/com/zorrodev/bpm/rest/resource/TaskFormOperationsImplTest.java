@@ -2,17 +2,6 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
-import com.zorrodev.bpm.engine.entity.ElementArtifactBindingEntity;
-import com.zorrodev.bpm.engine.entity.FormArtifactKind;
-import com.zorrodev.bpm.engine.entity.FormEntity;
-import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
-import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
-import com.zorrodev.bpm.engine.entity.UserTaskEntity;
-import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
-import com.zorrodev.bpm.engine.repository.FormRepository;
-import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
-import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
@@ -20,6 +9,7 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormResolver;
+import com.zorrodev.bpm.engine.service.TaskFormDataService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -27,7 +17,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,21 +29,24 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * WO-DEBT-4d — unit tests for the TaskForm domain slice. Real
  * {@link TaskFormOperationsImpl} (endpoints + 4 helpers exercised through them),
- * mocked repositories/services/support.
+ * mocked services/support.
+ * WO-DEBT-7 S2 — fixture layer re-pointed from the 5 repositories to
+ * {@link TaskFormDataService} (the impl under test now reads JPA only through
+ * it); every behavioral assertion/verify is byte-identical to the original,
+ * except getStartForm_bindingVersionPin_notLatest where the never-latest repo
+ * check became an exactly-once versioned-lookup check on the service (same
+ * intent: pinning, no silent latest).
  */
 class TaskFormOperationsImplTest {
 
-    private UserTaskRepository userTaskRepository;
-    private ProcessInstanceRepository processInstanceRepository;
-    private ProcessDefinitionRepository processDefinitionRepository;
-    private ElementArtifactBindingRepository bindingRepository;
-    private FormRepository formRepository;
+    private TaskFormDataService taskFormDataService;
     private FormResolver formResolver;
     private BpmnService bpmnService;
     private DBService dbService;
@@ -63,11 +55,7 @@ class TaskFormOperationsImplTest {
 
     @BeforeEach
     void setup() {
-        userTaskRepository = mock(UserTaskRepository.class);
-        processInstanceRepository = mock(ProcessInstanceRepository.class);
-        processDefinitionRepository = mock(ProcessDefinitionRepository.class);
-        bindingRepository = mock(ElementArtifactBindingRepository.class);
-        formRepository = mock(FormRepository.class);
+        taskFormDataService = mock(TaskFormDataService.class);
         formResolver = mock(FormResolver.class);
         bpmnService = mock(BpmnService.class);
         // WO-C8-26: default — plain start without formDefinition → legacy paths
@@ -76,17 +64,14 @@ class TaskFormOperationsImplTest {
             .thenReturn(new BpmnProcessDefinitionModel());
         dbService = mock(DBService.class);
         formAccessSupport = mock(FormAccessSupport.class);
-        impl = new TaskFormOperationsImpl(userTaskRepository, processInstanceRepository,
-            processDefinitionRepository, bindingRepository, formRepository,
+        impl = new TaskFormOperationsImpl(taskFormDataService,
             formResolver, bpmnService, dbService, formAccessSupport);
     }
 
-    private static ProcessDefinitionEntity pd(String key, int version) {
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(UUID.randomUUID());
-        pd.setKey(key);
-        pd.setVersion(version);
-        return pd;
+    private static TaskFormDataService.UserTaskFormData userTaskData(UUID taskId, UUID piId, UUID pdId,
+            String formId, String bindingType, String formKey, String elementId) {
+        return new TaskFormDataService.UserTaskFormData(taskId, formId, bindingType, formKey,
+            piId, elementId, pdId);
     }
 
     private static ProcessVariable variable(String name, String value) {
@@ -105,16 +90,8 @@ class TaskFormOperationsImplTest {
         UUID taskId = UUID.randomUUID();
         UUID piId = UUID.randomUUID();
         UUID pdId = UUID.randomUUID();
-        UserTaskEntity task = new UserTaskEntity();
-        task.setId(taskId);
-        task.setProcessInstanceId(piId);
-        task.setFormKey("orderForm");
-        task.setFormId("order-form");
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(taskFormDataService.loadUserTaskFormData(taskId)).thenReturn(
+            userTaskData(taskId, piId, pdId, "order-form", null, "orderForm", "review"));
         when(dbService.getVariables(eq(piId))).thenReturn(List.of());
         TaskFormDTO resolved = new TaskFormDTO();
         resolved.setType("embedded");
@@ -135,20 +112,9 @@ class TaskFormOperationsImplTest {
         UUID piId = UUID.randomUUID();
         UUID pdId = UUID.randomUUID();
         UUID deploymentId = UUID.randomUUID();
-        UserTaskEntity task = new UserTaskEntity();
-        task.setId(taskId);
-        task.setProcessInstanceId(piId);
-        task.setFormId("pinned-form");
-        task.setBindingType("deployment");
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(pdId);
-        pd.setDeploymentId(deploymentId);
-        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
+        when(taskFormDataService.loadUserTaskFormData(taskId)).thenReturn(
+            userTaskData(taskId, piId, pdId, "pinned-form", "deployment", null, "review"));
+        when(taskFormDataService.findDeploymentId(pdId)).thenReturn(deploymentId);
         when(dbService.getVariables(eq(piId))).thenReturn(List.of());
         TaskFormDTO pinned = new TaskFormDTO();
         pinned.setType("embedded");
@@ -167,15 +133,8 @@ class TaskFormOperationsImplTest {
         UUID taskId = UUID.randomUUID();
         UUID piId = UUID.randomUUID();
         UUID pdId = UUID.randomUUID();
-        UserTaskEntity task = new UserTaskEntity();
-        task.setId(taskId);
-        task.setProcessInstanceId(piId);
-        task.setFormKey("orderForm");
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(taskFormDataService.loadUserTaskFormData(taskId)).thenReturn(
+            userTaskData(taskId, piId, pdId, null, null, "orderForm", "review"));
         // prefillData: null name/value skipped, order preserved
         when(dbService.getVariables(eq(piId))).thenReturn(List.of(
             variable("orderId", "123"), variable(null, "x"), variable("empty", null)));
@@ -197,15 +156,8 @@ class TaskFormOperationsImplTest {
         UUID taskId = UUID.randomUUID();
         UUID piId = UUID.randomUUID();
         UUID pdId = UUID.randomUUID();
-        UserTaskEntity task = new UserTaskEntity();
-        task.setId(taskId);
-        task.setProcessInstanceId(piId);
-        task.setFormKey("orderForm");
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(taskFormDataService.loadUserTaskFormData(taskId)).thenReturn(
+            userTaskData(taskId, piId, pdId, null, null, "orderForm", "review"));
         doThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"))
             .when(formAccessSupport).requireRuntimePdAccess(pdId);
 
@@ -220,7 +172,8 @@ class TaskFormOperationsImplTest {
     @Test
     void getUserTaskForm_taskNotFound_404() {
         UUID taskId = UUID.randomUUID();
-        when(userTaskRepository.findById(taskId)).thenReturn(Optional.empty());
+        when(taskFormDataService.loadUserTaskFormData(taskId))
+            .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "User task not found"));
 
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
             () -> impl.getUserTaskForm(taskId));
@@ -231,13 +184,8 @@ class TaskFormOperationsImplTest {
     @Test
     void getUserTaskForm_instanceNotFound_404() {
         UUID taskId = UUID.randomUUID();
-        UUID piId = UUID.randomUUID();
-        UserTaskEntity task = new UserTaskEntity();
-        task.setId(taskId);
-        task.setProcessInstanceId(piId);
-        task.setFormKey("orderForm");
-        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.empty());
+        when(taskFormDataService.loadUserTaskFormData(taskId))
+            .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"));
 
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
             () -> impl.getUserTaskForm(taskId));
@@ -249,27 +197,20 @@ class TaskFormOperationsImplTest {
 
     @Test
     void getStartForm_happy_viaBinding() {
-        ProcessDefinitionEntity pd = pd("ord", 3);
-        when(processDefinitionRepository.findMaxByKey("ord")).thenReturn(Optional.of(3));
-        when(processDefinitionRepository.findByKeyAndVersion(eq("ord"), any())).thenReturn(Optional.of(pd));
-        ElementArtifactBindingEntity b = new ElementArtifactBindingEntity();
-        b.setProcessDefinitionId(pd.getId());
-        b.setArtifactKey("startForm");
-        b.setArtifactVersion(2);
-        when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(b));
-        FormEntity pinned = new FormEntity();
-        pinned.setFormKey("startForm");
-        pinned.setVersion(2);
-        pinned.setKind(FormArtifactKind.FORM_JS);
-        pinned.setSchemaJson("{\"components\":[]}");
-        when(formRepository.findByFormKeyAndVersion("startForm", 2)).thenReturn(Optional.of(pinned));
+        UUID pdId = UUID.randomUUID();
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", null, null));
+        when(taskFormDataService.findStartBindingRefs(pdId)).thenReturn(List.of(
+            new TaskFormDataService.BoundFormRef("startForm", 2)));
+        when(taskFormDataService.findFormData("startForm", 2)).thenReturn(
+            new TaskFormDataService.FormData("FORM_JS", "{\"components\":[]}"));
 
         TaskFormDTO result = impl.getStartForm("ord");
 
         assertThat(result.getType()).isEqualTo("embedded");
         assertThat(result.getKind()).isEqualTo("FORM_JS");
         assertThat(result.getSchema()).isEqualTo("{\"components\":[]}");
-        verify(formAccessSupport).requirePdAccess(pd.getId());
+        verify(formAccessSupport).requirePdAccess(pdId);
         // DEFINITION level, not RUNTIME level
         verify(formAccessSupport, never()).requireRuntimePdAccess(any());
     }
@@ -278,39 +219,31 @@ class TaskFormOperationsImplTest {
     void getStartForm_bindingVersionPin_notLatest() {
         // Explicit ADR-6 §D8 pin check: binding pins version 2 while newer versions
         // exist — the resolved schema must be v2's, never latest's
-        ProcessDefinitionEntity pd = pd("ord", 3);
-        when(processDefinitionRepository.findMaxByKey("ord")).thenReturn(Optional.of(3));
-        when(processDefinitionRepository.findByKeyAndVersion(eq("ord"), any())).thenReturn(Optional.of(pd));
-        ElementArtifactBindingEntity b = new ElementArtifactBindingEntity();
-        b.setProcessDefinitionId(pd.getId());
-        b.setArtifactKey("startForm");
-        b.setArtifactVersion(2);
-        when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(b));
-        FormEntity v2 = new FormEntity();
-        v2.setFormKey("startForm");
-        v2.setVersion(2);
-        v2.setKind(FormArtifactKind.FORM_JS);
-        v2.setSchemaJson("{\"v\":2}");
-        when(formRepository.findByFormKeyAndVersion("startForm", 2)).thenReturn(Optional.of(v2));
+        UUID pdId = UUID.randomUUID();
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", null, null));
+        when(taskFormDataService.findStartBindingRefs(pdId)).thenReturn(List.of(
+            new TaskFormDataService.BoundFormRef("startForm", 2)));
+        when(taskFormDataService.findFormData("startForm", 2)).thenReturn(
+            new TaskFormDataService.FormData("FORM_JS", "{\"v\":2}"));
 
         TaskFormDTO result = impl.getStartForm("ord");
 
         assertThat(result.getSchema()).isEqualTo("{\"v\":2}");
-        verify(formRepository).findByFormKeyAndVersion("startForm", 2);
-        verify(formRepository, never()).findTopByFormKeyOrderByVersionDesc(any());
+        verify(taskFormDataService).findFormData("startForm", 2);
+        // WO-DEBT-7 S2: adapted expectation — exactly one versioned lookup happened
+        // (no silent latest read anywhere on this path).
+        verify(taskFormDataService, times(1)).findFormData(any(), any());
     }
 
     @Test
     void getStartForm_bindingVersionMissing_fallbackToLatest() {
-        ProcessDefinitionEntity pd = pd("ord", 3);
-        when(processDefinitionRepository.findMaxByKey("ord")).thenReturn(Optional.of(3));
-        when(processDefinitionRepository.findByKeyAndVersion(eq("ord"), any())).thenReturn(Optional.of(pd));
-        ElementArtifactBindingEntity b = new ElementArtifactBindingEntity();
-        b.setProcessDefinitionId(pd.getId());
-        b.setArtifactKey("startForm");
-        b.setArtifactVersion(9);
-        when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(b));
-        when(formRepository.findByFormKeyAndVersion("startForm", 9)).thenReturn(Optional.empty());
+        UUID pdId = UUID.randomUUID();
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", null, null));
+        when(taskFormDataService.findStartBindingRefs(pdId)).thenReturn(List.of(
+            new TaskFormDataService.BoundFormRef("startForm", 9)));
+        when(taskFormDataService.findFormData("startForm", 9)).thenReturn(null);
         TaskFormDTO latest = new TaskFormDTO();
         latest.setType("embedded");
         when(formResolver.resolveTaskForm(eq("startForm"), isNull())).thenReturn(latest);
@@ -322,11 +255,10 @@ class TaskFormOperationsImplTest {
 
     @Test
     void getStartForm_happy_fallbackToScalarStartFormKey() {
-        ProcessDefinitionEntity pd = pd("ord", 3);
-        pd.setStartFormKey("sForm");
-        when(processDefinitionRepository.findMaxByKey("ord")).thenReturn(Optional.of(3));
-        when(processDefinitionRepository.findByKeyAndVersion(eq("ord"), any())).thenReturn(Optional.of(pd));
-        when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of());
+        UUID pdId = UUID.randomUUID();
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", null, "sForm"));
+        when(taskFormDataService.findStartBindingRefs(pdId)).thenReturn(List.of());
         TaskFormDTO resolved = new TaskFormDTO();
         resolved.setType("embedded");
         when(formResolver.resolveTaskForm(eq("sForm"), isNull())).thenReturn(resolved);
@@ -338,22 +270,23 @@ class TaskFormOperationsImplTest {
 
     @Test
     void getStartForm_deny_definitionAccess_404BeforeResolve() {
-        ProcessDefinitionEntity pd = pd("ord", 3);
-        when(processDefinitionRepository.findMaxByKey("ord")).thenReturn(Optional.of(3));
-        when(processDefinitionRepository.findByKeyAndVersion(eq("ord"), any())).thenReturn(Optional.of(pd));
+        UUID pdId = UUID.randomUUID();
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", null, null));
         doThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Not found"))
-            .when(formAccessSupport).requirePdAccess(pd.getId());
+            .when(formAccessSupport).requirePdAccess(pdId);
 
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
             () -> impl.getStartForm("ord"));
 
         assertEquals(HttpStatus.NOT_FOUND, e.getStatusCode());
-        verify(bindingRepository, never()).findByProcessDefinitionId(any());
+        verify(taskFormDataService, never()).findStartBindingRefs(any());
     }
 
     @Test
     void getStartForm_processNotFound_404() {
-        when(processDefinitionRepository.findMaxByKey("missing")).thenReturn(Optional.empty());
+        when(taskFormDataService.loadStartFormData("missing"))
+            .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Process definition not found"));
 
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
             () -> impl.getStartForm("missing"));
@@ -363,15 +296,15 @@ class TaskFormOperationsImplTest {
 
     // ==================== getStartForm: WO-C8-26 formDefinition ====================
 
-    private ProcessDefinitionEntity pdWithStartForm(String key, String startFormId, String bindingType) {
-        ProcessDefinitionEntity pd = pd(key, 3);
-        when(processDefinitionRepository.findMaxByKey(key)).thenReturn(Optional.of(3));
-        when(processDefinitionRepository.findByKeyAndVersion(eq(key), any())).thenReturn(Optional.of(pd));
+    private UUID pdWithStartForm(String key, String startFormId, String bindingType) {
+        UUID pdId = UUID.randomUUID();
+        when(taskFormDataService.loadStartFormData(key)).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, key, null, null));
         BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
         model.setStartFormId(startFormId);
         model.setStartFormBindingType(bindingType);
-        when(bpmnService.getProcessDefinitionModelById(pd.getId())).thenReturn(model);
-        return pd;
+        when(bpmnService.getProcessDefinitionModelById(pdId)).thenReturn(model);
+        return pdId;
     }
 
     @Test
@@ -379,13 +312,11 @@ class TaskFormOperationsImplTest {
         // Крит. 2/3/6: formDefinition побеждает legacy (bindings + scalar не трогаем
         // вообще) и идёт в готовый resolveTaskFormByFormId (крит. 6 — новых
         // механизмов нет: formResolver — mock, реализация не дублируется).
-        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "latest");
-        pd.setStartFormKey("legacyForm");
-        ElementArtifactBindingEntity b = new ElementArtifactBindingEntity();
-        b.setProcessDefinitionId(pd.getId());
-        b.setArtifactKey("legacyForm");
-        b.setArtifactVersion(1);
-        when(bindingRepository.findByProcessDefinitionId(pd.getId())).thenReturn(List.of(b));
+        UUID pdId = pdWithStartForm("ord", "order-start-form", "latest");
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", null, "legacyForm"));
+        when(taskFormDataService.findStartBindingRefs(pdId)).thenReturn(List.of(
+            new TaskFormDataService.BoundFormRef("legacyForm", 1)));
         TaskFormDTO resolved = new TaskFormDTO();
         resolved.setType("embedded");
         when(formResolver.resolveTaskFormByFormId(eq("order-start-form"), isNull())).thenReturn(resolved);
@@ -395,7 +326,7 @@ class TaskFormOperationsImplTest {
         assertSame(resolved, result);
         verify(formResolver).resolveTaskFormByFormId("order-start-form", null);
         // legacy-пути при живом formId недостижимы
-        verify(bindingRepository, never()).findByProcessDefinitionId(any());
+        verify(taskFormDataService, never()).findStartBindingRefs(any());
         verify(formResolver, never()).resolveTaskForm(any(), any());
     }
 
@@ -403,9 +334,10 @@ class TaskFormOperationsImplTest {
     void getStartForm_formId_deploymentBinding_resolvesPinned() {
         // Крит. 4: deployment-пин берёт deployment_id ТЕКУЩЕЙ версии процесса
         // (той, чью форму запрашивают) и идёт в resolveTaskFormByFormIdAndDeployment.
-        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "deployment");
         UUID deploymentId = UUID.randomUUID();
-        pd.setDeploymentId(deploymentId);
+        UUID pdId = pdWithStartForm("ord", "order-start-form", "deployment");
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", deploymentId, null));
         TaskFormDTO resolved = new TaskFormDTO();
         resolved.setType("embedded");
         when(formResolver.resolveTaskFormByFormIdAndDeployment(
@@ -421,8 +353,9 @@ class TaskFormOperationsImplTest {
     @Test
     void getStartForm_formId_deploymentBinding_noPair_404() {
         // Крит. 5: пара отсутствует → 404 той же формы, что C8-23 для user task.
-        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "deployment");
-        pd.setDeploymentId(UUID.randomUUID());
+        UUID pdId = pdWithStartForm("ord", "order-start-form", "deployment");
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", UUID.randomUUID(), null));
         when(formResolver.resolveTaskFormByFormIdAndDeployment(eq("order-start-form"), any(), isNull()))
             .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Form version not found"));
 
@@ -456,17 +389,8 @@ class TaskFormOperationsImplTest {
         UUID taskId = UUID.randomUUID();
         UUID piId = UUID.randomUUID();
         UUID pdId = UUID.randomUUID();
-        UserTaskEntity task = new UserTaskEntity();
-        task.setId(taskId);
-        task.setProcessInstanceId(piId);
-        task.setFormId("order-form");
-        task.setBindingType("versionTag");
-        task.setBpmnElementId("review");
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        when(userTaskRepository.findById(taskId)).thenReturn(Optional.of(task));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(taskFormDataService.loadUserTaskFormData(taskId)).thenReturn(
+            userTaskData(taskId, piId, pdId, "order-form", "versionTag", null, "review"));
         when(bpmnService.getProcessDefinitionModelById(pdId))
             .thenReturn(modelWithTaskTag("review", "v1"));
         TaskFormDTO resolved = new TaskFormDTO();
@@ -488,12 +412,14 @@ class TaskFormOperationsImplTest {
     void getStartForm_formId_versionTagBinding_resolvesPinned() {
         // Крит. 2 (start-потребитель): та же ветка на startFormVersionTag из C8-26,
         // резолвер общий (граница WO — не дублировать).
-        ProcessDefinitionEntity pd = pdWithStartForm("ord", "order-start-form", "versionTag");
+        UUID pdId = pdWithStartForm("ord", "order-start-form", "versionTag");
+        when(taskFormDataService.loadStartFormData("ord")).thenReturn(
+            new TaskFormDataService.StartFormData(pdId, "ord", null, null));
         BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
         model.setStartFormId("order-start-form");
         model.setStartFormBindingType("versionTag");
         model.setStartFormVersionTag("v1");
-        when(bpmnService.getProcessDefinitionModelById(pd.getId())).thenReturn(model);
+        when(bpmnService.getProcessDefinitionModelById(pdId)).thenReturn(model);
         TaskFormDTO resolved = new TaskFormDTO();
         resolved.setType("embedded");
         when(formResolver.resolveTaskFormByFormIdAndVersionTag(
@@ -503,6 +429,6 @@ class TaskFormOperationsImplTest {
 
         assertSame(resolved, result);
         verify(formResolver).resolveTaskFormByFormIdAndVersionTag("order-start-form", "v1", null);
-        verify(bindingRepository, never()).findByProcessDefinitionId(any());
+        verify(taskFormDataService, never()).findStartBindingRefs(any());
     }
 }
