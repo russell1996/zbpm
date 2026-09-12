@@ -12,7 +12,6 @@ import com.zorrodev.bpm.exchange.MailSendRequested;
 import com.zorrodev.bpm.exchange.ServiceTaskEnqueued;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -54,12 +53,6 @@ public class OutboxBatchProcessor {
 
     @Transactional
     public void processBatch() {
-        // WO-REL-23: propagate traceId to async handling — capture parent MDC via
-        // MDC.getCopyOfContextMap() (plain MDC.clear() would lose it). For the
-        // scheduled poller the parent is the scheduler thread (no request traceId),
-        // but the pattern is kept for any async handoff from a request thread.
-        var parentMdc = MDC.getCopyOfContextMap();
-        if (parentMdc != null) MDC.setContextMap(parentMdc);
         var pending = outboxRepository.findPendingBatch(batchSize);
         // WO-OBS-1: gauges sampled per batch (read-only, no behavior change).
         bpmMetrics.setOutboxBacklog(outboxRepository.countPending());
