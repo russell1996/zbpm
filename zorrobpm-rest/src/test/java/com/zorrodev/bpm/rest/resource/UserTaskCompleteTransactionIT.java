@@ -106,8 +106,8 @@ class UserTaskCompleteTransactionIT {
         com.zorrodev.bpm.engine.security.Principal principal = new com.zorrodev.bpm.engine.security.Principal.UserPrincipal(UUID.randomUUID(), "test", "USER");
         when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
         lenient().when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
-        doNothing().when(runtimeOperationSupport).requireOnBehalfMatchesTask(any(), any());
-        doNothing().when(runtimeOperationSupport).checkAssignee(any(), any());
+        doNothing().when(runtimeOperationSupport).requireOnBehalfMatchesTask(any(), any(), any(), any());
+        doNothing().when(runtimeOperationSupport).checkAssignee(any(), any(), any(), any());
         when(authorizationService.canCompleteUserTask(any(), any(), any())).thenReturn(true);
         when(runtimeOperationSupport.resolveDefinitionKeyByInstance(piId)).thenReturn("k-" + pdId.toString().substring(0, 8));
         BpmnProcessDefinitionModel bpmnModel = mock(BpmnProcessDefinitionModel.class);

@@ -1,10 +1,8 @@
 package com.zorrodev.bpm.rest.resource;
 
-import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
-import com.zorrodev.bpm.engine.entity.*;
-import com.zorrodev.bpm.engine.repository.*;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.RuntimeSupportService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,7 +15,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,15 +27,7 @@ class RuntimeOperationSupportTest {
 
     @Mock private HttpServletRequest request;
     @Mock private AuthorizationService authorizationService;
-    @Mock private UiUserRepository uiUserRepository;
-    @Mock private UserGroupRepository userGroupRepository;
-    @Mock private ProcessInstanceRepository processInstanceRepository;
-    @Mock private ProcessDefinitionRepository processDefinitionRepository;
-    @Mock private ProcessRepository processRepository;
-    @Mock private ProcessMemberRepository processMemberRepository;
-    @Mock private ServiceTaskRepository serviceTaskRepository;
-    @Mock private IncidentRepository incidentRepository;
-    @Mock private ActivityRepository activityRepository;
+    @Mock private RuntimeSupportService runtimeSupportService;
 
     @InjectMocks private RuntimeOperationSupport support;
 
@@ -153,126 +142,50 @@ class RuntimeOperationSupportTest {
             .hasFieldOrPropertyWithValue("status", HttpStatus.NOT_FOUND);
     }
 
-    // resolveTargetDefinition
-    @Test
-    void resolveTargetDefinition_byId() {
-        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
-        UUID id = UUID.randomUUID();
-        dto.setProcessDefinitionId(id);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(id);
-        when(processDefinitionRepository.findById(id)).thenReturn(Optional.of(pd));
-        assertThat(support.resolveTargetDefinition(dto)).isEqualTo(pd);
-    }
+    // resolveTargetDefinition moved to engine RuntimeSupportServiceTest (WO-DEBT-7 S1)
 
-    @Test
-    void resolveTargetDefinition_byKeyAndVersion() {
-        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
-        dto.setProcessDefinitionKey("key");
-        dto.setProcessDefinitionVersion(2);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setKey("key");
-        when(processDefinitionRepository.findByKeyAndVersion("key", 2)).thenReturn(Optional.of(pd));
-        assertThat(support.resolveTargetDefinition(dto)).isEqualTo(pd);
-    }
-
-    @Test
-    void resolveTargetDefinition_byKeyWithMaxVersion() {
-        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
-        dto.setProcessDefinitionKey("key");
-        dto.setProcessDefinitionVersion(null);
-        when(processDefinitionRepository.findMaxByKey("key")).thenReturn(Optional.of(5));
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setKey("key");
-        when(processDefinitionRepository.findByKeyAndVersion("key", 5)).thenReturn(Optional.of(pd));
-        assertThat(support.resolveTargetDefinition(dto)).isEqualTo(pd);
-    }
-
-    @Test
-    void resolveTargetDefinition_returnsNullWhenKeyNull() {
-        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
-        dto.setProcessDefinitionId(null);
-        dto.setProcessDefinitionKey(null);
-        assertThat(support.resolveTargetDefinition(dto)).isNull();
-    }
-
-    // resolveDefinitionKeyByInstance
+    // resolveDefinitionKeyByInstance (delegates to RuntimeSupportService)
     @Test
     void resolveDefinitionKeyByInstance_found() {
         UUID instanceId = UUID.randomUUID();
-        UUID pdId = UUID.randomUUID();
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(instanceId);
-        pi.setProcessDefinitionId(pdId);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(pdId);
-        pd.setKey("myKey");
-        when(processInstanceRepository.findById(instanceId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
+        when(runtimeSupportService.resolveDefinitionKeyByInstance(instanceId)).thenReturn("myKey");
         assertThat(support.resolveDefinitionKeyByInstance(instanceId)).isEqualTo("myKey");
     }
 
     @Test
     void resolveDefinitionKeyByInstance_notFound() {
         UUID instanceId = UUID.randomUUID();
-        when(processInstanceRepository.findById(instanceId)).thenReturn(Optional.empty());
+        when(runtimeSupportService.resolveDefinitionKeyByInstance(instanceId)).thenReturn(null);
         assertThat(support.resolveDefinitionKeyByInstance(instanceId)).isNull();
     }
 
-    // resolveDefinitionKeyByServiceTask
+    // resolveDefinitionKeyByServiceTask (delegates to RuntimeSupportService)
     @Test
     void resolveDefinitionKeyByServiceTask_found() {
         UUID taskId = UUID.randomUUID();
-        UUID piId = UUID.randomUUID();
-        ServiceTaskEntity st = new ServiceTaskEntity();
-        st.setId(taskId);
-        st.setProcessInstanceId(piId);
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(UUID.randomUUID());
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setKey("key");
-        when(serviceTaskRepository.findById(taskId)).thenReturn(Optional.of(st));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pi.getProcessDefinitionId())).thenReturn(Optional.of(pd));
+        when(runtimeSupportService.resolveDefinitionKeyByServiceTask(taskId)).thenReturn("key");
         assertThat(support.resolveDefinitionKeyByServiceTask(taskId)).isEqualTo("key");
     }
 
     @Test
     void resolveDefinitionKeyByServiceTask_notFound() {
         UUID taskId = UUID.randomUUID();
-        when(serviceTaskRepository.findById(taskId)).thenReturn(Optional.empty());
+        when(runtimeSupportService.resolveDefinitionKeyByServiceTask(taskId)).thenReturn(null);
         assertThat(support.resolveDefinitionKeyByServiceTask(taskId)).isNull();
     }
 
-    // resolveDefinitionKeyByIncident
+    // resolveDefinitionKeyByIncident (delegates to RuntimeSupportService)
     @Test
     void resolveDefinitionKeyByIncident_found() {
         UUID incidentId = UUID.randomUUID();
-        UUID activityId = UUID.randomUUID();
-        UUID piId = UUID.randomUUID();
-        IncidentEntity incident = new IncidentEntity();
-        incident.setId(incidentId);
-        incident.setActivityId(activityId);
-        ActivityEntity activity = new ActivityEntity();
-        activity.setId(activityId);
-        activity.setProcessInstanceId(piId);
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(UUID.randomUUID());
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setKey("key");
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
-        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pi.getProcessDefinitionId())).thenReturn(Optional.of(pd));
+        when(runtimeSupportService.resolveDefinitionKeyByIncident(incidentId)).thenReturn("key");
         assertThat(support.resolveDefinitionKeyByIncident(incidentId)).isEqualTo("key");
     }
 
     @Test
     void resolveDefinitionKeyByIncident_notFound() {
         UUID incidentId = UUID.randomUUID();
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.empty());
+        when(runtimeSupportService.resolveDefinitionKeyByIncident(incidentId)).thenReturn(null);
         assertThat(support.resolveDefinitionKeyByIncident(incidentId)).isNull();
     }
 
@@ -290,175 +203,7 @@ class RuntimeOperationSupportTest {
         assertThat(support.resolvePrincipalId(sp)).isEqualTo(apiKeyId.toString());
     }
 
-    // checkAssignee
-    @Test
-    void checkAssignee_allowsSuperAdmin() {
-        Principal superAdmin = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
-        // need to mock isSuperAdmin true
-        // SuperAdmin isSuperAdmin returns true
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee("bob");
-        task.setCandidateGroups("group1");
-        // should not throw
-        support.checkAssignee(superAdmin, task);
-    }
-
-    @Test
-    void checkAssignee_allowsWhenAssigneeMatches() {
-        UUID userId = UUID.randomUUID();
-        Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee("alice");
-        task.setCandidateGroups("group1");
-        task.setProcessInstanceId(UUID.randomUUID());
-        support.checkAssignee(user, task);
-    }
-
-    @Test
-    void checkAssignee_deniesWhenAssignedToOther() {
-        UUID userId = UUID.randomUUID();
-        Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee("bob");
-        task.setCandidateGroups("group1");
-        task.setProcessInstanceId(UUID.randomUUID());
-        assertThatThrownBy(() -> support.checkAssignee(user, task))
-            .isInstanceOf(ResponseStatusException.class)
-            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
-    }
-
-    @Test
-    void checkAssignee_allowsWhenCandidateGroupMatches() {
-        UUID userId = UUID.randomUUID();
-        Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee(null);
-        task.setCandidateGroups("group1,group2");
-        task.setProcessInstanceId(UUID.randomUUID());
-        when(userGroupRepository.findGroupNamesByUserId(userId)).thenReturn(List.of("group2", "group3"));
-        support.checkAssignee(user, task);
-    }
-
-    @Test
-    void checkAssignee_deniesWhenCandidateGroupNotMatches() {
-        UUID userId = UUID.randomUUID();
-        Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee(null);
-        task.setCandidateGroups("group1,group2");
-        task.setProcessInstanceId(UUID.randomUUID());
-        when(userGroupRepository.findGroupNamesByUserId(userId)).thenReturn(List.of("group3"));
-        assertThatThrownBy(() -> support.checkAssignee(user, task))
-            .isInstanceOf(ResponseStatusException.class)
-            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
-    }
-
-    @Test
-    void checkAssignee_allowsWhenProcessMember() {
-        UUID userId = UUID.randomUUID();
-        Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee(null);
-        task.setCandidateGroups(null);
-        UUID piId = UUID.randomUUID();
-        UUID pdId = UUID.randomUUID();
-        task.setProcessInstanceId(piId);
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(pdId);
-        pd.setKey("key");
-        ProcessEntity process = new ProcessEntity();
-        process.setId(UUID.randomUUID());
-        process.setDefinitionKey("key");
-        ProcessMemberEntity membership = new ProcessMemberEntity();
-        membership.setProcessId(process.getId());
-        membership.setUserId(userId);
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
-        when(processRepository.findByDefinitionKey("key")).thenReturn(Optional.of(process));
-        when(processMemberRepository.findById(new ProcessMemberId(process.getId(), userId))).thenReturn(Optional.of(membership));
-        support.checkAssignee(user, task);
-    }
-
-    @Test
-    void checkAssignee_deniesWhenNotProcessMember() {
-        UUID userId = UUID.randomUUID();
-        Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee(null);
-        task.setCandidateGroups(null);
-        UUID piId = UUID.randomUUID();
-        UUID pdId = UUID.randomUUID();
-        task.setProcessInstanceId(piId);
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(pdId);
-        pd.setKey("key");
-        ProcessEntity process = new ProcessEntity();
-        process.setId(UUID.randomUUID());
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
-        when(processRepository.findByDefinitionKey("key")).thenReturn(Optional.of(process));
-        when(processMemberRepository.findById(any())).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> support.checkAssignee(user, task))
-            .isInstanceOf(ResponseStatusException.class)
-            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
-    }
-
-    // requireOnBehalfMatchesTask
-    @Test
-    void requireOnBehalfMatchesTask_allowsWhenAssigneeMatches() {
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee("bob");
-        task.setCandidateGroups(null);
-        task.setProcessInstanceId(UUID.randomUUID());
-        UiUserEntity user = new UiUserEntity();
-        user.setId(UUID.randomUUID());
-        user.setUsername("bob");
-        when(uiUserRepository.findByUsername("bob")).thenReturn(Optional.of(user));
-        support.requireOnBehalfMatchesTask(task, "bob");
-    }
-
-    @Test
-    void requireOnBehalfMatchesTask_deniesWhenAssigneeMismatch() {
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee("alice");
-        UiUserEntity user = new UiUserEntity();
-        user.setId(UUID.randomUUID());
-        user.setUsername("bob");
-        when(uiUserRepository.findByUsername("bob")).thenReturn(Optional.of(user));
-        assertThatThrownBy(() -> support.requireOnBehalfMatchesTask(task, "bob"))
-            .isInstanceOf(ResponseStatusException.class)
-            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
-    }
-
-    @Test
-    void requireOnBehalfMatchesTask_allowsWhenCandidateGroupMatches() {
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee(null);
-        task.setCandidateGroups("group1,group2");
-        task.setProcessInstanceId(UUID.randomUUID());
-        UiUserEntity user = new UiUserEntity();
-        user.setId(UUID.randomUUID());
-        user.setUsername("bob");
-        when(uiUserRepository.findByUsername("bob")).thenReturn(Optional.of(user));
-        when(userGroupRepository.findGroupNamesByUserId(user.getId())).thenReturn(List.of("group2"));
-        support.requireOnBehalfMatchesTask(task, "bob");
-    }
-
-    @Test
-    void requireOnBehalfMatchesTask_deniesWhenUserNotFound() {
-        UserTaskEntity task = new UserTaskEntity();
-        task.setAssignee("bob");
-        when(uiUserRepository.findByUsername("bob")).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> support.requireOnBehalfMatchesTask(task, "bob"))
-            .isInstanceOf(ResponseStatusException.class)
-            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
-    }
+    // checkAssignee + requireOnBehalfMatchesTask moved to engine RuntimeSupportServiceTest (WO-DEBT-7 S1)
 
     // toDTO
     @Test

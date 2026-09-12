@@ -95,8 +95,8 @@ class UserTaskClaimTransactionIT {
         // Mock the other methods to allow
         lenient().when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
         lenient().when(runtimeOperationSupport.resolvePrincipalId(any())).thenReturn("test");
-        doNothing().when(runtimeOperationSupport).checkAssignee(any(), any());
-        doNothing().when(runtimeOperationSupport).requireOnBehalfMatchesTask(any(), any());
+        doNothing().when(runtimeOperationSupport).checkAssignee(any(), any(), any(), any());
+        doNothing().when(runtimeOperationSupport).requireOnBehalfMatchesTask(any(), any(), any(), any());
         when(authorizationService.canClaimUserTask(any(), any(), any())).thenReturn(true);
 
         doThrow(new RuntimeException("audit fail")).when(auditLogService).record(any(), eq("CLAIM_USER_TASK"), any(), eq(taskId.toString()), any());

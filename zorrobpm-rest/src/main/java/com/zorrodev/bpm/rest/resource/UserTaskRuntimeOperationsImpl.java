@@ -57,7 +57,8 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
         }
 
         // Also check assignee (existing check, refactored to use principal)
-        runtimeOperationSupport.checkAssignee(principal, task);
+        runtimeOperationSupport.checkAssignee(principal, task.getAssignee(), task.getCandidateGroups(),
+            task.getProcessInstanceId());
 
         // ADR-6 §D9: form validation via FormArtifactService facade
         if (dto.getVariables() != null && !dto.getVariables().isEmpty()) {
@@ -72,7 +73,8 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
         // WO-INT-4 criterion 9: a service key's attribution claim must be verifiable —
         // the named user has to be the assignee or a candidate for this task.
         if (onBehalfOf != null) {
-            runtimeOperationSupport.requireOnBehalfMatchesTask(task, onBehalfOf);
+            runtimeOperationSupport.requireOnBehalfMatchesTask(task.getAssignee(), task.getCandidateGroups(),
+                task.getProcessInstanceId(), onBehalfOf);
         }
         IdDTO result;
         try {
@@ -120,7 +122,8 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
             // WO-INT-4 criterion 9: the claimed user must be a candidate for this task.
             // (An unassigned task cannot match by assignee, so candidate/process-member
             // rules apply — the same rules as canClaimUserTask for a real user.)
-            runtimeOperationSupport.requireOnBehalfMatchesTask(task, assignee);
+            runtimeOperationSupport.requireOnBehalfMatchesTask(task.getAssignee(), task.getCandidateGroups(),
+                task.getProcessInstanceId(), assignee);
         }
 
         // Atomic claim can still lose the race to a concurrent claimant between the check above
