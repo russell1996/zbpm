@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.FormValidator;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import com.zorrodev.bpm.engine.service.RuntimeSupportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
     private final DBService dbService;
     private final CancelingPhaseService cancelingPhaseService;
     private final AuditLogService auditLogService;
+    private final RuntimeSupportService runtimeSupportService;
     private final RuntimeOperationSupport runtimeOperationSupport;
 
     @Transactional
@@ -51,7 +53,7 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
         // always "latest by key" — mirrors RuntimeServiceImpl.startProcessInstance's own
         // resolution order (id > key+version > key+maxVersion), so a start pinned to an older
         // version is validated against that version's form/schema, not a newer one's.
-        ProcessDefinitionEntity targetDefinition = runtimeOperationSupport.resolveTargetDefinition(dto);
+        ProcessDefinitionEntity targetDefinition = runtimeSupportService.resolveTargetDefinition(dto);
 
         // ADR-6 §D9: form validation via FormArtifactService facade
         if (targetDefinition != null && targetDefinition.getStartFormKey() != null) {

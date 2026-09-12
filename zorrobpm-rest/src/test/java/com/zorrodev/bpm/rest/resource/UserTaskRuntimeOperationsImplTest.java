@@ -56,7 +56,7 @@ class UserTaskRuntimeOperationsImplTest {
         when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
         when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
         when(authorizationService.canCompleteUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())).thenReturn(true);
-        doNothing().when(runtimeOperationSupport).checkAssignee(principal, task);
+        doNothing().when(runtimeOperationSupport).checkAssignee(eq(principal), any(), any(), any());
         when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
         com.zorrodev.bpm.engine.dto.IdDTO engineId = new com.zorrodev.bpm.engine.dto.IdDTO();
         engineId.setId(id);
@@ -89,7 +89,7 @@ class UserTaskRuntimeOperationsImplTest {
         when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
         when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
         when(authorizationService.canCompleteUserTask(principal, task.getProcessInstanceId(), task.getCandidateGroups())).thenReturn(true);
-        doNothing().when(runtimeOperationSupport).checkAssignee(principal, task);
+        doNothing().when(runtimeOperationSupport).checkAssignee(eq(principal), any(), any(), any());
         when(runtimeOperationSupport.checkedOnBehalfOf()).thenReturn(null);
         when(runtimeService.completeUserTask(id, dto.getVariables()))
             .thenThrow(new com.zorrodev.bpm.contract.exception.TaskCompletionInProgressException(
