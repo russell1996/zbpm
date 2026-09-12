@@ -32,6 +32,17 @@ PROJECT="zbpm-pgci"
 cleanup() { docker compose -f "$COMPOSE" -p "$PROJECT" down -v >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
+# The zbpm_m2 cache volume is a shared, PERSISTENT named volume (not per-run) --
+# whatever UID last wrote into it owns its content. Before every use, force it
+# back to the CURRENT invoker's UID: cheap (chown, not a fresh download) and
+# idempotent. Without this, a volume first populated by a different UID (e.g.
+# root, from a run before --user was added, or a different runner) makes every
+# subsequent --user run fail with AccessDeniedException -- caught on real CI
+# (pipeline 169520, commit 5de447ce) right after --user was added below.
+ensure_m2_ownership() {
+  docker run --rm -v zbpm_m2:/tmp/.m2 alpine:3.20 chown -R "$(id -u):$(id -g)" /tmp/.m2
+}
+
 echo "=== WO-PROC-8: Starting postgres:16 on host port $PG_PORT ==="
 docker compose -f "$COMPOSE" -p "$PROJECT" up -d
 
@@ -66,6 +77,7 @@ echo "=== postgres is ready ==="
 # trap still tears postgres down.
 run_pg_suite() {
   local module="$1"
+  ensure_m2_ownership
   set +e
   docker run --rm \
     --user "$(id -u):$(id -g)" \
@@ -104,6 +116,7 @@ run_pg_suite() {
 # HotColumnIndexUsagePgIT ui_users pollution) back into the database the rest
 # tests need clean.
 run_rest_suite() {
+  ensure_m2_ownership
   set +e
   docker run --rm \
     --user "$(id -u):$(id -g)" \
