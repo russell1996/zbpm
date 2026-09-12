@@ -92,6 +92,21 @@ public class CompleteServiceTaskPhaseResumePgIT extends PostgresIT {
                 .count());
     }
 
+    /**
+     * Counts endEvent activities in the instance. Characterizes the no-double-advance
+     * invariant: one service-task completion must produce exactly one endEvent row —
+     * a redelivered completion that slips past the guard would advance the token
+     * twice and create a second one (P-67: asserting only the service-task row
+     * cannot distinguish «guard ignored» from «guard bypassed», the second
+     * completion just re-updates the same row).
+     */
+    private long countEndEvents(UUID pi) {
+        return tx.execute(s -> activityRepository.findAll().stream()
+                .filter(a -> a.getProcessInstanceId().equals(pi)
+                        && a.getBpmnElementId().equals("endEvent"))
+                .count());
+    }
+
     // ----------------------------------------------------------------
     // tests
     // ----------------------------------------------------------------
@@ -121,6 +136,11 @@ public class CompleteServiceTaskPhaseResumePgIT extends PostgresIT {
                 .as("serviceTask1 should be COMPLETED after completion")
                 .isEqualTo(1);
 
+        // Exactly one endEvent row — the token advanced once, not twice
+        assertThat(countEndEvents(pi))
+                .as("exactly one endEvent row after single completion")
+                .isEqualTo(1);
+
         // Process instance should be completed (start → serviceTask → end)
         assertThat(isDone(pi))
                 .as("Process instance should be completed after service task completion")
@@ -143,6 +163,9 @@ public class CompleteServiceTaskPhaseResumePgIT extends PostgresIT {
         assertThat(countByElement(pi, "serviceTask1", ActivityStatus.COMPLETED))
                 .as("serviceTask1 should be COMPLETED after first completion")
                 .isEqualTo(1);
+        assertThat(countEndEvents(pi))
+                .as("one endEvent row after first completion")
+                .isEqualTo(1);
 
         // Complete again — should be ignored (no crash, no double-advance)
         tx.executeWithoutResult(s -> runtimeService.completeServiceTask(serviceTaskId, List.of()));
@@ -150,6 +173,10 @@ public class CompleteServiceTaskPhaseResumePgIT extends PostgresIT {
         // Still exactly 1 COMPLETED, process still done
         assertThat(countByElement(pi, "serviceTask1", ActivityStatus.COMPLETED))
                 .as("serviceTask1 should still be COMPLETED (no double-advance)")
+                .isEqualTo(1);
+        // The guard must have swallowed the redelivery: no second endEvent row
+        assertThat(countEndEvents(pi))
+                .as("guard must prevent double-advance: still exactly 1 endEvent row")
                 .isEqualTo(1);
         assertThat(isDone(pi))
                 .as("Process instance should still be completed")
