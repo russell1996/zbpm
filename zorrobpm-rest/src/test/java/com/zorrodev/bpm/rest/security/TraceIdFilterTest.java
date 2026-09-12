@@ -30,12 +30,12 @@ class TraceIdFilterTest {
         var filter = new TraceIdFilter();
         var request = new MockHttpServletRequest();
         var response = new MockHttpServletResponse();
-        var chain = new MockFilterChain((req, res) -> {
+        jakarta.servlet.FilterChain chain = (req, res) -> {
             // inside chain, MDC should contain generated traceId
             assertThat(MDC.get("traceId")).isNotNull().isNotBlank();
-        });
+        };
 
-        filter.doFilterInternal(request, response, chain);
+        filter.doFilter(request, response, chain);
 
         assertThat(response.getHeader("X-Request-Id")).isNotBlank();
     }
