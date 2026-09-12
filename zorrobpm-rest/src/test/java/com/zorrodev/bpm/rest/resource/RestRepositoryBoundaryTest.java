@@ -52,7 +52,6 @@ class RestRepositoryBoundaryTest {
             "ProcessInstanceRuntimeOperationsImpl",
             "SchemaMapOperationsImpl",
             "SseEventStreamService",
-            "TaskFormOperationsImpl",
             "UserTaskRuntimeOperationsImpl");
 
     private static Set<String> actualViolators() {
