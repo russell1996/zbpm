@@ -12,6 +12,7 @@ import com.zorrodev.bpm.exchange.MailSendRequested;
 import com.zorrodev.bpm.exchange.ServiceTaskEnqueued;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -53,6 +54,10 @@ public class OutboxBatchProcessor {
 
     @Transactional
     public void processBatch() {
+        // WO-REL-23: if this runs in an async thread, inherit traceId via copy, not clear()
+        // (MDC.getCopyOfContextMap() preserves parent context; plain MDC.clear() would lose it)
+        var parentMdc = MDC.getCopyOfContextMap();
+        if (parentMdc != null) MDC.setContextMap(parentMdc);
         var pending = outboxRepository.findPendingBatch(batchSize);
         // WO-OBS-1: gauges sampled per batch (read-only, no behavior change).
         bpmMetrics.setOutboxBacklog(outboxRepository.countPending());
