@@ -103,10 +103,7 @@ public class CompletionService {
      */
     public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
         Activity activity = elementSupport.lockAndReload(userTaskId);
-        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
-            // only an active task may complete — ignore a duplicate/late completion, a boundary-timer
-            // interruption (CANCELLED) or a task superseded by incident-resolve (ERROR) to avoid double execution
-            log.info("Ignoring completion of user task {} in status {}", userTaskId, activity.getStatus());
+        if (!isUserTaskCompletionAllowed(userTaskId, activity)) {
             return;
         }
         UUID processInstanceId = activity.getProcessInstanceId();
@@ -116,6 +113,36 @@ public class CompletionService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
+        rejectOpenAssigningPhase(userTaskId, activity, bpmnElement);
+        if (openUpdatingPhaseOnVariables(userTaskId, variables, processInstanceId, token, bpmnElement, activity)) {
+            return;
+        }
+        if (openCompletingPhase(userTaskId, variables, processInstanceId, token, bpmnElement, activity)) {
+            return;
+        }
+
+        finishUserTaskCompletion(processInstanceId, token, userTaskId, variables, bpmn, bpmnElement, executor);
+    }
+
+    /**
+     * WO-DEBT-6 S3: status guard of {@link #completeUserTask}.
+     * Verbatim block except mechanical return plumbing. Returns true when the completion may proceed.
+     */
+    private boolean isUserTaskCompletionAllowed(UUID userTaskId, Activity activity) {
+        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
+            // only an active task may complete — ignore a duplicate/late completion, a boundary-timer
+            // interruption (CANCELLED) or a task superseded by incident-resolve (ERROR) to avoid double execution
+            log.info("Ignoring completion of user task {} in status {}", userTaskId, activity.getStatus());
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * WO-DEBT-6 S3: assigning-phase guard of {@link #completeUserTask} (WO-C8-28).
+     * Verbatim block (void, zero-touch).
+     */
+    private void rejectOpenAssigningPhase(UUID userTaskId, Activity activity, BpmnElementModel bpmnElement) {
         // WO-C8-28: a complete attempted while another listener phase is open is a
         // client conflict (409), never a silent double transition — the in-flight
         // phase owns this task until its listeners finish. Same exception class as
@@ -130,7 +157,15 @@ public class CompletionService {
                 "User task '" + activity.getBpmnElementId() + "' is already assigning"
                     + " (assigning listener " + pendingAssigningOnComplete + " in flight) — wait for it to finish");
         }
+    }
 
+    /**
+     * WO-DEBT-6 S3: updating-phase opener of {@link #completeUserTask} (WO-C8-28).
+     * Verbatim block except mechanical return plumbing (the phase-open return stops
+     * the whole completion, hence boolean). Returns true when handled.
+     */
+    private boolean openUpdatingPhaseOnVariables(UUID userTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID token, BpmnElementModel bpmnElement, Activity activity) {
         // WO-C8-28: updating-listener phase — read only for elements that declare
         // updating listeners, so the common path never touches the new state. Opens
         // ONLY on a real variable write (complete WITH variables): a complete without
@@ -152,7 +187,7 @@ public class CompletionService {
                 serviceTaskEnqueueService.enqueueAfterCommit(userTaskId);
                 log.info("{}/{}: Completing user task, opening updating-listener phase of {}: {}/{}",
                     processInstanceId, token, activity.getBpmnElementId(), userTaskId, activity.getBpmnElementId());
-                return;
+                return true;
             }
             // Phase already open: same 409 discipline as completing (same exception
             // class — the REST catch maps by class; the message names this phase).
@@ -162,7 +197,16 @@ public class CompletionService {
                 "User task '" + activity.getBpmnElementId() + "' is already updating"
                     + " (updating listener " + pendingUpdating + " in flight) — wait for it to finish");
         }
+        return false;
+    }
 
+    /**
+     * WO-DEBT-6 S3: completing-phase opener of {@link #completeUserTask} (WO-C8-24).
+     * Verbatim block except mechanical return plumbing (the phase-open return stops
+     * the whole completion, hence boolean). Returns true when handled.
+     */
+    private boolean openCompletingPhase(UUID userTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID token, BpmnElementModel bpmnElement, Activity activity) {
         // WO-C8-24: completing-listener phase — read only for elements that declare
         // completing listeners, so the common path never touches the new state.
         List<ListenerModel> completingListeners = elementSupport.userTaskCompletingListeners(bpmnElement);
@@ -179,7 +223,7 @@ public class CompletionService {
                 serviceTaskEnqueueService.enqueueAfterCommit(userTaskId);
                 log.info("{}/{}: Completing user task, opening completing-listener phase of {}: {}/{}",
                     processInstanceId, token, activity.getBpmnElementId(), userTaskId, activity.getBpmnElementId());
-                return;
+                return true;
             }
             // Phase already open: a repeat complete is a client conflict (409), never a
             // silent re-completion and never a 500 (WO step 5; closes the R1-review defect
@@ -188,8 +232,7 @@ public class CompletionService {
                 "User task '" + activity.getBpmnElementId() + "' is already completing"
                     + " (completing listener " + pendingCompleting + " in flight) — wait for it to finish");
         }
-
-        finishUserTaskCompletion(processInstanceId, token, userTaskId, variables, bpmn, bpmnElement, executor);
+        return false;
     }
 
     /**
