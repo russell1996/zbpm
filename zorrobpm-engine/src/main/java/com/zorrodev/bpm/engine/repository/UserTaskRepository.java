@@ -81,6 +81,9 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
     @Query("SELECT e.bpmnElementId AS bpmnElementId, COUNT(e.id) AS count FROM UserTaskEntity e WHERE e.processInstanceId = :processInstanceId AND e.completedAt IS NULL GROUP BY e.bpmnElementId")
     List<BpmnElementStatistics> findStatsByProcessInstanceId(UUID processInstanceId);
 
+    @Query("SELECT MIN(e.createdAt) FROM UserTaskEntity e WHERE e.completedAt IS NULL")
+    Instant findOldestOpenCreatedAt();
+
     List<UserTaskEntity> findByProcessDefinitionId(UUID processDefinitionId);
 
     List<UserTaskEntity> findByProcessDefinitionIdAndProcessInstanceId(UUID processDefinitionId, UUID processInstanceId);

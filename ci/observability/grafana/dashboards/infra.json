@@ -1,0 +1,101 @@
+{
+  "id": null,
+  "uid": "infra",
+  "title": "ZorroBPM — Infra",
+  "tags": ["zorrobpm"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "query": "label_values(instance)",
+        "datasource": "Prometheus",
+        "current": {"text": "All", "value": "$__all"},
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "PostgreSQL — activity count / max connections / saturation %",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pg_stat_activity_count", "legendFormat": "activity"},
+        {"expr": "pg_settings_max_connections", "legendFormat": "max"},
+        {"expr": "pg_stat_activity_count / pg_settings_max_connections * 100", "legendFormat": "saturation %"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "PostgreSQL — database size",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pg_database_size_bytes{datname=\"zorrobpm-db\"}", "legendFormat": "size"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "PostgreSQL — longest transaction / deadlocks",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pg_postmaster_start_time_seconds", "legendFormat": "start"},
+        {"expr": "rate(pg_stat_database_deadlocks{datname=\"zorrobpm-db\"}[5m])", "legendFormat": "deadlocks"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Disk — avail / size % (red >85%)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "node_filesystem_avail_bytes", "legendFormat": "avail"},
+        {"expr": "100 - (node_filesystem_avail_bytes / node_filesystem_size_bytes * 100)", "legendFormat": "used %"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 85}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Memory — container vs limit / node",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "container_memory_usage_bytes / container_spec_memory_limit_bytes * 100", "legendFormat": "container %"},
+        {"expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "node used"},
+        {"expr": "node_memory_MemTotal_bytes", "legendFormat": "node total"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Node — CPU / load",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "rate(node_cpu_seconds_total[5m])", "legendFormat": "cpu"},
+        {"expr": "node_load1", "legendFormat": "load1"}
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}
