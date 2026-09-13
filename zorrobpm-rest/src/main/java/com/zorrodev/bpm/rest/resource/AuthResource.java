@@ -90,6 +90,17 @@ public class AuthResource implements AuthContract {
     }
 
     @Override
+    public void verify() {
+        // WO-OBS-4: nginx auth_request target. The filter already rejected missing/invalid
+        // tokens with 401 (same carve-out as me()); here we only translate valid JWT claims
+        // into identity headers. Empty body — auth_request ignores it.
+        TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
+        if (claims == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+        response.setHeader("X-Auth-User", claims.username());
+        response.setHeader("X-Auth-Role", claims.role());
+    }
+
+    @Override
     @Transactional
     public AuthResponse refresh() {
         String refreshTokenValue = extractCookie("refresh_token");

@@ -30,7 +30,10 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarGroupLabel: { template: '<div><slot /></div>' },
   SidebarMenu: { template: '<ul><slot /></ul>' },
   SidebarMenuItem: { template: '<li><slot /></li>' },
-  SidebarMenuButton: { template: '<button><slot /></button>' },
+  // WO-OBS-4: the mock renders the `as` prop like the real shadcn primitive,
+  // so the external Monitoring link renders as <a>, not <button> (the
+  // super-admin 12-button count below depends on exactly that).
+  SidebarMenuButton: { template: '<component :is="$attrs.as || \'button\'"><slot /></component>' },
   useSidebar: () => ({ state: mockSidebarState }),
 }))
 
@@ -81,6 +84,24 @@ describe('SidebarNavShadcn', () => {
     const buttons = wrapper.findAll('button')
     const labels = buttons.map(b => b.text())
     expect(labels.some(l => l === 'users' || l === 'submissionQueue' || l === 'registrationQueue')).toBe(false)
+  })
+
+  it('WO-OBS-4: super-admin sees the external Monitoring link (new tab, no router)', () => {
+    mockAuth.isSuperAdmin = true
+    const wrapper = mount(SidebarNavShadcn)
+    const link = wrapper.find('a[href="/grafana/"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toContain('noopener')
+    expect(link.text()).toBe('monitoring')
+    // external link is NOT a router button: the 12-button count above is untouched
+    expect(wrapper.findAll('button').length).toBe(12)
+  })
+
+  it('WO-OBS-4: non-super-admin does NOT see the Monitoring link', () => {
+    const wrapper = mount(SidebarNavShadcn)
+    expect(wrapper.find('a[href="/grafana/"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('monitoring')
   })
 
   it('has 5 domain group labels + admin group when super-admin', () => {
