@@ -2,23 +2,10 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.ApiKeyManagementContract;
 import com.zorrodev.bpm.contract.dto.*;
-import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
-import com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity;
-import com.zorrodev.bpm.engine.entity.ProcessEntity;
-import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
-import com.zorrodev.bpm.engine.entity.UiUserEntity;
-import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
-import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
-import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
-import com.zorrodev.bpm.engine.repository.ProcessRepository;
-import com.zorrodev.bpm.engine.repository.UiUserRepository;
-import com.zorrodev.bpm.engine.security.AuthorizationService;
-import com.zorrodev.bpm.engine.security.KeyHasher;
 import com.zorrodev.bpm.engine.security.Principal;
-import com.zorrodev.bpm.engine.service.AuditLogService;
+import com.zorrodev.bpm.engine.service.ApiKeyService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,29 +13,21 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.security.SecureRandom;
-import java.time.Instant;
-import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
-@Slf4j
+/**
+ * WO-DEBT-7 S3 — thin facade over {@link ApiKeyService}: auth checks +
+ * delegation. All JPA (reads and every {@code .save()}) lives in the service,
+ * inside this class' transaction (no {@code @Transactional} on the service —
+ * same as the original layout, proven by {@code ApiKeyTransactionalIT}: audit
+ * failure rolls the save back). Zero direct persistence imports.
+ */
 @RestController
 @RequiredArgsConstructor
 public class ApiKeyManagementResource implements ApiKeyManagementContract {
 
-    private static final String KEY_PREFIX = "zbpm_sk_";
-    private static final SecureRandom RANDOM = new SecureRandom();
-
-    private final ApiKeyRepository apiKeyRepository;
-    private final ApiKeyGrantRepository apiKeyGrantRepository;
-    private final ProcessRepository processRepository;
-    private final ProcessMemberRepository processMemberRepository;
-    private final UiUserRepository uiUserRepository;
-    private final AuthorizationService authorizationService;
-    private final AuditLogService auditLogService;
+    private final ApiKeyService apiKeyService;
     private final HttpServletRequest request;
 
     // ==================== Super-admin endpoints ====================
@@ -57,96 +36,34 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public ApiKeyWithSecretDTO createApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        return issueKeyForUser(userId);
+        return apiKeyService.issueKeyForUser(userId, getPrincipal());
     }
 
     @Override
     public ApiKeyDTO getApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        if (isSystemAccount(userId)) {
-            // WO-INT-4: a system account holds several keys — "the key of the user"
-            // answers with the first active one (listApiKeys is the full view).
-            return apiKeyRepository.findAllByOwnerUserId(userId).stream()
-                .filter(k -> k.getRevokedAt() == null)
-                .findFirst()
-                .map(this::toDTO)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No API key for this user"));
-        }
-        ApiKeyEntity apiKey = findByUserIdOr404(userId);
-        return toDTO(apiKey);
+        return apiKeyService.getApiKeyForUser(userId);
     }
 
     @Transactional
     @Override
     public List<ApiKeyGrantDTO> setGrants(@PathVariable UUID userId, @RequestBody SetGrantsDTO dto) {
         requireSuperAdmin();
-
-        if (isSystemAccount(userId)) {
-            // WO-INT-4 criterion 5: a system account's grants are account-level — every
-            // active key of the account carries the same grants (rotation must not
-            // produce a key with a different permission set).
-            List<ApiKeyEntity> keys = apiKeyRepository.findAllByOwnerUserId(userId).stream()
-                .filter(k -> k.getRevokedAt() == null)
-                .toList();
-            if (keys.isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No API key for this user");
-            }
-            replaceGrants(keys.get(0), dto); // validates once (process exists, membership, full/permissions)
-            for (int i = 1; i < keys.size(); i++) {
-                replaceGrants(keys.get(i), dto);
-            }
-            return getGrants(keys.get(0).getId());
-        }
-
-        ApiKeyEntity apiKey = findByUserIdOr404(userId);
-        return replaceGrants(apiKey, dto);
+        return apiKeyService.setGrantsForUser(userId, dto, getPrincipal());
     }
 
     @Transactional
     @Override
     public ApiKeyWithSecretDTO rotateApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        ApiKeyEntity apiKey = findByUserIdOr404(userId);
-
-        String rawKey = generateKey();
-        apiKey.setKeyHash(KeyHasher.sha256(rawKey));
-        apiKey.setPrefix(rawKey.substring(0, Math.min(16, rawKey.length())));
-        apiKeyRepository.save(apiKey);
-
-        log.info("API key rotated for user={}", userId);
-        auditLogService.record(getPrincipal(), "KEY_ROTATE", null, userId.toString());
-        return toWithSecret(apiKey, rawKey);
+        return apiKeyService.rotateKeyForUser(userId, getPrincipal());
     }
 
     @Transactional
     @Override
     public void revokeApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        // WO-INT-4: a system account may hold several active keys. Revoking "the key of the
-        // user" then means revoking them all — key-level revocation lives in revokeApiKeyById.
-        if (isSystemAccount(userId)) {
-            List<ApiKeyEntity> keys = apiKeyRepository.findAllByOwnerUserId(userId);
-            boolean any = false;
-            for (ApiKeyEntity key : keys) {
-                if (key.getRevokedAt() == null) {
-                    key.setRevokedAt(Instant.now());
-                    apiKeyRepository.save(key);
-                    any = true;
-                }
-            }
-            if (any) {
-                auditLogService.record(getPrincipal(), "KEY_REVOKE", null, userId.toString());
-            }
-            log.info("All API keys revoked for system user={}", userId);
-            return;
-        }
-        ApiKeyEntity apiKey = findByUserIdOr404(userId);
-
-        apiKey.setRevokedAt(Instant.now());
-        apiKeyRepository.save(apiKey);
-        auditLogService.record(getPrincipal(), "KEY_REVOKE", null, userId.toString());
-
-        log.info("API key revoked for user={}", userId);
+        apiKeyService.revokeKeyForUser(userId, getPrincipal());
     }
 
     // ==================== User self-service endpoints ====================
@@ -158,8 +75,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
 
-        ApiKeyEntity apiKey = findByUserIdOr404(u.userId());
-        return toDTO(apiKey);
+        return apiKeyService.getOwnApiKey(u.userId());
     }
 
     /**
@@ -171,7 +87,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public ApiKeyWithSecretDTO createMyApiKey() {
         Principal.UserPrincipal user = selfPrincipal();
-        return issueKeyForUser(user.userId());
+        return apiKeyService.issueKeyForUser(user.userId(), user);
     }
 
     /**
@@ -183,8 +99,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public List<ApiKeyGrantDTO> setMyGrants(@RequestBody SetGrantsDTO dto) {
         Principal.UserPrincipal user = selfPrincipal();
-        ApiKeyEntity apiKey = findByUserIdOr404(user.userId());
-        return replaceGrants(apiKey, dto);
+        return apiKeyService.setOwnGrants(user.userId(), dto, user);
     }
 
     @Transactional
@@ -195,14 +110,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
 
-        ApiKeyEntity apiKey = findByUserIdOr404(u.userId());
-
-        String rawKey = generateKey();
-        apiKey.setKeyHash(KeyHasher.sha256(rawKey));
-        apiKey.setPrefix(rawKey.substring(0, Math.min(16, rawKey.length())));
-        apiKeyRepository.save(apiKey);
-
-        return toWithSecret(apiKey, rawKey);
+        return apiKeyService.rotateOwnKey(u.userId());
     }
 
     @Transactional
@@ -213,9 +121,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
 
-        ApiKeyEntity apiKey = findByUserIdOr404(u.userId());
-        apiKey.setRevokedAt(Instant.now());
-        apiKeyRepository.save(apiKey);
+        apiKeyService.revokeOwnKey(u.userId());
     }
 
     // ==================== WO-INT-4: system accounts — multiple keys ====================
@@ -223,9 +129,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public List<ApiKeyDTO> listApiKeys(@PathVariable UUID userId) {
         requireSuperAdmin();
-        return apiKeyRepository.findAllByOwnerUserId(userId).stream()
-            .map(this::toDTO)
-            .collect(Collectors.toList());
+        return apiKeyService.listKeysForUser(userId);
     }
 
     @Transactional
@@ -234,128 +138,20 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         requireSuperAdmin();
         // WO-INT-4 criterion 5: multiple concurrent keys are a SYSTEM-account feature
         // (zero-downtime rotation). Human accounts keep one-key-per-user: an attempt to
-        // open a second key through this endpoint → 409.
-        if (!isSystemAccount(userId)) {
-            ApiKeyEntity existing = apiKeyRepository.findByOwnerUserId(userId).orElse(null);
-            if (existing != null && existing.getRevokedAt() == null) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
-            }
-        }
-        return issueKeyForUser(userId);
+        // open a second key through this endpoint → 409 — enforced inside
+        // issueKeyForUser (same query, same exception, same message as the removed
+        // duplicate guard here).
+        return apiKeyService.issueKeyForUser(userId, getPrincipal());
     }
 
     @Transactional
     @Override
     public void revokeApiKeyById(@PathVariable UUID userId, @PathVariable UUID apiKeyId) {
         requireSuperAdmin();
-        ApiKeyEntity key = apiKeyRepository.findById(apiKeyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "API key not found"));
-        if (!key.getOwnerUserId().equals(userId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "API key not found");
-        }
-        key.setRevokedAt(Instant.now());
-        apiKeyRepository.save(key);
-        auditLogService.record(getPrincipal(), "KEY_REVOKE", null, userId.toString());
-        log.info("API key {} revoked for user={}", apiKeyId, userId);
+        apiKeyService.revokeKeyById(userId, apiKeyId, getPrincipal());
     }
 
-    // ==================== Helpers ====================
-
-    /** WO-ACL-5: current caller as a UserPrincipal, or 401. Shared by all self-service endpoints. */
-    private Principal.UserPrincipal selfPrincipal() {
-        Principal principal = getPrincipal();
-        if (principal == null || !(principal instanceof Principal.UserPrincipal u)) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
-        }
-        return u;
-    }
-
-    /**
-     * One key per user, shared by the super-admin and self-service create paths:
-     * active key → 409, revoked key → replaced (old key + its grants deleted, new key issued).
-     * WO-INT-4: for a SYSTEM account the "one key" rule does not apply — a new key is
-     * added alongside the existing ones (zero-downtime rotation); nothing is deleted.
-     */
-    private ApiKeyWithSecretDTO issueKeyForUser(UUID userId) {
-        UiUserEntity user = uiUserRepository.findById(userId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
-        boolean system = "SYSTEM".equals(user.getUserType());
-
-        if (!system) {
-            var existingKey = apiKeyRepository.findByOwnerUserId(userId);
-            if (existingKey.isPresent()) {
-                ApiKeyEntity existing = existingKey.get();
-                if (existing.getRevokedAt() == null) {
-                    // Active key → 409
-                    throw new ResponseStatusException(HttpStatus.CONFLICT, "User already has an active API key");
-                }
-                // Revoked key → replace it (delete old + its grants, create new)
-                apiKeyGrantRepository.deleteByApiKeyId(existing.getId());
-                apiKeyRepository.delete(existing);
-                apiKeyRepository.flush();
-            }
-        }
-
-        String rawKey = generateKey();
-        String keyHash = KeyHasher.sha256(rawKey);
-
-        ApiKeyEntity apiKey = new ApiKeyEntity();
-        apiKey.setId(UUID.randomUUID());
-        apiKey.setOwnerUserId(userId);
-        apiKey.setKeyHash(keyHash);
-        apiKey.setPrefix(rawKey.substring(0, Math.min(16, rawKey.length())));
-        apiKey.setCreatedAt(Instant.now());
-        apiKeyRepository.save(apiKey);
-
-        log.info("API key created for user={}", user.getUsername());
-        auditLogService.record(getPrincipal(), "KEY_CREATE", null, userId.toString());
-        return toWithSecret(apiKey, rawKey);
-    }
-
-    /**
-     * Validate-and-replace grants, shared by the super-admin and self-service paths:
-     * each process must exist, the owner must be a member of it, full/permissions are
-     * mutually exclusive. Any violation → 400 before any grant is touched.
-     */
-    private List<ApiKeyGrantDTO> replaceGrants(ApiKeyEntity apiKey, SetGrantsDTO dto) {
-        // Validate grants: each process must exist, user must be member
-        for (SetGrantsDTO.GrantEntry entry : dto.getGrants()) {
-            ProcessEntity process = processRepository.findByDefinitionKey(entry.getProcessKey())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Process not found: " + entry.getProcessKey()));
-
-            if (entry.isFull() && (entry.getPermissions() != null && !entry.getPermissions().isBlank())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Cannot specify both permissions and full=true");
-            }
-
-            // Validate user is member of the process
-            var membership = processMemberRepository.findById(
-                new com.zorrodev.bpm.engine.entity.ProcessMemberId(process.getId(), apiKey.getOwnerUserId()));
-            if (membership.isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "User is not a member of process: " + entry.getProcessKey());
-            }
-        }
-
-        // Delete existing grants and insert new ones
-        apiKeyGrantRepository.deleteByApiKeyId(apiKey.getId());
-
-        for (SetGrantsDTO.GrantEntry entry : dto.getGrants()) {
-            ProcessEntity process = processRepository.findByDefinitionKey(entry.getProcessKey()).orElseThrow();
-
-            ApiKeyGrantEntity grant = new ApiKeyGrantEntity();
-            grant.setApiKeyId(apiKey.getId());
-            grant.setProcessId(process.getId());
-            grant.setPermissions(entry.getPermissions());
-            grant.setFull(entry.isFull());
-            apiKeyGrantRepository.save(grant);
-        }
-
-        log.info("Grants updated for user={}, count={}", apiKey.getOwnerUserId(), dto.getGrants().size());
-        auditLogService.record(getPrincipal(), "KEY_GRANTS_UPDATE", null, apiKey.getOwnerUserId().toString());
-        return getGrants(apiKey.getId());
-    }
+    // ==================== Helpers (no JPA) ====================
 
     private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
@@ -369,58 +165,12 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         }
     }
 
-    private ApiKeyEntity findByUserIdOr404(UUID userId) {
-        return apiKeyRepository.findByOwnerUserId(userId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No API key for this user"));
-    }
-
-    private boolean isSystemAccount(UUID userId) {
-        return uiUserRepository.findById(userId)
-            .map(u -> "SYSTEM".equals(u.getUserType()))
-            .orElse(false);
-    }
-
-    private String generateKey() {
-        byte[] bytes = new byte[32];
-        RANDOM.nextBytes(bytes);
-        return KEY_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private ApiKeyDTO toDTO(ApiKeyEntity apiKey) {
-        ApiKeyDTO dto = new ApiKeyDTO();
-        dto.setId(apiKey.getId());
-        dto.setOwnerUserId(apiKey.getOwnerUserId());
-        dto.setPrefix(apiKey.getPrefix());
-        dto.setCreatedAt(apiKey.getCreatedAt());
-        dto.setLastUsedAt(apiKey.getLastUsedAt());
-        dto.setExpiresAt(apiKey.getExpiresAt());
-        dto.setRevokedAt(apiKey.getRevokedAt());
-        dto.setGrants(getGrants(apiKey.getId()));
-        return dto;
-    }
-
-    private ApiKeyWithSecretDTO toWithSecret(ApiKeyEntity apiKey, String rawKey) {
-        ApiKeyWithSecretDTO dto = new ApiKeyWithSecretDTO();
-        dto.setId(apiKey.getId());
-        dto.setOwnerUserId(apiKey.getOwnerUserId());
-        dto.setPrefix(apiKey.getPrefix());
-        dto.setKey(rawKey);
-        dto.setCreatedAt(apiKey.getCreatedAt());
-        dto.setGrants(getGrants(apiKey.getId()));
-        return dto;
-    }
-
-    private List<ApiKeyGrantDTO> getGrants(UUID apiKeyId) {
-        return apiKeyGrantRepository.findByApiKeyId(apiKeyId).stream()
-            .map(g -> {
-                ApiKeyGrantDTO dto = new ApiKeyGrantDTO();
-                dto.setProcessId(g.getProcessId());
-                dto.setPermissions(g.getPermissions());
-                dto.setFull(g.isFull());
-                // Resolve processKey
-                processRepository.findById(g.getProcessId()).ifPresent(p -> dto.setProcessKey(p.getDefinitionKey()));
-                return dto;
-            })
-            .collect(Collectors.toList());
+    /** WO-ACL-5: current caller as a UserPrincipal, or 401. Shared by all self-service endpoints. */
+    private Principal.UserPrincipal selfPrincipal() {
+        Principal principal = getPrincipal();
+        if (principal == null || !(principal instanceof Principal.UserPrincipal u)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        return u;
     }
 }

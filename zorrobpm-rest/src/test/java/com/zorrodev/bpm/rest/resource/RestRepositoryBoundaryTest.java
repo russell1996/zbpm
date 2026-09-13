@@ -39,7 +39,6 @@ class RestRepositoryBoundaryTest {
      * эпика, см. отчёт Среза 0).
      */
     private static final Set<String> WHITELIST = Set.of(
-            "ApiKeyManagementResource",
             "AuditLogResource",
             "AuthResource",
             "ElementBindingOperationsImpl",
