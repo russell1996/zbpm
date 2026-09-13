@@ -185,6 +185,23 @@ docker compose up -d --build
 
 Остановить: `docker compose down` (добавьте `-v`, чтобы удалить тома с данными).
 
+### Мониторинг из коробки (WO-OBS-2)
+
+```bash
+# 1) создайте сервисный API-ключ как SUPER_ADMIN (UI → Admin → API keys или curl /api/auth) и положите в файл:
+echo -n "zbpm_sk_..." > ci/observability/scrape-token && chmod 600 ci/observability/scrape-token
+# 2) задайте пароль Grafana в .env:
+echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 24)" >> .env
+# 3) поднимите overlay поверх основного стека:
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# 4) откройте Grafana:
+open http://localhost:8081/grafana/   # логин admin / ваш пароль
+```
+
+Prometheus скрейпит `app:8080/actuator/prometheus` (bearer-токен из `scrape-token`), `rabbitmq:15692/metrics`, `postgres-exporter:9187`, `node-exporter:9100` и себя. Ретенция — `30d` по умолчанию (`PROMETHEUS_RETENTION` в `.env`). Дашборды — см. `WO-OBS-3`, алерты — `WO-OBS-5`. Одно-хостовая ретенция честно: TSDB локальный, не HA-хранилище; для долгосрочного хранения — скрейпите внешним Prometheus.
+
+Остановить мониторинг: `docker compose -f docker-compose.yml -f docker-compose.observability.yml down` (оставит основной стек).
+
 **Frontend** собирается отдельным образом (`zorrobpm-frontend/Dockerfile`, multi-stage `node:22` → `nginx`).
 В `src/` нет hardcoded `localhost`/IP: API-база — относительный `/api`, OIDC-redirect берётся из
 `window.location.origin`.
