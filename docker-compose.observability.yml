@@ -57,13 +57,15 @@ services:
       GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
       GF_AUTH_PROXY_SYNC_TTL: "60"
       # WO-OBS-4: MANDATORY whitelist — without it anyone reaching Grafana directly
-      # (bypassing nginx) could forge identity via header. Value = the compose
-      # network CIDR (re-derive: docker network inspect zorrobpm_zorrobpm).
-      # No grafana ports are published (see below), so the real boundary is network
-      # membership; this is defense-in-depth. Fail-closed: if the subnet ever
-      # changes, proxy-auth breaks back to the admin login form (criterion 6),
-      # never to open access.
-      GF_AUTH_PROXY_WHITELIST: 172.18.0.0/16
+      # (bypassing nginx) could forge identity via header. Value = the nginx
+      # container's STATIC IP /32 (defined in docker-compose.yml: frontend.networks.zorrobpm.ipv4_address).
+      # NOT the whole 172.18.0.0/16 subnet — that would let any compose
+      # container (e.g. app at 172.18.0.9) forge identity, which is exactly
+      # what criterion 4 rules out. No grafana ports are published (see below),
+      # so the real boundary is network membership; this is defense-in-depth.
+      # Fail-closed: wrong/absent value breaks proxy-auth back to the admin
+      # login form (criterion 6), never to open access.
+      GF_AUTH_PROXY_WHITELIST: ${GRAFANA_PROXY_WHITELIST:-172.18.0.3/32}
       GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
       # WO-OBS-5: webhook for alerts — OFF by default (empty → dummy URL, Firing without notification, principle 5)
       GRAFANA_ALERT_WEBHOOK_URL: ${GRAFANA_ALERT_WEBHOOK_URL:-http://localhost:0}
