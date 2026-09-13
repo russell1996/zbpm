@@ -1,0 +1,99 @@
+# WO-OBS-2: observability overlay — Prometheus + Grafana + exporters.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# (principle 3: separate file, not lines in the main compose). All services join
+# the same zorrobpm network so app/postgres/rabbitmq are reachable by service name.
+# Memory limits are explicit — b2b-test-vm has 7.8 GiB (5.9 available), 4 CPU.
+name: zorrobpm
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: zorrobpm-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./ci/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ci/observability/scrape-token:/etc/prometheus/scrape-token:ro
+      - prometheus-data:/prometheus
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    # no ports published — access via Grafana (datasource proxy) only
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: zorrobpm-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_DISABLE_LOGIN_FORM: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./ci/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    # no ports published — access via nginx /grafana subpath only
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: zorrobpm-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DB_USERNAME:-zorrodev}:${DB_PASSWORD:-zorrodev}@postgres:5432/${DB_NAME:-zorrobpm-db}?sslmode=disable"
+      DATA_SOURCE_URI: "postgres:5432/${DB_NAME:-zorrobpm-db}?sslmode=disable"
+      DATA_SOURCE_USER: "${DB_USERNAME:-zorrodev}"
+      DATA_SOURCE_PASS: "${DB_PASSWORD:-zorrodev}"
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: zorrobpm-node-exporter
+    restart: unless-stopped
+    command:
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)'
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  zorrobpm:
+    driver: bridge
