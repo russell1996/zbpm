@@ -41,6 +41,24 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SECURITY_DISABLE_LOGIN_FORM: "false"
+      # WO-OBS-4: shared ZBPM login via nginx auth_request + Grafana auth.proxy.
+      # Identity comes ONLY from X-WEBAUTH-* headers set by nginx (see nginx.conf
+      # /grafana/ + /_zbpm_auth); auto-signup maps every valid ZBPM session.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
+      GF_AUTH_PROXY_SYNC_TTL: "60"
+      # WO-OBS-4: MANDATORY whitelist — without it anyone reaching Grafana directly
+      # (bypassing nginx) could forge identity via header. Value = the compose
+      # network CIDR (re-derive: docker network inspect zorrobpm_zorrobpm).
+      # No grafana ports are published (see below), so the real boundary is network
+      # membership; this is defense-in-depth. Fail-closed: if the subnet ever
+      # changes, proxy-auth breaks back to the admin login form (criterion 6),
+      # never to open access.
+      GF_AUTH_PROXY_WHITELIST: 172.18.0.0/16
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
       # WO-OBS-5: webhook for alerts — OFF by default (empty → dummy URL, Firing without notification, principle 5)
       GRAFANA_ALERT_WEBHOOK_URL: ${GRAFANA_ALERT_WEBHOOK_URL:-http://localhost:0}
     volumes:

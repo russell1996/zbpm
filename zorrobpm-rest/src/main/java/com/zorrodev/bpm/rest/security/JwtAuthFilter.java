@@ -82,6 +82,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     /**
      * WO-SEC-14: Paths exempt from forcePasswordChange enforcement.
      * /auth/me is read-only (returns user info) — exempt.
+     * WO-OBS-4: /auth/verify is read-only auth-introspection (identity headers only) — exempt,
+     * same reason as /auth/me (nginx must validate any live session).
      * /users/* is where password change happens (PUT /users/{id}).
      */
     private static boolean isAuthExempt(String path) {
@@ -89,6 +91,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             || "/auth/refresh".equals(path)
             || "/auth/logout".equals(path)
             || "/auth/me".equals(path)
+            || "/auth/verify".equals(path)
             || isUsersPath(path)
             || "/me/password".equals(path);
     }
@@ -123,8 +126,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private boolean isProtected(String path) {
         // WO-SEC-26: deny-by-default — only explicitly public paths are unprotected
         if (isPublicPath(path)) return false;
-        // /auth/me and /users/* always require auth, even when requireApiAuth=false
-        if (path.equals("/auth/me") || path.startsWith("/me/") || isUsersPath(path)) return true;
+        // /auth/me, /auth/verify and /users/* always require auth, even when requireApiAuth=false
+        if (path.equals("/auth/me") || path.equals("/auth/verify") || path.startsWith("/me/") || isUsersPath(path)) return true;
         if (!requireApiAuth) return false;
         return true;
     }

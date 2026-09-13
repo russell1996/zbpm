@@ -17,6 +17,14 @@ public interface AuthContract {
     @GetExchange("/auth/me")
     UiUser me();
 
+    /**
+     * WO-OBS-4: validates the session for nginx {@code auth_request} (not for browsers).
+     * 200 + {@code X-Auth-User}/{@code X-Auth-Role} response headers, empty body;
+     * 401 without a valid token. Mirrors {@link #me()} auth handling.
+     */
+    @GetExchange("/auth/verify")
+    void verify();
+
     /** Refreshes access token using a valid refresh token cookie. Public (refresh token in cookie). */
     @PostExchange("/auth/refresh")
     AuthResponse refresh();

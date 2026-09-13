@@ -16,6 +16,7 @@ import {
   Table2,
   Inbox,
   Settings,
+  Activity,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -143,6 +144,24 @@ function navigate(to: string) {
               >
                 <component :is="item.icon" class="h-4 w-4 shrink-0" />
                 <span class="group-data-[collapsible=icon]:hidden">{{ t(item.labelKey) }}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <!-- WO-OBS-4: external Grafana link (shared ZBPM login via nginx auth_request).
+                 Plain anchor, NOT router navigation: Grafana is a neighbour behind the same
+                 gateway, not an SPA route. Same button primitive => identical styling.
+                 Inside the SUPER_ADMIN-only group (cosmetic gate; real enforcement is
+                 nginx auth_request + Grafana auth.proxy whitelist). -->
+            <SidebarMenuItem key="monitoring">
+              <SidebarMenuButton
+                as="a"
+                href="/grafana/"
+                target="_blank"
+                rel="noopener"
+                :is-active="false"
+                :tooltip="t('monitoring')"
+              >
+                <component :is="Activity" class="h-4 w-4 shrink-0" />
+                <span class="group-data-[collapsible=icon]:hidden">{{ t('monitoring') }}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
