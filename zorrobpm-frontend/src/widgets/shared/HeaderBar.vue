@@ -2,7 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { LogOut, User, Sun, Moon, Menu, FileCode, ChevronDown, PanelLeft } from 'lucide-vue-next'
+import { LogOut, User, Sun, Moon, Menu, FileCode, ChevronDown, PanelLeft, Activity, Gauge } from 'lucide-vue-next'
 import SearchCommand from './SearchCommand.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
 import { SidebarTrigger } from '@/components/ui/sidebar'
@@ -57,6 +57,31 @@ const { t } = useI18n()
         :title="t('apiDocs')"
       >
         <FileCode class="h-4 w-4" />
+      </a>
+      <!-- WO-OBS-4: observability shortcuts (shared ZBPM login via nginx auth_request).
+           Same <a target="_blank"> primitive and classes as the API-docs icon above.
+           SUPER_ADMIN-only (unlike apiDocs): cosmetic gate, real enforcement is
+           nginx auth_request (+ hard role check on /prometheus/ — Prometheus has no RBAC).
+           No iframes/embeds anywhere. -->
+      <a
+        v-if="auth.isSuperAdmin"
+        href="/grafana/"
+        target="_blank"
+        rel="noopener"
+        class="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
+        :title="t('monitoring')"
+      >
+        <Activity class="h-4 w-4" />
+      </a>
+      <a
+        v-if="auth.isSuperAdmin"
+        href="/prometheus/"
+        target="_blank"
+        rel="noopener"
+        class="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
+        :title="t('metrics')"
+      >
+        <Gauge class="h-4 w-4" />
       </a>
       <DropdownMenu v-if="auth.user">
         <DropdownMenuTrigger as-child>

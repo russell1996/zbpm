@@ -16,6 +16,12 @@ services:
       - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+      # WO-OBS-4: serve the UI from under /prometheus/ (nginx subpath, same as
+      # Grafana serve_from_sub_path). external-url proven live below; without the
+      # route-prefix the UI's asset links break off-root. Host part is env-driven
+      # (dev default = this host's frontend port; prod override in its own .env).
+      - '--web.route-prefix=/prometheus/'
+      - '--web.external-url=${PROMETHEUS_EXTERNAL_URL:-http://localhost:18081/prometheus/}'
     volumes:
       - ./ci/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./ci/observability/scrape-token:/etc/prometheus/scrape-token:ro
