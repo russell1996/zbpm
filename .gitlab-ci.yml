@@ -70,6 +70,7 @@ default:
       - "zorrobpm-frontend/**/*"
       - "pom.xml"
       - "Dockerfile"
+      - "entrypoint.sh"
       - "owasp-suppressions.xml"
       - "ci/**/*"
       - ".gitlab-ci.yml"

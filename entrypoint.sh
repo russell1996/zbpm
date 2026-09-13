@@ -10,4 +10,14 @@ FILES_DIR="${APP_FILES_DIR:-/app/files}"
 mkdir -p "$FILES_DIR"
 chown -R zorrobpm:zorrobpm "$FILES_DIR"
 
+# WO-REL-23's logback-spring.xml added a RollingFileAppender writing to logs/app.log
+# (relative to /app, the JVM's WORKDIR) -- /app itself is root-owned (image build runs as
+# root, only app.jar is chowned), so the unprivileged zorrobpm user this script drops to
+# below cannot create the logs/ directory and the JVM crashes at startup. Same fix as
+# FILES_DIR: create + chown before dropping privileges. Caught live 2026-09-13 -- every
+# deploy since 3a7c38b0 crashed immediately (FileNotFoundException: logs/app.log).
+LOGS_DIR="${APP_LOGS_DIR:-/app/logs}"
+mkdir -p "$LOGS_DIR"
+chown -R zorrobpm:zorrobpm "$LOGS_DIR"
+
 exec setpriv --reuid=zorrobpm --regid=zorrobpm --init-groups java -jar /app/app.jar "$@"
