@@ -41,10 +41,14 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SECURITY_DISABLE_LOGIN_FORM: "false"
+      # WO-OBS-5: webhook for alerts — OFF by default (empty → dummy URL, Firing without notification, principle 5)
+      GRAFANA_ALERT_WEBHOOK_URL: ${GRAFANA_ALERT_WEBHOOK_URL:-http://localhost:0}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./ci/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ci/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - zorrobpm
     deploy:
