@@ -55,6 +55,8 @@ services:
       # first confirm the host is actually internet-exposed — it is not.
       - "${RABBITMQ_PORT:-5672}:5672"        # AMQP
       - "${RABBITMQ_MGMT_PORT:-9300}:15672"  # management UI
+    expose:
+      - "15692"  # WO-OBS-2: rabbitmq_prometheus metrics (no host publish, same network as prometheus)
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
