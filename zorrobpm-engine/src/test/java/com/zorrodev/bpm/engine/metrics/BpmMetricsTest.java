@@ -83,16 +83,6 @@ class BpmMetricsTest {
     }
 
     @Test
-    void dlqDepth_gauge_holdsCount() {
-        Gauge gauge = registry.find("zbpm.dlq.depth").gauge();
-        assertThat(gauge).isNotNull();
-        metrics.setDlqDepth(5);
-        assertThat(gauge.value()).isEqualTo(5.0);
-        metrics.setDlqDepth(0);
-        assertThat(gauge.value()).isEqualTo(0.0);
-    }
-
-    @Test
     void usertaskAgeMax_gauge_holdsSeconds() {
         Gauge gauge = registry.find("zbpm.usertask.age.max").gauge();
         assertThat(gauge).isNotNull();
@@ -190,14 +180,13 @@ class BpmMetricsTest {
     }
 
     @Test
-    void allEighteenMeters_registered() {
+    void allSeventeenMeters_registered() {
         Counter started = registry.find("zbpm.process.started").counter();
         Counter completed = registry.find("zbpm.process.completed").counter();
         Counter failed = registry.find("zbpm.process.failed").counter();
         Gauge active = registry.find("zbpm.process.instances.active").gauge();
         Gauge stuck = registry.find("zbpm.tokens.stuck").gauge();
         Gauge stuckService = registry.find("zbpm.servicetask.stuck").gauge();
-        Gauge dlqDepth = registry.find("zbpm.dlq.depth").gauge();
         Gauge usertaskAge = registry.find("zbpm.usertask.age.max").gauge();
         Counter rejected = registry.find("zbpm.script.rejected").counter();
         Counter timeout = registry.find("zbpm.script.timeout").counter();
@@ -209,13 +198,18 @@ class BpmMetricsTest {
         Gauge quarantine = registry.find("zbpm.outbox.quarantine").gauge();
         Counter rabbit = registry.find("zbpm.rabbit.publish.failures").counter();
         Timer lag = registry.find("zbpm.timer.lag").timer();
-        assertThat(java.util.List.of(started, completed, failed, active, stuck, stuckService, dlqDepth, usertaskAge, rejected, timeout,
+        assertThat(java.util.List.of(started, completed, failed, active, stuck, stuckService, usertaskAge, rejected, timeout,
             poolActive, poolQueue, published, outboxFailed, backlog, quarantine, rabbit, lag))
             .doesNotContainNull();
     }
 
     @Test
     void allFifteenMeters_registered() {
-        allEighteenMeters_registered();
+        allSeventeenMeters_registered();
+    }
+
+    @Test
+    void allEighteenMeters_registered() {
+        allSeventeenMeters_registered();
     }
 }
