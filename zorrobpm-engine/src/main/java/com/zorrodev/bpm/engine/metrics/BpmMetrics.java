@@ -41,6 +41,8 @@ public class BpmMetrics {
     private final AtomicLong activeInstances = new AtomicLong(0);
     private final AtomicLong stuckTokens = new AtomicLong(0);
     private final AtomicLong stuckServiceTasks = new AtomicLong(0);
+    private final AtomicLong dlqDepth = new AtomicLong(0);
+    private final AtomicLong usertaskAgeMax = new AtomicLong(0);
 
     // --- Script bulkhead gauges + counters ---
     private final Counter scriptRejected;
@@ -86,6 +88,16 @@ public class BpmMetrics {
         // WO-REL-27: stuck service tasks beyond dispatch-timeout
         Gauge.builder("zbpm.servicetask.stuck", stuckServiceTasks, AtomicLong::doubleValue)
             .description("Service tasks stuck in CREATED beyond dispatch-timeout")
+            .register(registry);
+
+        // WO-OBS-3: DLQ depth (rabbitmq DLQ queue messages)
+        Gauge.builder("zbpm.dlq.depth", dlqDepth, AtomicLong::doubleValue)
+            .description("Messages in DLQ (zorrobpm.complete-service-task.dlq)")
+            .register(registry);
+
+        // WO-OBS-3: oldest open user task age (seconds)
+        Gauge.builder("zbpm.usertask.age.max", usertaskAgeMax, AtomicLong::doubleValue)
+            .description("Age of oldest open user task (seconds)")
             .register(registry);
 
         // Script bulkhead
@@ -137,6 +149,10 @@ public class BpmMetrics {
     public void decrementStuckTokens() { stuckTokens.decrementAndGet(); }
 
     public void setStuckServiceTasks(long count) { stuckServiceTasks.set(count); }
+
+    public void setDlqDepth(long count) { dlqDepth.set(count); }
+
+    public void setUsertaskAgeMax(long seconds) { usertaskAgeMax.set(seconds); }
 
     // --- Script bulkhead ---
     public void scriptRejected() { scriptRejected.increment(); }
