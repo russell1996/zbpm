@@ -40,6 +40,7 @@ public class BpmMetrics {
     // --- Process gauges ---
     private final AtomicLong activeInstances = new AtomicLong(0);
     private final AtomicLong stuckTokens = new AtomicLong(0);
+    private final AtomicLong stuckServiceTasks = new AtomicLong(0);
 
     // --- Script bulkhead gauges + counters ---
     private final Counter scriptRejected;
@@ -80,6 +81,11 @@ public class BpmMetrics {
         // Stuck tokens gauge (open incidents)
         Gauge.builder("zbpm.tokens.stuck", stuckTokens, AtomicLong::doubleValue)
             .description("Tokens in stuck/error state (open incidents)")
+            .register(registry);
+
+        // WO-REL-27: stuck service tasks beyond dispatch-timeout
+        Gauge.builder("zbpm.servicetask.stuck", stuckServiceTasks, AtomicLong::doubleValue)
+            .description("Service tasks stuck in CREATED beyond dispatch-timeout")
             .register(registry);
 
         // Script bulkhead
@@ -129,6 +135,8 @@ public class BpmMetrics {
     public void decrementActiveInstances() { activeInstances.decrementAndGet(); }
     public void incrementStuckTokens() { stuckTokens.incrementAndGet(); }
     public void decrementStuckTokens() { stuckTokens.decrementAndGet(); }
+
+    public void setStuckServiceTasks(long count) { stuckServiceTasks.set(count); }
 
     // --- Script bulkhead ---
     public void scriptRejected() { scriptRejected.increment(); }

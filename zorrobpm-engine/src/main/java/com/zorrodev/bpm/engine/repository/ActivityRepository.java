@@ -39,4 +39,14 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
      * the last-closer check for a deferred process-cancel tail.
      */
     List<ActivityEntity> findByProcessInstanceIdAndPendingCancelingListenerIndexIsNotNull(UUID processInstanceId);
+
+    /**
+     * WO-REL-27: stuck service tasks — CREATED service tasks whose createdAt is
+     * older than the dispatch-timeout cutoff. Uses FOR UPDATE SKIP LOCKED via
+     * the batch processor's short TX so concurrent watchdog instances don't
+     * duplicate incidents. Batch size limits locking.
+     */
+    @Query(value = "SELECT * FROM activities WHERE type = 'SERVICE_TASK' AND status = 'CREATED' AND created_at < :cutoff ORDER BY created_at LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<ActivityEntity> findStuckServiceTasksLocked(Instant cutoff, int limit);
+
 }
