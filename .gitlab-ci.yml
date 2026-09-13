@@ -400,6 +400,15 @@ deploy:
 rollback:
   stage: rollback
   tags: [zbpm]
+  # needs: [] detaches this job from stage ordering entirely (DAG mode): it becomes playable the
+  # moment the pipeline starts, independent of test/security/build/deploy outcome. Without this,
+  # a `deploy` failure (allow_failure: false, by design) halts the stage-sequential pipeline BEFORE
+  # the `rollback` stage is reached, and GitLab marks this job `skipped` — unplayable exactly in the
+  # one scenario (deploy failed) it exists to recover from. Confirmed live 2026-09-12: pipeline
+  # 169556, deploy job 534359 failed, rollback job 534360 came up `skipped`, API play returned
+  # "400 Unplayable Job". Safe to detach: rollback restores `.previous_tag`, an already-built image
+  # already on the deploy host — it never needed this pipeline's own test/build results to run.
+  needs: []
   script:
     - cd "$DEPLOY_DIR"
     - test -f .previous_tag || { echo "No .previous_tag recorded — nothing to roll back to"; exit 1; }
