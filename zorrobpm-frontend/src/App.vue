@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// WO-OBS-5: infra only — no frontend logic change, G2 categorization (frontend file touch)
 import { computed } from 'vue'
 import { RouterView } from 'vue-router'
 import { Toaster as Sonner } from '@/components/ui/sonner'
