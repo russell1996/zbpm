@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # WO-PROC-8: Run PG-only integration tests (@Tag("pg")) against a real postgres:16.
-# WO-OBS-5: observability overlay does not affect PG tests — no change to the PG path, this comment is for G2 categorization (ci/*.sh change).
 #
 # Usage: ci/run-pg-tests.sh
 #   Starts postgres via ci/docker-compose.pg.yml, waits for health, runs the PG-IT
