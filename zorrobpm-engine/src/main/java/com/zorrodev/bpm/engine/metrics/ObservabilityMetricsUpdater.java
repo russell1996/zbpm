@@ -11,10 +11,10 @@ import java.time.Duration;
 import java.time.Instant;
 
 /**
- * WO-OBS-3: updates DLQ depth and oldest user-task age gauges.
+ * WO-OBS-3: updates oldest user-task age gauge (zbpm.usertask.age.max).
  * Runs every 15s (same as Prometheus scrape), best-effort — failures are logged, not propagated.
- * DLQ depth via RabbitAdmin (AMQP), user-task age via UserTaskRepository.
- * If WO-OBS-5 watchdog already updates servicetask.stuck, this component only touches the two new gauges.
+ * DLQ depth is NOT updated here — rabbitmq_queue_messages{queue="zorrobpm.complete-service-task.dlq"}
+ * from WO-OBS-2 already covers it; no custom zbpm.dlq.depth needed.
  */
 @Slf4j
 @Component
@@ -30,25 +30,10 @@ public class ObservabilityMetricsUpdater {
     @Scheduled(fixedDelayString = "${zorrobpm.observability.metrics-interval-ms:15000}")
     public void update() {
         try {
-            updateDlqDepth();
-        } catch (Exception e) {
-            log.debug("Failed to update dlq depth", e);
-        }
-        try {
             updateUsertaskAgeMax();
         } catch (Exception e) {
             log.debug("Failed to update usertask age", e);
         }
-    }
-
-    private void updateDlqDepth() {
-        // WO-OBS-3: DLQ depth — best-effort via RabbitMQ. If the queue is not yet declared
-        // or Rabbit is unreachable, report 0 (not No data). The metric itself is the contract;
-        // the value being 0 under normal load (no DLQ messages) is expected and still renders
-        // as data in Grafana (quarantine panel red zone >0).
-        // For now we report 0 — the RabbitAdmin-based poll can be wired when the rabbitmq
-        // module exposes it, but the gauge must exist now for the dashboard to not show No data.
-        bpmMetrics.setDlqDepth(0);
     }
 
     private void updateUsertaskAgeMax() {

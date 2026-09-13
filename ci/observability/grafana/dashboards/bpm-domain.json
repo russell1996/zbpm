@@ -88,12 +88,11 @@
     },
     {
       "id": 6,
-      "title": "DLQ — depth + rabbit queue",
+      "title": "DLQ — rabbit queue depth",
       "type": "timeseries",
       "datasource": "Prometheus",
       "targets": [
-        {"expr": "zbpm_dlq_depth", "legendFormat": "dlq_depth"},
-        {"expr": "rabbitmq_queue_messages{queue=\"zorrobpm.complete-service-task.dlq\"}", "legendFormat": "rabbitmq dlq"}
+        {"expr": "rabbitmq_queue_messages{queue=\"zorrobpm.complete-service-task.dlq\"}", "legendFormat": "dlq"}
       ],
       "fieldConfig": {
         "defaults": {
