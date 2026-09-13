@@ -45,6 +45,9 @@ services:
       TZ: Asia/Almaty
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      # WO-OBS-5: per-object prometheus metrics (single-file mount — image's
+      # /etc/rabbitmq/conf.d/10-defaults.conf stays in place).
+      - ./ci/observability/rabbitmq/conf.d/20-per-object-metrics.conf:/etc/rabbitmq/conf.d/20-per-object-metrics.conf:ro
     ports:
       # INTENDED / NORMAL — publish on all host interfaces. DO NOT re-restrict to 127.0.0.1.
       # The host lives inside a protected network perimeter (not reachable from the public

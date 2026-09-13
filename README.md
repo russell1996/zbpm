@@ -198,7 +198,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 open http://localhost:8081/grafana/   # логин admin / ваш пароль
 ```
 
-Prometheus скрейпит `app:8080/actuator/prometheus` (bearer-токен из `scrape-token`), `rabbitmq:15692/metrics`, `postgres-exporter:9187`, `node-exporter:9100` и себя. Ретенция — `30d` по умолчанию (`PROMETHEUS_RETENTION` в `.env`). Дашборды — см. `WO-OBS-3`, алерты — `WO-OBS-5`. Одно-хостовая ретенция честно: TSDB локальный, не HA-хранилище; для долгосрочного хранения — скрейпите внешним Prometheus.
+Prometheus скрейпит `app:8080/actuator/prometheus` (bearer-токен из `scrape-token`), `rabbitmq:15692/metrics`, `postgres-exporter:9187`, `node-exporter:9100` и себя. Ретенция — `30d` по умолчанию (`PROMETHEUS_RETENTION` в `.env`). Дашборды — см. `WO-OBS-3`, алерты — `WO-OBS-5` (9 правил: quarantine/DLQ/stuck-service-task/диск/app-down/health/Hikari/rabbit-unroutable/incident-spike; OFF по умолчанию, `GRAFANA_ALERT_WEBHOOK_URL` пусто → Firing без notification, задайте webhook — Telegram `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>` или Slack `https://hooks.slack.com/...` — чтобы слать). Одно-хостовая ретенция честно: TSDB локальный, не HA-хранилище; для долгосрочного хранения — скрейпите внешним Prometheus.
 
 Остановить мониторинг: `docker compose -f docker-compose.yml -f docker-compose.observability.yml down` (оставит основной стек).
 
