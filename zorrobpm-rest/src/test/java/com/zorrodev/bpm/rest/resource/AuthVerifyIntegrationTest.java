@@ -94,6 +94,31 @@ class AuthVerifyIntegrationTest {
     }
 
     @Test
+    void requireRole_matchingRole_returns200() throws Exception {
+        // Test-profile bootstrap admin is SUPER_ADMIN — the positive role-gate path
+        // (nginx /prometheus/ for SUPER_ADMIN sessions).
+        String token = loginCookie();
+        mockMvc.perform(get("/auth/verify")
+                        .queryParam("requireRole", "SUPER_ADMIN")
+                        .cookie(new jakarta.servlet.http.Cookie("zbpm_token", token)))
+                .andExpect(status().isOk())
+                .andExpect(header().exists("X-Auth-User"))
+                .andExpect(header().string("X-Auth-Role", "SUPER_ADMIN"));
+    }
+
+    @Test
+    void requireRole_mismatchedRole_returns403() throws Exception {
+        // Same valid session, wrong role — hard gate lives in the endpoint because
+        // nginx cannot evaluate auth_request_set variables in a location-level `if`
+        // (it fires before the subrequest and would 403 everyone).
+        String token = loginCookie();
+        mockMvc.perform(get("/auth/verify")
+                        .queryParam("requireRole", "NONEXISTENT_ROLE")
+                        .cookie(new jakarta.servlet.http.Cookie("zbpm_token", token)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void validBearer_returns200WithIdentityHeaders() throws Exception {
         String token = bearerToken();
         mockMvc.perform(get("/auth/verify")

@@ -90,12 +90,18 @@ public class AuthResource implements AuthContract {
     }
 
     @Override
-    public void verify() {
+    public void verify(String requireRole) {
         // WO-OBS-4: nginx auth_request target. The filter already rejected missing/invalid
         // tokens with 401 (same carve-out as me()); here we only translate valid JWT claims
         // into identity headers. Empty body — auth_request ignores it.
+        // requireRole: hard role gate for paths nginx cannot evaluate itself (Prometheus
+        // has no RBAC; a location-level `if` on the auth_request_set variable fires before
+        // the subrequest runs and would 403 everyone). 403 here = valid session, wrong role.
         TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
         if (claims == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized");
+        if (requireRole != null && !requireRole.equals(claims.role())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Role not authorized");
+        }
         response.setHeader("X-Auth-User", claims.username());
         response.setHeader("X-Auth-Role", claims.role());
     }
