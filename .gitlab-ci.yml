@@ -402,6 +402,18 @@ deploy:
     # down (not just stopped — removed) minutes later. The overlay is now a standing part of every
     # deploy, same as the base stack.
     - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --remove-orphans || { echo "docker compose up failed"; docker compose -f docker-compose.yml -f docker-compose.observability.yml ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
+    # Incident 2026-09-14 (live-caught right after WO-OBS-6's deploy): the DEPLOY_DIR wipe+resync
+    # above unlinks and recreates every file under ci/observability/* (scrape-token,
+    # prometheus.yml, grafana provisioning) on EVERY deploy. A single-file bind mount is bound to
+    # the inode at container-start time -- `up -d` only recreates a service whose OWN definition
+    # or image changed, so prometheus/grafana (unchanged this deploy) kept their mount pointing at
+    # the OLD, now-orphaned inode: fresh scrape-token content on the host, but Prometheus's own
+    # view of the file read back 0 bytes -- app's real token, provisioned by ScrapeTokenBootstrap,
+    # was silently invisible to Prometheus (401 on every scrape) despite everything else being
+    # correct. Force-recreating these services after every deploy makes their bind mounts always
+    # resolve to the current on-disk files, regardless of whether compose thinks anything changed.
+    # Cheap and safe: neither service is in the main app's serving path.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || true
     # WO-REL-23: deploy smoke — wait for app health, fail job if not UP
     - |
       for i in $(seq 1 10); do
@@ -450,6 +462,9 @@ rollback:
     # Same overlay-inclusion fix as `deploy` (2026-09-14 incident) — rollback must not
     # --remove-orphans the observability stack either.
     - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --remove-orphans || { echo "docker compose up failed"; docker compose -f docker-compose.yml -f docker-compose.observability.yml ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
+    # Same bind-mount-inode fix as `deploy` (2026-09-14 incident) — force-recreate so these
+    # services never keep an orphaned inode of a file the DEPLOY_DIR resync just replaced.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || true
     # WO-REL-23: rollback smoke — same health gate as deploy
     - |
       for i in $(seq 1 10); do
