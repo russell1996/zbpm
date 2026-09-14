@@ -50,7 +50,13 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ScrapeTokenBootstrap implements ApplicationRunner {
 
-    static final String SCRAPER_USERNAME = "prom-scraper";
+    /**
+     * Fixed scraper login. WO names {@code prom-scraper} as an example, but that
+     * exact string is already a test fixture ({@code JwtAuthFilterIntegrationTest}
+     * saves its own HUMAN {@code prom-scraper} — adopting it would collide on the
+     * username unique index), so the provisioned account uses this name instead.
+     */
+    public static final String SCRAPER_USERNAME = "prometheus-scraper";
 
     private final UiUserRepository uiUserRepository;
     private final UiUserService uiUserService;
@@ -67,10 +73,19 @@ public class ScrapeTokenBootstrap implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // NOTE: this runner executes in EVERY Spring context, including sliced
+        // test contexts that @MockitoBean-mock our collaborators (nulls instead
+        // of rows). Every step below null-guards instead of orElseThrow — a
+        // bootstrap must degrade to a loud log, never crash someone else's
+        // context startup (caught live: two CharacterizationTest classes).
         UUID userId = ensureAccount();
         boolean accountCreated = false;
         if (userId == null) {
             userId = createAccount();
+            if (userId == null) {
+                log.warn("Scrape account provisioning unavailable (user service returned no id) — skipping");
+                return;
+            }
             accountCreated = true;
         }
 
@@ -78,9 +93,17 @@ public class ScrapeTokenBootstrap implements ApplicationRunner {
         if (accountCreated || !hasActiveKey(userId)) {
             // Self-issuance, trailed in audit as such: the account provisions
             // its own first key (no human actor exists at bootstrap time).
-            UiUserEntity account = uiUserRepository.findById(userId).orElseThrow();
+            UiUserEntity account = uiUserRepository.findById(userId).orElse(null);
+            if (account == null) {
+                log.error("Scrape account {} vanished before key issuance — skipping", userId);
+                return;
+            }
             Principal actor = new Principal.UserPrincipal(userId, account.getUsername(), account.getRole());
             ApiKeyWithSecretDTO issued = apiKeyService.issueKeyForUser(userId, actor);
+            if (issued == null || issued.getKey() == null) {
+                log.warn("Scrape key issuance unavailable (key service returned nothing) — skipping");
+                return;
+            }
             rawKey = issued.getKey();
             log.info("Issued Prometheus scrape API key for user={}", SCRAPER_USERNAME);
         }
