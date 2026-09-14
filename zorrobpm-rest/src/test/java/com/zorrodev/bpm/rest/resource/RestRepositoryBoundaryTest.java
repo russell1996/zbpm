@@ -48,7 +48,6 @@ class RestRepositoryBoundaryTest {
             "OutboxAdminResource",
             "ProcessDefinitionResource",
             "ProcessInstanceRuntimeOperationsImpl",
-            "SchemaMapOperationsImpl",
             "SseEventStreamService",
             "UserTaskRuntimeOperationsImpl");
 
