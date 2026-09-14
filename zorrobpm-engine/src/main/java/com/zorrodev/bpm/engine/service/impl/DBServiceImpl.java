@@ -523,8 +523,18 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId) {
+        return messageSubscriptionDbOperations.findMessageSubscriptions(messageName, processInstanceId, cursorId);
+    }
+
+    @Override
     public List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey) {
         return messageSubscriptionDbOperations.findMessageSubscriptionsByKey(messageName, correlationKey);
+    }
+
+    @Override
+    public List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey, UUID cursorId) {
+        return messageSubscriptionDbOperations.findMessageSubscriptionsByKey(messageName, correlationKey, cursorId);
     }
 
     @Override
@@ -551,6 +561,11 @@ public class DBServiceImpl implements DBService {
     @Override
     public List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName) {
         return signalSubscriptionDbOperations.findSignalSubscriptions(signalName);
+    }
+
+    @Override
+    public List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName, UUID cursorId) {
+        return signalSubscriptionDbOperations.findSignalSubscriptions(signalName, cursorId);
     }
 
     @Override

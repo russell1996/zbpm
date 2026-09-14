@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_rel31sig" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:signal id="goSignal" name="rel31-go" />
+  <bpmn:process id="test-rel31-signal-fanout" name="test-rel31-signal-fanout" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="sigCatch" />
+    <bpmn:intermediateCatchEvent id="sigCatch" name="sigCatch">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+      <bpmn:signalEventDefinition id="sed1" signalRef="goSignal" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="sigCatch" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

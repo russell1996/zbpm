@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -37,6 +38,18 @@ public class MultiInstanceExecutor {
 
     private final FlowNavigator flowNavigator;
 
+    /**
+     * WO-REL-31 F23: upper bound on how many MI instances a single multi-instance entry may
+     * spawn synchronously in one transaction. Justification: {@code MAX_MI_CARDINALITY = 1_000}
+     * is 2× the CR-3 fan-out batch size (500) and already a heavy single-transaction operation
+     * (~1 000 activities + ~1 000 user/service-task rows + ~2 000 variable rows + boundary
+     * subscriptions ≈ 5-6k rows). Anything above is unbounded synchronous work in one
+     * transaction — a process model asking for it should use a different pattern (nested
+     * multi-instance, message-driven chunks), not a giant spawn. The audit flagged the same
+     * OOM risk on the 10k-subscriber fan-out; this is the intra-instance twin of that bound.
+     */
+    static final int MAX_MI_CARDINALITY = 1_000;
+
     public boolean isMultiInstance(BpmnElementModel element) {
         return Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
@@ -51,10 +64,34 @@ public class MultiInstanceExecutor {
      */
     public void enter(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement, TokenExecutor executor) {
         MultiInstanceExtensionModel mi = bpmnElement.getExtensions().getMultiInstanceExtension();
-        int count = resolveCardinality(processInstanceId, bpmnElement);
-        if (count <= 0) {
+        int count;
+        try {
+            count = resolveCardinality(processInstanceId, bpmnElement);
+        } catch (EngineException e) {
+            // WO-REL-31 F23: a failed cardinality resolution (fractional/out-of-int-range value,
+            // missing characteristics) is an element failure — raise a visible incident on the
+            // element, never abort the whole request: EngineException would otherwise propagate
+            // through ActivityServiceImpl.execute as an abort.
+            raiseCardinalityIncident(processInstanceId, token, bpmnElement, e.getMessage());
+            return;
+        }
+        if (count == 0) {
             log.info("{}/{}: Multi-instance {} has zero instances, skipping", processInstanceId, token, bpmnElement.getId());
             flowNavigator.proceedToOutgoing(processInstanceId, token, bpmnElement.getProcessDefinition(), bpmnElement, executor);
+            return;
+        }
+        if (count < 0) {
+            // F23: negative is invalid (the old intValue() path only reached count <= 0 here and
+            // silently skipped — including for wrapped overflow values; the skip is reserved for 0).
+            raiseCardinalityIncident(processInstanceId, token, bpmnElement,
+                "Multi-instance " + bpmnElement.getId() + " cardinality must be non-negative: " + count);
+            return;
+        }
+        if (count > MAX_MI_CARDINALITY) {
+            // F23: cap synchronous spawn (covers loopCardinality AND inputCollection paths).
+            raiseCardinalityIncident(processInstanceId, token, bpmnElement,
+                "Multi-instance " + bpmnElement.getId() + " cardinality " + count
+                    + " exceeds the engine limit of " + MAX_MI_CARDINALITY);
             return;
         }
         String miId = bpmnElement.getId();
@@ -181,7 +218,27 @@ public class MultiInstanceExecutor {
         if (!(value instanceof Number number)) {
             throw new EngineException("Multi-instance " + element.getId() + " cardinality did not evaluate to a number: " + value);
         }
-        return number.intValue();
+        // WO-REL-31 F23: Number.intValue() silently TRUNCATES fractions (2.5 → 2) and WRAPS
+        // out-of-int-range values (3_000_000_000 → −1_294_967_296) — neither is a valid instance
+        // count. intValueExact() on the exact decimal representation raises ArithmeticException
+        // for both, which we turn into an EngineException (→ incident in enter()).
+        try {
+            return new BigDecimal(number.toString()).intValueExact();
+        } catch (ArithmeticException e) {
+            throw new EngineException("Multi-instance " + element.getId() + " cardinality is not a valid whole number in int range: " + number);
+        }
+    }
+
+    /**
+     * F23: parks the token at the multi-instance element with a visible incident. Creates the
+     * element's activity row first (precedent: spawnMiInstance's resolveUserTaskPriorityOrThrow
+     * path) — IncidentService.raiseIncident would silently skip an element without an activity.
+     */
+    private void raiseCardinalityIncident(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement, String message) {
+        log.warn("{}/{}: {}", processInstanceId, token, message);
+        UUID activityId = dbService.createActivity(processInstanceId, token, bpmnElement);
+        dbService.errorActivity(activityId);
+        dbService.createIncident(activityId, message);
     }
 
     private int collectionSize(Object collection, String elementId) {

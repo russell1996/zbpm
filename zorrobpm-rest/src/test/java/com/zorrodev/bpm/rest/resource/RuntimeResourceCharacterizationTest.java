@@ -181,6 +181,7 @@ class RuntimeResourceCharacterizationTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("svc-key");
         when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(st));
+        when(serviceTaskRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("svc-key"));
         when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
         when(authorizationService.canOperate(any(), eq("svc-key"), eq(AuthorizationService.Action.COMPLETE_SERVICE_TASK))).thenReturn(true);
@@ -205,6 +206,7 @@ class RuntimeResourceCharacterizationTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("svc-key");
         when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(st));
+        when(serviceTaskRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("svc-key"));
         when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
         when(authorizationService.canOperate(any(), eq("svc-key"), eq(AuthorizationService.Action.COMPLETE_SERVICE_TASK))).thenReturn(false);
@@ -241,6 +243,7 @@ class RuntimeResourceCharacterizationTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("svc-key");
         when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(st));
+        when(serviceTaskRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("svc-key"));
         when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
         when(authorizationService.canOperate(any(), eq("svc-key"), eq(AuthorizationService.Action.COMPLETE_SERVICE_TASK))).thenReturn(true);
@@ -262,10 +265,11 @@ class RuntimeResourceCharacterizationTest {
         UUID id = UUID.randomUUID();
         UUID piId = UUID.randomUUID();
         UUID pdId = UUID.randomUUID();
-        ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInstanceId(piId);
+ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInstanceId(piId);
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("svc-key");
         when(serviceTaskRepository.findById(id)).thenReturn(Optional.of(st));
+        when(serviceTaskRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("svc-key"));
         when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
         when(authorizationService.canOperate(any(), eq("svc-key"), eq(AuthorizationService.Action.COMPLETE_SERVICE_TASK))).thenReturn(false);
@@ -565,6 +569,7 @@ class RuntimeResourceCharacterizationTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("inc-key");
         when(incidentRepository.findById(id)).thenReturn(Optional.of(incident));
+        when(incidentRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("inc-key"));
         when(activityRepository.findById(actId)).thenReturn(Optional.of(act));
         when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
@@ -592,6 +597,7 @@ class RuntimeResourceCharacterizationTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("inc-key");
         when(incidentRepository.findById(id)).thenReturn(Optional.of(incident));
+        when(incidentRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("inc-key"));
         when(activityRepository.findById(actId)).thenReturn(Optional.of(act));
         when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
@@ -629,6 +635,7 @@ class RuntimeResourceCharacterizationTest {
         ProcessInstanceEntity piEntity = new ProcessInstanceEntity(); piEntity.setId(id); piEntity.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("cancel-key");
         when(processInstanceRepository.findById(id)).thenReturn(Optional.of(piEntity));
+        when(processInstanceRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("cancel-key"));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
         when(authorizationService.canOperate(any(), eq("cancel-key"), eq(AuthorizationService.Action.DELETE_PROCESS))).thenReturn(true);
 
@@ -648,6 +655,7 @@ class RuntimeResourceCharacterizationTest {
         ProcessInstanceEntity piEntity = new ProcessInstanceEntity(); piEntity.setId(id); piEntity.setProcessDefinitionId(pdId);
         ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("cancel-key");
         when(processInstanceRepository.findById(id)).thenReturn(Optional.of(piEntity));
+        when(processInstanceRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("cancel-key"));
         when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
         when(authorizationService.canOperate(any(), eq("cancel-key"), eq(AuthorizationService.Action.DELETE_PROCESS))).thenReturn(false);
 

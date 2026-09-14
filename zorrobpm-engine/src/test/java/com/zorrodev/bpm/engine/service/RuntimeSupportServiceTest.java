@@ -134,23 +134,8 @@ class RuntimeSupportServiceTest {
         UUID userId = UUID.randomUUID();
         Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
         UUID piId = UUID.randomUUID();
-        UUID pdId = UUID.randomUUID();
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(pdId);
-        pd.setKey("key");
-        ProcessEntity process = new ProcessEntity();
-        process.setId(UUID.randomUUID());
-        process.setDefinitionKey("key");
-        ProcessMemberEntity membership = new ProcessMemberEntity();
-        membership.setProcessId(process.getId());
-        membership.setUserId(userId);
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
-        when(processRepository.findByDefinitionKey("key")).thenReturn(Optional.of(process));
-        when(processMemberRepository.findById(new ProcessMemberId(process.getId(), userId))).thenReturn(Optional.of(membership));
+        when(processInstanceRepository.findDefinitionKeyById(piId)).thenReturn(Optional.of("key"));
+        when(processMemberRepository.isMemberByDefinitionKey(userId, "key")).thenReturn(true);
         support.checkAssignee(user, null, null, piId);
     }
 
@@ -159,19 +144,19 @@ class RuntimeSupportServiceTest {
         UUID userId = UUID.randomUUID();
         Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
         UUID piId = UUID.randomUUID();
-        UUID pdId = UUID.randomUUID();
-        ProcessInstanceEntity pi = new ProcessInstanceEntity();
-        pi.setId(piId);
-        pi.setProcessDefinitionId(pdId);
-        ProcessDefinitionEntity pd = new ProcessDefinitionEntity();
-        pd.setId(pdId);
-        pd.setKey("key");
-        ProcessEntity process = new ProcessEntity();
-        process.setId(UUID.randomUUID());
-        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
-        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
-        when(processRepository.findByDefinitionKey("key")).thenReturn(Optional.of(process));
-        when(processMemberRepository.findById(any())).thenReturn(Optional.empty());
+        when(processInstanceRepository.findDefinitionKeyById(piId)).thenReturn(Optional.of("key"));
+        when(processMemberRepository.isMemberByDefinitionKey(userId, "key")).thenReturn(false);
+        assertThatThrownBy(() -> support.checkAssignee(user, null, null, piId))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void checkAssignee_deniesWhenNoProcessForDefinitionKey() {
+        UUID userId = UUID.randomUUID();
+        Principal.UserPrincipal user = new Principal.UserPrincipal(userId, "alice", "USER");
+        UUID piId = UUID.randomUUID();
+        when(processInstanceRepository.findDefinitionKeyById(piId)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> support.checkAssignee(user, null, null, piId))
             .isInstanceOf(ResponseStatusException.class)
             .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);

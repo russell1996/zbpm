@@ -80,4 +80,12 @@ public interface ProcessInstanceRepository extends JpaRepository<ProcessInstance
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT pi FROM ProcessInstanceEntity pi WHERE pi.id = :id")
     Optional<ProcessInstanceEntity> findByIdForUpdate(UUID id);
+
+    /**
+     * WO-REL-31 CR-4: definition key in one join query instead of instance→definition
+     * two-step resolution. Empty when the instance or its definition is missing —
+     * same branches the two-step path used to skip.
+     */
+    @Query("SELECT pd.key FROM ProcessInstanceEntity pi JOIN ProcessDefinitionEntity pd ON pd.id = pi.processDefinitionId WHERE pi.id = :id")
+    Optional<String> findDefinitionKeyById(UUID id);
 }

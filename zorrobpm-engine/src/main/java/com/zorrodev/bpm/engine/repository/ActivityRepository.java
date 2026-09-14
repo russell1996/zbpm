@@ -21,6 +21,12 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
 
     List<ActivityEntity> findByProcessInstanceIdAndStatusIn(UUID processInstanceId, Collection<ActivityStatus> statuses);
 
+    /**
+     * WO-REL-31 CR-3: deterministic iteration order for getActiveActivities (triggerConditionalEvents
+     * fan-out) — activities processed in stable id-ASC order, never a DB/heap-order surprise.
+     */
+    List<ActivityEntity> findByProcessInstanceIdAndStatusInOrderByIdAsc(UUID processInstanceId, Collection<ActivityStatus> statuses);
+
     List<ActivityEntity> findByProcessInstanceIdOrderByCreatedAtAsc(UUID processInstanceId);
 
     List<ActivityEntity> findByTokenAndStatusIn(UUID token, Collection<ActivityStatus> statuses);
