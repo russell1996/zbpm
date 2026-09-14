@@ -367,9 +367,15 @@ deploy:
     - bash ci/disk-space-check.sh
     # remember the currently deployed tag so `rollback` can restore it
     - if [ -f "$DEPLOY_DIR/.current_tag" ]; then cp "$DEPLOY_DIR/.current_tag" "$DEPLOY_DIR/.previous_tag"; fi
-    # sync sources, preserving host .env (DB/RabbitMQ secrets) and rollback bookkeeping
+    # sync sources, preserving host .env (DB/RabbitMQ secrets) and rollback bookkeeping.
+    # Incident 2026-09-14: ci/observability/scrape-token is a live-only secret (never committed,
+    # generated once on the host) — it lived under ci/, a plain top-level dir with no exclusion
+    # here, so every deploy silently wiped it and Prometheus lost its app-scrape credential the
+    # moment the *next*, unrelated deploy ran. Back it up and restore it after the sync.
+    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then cp "$DEPLOY_DIR/ci/observability/scrape-token" /tmp/scrape-token.bak; fi
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
     - cp -a ./ "$DEPLOY_DIR"/
+    - if [ -f /tmp/scrape-token.bak ]; then mv /tmp/scrape-token.bak "$DEPLOY_DIR/ci/observability/scrape-token"; chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
     - cd "$DEPLOY_DIR"
     - export APP_TAG="$IMAGE_TAG" FRONTEND_TAG="$IMAGE_TAG"
     # Incident 2026-09-12 (pipeline 169556): when app's own Compose healthcheck fails during
@@ -377,7 +383,13 @@ deploy:
     # start: container ... is unhealthy") BEFORE the smoke-loop below ever runs — its log-dump
     # code never fired, leaving zero diagnostics for the crash. Dump logs here too so a repeat
     # failure is diagnosable instead of silent.
-    - docker compose up -d --remove-orphans || { echo "docker compose up failed"; docker compose ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
+    # Incident 2026-09-14: the observability overlay (Grafana/Prometheus/exporters) was stood up
+    # manually on the host via `docker compose -f docker-compose.yml -f docker-compose.observability.yml
+    # up -d` — never part of THIS job. The very next routine deploy ran plain `docker compose up -d
+    # --remove-orphans` with only docker-compose.yml, so --remove-orphans tore the whole overlay back
+    # down (not just stopped — removed) minutes later. The overlay is now a standing part of every
+    # deploy, same as the base stack.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --remove-orphans || { echo "docker compose up failed"; docker compose -f docker-compose.yml -f docker-compose.observability.yml ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
     # WO-REL-23: deploy smoke — wait for app health, fail job if not UP
     - |
       for i in $(seq 1 10); do
@@ -423,7 +435,9 @@ rollback:
     - test -f .previous_tag || { echo "No .previous_tag recorded — nothing to roll back to"; exit 1; }
     - export APP_TAG="$(cat .previous_tag)" FRONTEND_TAG="$(cat .previous_tag)"
     - echo "Rolling back to $APP_TAG"
-    - docker compose up -d --remove-orphans || { echo "docker compose up failed"; docker compose ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
+    # Same overlay-inclusion fix as `deploy` (2026-09-14 incident) — rollback must not
+    # --remove-orphans the observability stack either.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --remove-orphans || { echo "docker compose up failed"; docker compose -f docker-compose.yml -f docker-compose.observability.yml ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
     # WO-REL-23: rollback smoke — same health gate as deploy
     - |
       for i in $(seq 1 10); do
