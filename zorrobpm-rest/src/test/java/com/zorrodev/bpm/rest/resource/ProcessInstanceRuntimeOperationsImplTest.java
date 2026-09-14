@@ -3,16 +3,15 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
-import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
-import com.zorrodev.bpm.engine.security.AuthorizationService;
-import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.FormValidator;
+import com.zorrodev.bpm.engine.service.ProcessInstanceLifecycleService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import com.zorrodev.bpm.engine.service.RuntimeSupportService;
+import com.zorrodev.bpm.engine.security.AuthorizationService;
+import com.zorrodev.bpm.engine.security.Principal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -35,8 +34,7 @@ import static org.mockito.Mockito.*;
 class ProcessInstanceRuntimeOperationsImplTest {
 
     @Mock private RuntimeService runtimeService;
-    @Mock private ProcessDefinitionRepository processDefinitionRepository;
-    @Mock private ProcessInstanceRepository processInstanceRepository;
+    @Mock private ProcessInstanceLifecycleService processInstanceLifecycleService;
     @Mock private FormArtifactService formArtifactService;
     @Mock private DBService dbService;
     @Mock private com.zorrodev.bpm.engine.handler.CancelingPhaseService cancelingPhaseService;
@@ -51,6 +49,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
         dto.setProcessDefinitionKey("key");
         dto.setVariables(List.of());
         String definitionKey = "key";
+        when(processInstanceLifecycleService.resolveDefinitionKey(any())).thenReturn("key");
         ProcessDefinitionEntity targetDef = new ProcessDefinitionEntity();
         targetDef.setKey("key");
         targetDef.setStartFormKey(null);
@@ -86,6 +85,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
     void startProcessInstance_denyWhenNotAuthorized() {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionKey("key");
+        when(processInstanceLifecycleService.resolveDefinitionKey(any())).thenReturn("key");
         doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied"))
             .when(runtimeOperationSupport).requireOperate("key", AuthorizationService.Action.START);
 
@@ -101,6 +101,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
     void startProcessInstance_validationFails() {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionKey("key");
+        when(processInstanceLifecycleService.resolveDefinitionKey(any())).thenReturn("key");
         ProcessDefinitionEntity targetDef = new ProcessDefinitionEntity();
         targetDef.setStartFormKey("formKey");
         when(runtimeSupportService.resolveTargetDefinition(dto)).thenReturn(targetDef);

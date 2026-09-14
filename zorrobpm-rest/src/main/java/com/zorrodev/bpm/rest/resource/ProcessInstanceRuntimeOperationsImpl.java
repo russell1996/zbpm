@@ -2,15 +2,13 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.contract.dto.IdDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
-import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
-import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.handler.CancelingPhaseService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.FormValidator;
+import com.zorrodev.bpm.engine.service.ProcessInstanceLifecycleService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import com.zorrodev.bpm.engine.service.RuntimeSupportService;
 import lombok.RequiredArgsConstructor;
@@ -22,15 +20,22 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
+/**
+ * WO-DEBT-7 S10 — thin facade over {@link ProcessInstanceLifecycleService}:
+ * auth checks + delegation. All JPA (definition lookup for the START key
+ * and the single {@code .save()} for the initiator) lives in the service,
+ * inside this class' transaction (no {@code @Transactional} on the service —
+ * same as the original layout, proven by
+ * {@code ProcessInstanceRuntimeTransactionalIT}: audit failure rolls the save
+ * back). Zero direct persistence imports.
+ */
 @Service
 @RequiredArgsConstructor
 public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRuntimeOperations {
 
     private final RuntimeService runtimeService;
-    private final ProcessDefinitionRepository processDefinitionRepository;
-    private final ProcessInstanceRepository processInstanceRepository;
+    private final ProcessInstanceLifecycleService processInstanceLifecycleService;
     private final FormArtifactService formArtifactService;
     private final DBService dbService;
     private final CancelingPhaseService cancelingPhaseService;
@@ -41,19 +46,15 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
     @Transactional
     @Override
     public IdDTO startProcessInstance(StartProcessInstanceDTO dto) {
-        // Resolve definitionKey from DTO
-        String definitionKey = dto.getProcessDefinitionKey();
-        if (definitionKey == null && dto.getProcessDefinitionId() != null) {
-            ProcessDefinitionEntity pd = processDefinitionRepository.findById(dto.getProcessDefinitionId()).orElse(null);
-            if (pd != null) definitionKey = pd.getKey();
-        }
+        // Resolve definitionKey from DTO (JPA inside the service for the id→key path)
+        String definitionKey = processInstanceLifecycleService.resolveDefinitionKey(dto);
         runtimeOperationSupport.requireOperate(definitionKey, AuthorizationService.Action.START);
 
         // WO-ENG-10: validate against the EXACT definition that will actually be started, not
         // always "latest by key" — mirrors RuntimeServiceImpl.startProcessInstance's own
         // resolution order (id > key+version > key+maxVersion), so a start pinned to an older
         // version is validated against that version's form/schema, not a newer one's.
-        ProcessDefinitionEntity targetDefinition = runtimeSupportService.resolveTargetDefinition(dto);
+        var targetDefinition = runtimeSupportService.resolveTargetDefinition(dto);
 
         // ADR-6 §D9: form validation via FormArtifactService facade
         if (targetDefinition != null && targetDefinition.getStartFormKey() != null) {
@@ -74,10 +75,7 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
         if (onBehalfOf != null) {
             // WO-SEC-28: the initiator is a claimed, unverified attribution — keep the marker.
             String claimed = "[claimed] " + onBehalfOf;
-            processInstanceRepository.findById(result.getId()).ifPresent(pi -> {
-                pi.setInitiator(claimed);
-                processInstanceRepository.save(pi);
-            });
+            processInstanceLifecycleService.recordInitiator(result.getId(), claimed);
             auditLogService.record(runtimeOperationSupport.getPrincipal(), "START", definitionKey, result.getId().toString(), claimed);
         } else {
             auditLogService.record(runtimeOperationSupport.getPrincipal(), "START", definitionKey, result.getId().toString(), null);
