@@ -53,16 +53,19 @@ public class ElementSupport {
     private ZoneId businessZone;
 
     /**
-     * Reads the activity, takes a pessimistic write lock on its process instance, then re-reads the
-     * activity under that lock. Serialises all execution touching one instance so concurrent async
-     * branches cannot race on joins or double-advance a token; the re-read returns a status that is
-     * consistent with the lock (a competing transaction has already committed by the time we hold it).
-     * <p>Shared by {@link CompletionService} and {@link EventTrigger} (WO-AUD-24 / P-24 dedup).</p>
+     * Locks the activity's process instance and returns the activity in ONE
+     * {@code SELECT ... FOR UPDATE} ({@code DBService.getActivityForUpdate}).
+     * Serialises all execution touching one instance so concurrent async
+     * branches cannot race on joins or double-advance a token; the row read
+     * under the lock is consistent with it (a competing transaction has already
+     * committed by the time we hold it).
+     * <p>WO-REL-30 (B-3): single statement, no read/lock race window
+     * (was: get + lock + get = 3 statements).
+     * <p>Shared by {@link CompletionService}, {@link EventTrigger} and
+     * {@link IncidentService} (WO-AUD-24 / P-24 dedup).
      */
     public Activity lockAndReload(UUID activityId) {
-        Activity activity = dbService.getActivity(activityId);
-        dbService.lockProcessInstance(activity.getProcessInstanceId());
-        return dbService.getActivity(activityId);
+        return dbService.getActivityForUpdate(activityId);
     }
 
     // ─── User task helpers ──────────────────────────────────────────────

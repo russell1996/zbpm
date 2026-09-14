@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.repository.TokenRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -36,9 +37,12 @@ public class TokenDbOperationsImpl implements TokenDbOperations {
 
     @Override
     public Token getToken(UUID tokenId) {
-        return tokenRepository.findById(tokenId)
-            .map(this::toToken)
-            .orElseThrow();
+        return findToken(tokenId).orElseThrow();
+    }
+
+    @Override
+    public Optional<Token> findToken(UUID tokenId) {
+        return tokenRepository.findById(tokenId).map(this::toToken);
     }
 
     @Override

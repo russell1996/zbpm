@@ -419,8 +419,14 @@ public class FlowNavigator {
      * Shared by plain and escalation end events.
      */
     public void finishBranch(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, TokenExecutor executor) {
-        Token endToken = dbService.getToken(tokenId);
-        if (endToken != null && endToken.getScopeActivityId() != null) {
+        // WO-REL-30 (B-4): a stale token reference (cancel/cleanup races) is a
+        // managed no-op — log + return, never NoSuchElementException → 500.
+        Token endToken = dbService.findToken(tokenId).orElse(null);
+        if (endToken == null) {
+            log.warn("{}/{}: finishBranch on missing token — stale reference, ignoring", processInstanceId, tokenId);
+            return;
+        }
+        if (endToken.getScopeActivityId() != null) {
             // end of an embedded subprocess scope: complete the container and continue the parent
             // token from the subprocess's outgoing flows; the process instance stays running
             UUID subProcessActivityId = endToken.getScopeActivityId();
@@ -487,9 +493,16 @@ public class FlowNavigator {
             }
             // remaining == 0 — all branches of currentToken consumed. Bubble up to parent if it is
             // itself still waiting on sibling branches.
-            Token currentToken = dbService.getToken(currentTokenId);
-            if (currentToken != null && currentToken.getParentId() != null) {
-                Token parentToken = dbService.getToken(currentToken.getParentId());
+            // WO-REL-30 (B-4): a token deleted mid-flight (cancel/cleanup races)
+            // ends the walk as fully consumed — never NoSuchElementException → 500.
+            Token currentToken = dbService.findToken(currentTokenId).orElse(null);
+            if (currentToken == null) {
+                log.warn("{}/{}: bubble-up token gone mid-flight — treating branch as consumed",
+                    processInstanceId, currentTokenId);
+                break;
+            }
+            if (currentToken.getParentId() != null) {
+                Token parentToken = dbService.findToken(currentToken.getParentId()).orElse(null);
                 if (parentToken != null && parentToken.getPendingBranches() != null && parentToken.getPendingBranches() > 0) {
                     log.info("{}/{}: Nested token bubble-up — moving up to parent {}/{} (pending={})",
                         processInstanceId, currentTokenId, currentToken.getParentId(), parentToken.getId(), parentToken.getPendingBranches());

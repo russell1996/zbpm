@@ -33,6 +33,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -116,12 +117,18 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        // Stub elementSupport.lockAndReload to delegate to dbService (it's a real method on ElementSupport)
-        org.mockito.Mockito.lenient().when(elementSupport.lockAndReload(any(java.util.UUID.class))).thenAnswer(invocation -> {
-            java.util.UUID activityId = invocation.getArgument(0);
-            Activity act = dbService.getActivity(activityId);
-            dbService.lockProcessInstance(act.getProcessInstanceId());
-            return dbService.getActivity(activityId);
+        // Stub lockAndReload to delegate to the mock dbService (WO-REL-30: single
+        // getActivityForUpdate — one SELECT FOR UPDATE, same as the real method).
+        // PLUS the fixture's tokens: finishBranch reads them via findToken — a
+        // Mockito mock returns empty by default, which would (correctly) take the
+        // new stale-token branch on every test. Reproduce the DB those fixtures
+        // describe instead: any token the test created exists.
+        org.mockito.Mockito.lenient().when(elementSupport.lockAndReload(any(java.util.UUID.class))).thenAnswer(invocation ->
+            dbService.getActivityForUpdate(invocation.getArgument(0)));
+        org.mockito.Mockito.lenient().when(dbService.findToken(any(java.util.UUID.class))).thenAnswer(invocation -> {
+            Token t = new Token();
+            t.setId(invocation.getArgument(0));
+            return Optional.of(t);
         });
         // Stub computeDueAt for the timer catch test (BPMN uses PT5M)
         org.mockito.Mockito.lenient().when(
@@ -329,7 +336,7 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
-        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getActivityForUpdate(serviceTaskId)).thenReturn(activity);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("serviceTask1"))).thenReturn(serviceTaskId);
@@ -374,7 +381,7 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
-        when(dbService.getActivity(userTaskId)).thenReturn(activity);
+        when(dbService.getActivityForUpdate(userTaskId)).thenReturn(activity);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("userTask1"))).thenReturn(userTaskId);
@@ -621,6 +628,10 @@ public class ActivityServiceImplTests {
         when(dbService.createToken(isNull())).thenReturn(token1);
         when(dbService.createToken(eq(token1.getId()))).thenReturn(token2);
         when(dbService.getToken(eq(token1.getId()))).thenReturn(token1);
+        // WO-REL-30 (B-4): child + parent finishBranch читают токены через findToken —
+        // мок обязан вернуть существующие токены (child token2 с parent token1).
+        when(dbService.findToken(eq(token2.getId()))).thenReturn(Optional.of(token2));
+        when(dbService.findToken(eq(token1.getId()))).thenReturn(Optional.of(token1));
         // WO-C8-2: CallActivityHandler resolves processId via elementSupport — a literal passes through as-is.
         when(elementSupport.resolveExpression(eq("dummy-process"), eq(processInstanceId))).thenReturn("dummy-process");
         // WO-C8-3b: this fixture binds with bindingType="deployment" — stub the pinned lookup
@@ -664,6 +675,16 @@ public class ActivityServiceImplTests {
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(dbService.getVariables(processInstanceId)).thenReturn(List.of());
         when(dbService.findMessageSubscriptions("ping", null, null)).thenReturn(List.of());
+        // WO-REL-30 (B-4): finishBranch reads the token via findToken — the mock DB
+        // holds the row the flow created, so the instance completes as before.
+        Token linearToken = new Token();
+        linearToken.setId(token);
+        when(dbService.findToken(token)).thenReturn(Optional.of(linearToken));
+        // WO-REL-30 (B-4): finishBranch читает токен через findToken — мок обязан
+        // вернуть существующий токен, иначе это stale-ветка (лог + return).
+        Token throwToken = new Token();
+        throwToken.setId(token);
+        when(dbService.findToken(token)).thenReturn(Optional.of(throwToken));
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("msgThrow"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
@@ -713,7 +734,7 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
-        when(dbService.getActivity(msgActivityId)).thenReturn(msgActivity);
+        when(dbService.getActivityForUpdate(msgActivityId)).thenReturn(msgActivity);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("msgCatch"))).thenReturn(msgActivityId);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
@@ -788,6 +809,7 @@ public class ActivityServiceImplTests {
         host.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED);
 
         when(dbService.getActivity(hostActivityId)).thenReturn(host);
+        when(dbService.getActivityForUpdate(hostActivityId)).thenReturn(host);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("escalationEnd"))).thenReturn(UUID.randomUUID());
@@ -835,6 +857,7 @@ public class ActivityServiceImplTests {
         branch.setParentId(token);
 
         when(dbService.getActivity(hostActivityId)).thenReturn(host);
+        when(dbService.getActivityForUpdate(hostActivityId)).thenReturn(host);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.createToken(token)).thenReturn(branch);
@@ -900,6 +923,11 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        // WO-REL-30 (B-4): finishBranch читает токен через findToken — мок обязан
+        // вернуть существующий токен, иначе это stale-ветка (лог + return).
+        Token intermediateToken = new Token();
+        intermediateToken.setId(token);
+        when(dbService.findToken(token)).thenReturn(Optional.of(intermediateToken));
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("throw1"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
@@ -977,7 +1005,7 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
-        when(dbService.getActivity(catchActivityId)).thenReturn(catchActivity);
+        when(dbService.getActivityForUpdate(catchActivityId)).thenReturn(catchActivity);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("catch1"))).thenReturn(catchActivityId);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
@@ -1007,7 +1035,7 @@ public class ActivityServiceImplTests {
         activity.setType(BpmnElementType.SERVICE_TASK);
         activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
 
-        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getActivityForUpdate(serviceTaskId)).thenReturn(activity);
 
         activityService.completeServiceTask(serviceTaskId, List.of());
 
@@ -1029,11 +1057,11 @@ public class ActivityServiceImplTests {
         activity.setProcessInstanceId(processInstanceId);
         activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
 
-        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getActivityForUpdate(serviceTaskId)).thenReturn(activity);
 
         activityService.completeServiceTask(serviceTaskId, List.of());
 
-        verify(dbService).lockProcessInstance(processInstanceId);
+        verify(dbService).getActivityForUpdate(serviceTaskId);
     }
 
     @Test
