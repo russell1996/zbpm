@@ -6,6 +6,17 @@
 name: zorrobpm
 
 services:
+  # WO-OBS-6: the app writes the Prometheus scrape token (see ScrapeTokenBootstrap).
+  # The token file is bind-mounted read-write here (prometheus keeps its :ro mount
+  # below); entrypoint.sh arranges 65534:zorrobpm/640 on it so the JVM (uid 10001,
+  # supplementary groups reset by setpriv --init-groups) can write as group member
+  # while Prometheus (uid 65534) keeps reading as owner. Never world-readable.
+  app:
+    volumes:
+      - ./ci/observability/scrape-token:/etc/prometheus/scrape-token
+    environment:
+      SCRAPE_TOKEN_FILE: /etc/prometheus/scrape-token
+
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: zorrobpm-prometheus
