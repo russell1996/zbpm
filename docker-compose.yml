@@ -176,8 +176,7 @@ services:
         reservations:
           memory: 32m
     networks:
-      zorrobpm:
-        ipv4_address: 172.18.0.3
+      - zorrobpm
 
 volumes:
   postgres-data:
@@ -187,6 +186,3 @@ volumes:
 networks:
   zorrobpm:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.18.0.0/16
