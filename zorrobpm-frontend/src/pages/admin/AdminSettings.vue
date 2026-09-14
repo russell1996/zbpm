@@ -29,10 +29,13 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 // Tab order per WO-UI-10 brief: mail-settings, users, submissions.
+// Tab order per WO-UI-10/15: mail-settings, users, submissions, registrations.
 const sections = [
   { to: '/admin/settings/mail-settings', labelKey: 'mailSettings', id: 'panel-mail-settings' },
   { to: '/admin/settings/users', labelKey: 'users', id: 'panel-users' },
   { to: '/admin/settings/submissions', labelKey: 'submissionQueue', id: 'panel-submissions' },
+  // WO-UI-15: registration queue moved from standalone sidebar item
+  { to: '/admin/settings/registrations', labelKey: 'registrationQueue', id: 'panel-registrations' },
 ]
 
 function isActive(to: string) {

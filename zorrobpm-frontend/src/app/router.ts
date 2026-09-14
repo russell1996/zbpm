@@ -211,6 +211,14 @@ const router = createRouter({
               component: () => import('@/pages/admin/SubmissionQueue.vue'),
               meta: { titleKey: 'submissionQueue', requiresSuperAdmin: true },
             },
+            // WO-UI-15: registration queue consolidated into admin settings hub.
+            // Standalone /admin/registrations kept for deep-link / backward compat.
+            {
+              path: 'registrations',
+              name: 'admin-settings-registrations',
+              component: () => import('@/pages/admin/RegistrationQueue.vue'),
+              meta: { titleKey: 'registrationQueue', requiresSuperAdmin: true },
+            },
           ],
         },
         {
