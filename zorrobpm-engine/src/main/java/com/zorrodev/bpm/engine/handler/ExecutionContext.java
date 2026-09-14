@@ -4,14 +4,17 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Owns the two ThreadLocal guards used during process execution:
+ * Owns the ThreadLocal guards used during process execution:
  * <ul>
  *   <li>{@code executionDepth} — recursion depth limiter (prevents StackOverflow)</li>
+ *   <li>{@code callStack} — call-activity chain limiter (WO-REL-29, prevents StackOverflow via A→A/A→B→A)</li>
  *   <li>{@code evaluatingConditionals} — re-entrancy guard for conditional event evaluation</li>
  *   <li>{@code variableChanges} — variable writes since the last conditional trigger pass
  *   (WO-C8-29, consumed by {@code triggerConditionalEvents} for conditionalFilter matching)</li>
@@ -25,7 +28,11 @@ public class ExecutionContext {
     @Value("${zorrobpm.engine.max-execution-depth:1000}")
     private int maxExecutionDepth = 1000;
 
+    @Value("${zorrobpm.engine.max-call-depth:50}")
+    private int maxCallDepth = 50;
+
     private final ThreadLocal<Integer> executionDepth = ThreadLocal.withInitial(() -> 0);
+    private final ThreadLocal<Deque<String>> callStack = ThreadLocal.withInitial(ArrayDeque::new);
     private final ThreadLocal<Boolean> evaluatingConditionals = ThreadLocal.withInitial(() -> false);
     private final ThreadLocal<Map<String, String>> variableChanges =
         ThreadLocal.withInitial(LinkedHashMap::new);
@@ -54,6 +61,39 @@ public class ExecutionContext {
             executionDepth.remove();
         } else {
             executionDepth.set(depth - 1);
+        }
+    }
+
+    /**
+     * WO-REL-29: enters a call-activity frame. Detects recursion (A→A or A→B→A) and
+     * depth overflow before the child process is started. Throws a plain
+     * {@code IllegalStateException} so {@code ActivityServiceImpl.execute()} parks
+     * it as an incident (managed error) instead of propagating as engine abort
+     * or StackOverflow.
+     */
+    public void enterCall(String processKey, String elementId, UUID processInstanceId) {
+        Deque<String> stack = callStack.get();
+        if (stack.contains(processKey)) {
+            String chain = String.join(" -> ", stack) + " -> " + processKey;
+            throw new IllegalStateException("Call activity recursion detected: chain [" + chain
+                + "] at element '" + elementId + "' in process instance " + processInstanceId
+                + " — process '" + processKey + "' is already in the call stack");
+        }
+        if (stack.size() >= maxCallDepth) {
+            String chain = String.join(" -> ", stack) + " -> " + processKey;
+            throw new IllegalStateException("Call activity max depth (" + maxCallDepth + ") exceeded: chain ["
+                + chain + "] at element '" + elementId + "'");
+        }
+        stack.push(processKey);
+    }
+
+    public void exitCall() {
+        Deque<String> stack = callStack.get();
+        if (!stack.isEmpty()) {
+            stack.pop();
+        }
+        if (stack.isEmpty()) {
+            callStack.remove();
         }
     }
 
