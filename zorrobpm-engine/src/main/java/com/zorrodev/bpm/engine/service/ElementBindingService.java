@@ -87,9 +87,9 @@ public class ElementBindingService {
         binding.setProcessDefinitionVersion(pd.getVersion());
         binding.setElementId(dto.getElementId());
         binding.setArtifactKey(dto.getArtifactKey());
-        binding.setArtifactVersion(artifact.getVersion());
-        binding.setCreatedAt(Instant.now());
-        bindingRepository.save(binding);
+            binding.setArtifactVersion(artifact.getVersion());
+            binding.setCreatedAt(Instant.now());
+            bindingRepository.save(binding);
 
         ElementBindingDTO result = new ElementBindingDTO();
         result.setId(binding.getId());
