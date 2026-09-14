@@ -40,6 +40,7 @@ services:
     image: grafana/grafana:11.4.0
     container_name: zorrobpm-grafana
     restart: unless-stopped
+    entrypoint: ["/entrypoint-whitelist.sh"]
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
@@ -56,16 +57,20 @@ services:
       GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
       GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
       GF_AUTH_PROXY_SYNC_TTL: "60"
-      # WO-OBS-4: MANDATORY whitelist — without it anyone reaching Grafana directly
-      # (bypassing nginx) could forge identity via header. Value = the nginx
-      # container's STATIC IP /32 (defined in docker-compose.yml: frontend.networks.zorrobpm.ipv4_address).
-      # NOT the whole 172.18.0.0/16 subnet — that would let any compose
-      # container (e.g. app at 172.18.0.9) forge identity, which is exactly
-      # what criterion 4 rules out. No grafana ports are published (see below),
-      # so the real boundary is network membership; this is defense-in-depth.
+      # WO-OBS-4/WO-OBS-6: MANDATORY whitelist — without it anyone reaching Grafana
+      # directly (bypassing nginx) could forge identity via header. Must be ONLY the
+      # nginx container's IP, NOT the whole subnet (e.g. app's IP) -- that's exactly
+      # what criterion 4 rules out. No grafana ports are published (see below), so the
+      # real boundary is network membership; this is defense-in-depth.
+      # Left unset here on purpose: entrypoint-whitelist.sh (below) resolves nginx's
+      # actual IP at container start and fills this in -- a static pin needs an explicit
+      # ipam.config.subnet on the shared network, which is exactly what took prod down
+      # on 2026-09-14 (conflicted with an unrelated pre-existing docker network on the
+      # host). Set GRAFANA_PROXY_WHITELIST in .env only to override for an unusual
+      # topology; normally leave it unset.
       # Fail-closed: wrong/absent value breaks proxy-auth back to the admin
       # login form (criterion 6), never to open access.
-      GF_AUTH_PROXY_WHITELIST: ${GRAFANA_PROXY_WHITELIST:-172.18.0.3/32}
+      GF_AUTH_PROXY_WHITELIST: ${GRAFANA_PROXY_WHITELIST:-}
       GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
       # WO-OBS-5: webhook for alerts — OFF by default (empty → dummy URL, Firing without notification, principle 5)
       GRAFANA_ALERT_WEBHOOK_URL: ${GRAFANA_ALERT_WEBHOOK_URL:-http://localhost:0}
@@ -73,6 +78,7 @@ services:
       - grafana-data:/var/lib/grafana
       - ./ci/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ci/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./ci/observability/grafana/entrypoint-whitelist.sh:/entrypoint-whitelist.sh:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

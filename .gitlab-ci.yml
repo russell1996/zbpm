@@ -376,7 +376,19 @@ deploy:
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
     - cp -a ./ "$DEPLOY_DIR"/
     - if [ -f /tmp/scrape-token.bak ]; then mv /tmp/scrape-token.bak "$DEPLOY_DIR/ci/observability/scrape-token"; chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    # WO-OBS-6: a brand-new host has no scrape-token at all -- without this, Docker's bind
+    # mount creates it as an empty DIRECTORY on first `up` (same bug class fixed live on
+    # 2026-09-14), and Prometheus fails with "is a directory" instead of just an auth error.
+    # An empty placeholder file scrapes as unauthorized (safe, diagnosable) until the real
+    # token is provisioned, rather than breaking the mount entirely.
+    - if [ ! -e "$DEPLOY_DIR/ci/observability/scrape-token" ]; then touch "$DEPLOY_DIR/ci/observability/scrape-token"; chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
     - cd "$DEPLOY_DIR"
+    # WO-OBS-6: Grafana refuses to start without GF_SECURITY_ADMIN_PASSWORD (docker-compose.observability.yml
+    # uses the `:?` hard-fail form on purpose -- no static default for an admin account). Generate
+    # it once on first deploy instead of requiring a manual SSH step before the stack can come up;
+    # .env itself is preserved across every deploy (excluded from the resync above), so this only
+    # ever runs once per host.
+    - if ! grep -q '^GRAFANA_ADMIN_PASSWORD=' .env 2>/dev/null; then echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)" >> .env; echo "generated GRAFANA_ADMIN_PASSWORD (first deploy on this host)"; fi
     - export APP_TAG="$IMAGE_TAG" FRONTEND_TAG="$IMAGE_TAG"
     # Incident 2026-09-12 (pipeline 169556): when app's own Compose healthcheck fails during
     # the dependency-wait, `docker compose up -d` itself errors out ("dependency failed to
