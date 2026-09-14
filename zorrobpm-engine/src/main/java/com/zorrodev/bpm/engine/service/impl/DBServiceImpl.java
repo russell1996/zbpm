@@ -102,6 +102,11 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public boolean hasCompletedActivityOnTokenAndElement(UUID tokenId, String bpmnElementId) {
+        return activityDbOperations.hasCompletedActivityOnTokenAndElement(tokenId, bpmnElementId);
+    }
+
+    @Override
     public List<Incident> findOpenIncidentsByActivityIds(List<UUID> activityIds) {
         return incidentDbOperations.findOpenIncidentsByActivityIds(activityIds);
     }
