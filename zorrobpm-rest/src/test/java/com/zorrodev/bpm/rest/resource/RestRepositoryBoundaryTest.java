@@ -41,7 +41,6 @@ class RestRepositoryBoundaryTest {
     private static final Set<String> WHITELIST = Set.of(
             "AuditLogResource",
             "AuthResource",
-            "EventResource",
             "OutboxAdminResource",
             "ProcessDefinitionResource",
             "ProcessInstanceRuntimeOperationsImpl",
