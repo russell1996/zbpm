@@ -29,7 +29,10 @@ public class UiUserBootstrap implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (repository.count() > 0) return;
+        // WO-OBS-6: gate on the admin row itself, not on "any user exists" — other
+        // seeders (e.g. ScrapeTokenBootstrap) may run first and must not suppress
+        // the admin seed; same for a restored DB that has users but no admin row.
+        if (repository.existsByUsername(adminUsername)) return;
 
         UiUserEntity admin = new UiUserEntity();
         admin.setId(UUID.randomUUID());
