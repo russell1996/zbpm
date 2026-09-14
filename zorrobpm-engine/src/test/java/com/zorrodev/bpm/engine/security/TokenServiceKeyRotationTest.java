@@ -64,7 +64,7 @@ class TokenServiceKeyRotationTest {
 
     @Test
     void criterion1_issuedToken_carriesKidInHeader() throws Exception {
-        String token = serviceWith(KEY_A, "").issue(UUID.randomUUID(), "alice", "USER");
+        String token = serviceWith(KEY_A, "").issue(UUID.randomUUID(), "alice", "USER", 0);
         Map<String, Object> header = mapper.readValue(b64d.decode(token.split("\\.")[0]), Map.class);
         String kid = (String) header.get("kid");
         assertThat(kid).isNotBlank();
@@ -72,7 +72,7 @@ class TokenServiceKeyRotationTest {
 
         // kid must be deterministic per key: another service with the same key emits the same kid
         Map<String, Object> header2 = mapper.readValue(
-            b64d.decode(serviceWith(KEY_A, "").issue(UUID.randomUUID(), "alice", "USER").split("\\.")[0]), Map.class);
+            b64d.decode(serviceWith(KEY_A, "").issue(UUID.randomUUID(), "alice", "USER", 0).split("\\.")[0]), Map.class);
         assertThat(header2.get("kid")).isEqualTo(kid);
     }
 
@@ -81,7 +81,7 @@ class TokenServiceKeyRotationTest {
     @Test
     void criterion2_tokenSignedWithKeyA_verifiesAfterRotationWhileAInAccepted() {
         UUID userId = UUID.randomUUID();
-        String tokenBeforeRotation = serviceWith(KEY_A, "").issue(userId, "alice", "ADMIN");
+        String tokenBeforeRotation = serviceWith(KEY_A, "").issue(userId, "alice", "ADMIN", 0);
 
         // rotation: active key becomes B, A moves to the accepted (legacy) set
         TokenService rotated = serviceWith(KEY_B, KEY_A);
@@ -136,7 +136,7 @@ class TokenServiceKeyRotationTest {
         // rejected by the kid lookup, not by the alg guard — the test would stay green even if
         // the alg check were removed, promising more than it verifies.
         String realKid = (String) mapper.readValue(
-            b64d.decode(serviceWith(KEY_B, "").issue(UUID.randomUUID(), "alice", "USER").split("\\.")[0]),
+            b64d.decode(serviceWith(KEY_B, "").issue(UUID.randomUUID(), "alice", "USER", 0).split("\\.")[0]),
             Map.class).get("kid");
         String token = buildToken("none", realKid, validPayload(), KEY_B);
         assertThat(serviceWith(KEY_B, "").verify(token)).isNull();
@@ -148,7 +148,7 @@ class TokenServiceKeyRotationTest {
     void criterion6_onlyJwtSecret_worksAsBefore() {
         TokenService singleKey = serviceWith(KEY_B, "");
         UUID userId = UUID.randomUUID();
-        String token = singleKey.issue(userId, "bob", "USER");
+        String token = singleKey.issue(userId, "bob", "USER", 0);
         TokenService.Claims claims = singleKey.verify(token);
         assertThat(claims).isNotNull();
         assertThat(claims.userId()).isEqualTo(userId);

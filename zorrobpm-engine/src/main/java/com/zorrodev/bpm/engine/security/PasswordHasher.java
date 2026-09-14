@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Base64;
 
 /**
@@ -17,6 +18,23 @@ public class PasswordHasher {
     private static final int ITERATIONS = 120_000;
     private static final int KEY_LENGTH = 256;
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    /**
+     * WO-SEC-63 (F21): precomputed PBKDF2 hash used for the "unknown user" login branch.
+     * For an unknown username the old code called {@code hash(password)} + {@code matches()}
+     * (TWO PBKDF2 runs) versus ONE {@code matches()} for a known user — a timing oracle and
+     * double CPU cost on unknown logins. With a precomputed constant the unknown-user branch
+     * runs exactly one {@code matches()}, same cost as a known user. Deterministic fixed salt
+     * (never stored, never compared for equality — only its KDF cost matters).
+     */
+    public static final String CONSTANT_TIME_DUMMY_HASH = buildDummyHash();
+
+    private static String buildDummyHash() {
+        byte[] salt = new byte[16];
+        Arrays.fill(salt, (byte) 0x5A);
+        byte[] hash = pbkdf2("constant-time-login-dummy".toCharArray(), salt, ITERATIONS);
+        return "pbkdf2$" + ITERATIONS + "$" + b64(salt) + "$" + b64(hash);
+    }
 
     public String hash(String rawPassword) {
         byte[] salt = new byte[16];

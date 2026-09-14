@@ -46,6 +46,12 @@ public class TokenService {
 
     private static final String DEFAULT_SECRET = "change-me-dev-secret-please-override-in-production";
     private static final Set<String> SECRET_OPTIONAL_PROFILES = Set.of("dev", "test");
+    /**
+     * WO-SEC-63 (F20): minimum length for the JWT signing secret — 32 chars = 256 bits,
+     * matching the HS256 output size. Anything shorter is brute-forceable regardless of
+     * whether it matches a known literal, so fail-fast on length, not only on defaults.
+     */
+    private static final int MIN_SECRET_LENGTH = 32;
 
     public TokenService(
         @Value("${zorrobpm.security.jwt-secret:" + DEFAULT_SECRET + "}") String secret,
@@ -54,9 +60,10 @@ public class TokenService {
         Environment environment) {
         boolean devOrTest = Arrays.stream(environment.getActiveProfiles())
             .anyMatch(SECRET_OPTIONAL_PROFILES::contains);
-        if (!devOrTest && DEFAULT_SECRET.equals(secret)) {
+        if (!devOrTest && (DEFAULT_SECRET.equals(secret) || secret.length() < MIN_SECRET_LENGTH)) {
             throw new IllegalStateException(
-                "FATAL: zorrobpm.security.jwt-secret must be set (default secret allowed only in dev/test profiles). "
+                "FATAL: zorrobpm.security.jwt-secret must be a random secret of at least "
+                + MIN_SECRET_LENGTH + " characters (default/too-short secret allowed only in dev/test profiles). "
                 + "Set ZORROBPM_JWT_SECRET or application-prod.yml.");
         }
         this.activeSecret = secret.getBytes(StandardCharsets.UTF_8);
@@ -71,10 +78,11 @@ public class TokenService {
                     // as the active secret. Without this, the published default secret written into
                     // jwt-legacy-secrets would become an accepted signing key in production, silently
                     // bypassing the WO-SEC-9 invariant (full auth bypass to ADMIN).
-                    if (!devOrTest && DEFAULT_SECRET.equals(trimmed)) {
+                    if (!devOrTest && (DEFAULT_SECRET.equals(trimmed) || trimmed.length() < MIN_SECRET_LENGTH)) {
                         throw new IllegalStateException(
-                            "FATAL: default secret must not appear in jwt-legacy-secrets "
-                            + "(default secret allowed only in dev/test profiles). "
+                            "FATAL: jwt-legacy-secrets entries must be random secrets of at least "
+                            + MIN_SECRET_LENGTH + " characters "
+                            + "(default/too-short secret allowed only in dev/test profiles). "
                             + "Set ZORROBPM_JWT_LEGACY_SECRETS to real rotation keys.");
                     }
                     byte[] legacyBytes = trimmed.getBytes(StandardCharsets.UTF_8);
@@ -83,6 +91,11 @@ public class TokenService {
             }
         }
         this.ttlSeconds = ttlMinutes * 60;
+    }
+
+    /** Test-visible accessor: the active key id (for hand-built legacy-token fixtures). */
+    String keyIdForTest() {
+        return activeKeyId;
     }
 
     /**
@@ -98,16 +111,20 @@ public class TokenService {
         }
     }
 
-    public record Claims(UUID userId, String username, String role, long exp) {}
+    public record Claims(UUID userId, String username, String role, int tokenVersion, long exp) {}
 
-    /** Issues a signed token carrying the user id, username and role. */
-    public String issue(UUID userId, String username, String role) {
+    /**
+     * Issues a signed token carrying the user id, username, role and the access-token version
+     * (WO-SEC-63). The version is embedded as claim {@code ver}; JwtAuthFilter compares it with
+     * the user's current token_version to detect revoked tokens (logout/password change bumped it).
+     */
+    public String issue(UUID userId, String username, String role, int tokenVersion) {
         long exp = Instant.now().getEpochSecond() + ttlSeconds;
         try {
             String header = b64.encodeToString(
                 ("{\"alg\":\"HS256\",\"kid\":\"" + activeKeyId + "\",\"typ\":\"JWT\"}").getBytes(StandardCharsets.UTF_8));
             byte[] payloadJson = mapper.writeValueAsBytes(Map.of(
-                "sub", userId.toString(), "username", username, "role", role, "exp", exp));
+                "sub", userId.toString(), "username", username, "role", role, "ver", tokenVersion, "exp", exp));
             String payload = b64.encodeToString(payloadJson);
             String signingInput = header + "." + payload;
             return signingInput + "." + b64.encodeToString(hmac(signingInput, activeSecret));
@@ -150,10 +167,15 @@ public class TokenService {
             Map<String, Object> payload = mapper.readValue(b64d.decode(parts[1]), Map.class);
             long exp = ((Number) payload.get("exp")).longValue();
             if (Instant.now().getEpochSecond() >= exp) return null;
+            // WO-SEC-63: 'ver' claim — tokens issued BEFORE this change carry no version.
+            // Default to 0 so a legacy token matches a user whose version was never bumped;
+            // the FIRST logout/password change raises the version and invalidates all of them.
+            int tokenVersion = payload.get("ver") == null ? 0 : ((Number) payload.get("ver")).intValue();
             return new Claims(
                 UUID.fromString((String) payload.get("sub")),
                 (String) payload.get("username"),
                 (String) payload.get("role"),
+                tokenVersion,
                 exp);
         } catch (Exception e) {
             return null;

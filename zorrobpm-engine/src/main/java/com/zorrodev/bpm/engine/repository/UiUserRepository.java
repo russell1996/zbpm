@@ -6,8 +6,10 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -38,6 +40,16 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     long countByRoleAndActiveAndUserType(String role, boolean active, String userType);
+
+    /**
+     * WO-SEC-63: atomically increment token_version to invalidate all outstanding access tokens
+     * for the given user. Used by logout and password-change paths. Returns the number of rows
+     * updated (0 if user does not exist).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE UiUserEntity u SET u.tokenVersion = u.tokenVersion + 1 WHERE u.id = :userId")
+    int incrementTokenVersion(@Param("userId") UUID userId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT u FROM UiUserEntity u WHERE u.role = :role AND u.active = :active AND u.userType = :userType")
