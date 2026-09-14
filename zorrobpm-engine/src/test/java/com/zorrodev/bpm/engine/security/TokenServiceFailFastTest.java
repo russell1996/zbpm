@@ -17,7 +17,11 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 class TokenServiceFailFastTest {
 
     private static final String DEFAULT_SECRET = "change-me-dev-secret-please-override-in-production";
-    private static final String CUSTOM_SECRET = "my-secure-secret-key-12345678";
+    // >= MIN_SECRET_LENGTH (WO-SEC-63 F20): a "custom" secret must also be long enough to be a real key
+    private static final String CUSTOM_SECRET = "my-secure-secret-key-0123456789abcdef";
+    // legacy CSV entries must satisfy the SAME length rule as the active secret
+    private static final String LEGACY_A = "legacy-key-a-secret-0123456789abcdef";
+    private static final String LEGACY_B = "legacy-key-b-secret-0123456789abcdef";
 
     // --- Criterion #1: No active profile + default secret → fail-fast ---
 
@@ -106,6 +110,44 @@ class TokenServiceFailFastTest {
     void criterion5_productionProfile_customLegacySecrets_doesNotThrow() {
         MockEnvironment env = new MockEnvironment();
         env.setActiveProfiles("production");
-        assertThatNoException().isThrownBy(() -> new TokenService(CUSTOM_SECRET, 60, "legacy-key-1, legacy-key-2", env));
+        assertThatNoException().isThrownBy(() -> new TokenService(CUSTOM_SECRET, 60, LEGACY_A + ", " + LEGACY_B, env));
+    }
+
+    // --- WO-SEC-63 (F20): fail-fast on SHORT secrets — the old gate only matched the default
+    // literal, so a 6-char "secret" passed it silently. Length is the real measure of key
+    // strength (32 chars = 256 bits = HS256 output), and it applies everywhere, not only
+    // against known literals.
+
+    @Test
+    void criterion6_productionProfile_shortSecret_throwsIllegalState() {
+        MockEnvironment env = new MockEnvironment();
+        env.setActiveProfiles("production");
+        assertThatThrownBy(() -> new TokenService("short", 60, "", env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("jwt-secret");
+    }
+
+    @Test
+    void criterion6_noProfile_shortSecret_throwsIllegalState() {
+        MockEnvironment env = new MockEnvironment();
+        assertThatThrownBy(() -> new TokenService("short", 60, "", env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("jwt-secret");
+    }
+
+    @Test
+    void criterion6_testProfile_shortSecret_doesNotThrow() {
+        MockEnvironment env = new MockEnvironment();
+        env.setActiveProfiles("test");
+        assertThatNoException().isThrownBy(() -> new TokenService("short", 60, "", env));
+    }
+
+    @Test
+    void criterion6_productionProfile_shortLegacySecret_throwsIllegalState() {
+        MockEnvironment env = new MockEnvironment();
+        env.setActiveProfiles("production");
+        assertThatThrownBy(() -> new TokenService(CUSTOM_SECRET, 60, "short," + LEGACY_A, env))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("jwt-legacy-secrets");
     }
 }

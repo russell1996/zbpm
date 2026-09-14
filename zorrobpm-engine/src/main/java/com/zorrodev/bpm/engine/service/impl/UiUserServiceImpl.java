@@ -68,15 +68,22 @@ public class UiUserServiceImpl implements UiUserService {
             user = repository.findByEmail(normalizeEmail(dto.getUsername())).orElse(null);
         }
 
-        // WO-SEC-17 M7: constant-time — always compare hash, even for unknown/inactive users
-        String dummyHash = user != null ? user.getPasswordHash() : passwordHasher.hash(dto.getPassword());
-        boolean passwordMatches = passwordHasher.matches(dto.getPassword(), dummyHash);
+        // WO-SEC-17 M7 + WO-SEC-63 (F21): constant-time — always one KDF compare for the full path.
+        // For an unknown user we compare against the PRE-COMPUTED dummy hash (same PBKDF2 cost
+        // as a real stored hash): exactly ONE matches() in both branches. The old code hashed
+        // the submitted password first for unknown users (TWO PBKDF2 runs) — a timing oracle
+        // and double CPU burn on unknown logins.
+        String hashToCheck = user != null ? user.getPasswordHash() : PasswordHasher.CONSTANT_TIME_DUMMY_HASH;
+        boolean passwordMatches = passwordHasher.matches(dto.getPassword(), hashToCheck);
         boolean valid = user != null && user.isActive() && passwordMatches;
 
         if (!valid) return Optional.empty();
 
         AuthResponse response = new AuthResponse();
-        response.setToken(tokenService.issue(user.getId(), user.getUsername(), user.getRole()));
+        // WO-SEC-63: access token carries the CURRENT token_version; a later logout/password
+        // change bumps it and invalidates this token at the next filter check.
+        response.setToken(tokenService.issue(
+            user.getId(), user.getUsername(), user.getRole(), user.getTokenVersion()));
         response.setUser(mapper.toDTO(user));
         return Optional.of(response);
     }
@@ -221,7 +228,14 @@ public class UiUserServiceImpl implements UiUserService {
 
         entity.setPasswordHash(passwordHasher.hash(newPassword));
         entity.setForcePasswordChange(false);
-        
+
+        // WO-SEC-63: changing the password must invalidate ALL outstanding access tokens for
+        // this user (same guarantee as logout — copied tokens stop working immediately).
+        entity.setTokenVersion(entity.getTokenVersion() + 1);
+        // ...and their refresh tokens: a stolen refresh cookie would otherwise keep minting
+        // fresh access tokens past the password change (mirror of WO-SEC-59 #6 admin reset).
+        refreshTokenRepository.revokeAllByUserId(userId);
+
         entity.setUpdatedAt(java.time.Instant.now());
         repository.save(entity);
         return entity.getId();
@@ -276,6 +290,13 @@ public class UiUserServiceImpl implements UiUserService {
         }
         if (dto.getRole() != null) entity.setRole(newRole);
         if (dto.getActive() != null) entity.setActive(newActive);
+        // WO-SEC-63 (F01): identity attributes (role / active) are part of the access-token
+        // contract — any change must invalidate outstanding tokens, otherwise a demoted/deactivated
+        // user keeps their old role until the 30-minute access TTL expires. The filter also checks
+        // active + role per request (defense-in-depth), but bumping the version here forces a
+        // refresh/re-login cycle immediately and keeps the persisted state consistent.
+        boolean identityChanged = (dto.getRole() != null && !newRole.equals(previousRole))
+            || (dto.getActive() != null && newActive != previousActive);
         // WO-INT-4: a system account never gets a password and forcePasswordChange is
         // not applicable to it — both are ignored so the integration cannot be locked
         // by a password-flow decision.
@@ -287,6 +308,17 @@ public class UiUserServiceImpl implements UiUserService {
             // WO-SEC-59 #6: admin password reset must revoke all of the user's refresh tokens,
             // otherwise a stolen/held token keeps refreshing access after the reset.
             refreshTokenRepository.revokeAllByUserId(id);
+            // WO-SEC-63: and invalidate all outstanding access tokens for the same reason.
+            identityChanged = true;
+        }
+        if (identityChanged) {
+            entity.setTokenVersion(entity.getTokenVersion() + 1);
+            // WO-SEC-63 (F01): deactivation (without password change) must ALSO revoke the
+            // refresh tokens — an active check alone leaves the stolen refresh cookie reusable
+            // if the user is later re-activated.
+            if (dto.getActive() != null && !newActive && previousActive) {
+                refreshTokenRepository.revokeAllByUserId(id);
+            }
         }
         entity.setUpdatedAt(Instant.now());
         try {

@@ -27,6 +27,7 @@ import static org.mockito.Mockito.when;
 class JwtAuthFilterTest {
 
     private TokenService tokenService;
+    private com.zorrodev.bpm.engine.security.UiUserLookupService userLookup;
     private JwtAuthFilter filter;
 
     @BeforeEach
@@ -34,7 +35,7 @@ class JwtAuthFilterTest {
         tokenService = mock(TokenService.class);
         ApiKeyRepository apiKeyRepo = mock(ApiKeyRepository.class);
         ApiKeyGrantRepository apiKeyGrantRepo = mock(ApiKeyGrantRepository.class);
-        var userLookup = mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class);
+        userLookup = mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class);
         var authz = mock(com.zorrodev.bpm.engine.security.AuthorizationService.class);
         var env = mock(org.springframework.core.env.Environment.class);
         filter = new JwtAuthFilter(tokenService, apiKeyRepo, apiKeyGrantRepo, userLookup, authz, env);
@@ -109,7 +110,16 @@ class JwtAuthFilterTest {
     void validToken_passesThrough_withClaimsAttribute() throws Exception {
         setRequireApiAuth(true);
         TokenService.Claims claims = mock(TokenService.Claims.class);
+        UUID userId = UUID.randomUUID();
+        when(claims.userId()).thenReturn(userId);
+        when(claims.role()).thenReturn("USER");
+        when(claims.tokenVersion()).thenReturn(7);
         when(tokenService.verify("good-token")).thenReturn(claims);
+        // WO-SEC-63: filter resolves the live user-state on every JWT request; a matching
+        // active user with SAME role + tokenVersion must pass through.
+        when(userLookup.securityState(userId)).thenReturn(java.util.Optional.of(
+            new com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState(
+                userId, "alice", "USER", true, 7, false)));
 
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/process-instances");
         request.addHeader("Authorization", "Bearer good-token");
@@ -125,8 +135,16 @@ class JwtAuthFilterTest {
     @Test
     void usersPath_nonAdminRole_returns403() throws Exception {
         TokenService.Claims claims = mock(TokenService.Claims.class);
+        UUID userId = UUID.randomUUID();
+        when(claims.userId()).thenReturn(userId);
         when(claims.role()).thenReturn("USER");
+        when(claims.tokenVersion()).thenReturn(0);
         when(tokenService.verify("user-token")).thenReturn(claims);
+        // Active user in DB, role matches the claim → the "/users" admin path check
+        // (not the filter itself) decides the 403.
+        when(userLookup.securityState(userId)).thenReturn(java.util.Optional.of(
+            new com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState(
+                userId, "bob", "USER", true, 0, false)));
 
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/users");
         request.addHeader("Authorization", "Bearer user-token");
@@ -136,6 +154,113 @@ class JwtAuthFilterTest {
         filter.doFilterInternal(request, response, chain);
 
         assertThat(response.getStatus()).isEqualTo(403);
+    }
+
+    // --- WO-SEC-63 (F01): the JWT hot path must invalidate a token as soon as the DB state
+    // diverges from the claims — tokenVersion bump (logout/password change), deactivation,
+    // or role change must all turn a previously-valid bearer token into 401, not 200.
+
+    @Test
+    void tokenVersionMismatch_staleToken_returns401() throws Exception {
+        setRequireApiAuth(true);
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        UUID userId = UUID.randomUUID();
+        when(claims.userId()).thenReturn(userId);
+        when(claims.role()).thenReturn("USER");
+        // Token was issued BEFORE the user logged out → carries stale version 3.
+        when(claims.tokenVersion()).thenReturn(3);
+        when(tokenService.verify("stale-token")).thenReturn(claims);
+        // Logout incremented the DB version to 4 → mismatch must invalidate.
+        when(userLookup.securityState(userId)).thenReturn(java.util.Optional.of(
+            new com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState(
+                userId, "alice", "USER", true, 4, false)));
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/process-instances");
+        request.addHeader("Authorization", "Bearer stale-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(request.getAttribute("authClaims")).isNull();
+    }
+
+    @Test
+    void inactiveUser_token_returns401() throws Exception {
+        setRequireApiAuth(true);
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        UUID userId = UUID.randomUUID();
+        when(claims.userId()).thenReturn(userId);
+        when(claims.role()).thenReturn("USER");
+        when(claims.tokenVersion()).thenReturn(0);
+        when(tokenService.verify("deactivated-token")).thenReturn(claims);
+        // Deactivated in DB (version was also bumped by UiUserServiceImpl.update on
+        // deactivation, but the active=false alone must already block).
+        when(userLookup.securityState(userId)).thenReturn(java.util.Optional.of(
+            new com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState(
+                userId, "alice", "USER", false, 0, false)));
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/process-instances");
+        request.addHeader("Authorization", "Bearer deactivated-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(request.getAttribute("authClaims")).isNull();
+    }
+
+    @Test
+    void roleDemoted_token_returns401() throws Exception {
+        // Role demotion (SUPER_ADMIN → USER) must also kill old tokens immediately:
+        // JWT path re-checks role from DB like the API-key path always did (F01).
+        setRequireApiAuth(true);
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        UUID userId = UUID.randomUUID();
+        when(claims.userId()).thenReturn(userId);
+        // The token still claims SUPER_ADMIN.
+        when(claims.role()).thenReturn("SUPER_ADMIN");
+        when(claims.tokenVersion()).thenReturn(0);
+        when(tokenService.verify("demoted-token")).thenReturn(claims);
+        // DB has already demoted the user; version bump from update() covers this too,
+        // but the role check is the dedicated F01 guard and must block on its own.
+        when(userLookup.securityState(userId)).thenReturn(java.util.Optional.of(
+            new com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState(
+                userId, "bob", "USER", true, 0, false)));
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/process-instances");
+        request.addHeader("Authorization", "Bearer demoted-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(request.getAttribute("authClaims")).isNull();
+    }
+
+    @Test
+    void userStateMissing_token_returns401() throws Exception {
+        setRequireApiAuth(true);
+        TokenService.Claims claims = mock(TokenService.Claims.class);
+        UUID userId = UUID.randomUUID();
+        when(claims.userId()).thenReturn(userId);
+        when(claims.role()).thenReturn("USER");
+        when(claims.tokenVersion()).thenReturn(1);
+        when(tokenService.verify("deleted-token")).thenReturn(claims);
+        when(userLookup.securityState(userId)).thenReturn(java.util.Optional.empty());
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/process-instances");
+        request.addHeader("Authorization", "Bearer deleted-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(request.getAttribute("authClaims")).isNull();
     }
 
     @Test

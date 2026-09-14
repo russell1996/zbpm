@@ -33,6 +33,7 @@ class UserInvitationServiceTest {
 
     @Mock UiUserRepository userRepository;
     @Mock PasswordTokenRepository tokenRepository;
+    @Mock com.zorrodev.bpm.engine.repository.RefreshTokenRepository refreshTokenRepository;
     @Mock TokenService tokenService;
     @Mock PasswordHasher passwordHasher;
     @Mock MailSender mailSender;
@@ -168,6 +169,22 @@ class UserInvitationServiceTest {
         // Second use must fail (criterion 6) — the token is already spent.
         assertThatThrownBy(() -> service.consumeToken("RAW-TOKEN", "OtherPass1!"))
                 .isInstanceOf(EngineException.class);
+    }
+
+    // ---- WO-SEC-63 (F03): EMAIL_VERIFY tokens must never double as password setters ----
+    @Test
+    void consumeToken_emailVerifyTokenRejected_noStateChanged() {
+        PasswordTokenEntity token = token();
+        token.setType("EMAIL_VERIFY");
+        when(tokenRepository.findByTokenHashAndUsedFalse("HASHED-TOKEN")).thenReturn(Optional.of(token));
+
+        assertThatThrownBy(() -> service.consumeToken("RAW-TOKEN", "NewPassw0rd!"))
+                .isInstanceOf(EngineException.class)
+                .hasMessageContaining("Invalid or expired token");
+
+        verify(userRepository, never()).save(any());
+        verify(refreshTokenRepository, never()).revokeAllByUserId(any());
+        verify(tokenRepository, never()).consumeByTokenHash(anyString(), any(Instant.class));
     }
 
     // ---- Criterion 7: expired token rejected ----

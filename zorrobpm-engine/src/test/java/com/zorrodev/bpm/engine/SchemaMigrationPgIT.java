@@ -50,6 +50,41 @@ class SchemaMigrationPgIT extends PostgresIT {
         assertThat(uiUserRepository.findById(sys.getId()).orElseThrow().getUserType()).isEqualTo("SYSTEM");
     }
 
+    // --- WO-SEC-63 (107): ui_users.token_version present with NOT NULL + DEFAULT 0,
+    // and the entity round-trips it. The default matters: existing accounts upgraded in
+    // place must start at 0, and a legacy JWT without a 'ver' claim matches that 0.
+
+    @Test
+    void migration107_addsTokenVersionColumnWithDefaultZero() {
+        Integer cols = jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM information_schema.columns "
+                + "WHERE table_name = 'ui_users' AND column_name = 'token_version'",
+            Integer.class);
+        assertThat(cols).isEqualTo(1);
+
+        String isNullable = jdbcTemplate.queryForObject(
+            "SELECT is_nullable FROM information_schema.columns "
+                + "WHERE table_name = 'ui_users' AND column_name = 'token_version'",
+            String.class);
+        assertThat(isNullable).isEqualTo("NO");
+
+        // Insert WITHOUT setting tokenVersion → DB default 0 must apply (not explicit NULL)
+        UiUserEntity u = new UiUserEntity();
+        u.setId(UUID.randomUUID());
+        u.setUsername("mig107_0_" + UUID.randomUUID().toString().substring(0, 8));
+        u.setPasswordHash("x");
+        u.setUserType("HUMAN");
+        u.setRole("USER");
+        u.setActive(true);
+        u.setCreatedAt(Instant.now());
+        uiUserRepository.save(u);
+        assertThat(uiUserRepository.findById(u.getId()).orElseThrow().getTokenVersion()).isZero();
+
+        // Bump and read back — the column actually persists the value
+        uiUserRepository.incrementTokenVersion(u.getId());
+        assertThat(uiUserRepository.findById(u.getId()).orElseThrow().getTokenVersion()).isEqualTo(1);
+    }
+
     // --- 076 (criterion 11): service_account tables dropped ---
 
     @Test

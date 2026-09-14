@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -62,7 +63,7 @@ class UiUserServiceImplLoginByEmailTest {
         when(repository.findByUsername("ivan@example.com")).thenReturn(Optional.empty());
         when(repository.findByEmail("ivan@example.com")).thenReturn(Optional.of(u));
         when(passwordHasher.matches("secret", "real-hash")).thenReturn(true);
-        when(tokenService.issue(any(), anyString(), anyString())).thenReturn("jwt");
+        when(tokenService.issue(any(), anyString(), anyString(), anyInt())).thenReturn("jwt");
 
         assertThat(service.login(dto("ivan@example.com", "secret"))).isPresent();
     }
@@ -73,7 +74,7 @@ class UiUserServiceImplLoginByEmailTest {
         when(repository.findByUsername("Foo@X.com")).thenReturn(Optional.empty());
         when(repository.findByEmail("foo@x.com")).thenReturn(Optional.of(u));
         when(passwordHasher.matches("secret", "real-hash")).thenReturn(true);
-        when(tokenService.issue(any(), anyString(), anyString())).thenReturn("jwt");
+        when(tokenService.issue(any(), anyString(), anyString(), anyInt())).thenReturn("jwt");
 
         assertThat(service.login(dto("Foo@X.com", "secret"))).isPresent();
         verify(repository).findByEmail("foo@x.com");
@@ -101,7 +102,7 @@ class UiUserServiceImplLoginByEmailTest {
         UiUserEntity a = user("x", "a@example.com");
         when(repository.findByUsername("x")).thenReturn(Optional.of(a));
         when(passwordHasher.matches("secret", "real-hash")).thenReturn(true);
-        when(tokenService.issue(any(), anyString(), anyString())).thenReturn("jwt");
+        when(tokenService.issue(any(), anyString(), anyString(), anyInt())).thenReturn("jwt");
 
         assertThat(service.login(dto("x", "secret"))).isPresent();
         verify(repository, never()).findByEmail(anyString());
@@ -122,7 +123,7 @@ class UiUserServiceImplLoginByEmailTest {
         UiUserEntity u = user("ivan", "ivan@example.com");
         when(repository.findByUsername("ivan")).thenReturn(Optional.of(u));
         when(passwordHasher.matches("secret", "real-hash")).thenReturn(true);
-        when(tokenService.issue(any(), anyString(), anyString())).thenReturn("jwt");
+        when(tokenService.issue(any(), anyString(), anyString(), anyInt())).thenReturn("jwt");
 
         assertThat(service.login(dto("ivan", "secret"))).isPresent();
         verify(passwordHasher, times(1)).matches(anyString(), anyString());
@@ -134,7 +135,7 @@ class UiUserServiceImplLoginByEmailTest {
         when(repository.findByUsername("ivan@example.com")).thenReturn(Optional.empty());
         when(repository.findByEmail("ivan@example.com")).thenReturn(Optional.of(u));
         when(passwordHasher.matches("secret", "real-hash")).thenReturn(true);
-        when(tokenService.issue(any(), anyString(), anyString())).thenReturn("jwt");
+        when(tokenService.issue(any(), anyString(), anyString(), anyInt())).thenReturn("jwt");
 
         assertThat(service.login(dto("ivan@example.com", "secret"))).isPresent();
         verify(passwordHasher, times(1)).matches(anyString(), anyString());
