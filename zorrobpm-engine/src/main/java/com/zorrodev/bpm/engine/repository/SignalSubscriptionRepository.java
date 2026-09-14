@@ -13,6 +13,13 @@ public interface SignalSubscriptionRepository extends JpaRepository<SignalSubscr
 
     List<SignalSubscriptionEntity> findByConsumedFalseAndSignalName(String signalName);
 
+    // WO-REL-31 CR-3: keyset-paged fan-out finders — batch ≤500, deterministic id-DESC order.
+    // Cursor is the minimum id from the previous page (null = first page).
+
+    List<SignalSubscriptionEntity> findFirst500ByConsumedFalseAndSignalNameOrderByIdDesc(String signalName);
+
+    List<SignalSubscriptionEntity> findFirst500ByConsumedFalseAndSignalNameAndIdLessThanOrderByIdDesc(String signalName, UUID id);
+
     @Modifying
     @Query("UPDATE SignalSubscriptionEntity e SET e.consumed = true WHERE e.id = :id AND e.consumed = false")
     int markConsumed(@Param("id") UUID id);

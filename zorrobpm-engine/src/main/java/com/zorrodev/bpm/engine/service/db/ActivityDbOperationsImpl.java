@@ -261,7 +261,8 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
 
     @Override
     public List<Activity> getActiveActivities(UUID processInstanceId) {
-        return activityRepository.findByProcessInstanceIdAndStatusIn(
+        // WO-REL-31 CR-3: deterministic id-ASC order (see repo method javadoc)
+        return activityRepository.findByProcessInstanceIdAndStatusInOrderByIdAsc(
                 processInstanceId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS)).stream()
             .map(this::getActivity)
             .toList();

@@ -1,22 +1,14 @@
 package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
-import com.zorrodev.bpm.engine.entity.ActivityEntity;
-import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
-import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
-import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
-import com.zorrodev.bpm.engine.entity.ProcessMemberId;
-import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
-import com.zorrodev.bpm.engine.repository.ActivityRepository;
-import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
-import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
+import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.security.Principal;
@@ -48,11 +40,9 @@ public class RuntimeSupportService {
     private final UserGroupRepository userGroupRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
-    private final ProcessRepository processRepository;
     private final ProcessMemberRepository processMemberRepository;
     private final ServiceTaskRepository serviceTaskRepository;
     private final IncidentRepository incidentRepository;
-    private final ActivityRepository activityRepository;
 
     /**
      * WO-INT-4 criteria 9-10: when a service key claims an attribution, the claim must be
@@ -83,17 +73,13 @@ public class RuntimeSupportService {
         }
 
         // Unassigned task with no candidate groups: open to process members only.
-        ProcessInstanceEntity instance = processInstanceRepository.findById(processInstanceId).orElse(null);
-        if (instance != null) {
-            ProcessDefinitionEntity definition = processDefinitionRepository.findById(instance.getProcessDefinitionId()).orElse(null);
-            if (definition != null) {
-                ProcessEntity process = processRepository.findByDefinitionKey(definition.getKey()).orElse(null);
-                if (process != null) {
-                    ProcessMemberEntity membership = processMemberRepository.findById(
-                        new ProcessMemberId(process.getId(), namedUser.getId())).orElse(null);
-                    if (membership != null) return;
-                }
-            }
+        // WO-REL-31 CR-4: one definition-key query + one membership query instead of
+        // the former instance→definition→process→membership four-step chain; a missing
+        // link at any step must yield the same FORBIDDEN as before.
+        String definitionKey = processInstanceRepository.findDefinitionKeyById(processInstanceId).orElse(null);
+        if (definitionKey != null
+                && processMemberRepository.isMemberByDefinitionKey(namedUser.getId(), definitionKey)) {
+            return;
         }
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
     }
@@ -125,24 +111,19 @@ public class RuntimeSupportService {
     }
 
     public String resolveDefinitionKeyByInstance(UUID instanceId) {
-        ProcessInstanceEntity pi = processInstanceRepository.findById(instanceId).orElse(null);
-        if (pi == null) return null;
-        ProcessDefinitionEntity pd = processDefinitionRepository.findById(pi.getProcessDefinitionId()).orElse(null);
-        return pd != null ? pd.getKey() : null;
+        // WO-REL-31 CR-4: single join query (was instance→definition two steps).
+        return processInstanceRepository.findDefinitionKeyById(instanceId).orElse(null);
     }
 
     public String resolveDefinitionKeyByServiceTask(UUID serviceTaskId) {
-        ServiceTaskEntity st = serviceTaskRepository.findById(serviceTaskId).orElse(null);
-        if (st == null) return null;
-        return resolveDefinitionKeyByInstance(st.getProcessInstanceId());
+        // WO-REL-31 CR-4: single join query off the entity's own processDefinitionId column
+        // (was serviceTask→instance→definition three steps).
+        return serviceTaskRepository.findDefinitionKeyById(serviceTaskId).orElse(null);
     }
 
     public String resolveDefinitionKeyByIncident(UUID incidentId) {
-        IncidentEntity incident = incidentRepository.findById(incidentId).orElse(null);
-        if (incident == null) return null;
-        ActivityEntity activity = activityRepository.findById(incident.getActivityId()).orElse(null);
-        if (activity == null) return null;
-        return resolveDefinitionKeyByInstance(activity.getProcessInstanceId());
+        // WO-REL-31 CR-4: single join query (was incident→activity→instance→definition four steps).
+        return incidentRepository.findDefinitionKeyById(incidentId).orElse(null);
     }
 
     public void checkAssignee(Principal principal, String assignee, String candidateGroups,
@@ -172,18 +153,12 @@ public class RuntimeSupportService {
             // Unassigned task with no candidate groups — only process members can complete (WO-AUD-5 F18)
             if ((assignee == null || assignee.isBlank())
                     && (candidateGroups == null || candidateGroups.isBlank())) {
-                // Resolve instance → definition → key → registry → membership
-                ProcessInstanceEntity instance = processInstanceRepository.findById(processInstanceId).orElse(null);
-                if (instance != null) {
-                    ProcessDefinitionEntity definition = processDefinitionRepository.findById(instance.getProcessDefinitionId()).orElse(null);
-                    if (definition != null) {
-                        ProcessEntity process = processRepository.findByDefinitionKey(definition.getKey()).orElse(null);
-                        if (process != null) {
-                            ProcessMemberEntity membership = processMemberRepository.findById(
-                                new ProcessMemberId(process.getId(), user.userId())).orElse(null);
-                            if (membership != null) return; // member can complete
-                        }
-                    }
+                // WO-REL-31 CR-4: definition-key + membership in two queries
+                // (was instance→definition→process→membership four-step chain).
+                String definitionKey = processInstanceRepository.findDefinitionKeyById(processInstanceId).orElse(null);
+                if (definitionKey != null
+                        && processMemberRepository.isMemberByDefinitionKey(user.userId(), definitionKey)) {
+                    return; // member can complete
                 }
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
             }

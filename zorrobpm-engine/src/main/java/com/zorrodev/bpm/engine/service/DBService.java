@@ -303,8 +303,18 @@ public interface DBService {
 
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
 
+    /**
+     * WO-REL-31 CR-3: keyset-paged fan-out — returns up to {@link #FAN_OUT_BATCH_SIZE} rows
+     * in deterministic id-DESC order. Cursor is the minimum id from the previous page
+     * (null = first page).
+     */
+    List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId);
+
     /** Active subscriptions matching the message name and correlation-key value (targeted delivery). */
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey);
+
+    /** Keyset-paged variant of {@link #findMessageSubscriptionsByKey(String, String)} — batch ≤ {@link #FAN_OUT_BATCH_SIZE}. */
+    List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey, UUID cursorId);
 
     boolean consumeMessageSubscription(UUID subscriptionId);
 
@@ -319,7 +329,13 @@ public interface DBService {
     /** All active (unconsumed) subscriptions for {@code signalName}; a signal throw wakes them all. */
     List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName);
 
+    /** Keyset-paged variant — returns up to {@link #FAN_OUT_BATCH_SIZE} rows in id-DESC order. */
+    List<com.zorrodev.bpm.engine.dto.SignalSubscription> findSignalSubscriptions(String signalName, UUID cursorId);
+
     boolean consumeSignalSubscription(UUID subscriptionId);
+
+    // WO-REL-31 CR-3: fan-out batch size — cursor-paged finders return at most this many rows per page.
+    int FAN_OUT_BATCH_SIZE = 500;
 
     /** Replaces any signal-start subscriptions for {@code processKey} with a fresh one (newer
      *  versions supersede older ones). */

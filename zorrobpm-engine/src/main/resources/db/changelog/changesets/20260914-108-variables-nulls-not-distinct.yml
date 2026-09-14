@@ -1,0 +1,44 @@
+databaseChangeLog:
+  - logicalFilePath: 20260914-108
+  - changeSet:
+      id: 20260914-108
+      author: zorrodev
+      changes:
+        # WO-REL-31 CR-1 (CTO-approved in agent-to-cto.md 2026-09-14): without
+        # NULLS NOT DISTINCT the root scope (scope_id IS NULL) has NO uniqueness at
+        # all — PostgreSQL and H2 treat every NULL as distinct, so a second
+        # setVariables(root) after a concurrent select-then-insert silently creates
+        # a duplicate row. Pre-dedupe first (safe no-op when no dupes exist, repairs
+        # when they do — no prod pre-check needed), then switch the constraint.
+        #
+        # Pre-dedupe: keep the row with the SMALLEST id per (process_instance_id,
+        # name) root-scope group, delete the rest via NOT EXISTS. Same SQL on
+        # PostgreSQL and H2.
+        - sql:
+            dbms: postgresql, h2
+            sql: |
+              DELETE FROM variables v
+              WHERE v.scope_id IS NULL
+                AND EXISTS (
+                  SELECT 1 FROM variables keep
+                  WHERE keep.scope_id IS NULL
+                    AND keep.process_instance_id = v.process_instance_id
+                    AND keep.name = v.name
+                    AND keep.id < v.id
+                );
+        - dropUniqueConstraint:
+            tableName: variables
+            constraintName: uk_variables__pi_name_scope
+        # NULLS NOT DISTINCT must be spelled out as raw SQL: Liquibase 5.0.2's
+        # addUniqueConstraint(nullsNotDistinct: true) silently generates a plain
+        # UNIQUE constraint on PostgreSQL (probe: pg_get_constraintdef shows
+        # "UNIQUE (...)" without NULLS NOT DISTINCT, so root NULL rows still
+        # duplicate). The ALTER TABLE ... ADD CONSTRAINT UNIQUE NULLS NOT DISTINCT
+        # form is accepted verbatim by PostgreSQL 16 AND H2 2.3.232 (direct JDBC
+        # probe both ways).
+        - sql:
+            dbms: postgresql, h2
+            sql: |
+              ALTER TABLE variables
+                ADD CONSTRAINT uk_variables__pi_name_scope
+                UNIQUE NULLS NOT DISTINCT (process_instance_id, name, scope_id)

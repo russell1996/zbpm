@@ -104,6 +104,31 @@ public class MessageSubscriptionDbOperationsImpl implements MessageSubscriptionD
     }
 
     @Override
+    public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId) {
+        List<MessageSubscriptionEntity> entities = processInstanceId != null
+            ? (cursorId == null
+                ? messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndProcessInstanceIdOrderByIdDesc(messageName, processInstanceId)
+                : messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndProcessInstanceIdAndIdLessThanOrderByIdDesc(messageName, processInstanceId, cursorId))
+            : (cursorId == null
+                ? messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameOrderByIdDesc(messageName)
+                : messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndIdLessThanOrderByIdDesc(messageName, cursorId));
+        return toMessageSubscriptions(entities);
+    }
+
+    @Override
+    public List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey, UUID cursorId) {
+        List<MessageSubscriptionEntity> entities = cursorId == null
+            ? messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndCorrelationKeyOrderByIdDesc(messageName, correlationKey)
+            : messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndCorrelationKeyAndIdLessThanOrderByIdDesc(messageName, correlationKey, cursorId);
+        return toMessageSubscriptions(entities);
+    }
+
+    /**
+     * Legacy entry point — returns ALL unconsumed subscriptions (no batch limit).
+     * Used by characterization tests and non-fan-out callers. Fan-out paths use the
+     * 3-arg cursor variant ({@link #findMessageSubscriptions(String, UUID, UUID)}) instead.
+     */
+    @Override
     public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId) {
         List<MessageSubscriptionEntity> entities = processInstanceId != null
             ? messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId(messageName, processInstanceId)

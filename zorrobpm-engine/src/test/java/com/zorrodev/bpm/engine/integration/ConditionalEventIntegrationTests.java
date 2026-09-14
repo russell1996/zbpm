@@ -291,6 +291,34 @@ public class ConditionalEventIntegrationTests {
         assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNotNull();
     }
 
+    // ==================== WO-REL-31 CR-2: double-write in startProcessInstanceAt POF ====================
+
+    @Transactional
+    @Test
+    void initialStartVarsDoNotSpuriouslyTriggerUpdateFilterOnUnrelatedCompletion() throws Exception {
+        // WO-REL-31, criterion 2 (POF): the redundant second variable write
+        // (find-then-update) in EventTrigger.startProcessInstanceAt left a stale
+        // {approved:"update"} change record in the thread-local map after start.
+        // An unrelated later completion (note=hello) then matched the update-only filter
+        // on that stale record and spuriously re-evaluated the condition — observeably:
+        // evaluateScript ran although the completion touched only note.
+        //
+        // With the duplicate write removed, the start records nothing (INSERT only),
+        // the map carries only {note:"create"} at completion, and the update-only
+        // filter misses — no evaluation, no spurious conditional trigger.
+        UUID processInstanceId = startWithVariables("test-conditional-filter-update-only.bpmn",
+            List.of(bool("approved", false)));
+        assertThat(active(processInstanceId, "condCatch").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        clearInvocations(scriptService);
+
+        ActivityEntity setFlag = active(processInstanceId, "setFlag");
+        runtimeService.completeUserTask(setFlag.getId(), List.of(str("note", "hello")));
+
+        assertThat(active(processInstanceId, "condCatch").getStatus()).isEqualTo(ActivityStatus.CREATED);
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNull();
+        verify(scriptService, never()).evaluateScript(eq("approved = true"), any());
+    }
+
     @Transactional
     @Test
     void conditionalFilterSkipsBoundaryOnIrrelevantChange() throws Exception {
