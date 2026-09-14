@@ -344,6 +344,17 @@ public class DBServiceImpl implements DBService {
         return activityDbOperations.getActivity(activityId);
     }
 
+    /**
+     * WO-REL-30 (B-3): joins the caller's transaction (the domain boundary on
+     * {@code ActivityServiceImpl}/{@code CompletionService} is the normal path);
+     * without one the {@code FOR UPDATE} has nothing to hold the lock in.
+     */
+    @Override
+    @org.springframework.transaction.annotation.Transactional
+    public Activity getActivityForUpdate(UUID activityId) {
+        return activityDbOperations.getActivityForUpdate(activityId);
+    }
+
     @Override
     public List<ProcessVariable> getVariables(@NonNull UUID processInstanceId) {
         return variableDbOperations.getVariables(processInstanceId);
@@ -392,6 +403,11 @@ public class DBServiceImpl implements DBService {
     @Override
     public Token getToken(UUID tokenId) {
         return tokenDbOperations.getToken(tokenId);
+    }
+
+    @Override
+    public java.util.Optional<Token> findToken(UUID tokenId) {
+        return tokenDbOperations.findToken(tokenId);
     }
 
     @Override

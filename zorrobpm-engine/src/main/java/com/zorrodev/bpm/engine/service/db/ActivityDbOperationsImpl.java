@@ -297,6 +297,12 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
     }
 
     @Override
+    public Activity getActivityForUpdate(UUID activityId) {
+        ActivityEntity activityEntity = activityRepository.findByIdForUpdate(activityId).orElseThrow();
+        return getActivity(activityEntity);
+    }
+
+    @Override
     public List<Activity> getActivitiesByTokenAndBpmnElementId(UUID token, String bpmnElementId) {
         return activityRepository.findByTokenAndBpmnElementId(token, bpmnElementId).stream()
             .map(this::getActivity)

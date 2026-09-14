@@ -206,6 +206,12 @@ public interface DBService {
 
     Activity getActivity(UUID activityId);
 
+    /**
+     * WO-REL-30 (B-3): activity + its process-instance lock in ONE
+     * {@code SELECT ... FOR UPDATE} — drop-in для {@code lockAndReload}.
+     */
+    Activity getActivityForUpdate(UUID activityId);
+
     List<ProcessVariable> getVariables(@NonNull UUID processInstanceId);
 
     /** Merged view of the process-instance root scope and a local {@code scopeId} (local shadows root). */
@@ -228,6 +234,12 @@ public interface DBService {
     Token createToken(UUID parentId, UUID scopeActivityId);
 
     Token getToken(UUID tokenId);
+
+    /**
+     * WO-REL-30 (B-4): non-throwing token read — empty when the token is gone
+     * (stale reference after cancel/cleanup races). See {@code TokenDbOperations.findToken}.
+     */
+    java.util.Optional<Token> findToken(UUID tokenId);
 
     /**
      * Consumes (deletes) a token that has reached an end event.
