@@ -45,7 +45,6 @@ class RestRepositoryBoundaryTest {
             "EventAuthzResolver",
             "EventResource",
             "FormOperationsImpl",
-            "MemberResource",
             "OutboxAdminResource",
             "ProcessDefinitionResource",
             "ProcessInstanceRuntimeOperationsImpl",
