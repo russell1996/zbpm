@@ -68,6 +68,17 @@ public class IncidentService {
             return;
         }
 
+        // WO-REL-28: if a COMPLETED activity already exists for this (token, element), the work is done
+        // (e.g. operator manually completed the service task while the watchdog incident was still open).
+        // Mirror the active-activity guard: close incident without re-execution to avoid a duplicate task.
+        // Uses the existing finder with List.of(COMPLETED) — no new query needed.
+        if (dbService.hasCompletedActivityOnTokenAndElement(activity.getToken(), activity.getBpmnElementId())) {
+            log.info("{}/{}: Completed activity already exists for element {}, closing incident {} without re-execution",
+                activity.getProcessInstanceId(), activity.getToken(), activity.getBpmnElementId(), incidentId);
+            dbService.completeIncident(incidentId);
+            return;
+        }
+
         if (variables != null && !variables.isEmpty()) {
             dbService.setVariables(activity.getProcessInstanceId(), variables);
         }
