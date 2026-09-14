@@ -22,19 +22,21 @@ chown -R zorrobpm:zorrobpm "$LOGS_DIR"
 
 # WO-OBS-6: scrape-token file (bind-mounted from ci/observability/scrape-token by the
 # observability overlay; deploy guarantees a placeholder so Docker never creates a
-# directory here). The JVM below runs as zorrobpm (uid 10001) with supplementary
-# groups RESET by setpriv --init-groups — so a docker group_add membership would NOT
-# survive to the JVM, and the file must stay readable by Prometheus (uid 65534).
-# Sharing is arranged via the FILE's group instead of process memberships:
-# owner stays 65534 (deploy convention — Prometheus reads as OWNER, zero assumptions
-# about its groups, prometheus service untouched), group zorrobpm (10001) + 640, so
-# the JVM writes as group member. Prometheus never needs group bits (it IS the owner).
-# Java only truncates content, which preserves owner/group/mode — no chmod/chown here
-# would survive a rewrite anyway, and none is needed. Missing/non-regular path
-# (no overlay, or Docker created a directory) → skip silently; the JVM logs loudly.
+# directory here). The JVM below runs as zorrobpm (uid/gid 10001, supplementary groups
+# RESET by setpriv --init-groups — so a docker group_add membership would NOT survive
+# to the JVM), and Prometheus runs as uid/gid 65534 (verified live in
+# prom/prometheus:v2.55.1: uid=65534(nobody) gid=65534(nogroup)).
+# Sharing is arranged WITHOUT process group games and WITHOUT world-readable bits:
+# owner 10001 (the JVM writes as OWNER — group-write was proven DENIED on this host
+# for non-owners despite matching gid, host LSM quirk outside this WO's scope) and
+# group 65534 + 640 (Prometheus reads as GROUP member — proven live). Deploy's
+# placeholder shape (65534:65534/400) is adjusted here on every app start; deploy
+# re-applies its own shape on the next deploy — both idempotent, convergent.
+# Java only truncates content, which preserves owner/group/mode. Missing/non-regular
+# path (no overlay, or Docker created a directory) → skip silently; the JVM logs loudly.
 SCRAPE_TOKEN_FILE="${SCRAPE_TOKEN_FILE:-/etc/prometheus/scrape-token}"
 if [ -f "$SCRAPE_TOKEN_FILE" ]; then
-  chgrp zorrobpm "$SCRAPE_TOKEN_FILE"
+  chown 10001:65534 "$SCRAPE_TOKEN_FILE"
   chmod 640 "$SCRAPE_TOKEN_FILE"
 fi
 

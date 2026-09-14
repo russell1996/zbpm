@@ -24,8 +24,8 @@ import java.util.UUID;
 /**
  * WO-OBS-6: self-provisioning of the Prometheus scrape credential.
  *
- * <p>On startup, idempotently ensures a fixed SYSTEM account ({@code prom-scraper},
- * no password — login impossible, WO-INT-4) and, only if the account was just
+ * <p>On startup, idempotently ensures a fixed SYSTEM account
+ * ({@link #SCRAPER_USERNAME}, no password — login impossible, WO-INT-4) and, only if the account was just
  * created or holds no active API key, issues one raw key via
  * {@link ApiKeyService#issueKeyForUser} (the same path as the real UI flow) and
  * writes it — without trailing newline, the {@code echo -n} convention from
