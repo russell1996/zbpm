@@ -19,6 +19,7 @@ import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springdoc.core.annotations.ParameterObject;
@@ -82,7 +83,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
      * Process registry entity IS created (needed for member management).
      */
     @Override
-    public ProcessDefinition addProcessDefinition(AddProcessDefinitionDTO dto) {
+    public ProcessDefinition addProcessDefinition(@Valid AddProcessDefinitionDTO dto) {
         requireSuperAdmin();
         ProcessDefinition result = processDefinitionService.addProcessDefinition(dto.getBpmn());
         ensureProcessRegistry(result.getKey());
@@ -98,7 +99,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
      * process A cannot capture process B by uploading a model with B's key.
      */
     @Override
-    public ProcessDefinition addProcessDefinitionVersion(UUID id, AddProcessDefinitionDTO dto) {
+    public ProcessDefinition addProcessDefinitionVersion(UUID id, @Valid AddProcessDefinitionDTO dto) {
         ProcessDefinition target = requireDeployAccess(id);
 
         BpmnProcessDefinitionModel model;

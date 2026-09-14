@@ -67,6 +67,18 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     @SneakyThrows
     @Override
     public ProcessDefinition addProcessDefinition(String bpmn, UUID deploymentId) {
+        // WO-SEC-62: fail fast on oversized uploads BEFORE getBytes()+SHA256+parse —
+        // covers direct service callers that bypass MVC @Size validation (e.g.
+        // batch deploys). Same 413 BPMN_TOO_LARGE contract as the MVC path.
+        if (bpmn != null && bpmn.length() > com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO.MAX_BPMN_LENGTH) {
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE,
+                "BPMN_TOO_LARGE",
+                "BPMN XML exceeds the 5 MB upload limit",
+                java.util.Map.of("maxLength",
+                    com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO.MAX_BPMN_LENGTH,
+                    "actualLength", bpmn.length()));
+        }
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         String sha256 = Base64.getEncoder().encodeToString(digest.digest(bpmn.getBytes(StandardCharsets.UTF_8)));
 
