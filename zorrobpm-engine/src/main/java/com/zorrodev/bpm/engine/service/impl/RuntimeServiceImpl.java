@@ -12,12 +12,21 @@ import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * WO-REL-30: доменная транзакционная граница. Каждый публичный метод — одна
+ * транзакция: create + setVars + createToken + execute либо коммитятся целиком,
+ * либо катятся целиком. REQUIRED: REST-фасады и шедулеры (своя Tx уже есть)
+ * джойнятся без смены поведения; прямые вызовы без внешней Tx (тесты, будущие
+ * пути) получают свою границу вместо автокоммита по стейтментам.
+ */
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class RuntimeServiceImpl implements RuntimeService {
 
     private final DBService dbService;

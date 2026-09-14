@@ -18,6 +18,7 @@ import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -35,6 +36,7 @@ import java.util.UUID;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@Transactional
 public class CompletionService {
 
     private final DBService dbService;
