@@ -24,4 +24,10 @@ public interface ProcessDefinitionService {
     PagedDataDTO<ProcessDefinition> getProcessDefinitions(ProcessDefinitionsQueryParameters parameters);
 
     PagedDataDTO<ProcessDefinition> getProcessDefinitions(ProcessDefinitionsQueryParameters parameters, Collection<UUID> allowedPdIds);
+
+    /** WO-ENG-9: archive a process key (all versions hidden by default). */
+    void archiveProcess(String key);
+
+    /** WO-ENG-9: unarchive a process key. */
+    void unarchiveProcess(String key);
 }

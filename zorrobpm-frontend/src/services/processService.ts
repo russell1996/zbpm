@@ -50,3 +50,11 @@ export async function addProcessDefinitionVersion(id: string, bpmn: string): Pro
   const { data } = await api.post<ProcessDefinition>(`/process-definitions/${id}/versions`, { bpmn })
   return data
 }
+
+export async function archiveProcess(key: string): Promise<void> {
+  await api.post(`/processes/${key}/archive`)
+}
+
+export async function unarchiveProcess(key: string): Promise<void> {
+  await api.post(`/processes/${key}/unarchive`)
+}

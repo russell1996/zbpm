@@ -19,4 +19,6 @@ public class ProcessEntity {
     private String definitionKey;
     private String name;
     private Instant createdAt;
+    private boolean archived;
+    private Instant archivedAt;
 }

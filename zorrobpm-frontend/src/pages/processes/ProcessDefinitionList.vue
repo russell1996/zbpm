@@ -6,11 +6,12 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { usePagination } from '@/composables/usePagination'
 import { getMyMemberships } from '@/services/adminService'
+import { archiveProcess, unarchiveProcess } from '@/services/processService'
 import { exportToCsv } from '@/shared/lib/export'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import MySubmissions from '@/pages/processes/MySubmissions.vue'
 import AppDrawer from '@/widgets/shared/AppDrawer.vue'
-import { Download, RefreshCw, FileText, Upload } from 'lucide-vue-next'
+import { Download, RefreshCw, FileText, Upload, Archive, ArchiveRestore } from 'lucide-vue-next'
 
 const router = useRouter()
 const store = useProcessStore()
@@ -19,6 +20,8 @@ const { formatDate } = useDateFormat()
 
 const search = ref('')
 const latestOnly = ref(true)
+// WO-ENG-9: show archived toggle (default hidden)
+const showArchived = ref(false)
 const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
   () => store.definitions?.totalElements,
 )
@@ -42,7 +45,24 @@ async function load() {
     pageSize,
     name: search.value || undefined,
     latestVersionOnly: latestOnly.value || undefined,
+    includeArchived: showArchived.value || undefined,
   })
+}
+
+async function toggleArchive(def: { key: string; archived?: boolean }) {
+  try {
+    if (def.archived) {
+      await unarchiveProcess(def.key)
+      toast.success(t('unarchived'))
+    } else {
+      await archiveProcess(def.key)
+      toast.success(t('archived'))
+    }
+    await load()
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } }
+    toast.error(err?.response?.data?.message || t('loadError'))
+  }
 }
 
 async function toggleMyOnly() {
@@ -84,7 +104,7 @@ const showSubmissions = ref(false)
 const showDeployDialog = ref(false)
 
 onMounted(load)
-watch([search, latestOnly], () => { resetPage(); load() })
+watch([search, latestOnly, showArchived], () => { resetPage(); load() })
 </script>
 
 <template>
@@ -140,6 +160,10 @@ watch([search, latestOnly], () => { resetPage(); load() })
         <input v-model="latestOnly" type="checkbox" class="rounded" />
         {{ t('latestOnly') }}
       </label>
+      <label class="flex items-center gap-2 text-sm">
+        <input v-model="showArchived" type="checkbox" class="rounded" data-testid="show-archived-toggle" />
+        {{ t('showArchived') }}
+      </label>
       <!-- WO-ACL-8 criterion 22: "All / My" segment toggle instead of checkbox. -->
       <div class="flex items-center border border-border rounded-md overflow-hidden text-sm">
         <button
@@ -167,6 +191,7 @@ watch([search, latestOnly], () => { resetPage(); load() })
             <th class="px-4 py-3 text-left font-medium">{{ t('key') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('version') }}</th>
             <th class="px-4 py-3 text-left font-medium">{{ t('created') }}</th>
+            <th class="px-4 py-3 text-left font-medium w-32">{{ t('actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -186,9 +211,29 @@ watch([search, latestOnly], () => { resetPage(); load() })
               </span>
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDate(def.createdAt) }}</td>
+            <td class="px-4 py-3">
+              <button
+                v-if="!def.archived"
+                class="inline-flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
+                data-testid="archive-btn"
+                @click.stop="toggleArchive(def)"
+              >
+                <Archive class="h-3 w-3" />
+                {{ t('archive') }}
+              </button>
+              <button
+                v-else
+                class="inline-flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
+                data-testid="unarchive-btn"
+                @click.stop="toggleArchive(def)"
+              >
+                <ArchiveRestore class="h-3 w-3" />
+                {{ t('unarchive') }}
+              </button>
+            </td>
           </tr>
           <tr v-if="!visibleDefinitions.length">
-            <td colspan="4" class="px-4 py-8 text-center text-muted-foreground">
+            <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">
               {{ myOnly ? t('noMyProcesses') : t('noDefinitions') }}
             </td>
           </tr>

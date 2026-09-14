@@ -53,6 +53,9 @@ class ProcessDefinitionServiceImplTest {
     private ProcessDefinitionRepository processDefinitionRepository;
 
     @Mock
+    private com.zorrodev.bpm.engine.repository.ProcessRepository processRepository;
+
+    @Mock
     private FileService fileService;
 
     @Mock
@@ -84,8 +87,11 @@ class ProcessDefinitionServiceImplTest {
             org.springframework.transaction.support.TransactionCallback<?> callback = inv.getArgument(0);
             return callback.doInTransaction(null);
         });
+        when(processRepository.findByArchivedTrue()).thenReturn(List.of());
+        when(processRepository.findByDefinitionKey(anyString())).thenReturn(Optional.empty());
         service = new ProcessDefinitionServiceImpl(
             processDefinitionRepository,
+            processRepository,
             bpmnParseService,
             fileService,
             bindingRepository,

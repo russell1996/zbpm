@@ -15,6 +15,12 @@ import java.util.UUID;
 
 public interface ProcessDefinitionContract {
 
+    @PostExchange(value = "/processes/{key}/archive", accept = MediaType.APPLICATION_JSON_VALUE)
+    void archiveProcess(@PathVariable("key") String key);
+
+    @PostExchange(value = "/processes/{key}/unarchive", accept = MediaType.APPLICATION_JSON_VALUE)
+    void unarchiveProcess(@PathVariable("key") String key);
+
     @PostExchange(value = "/process-definitions", accept = MediaType.APPLICATION_JSON_VALUE, contentType = MediaType.APPLICATION_JSON_VALUE)
     ProcessDefinition addProcessDefinition(@RequestBody AddProcessDefinitionDTO dto);
 
