@@ -275,6 +275,13 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
     }
 
     @Override
+    public boolean hasCompletedActivityOnTokenAndElement(UUID tokenId, String bpmnElementId) {
+        return !activityRepository.findByTokenAndBpmnElementIdAndStatusIn(
+                tokenId, bpmnElementId, List.of(ActivityStatus.COMPLETED))
+            .isEmpty();
+    }
+
+    @Override
     public List<Activity> getCompletedActivities(UUID processInstanceId) {
         return activityRepository.findByProcessInstanceIdAndStatusIn(
                 processInstanceId, List.of(ActivityStatus.COMPLETED)).stream()
