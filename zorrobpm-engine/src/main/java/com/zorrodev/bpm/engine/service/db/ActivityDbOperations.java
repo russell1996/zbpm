@@ -41,6 +41,15 @@ public interface ActivityDbOperations {
     Activity getActivity(UUID activityId);
 
     /**
+     * WO-REL-30 (B-3): {@link #getActivity(UUID)} + process-instance lock in ONE
+     * {@code SELECT ... FOR UPDATE} ({@code ActivityRepository.findByIdForUpdate}).
+     * Same DTO, same lock semantics as the old read-then-lock pair — no race
+     * window between read and lock. Requires an active transaction (joins the
+     * domain boundary opened by {@code ActivityServiceImpl}/{@code RuntimeServiceImpl}).
+     */
+    Activity getActivityForUpdate(UUID activityId);
+
+    /**
      * WO-C8-21r2: advance/clear the in-flight creating-listener phase on the activity row
      * (null = no phase). Entity mutation + save (never bulk UPDATE: the dispatcher re-reads
      * the index in the same transaction — a bulk update would leave a stale copy).
