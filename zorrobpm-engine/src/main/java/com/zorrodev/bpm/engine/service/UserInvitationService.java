@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.engine.entity.PasswordTokenEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.PasswordTokenRepository;
+import com.zorrodev.bpm.engine.repository.RefreshTokenRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.AdminPasswordValidator;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
@@ -39,6 +40,7 @@ public class UserInvitationService {
 
     private final UiUserRepository userRepository;
     private final PasswordTokenRepository tokenRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final TokenService tokenService;
     private final PasswordHasher passwordHasher;
     private final MailSender mailSender;
@@ -133,6 +135,11 @@ public class UserInvitationService {
         String hash = tokenService.hashToken(rawToken);
         PasswordTokenEntity token = tokenRepository.findByTokenHashAndUsedFalse(hash)
                 .orElseThrow(() -> new EngineException("Invalid or expired token"));
+        // WO-SEC-63 (F03): only password-path token types may enter here — an EMAIL_VERIFY
+        // token (email-ownership proof) must never double as a password setter.
+        if (!TYPE_INVITE.equals(token.getType()) && !TYPE_RESET.equals(token.getType())) {
+            throw new EngineException("Invalid or expired token");
+        }
         if (token.getExpiresAt().isBefore(Instant.now())) {
             throw new EngineException("Invalid or expired token");
         }
@@ -141,6 +148,13 @@ public class UserInvitationService {
 
         user.setPasswordHash(passwordHasher.hash(newPassword));
         user.setForcePasswordChange(false);
+        // WO-SEC-63 (F03): password recovery must revoke live sessions like every other
+        // password change (self-service/admin — same guarantee): a captured refresh token
+        // must not survive the legitimate owner's recovery, and outstanding access
+        // tokens die via the version bump. Same transaction as the password write and
+        // the single-use consume below — all-or-nothing.
+        user.setTokenVersion(user.getTokenVersion() + 1);
+        refreshTokenRepository.revokeAllByUserId(user.getId());
         user.setUpdatedAt(Instant.now());
         userRepository.save(user);
 

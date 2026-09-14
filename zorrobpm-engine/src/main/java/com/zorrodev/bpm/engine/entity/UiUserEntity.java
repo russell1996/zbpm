@@ -47,4 +47,10 @@ public class UiUserEntity {
     private Instant rejectedAt;
     /** WO-REG-2: free-text reject reason, internal — never sent to the user in email. */
     private String rejectedReason;
+    /**
+     * WO-SEC-63: JWT access-token version — incremented on logout and password change.
+     * JwtAuthFilter compares claim 'ver' against the current value; mismatch = token revoked.
+     * Primitive int: Hibernate sends 0 (matching DB DEFAULT) for existing rows — no migration race.
+     */
+    private int tokenVersion;
 }

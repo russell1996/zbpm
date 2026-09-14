@@ -107,10 +107,19 @@ class FormResourceCharacterizationTest {
 
     @BeforeEach
     void setupAuth() {
+        // Stable ids so the JwtAuthFilter securityState stub (WO-SEC-63) can match per-token.
+        UUID adminId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
         lenient().when(tokenService.verify(ADMIN_TOKEN)).thenReturn(
-            new TokenService.Claims(UUID.randomUUID(), "admin", "SUPER_ADMIN", Long.MAX_VALUE));
+            new TokenService.Claims(adminId, "admin", "SUPER_ADMIN", 0, Long.MAX_VALUE));
         lenient().when(tokenService.verify(USER_TOKEN)).thenReturn(
-            new TokenService.Claims(UUID.randomUUID(), "user", "USER", Long.MAX_VALUE));
+            new TokenService.Claims(userId, "user", "USER", 0, Long.MAX_VALUE));
+        // WO-SEC-63: filter checks live user-state (active/role/tokenVersion); version 0 matches
+        // the claims above, roles must match exactly or the token is rejected.
+        lenient().when(userLookupService.securityState(eq(adminId))).thenReturn(Optional.of(
+            new UiUserLookupService.UserSecurityState(adminId, "admin", "SUPER_ADMIN", true, 0, false)));
+        lenient().when(userLookupService.securityState(eq(userId))).thenReturn(Optional.of(
+            new UiUserLookupService.UserSecurityState(userId, "user", "USER", true, 0, false)));
         lenient().when(userLookupService.isActive(any())).thenReturn(true);
         lenient().when(userLookupService.isForcePasswordChange(any())).thenReturn(false);
         lenient().when(authorizationService.effectiveGrants(any(), any())).thenReturn(Map.of());
