@@ -45,6 +45,27 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationErrors(MethodArgumentNotValidException ex) {
+        // WO-SEC-62: an oversized BPMN upload is a 413, not a 400 — same code/params
+        // shape as the service-level BPMN_TOO_LARGE below. Only the bpmn @Size
+        // violation maps here; every other field error keeps the old 400 contract.
+        boolean bpmnTooLarge = ex.getBindingResult().getFieldErrors().stream()
+            .anyMatch(fe -> "bpmn".equals(fe.getField())
+                && fe.getCode() != null && fe.getCode().contains("Size"));
+        if (bpmnTooLarge) {
+            int actualLength = ex.getBindingResult().getFieldErrors().stream()
+                .filter(fe -> "bpmn".equals(fe.getField()))
+                .map(fe -> fe.getRejectedValue())
+                .filter(String.class::isInstance)
+                .mapToInt(v -> ((String) v).length())
+                .max().orElse(-1);
+            Map<String, Object> tooLargeBody = new LinkedHashMap<>();
+            tooLargeBody.put("code", "BPMN_TOO_LARGE");
+            tooLargeBody.put("params", Map.of(
+                "maxLength", com.zorrodev.bpm.contract.dto.AddProcessDefinitionDTO.MAX_BPMN_LENGTH,
+                "actualLength", actualLength));
+            tooLargeBody.put("message", "BPMN XML exceeds the 5 MB upload limit");
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(tooLargeBody);
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", "VALIDATION_ERROR");
         List<Map<String, String>> fieldErrors = ex.getBindingResult().getFieldErrors().stream()
