@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -58,9 +59,19 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
 
     List<ProcessVariableEntity> findByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 
-    Optional<ProcessVariableEntity> findByNameAndProcessInstanceIdAndScopeIdIsNull(String name, UUID processInstanceId);
-
-    Optional<ProcessVariableEntity> findByNameAndProcessInstanceIdAndScopeId(String name, UUID processInstanceId, UUID scopeId);
+    /**
+     * WO-REL-31 CR-4: one query instead of two for the root+scoped read merge.
+     * Root rows (scopeId IS NULL) are ordered BEFORE the given scope rows — the
+     * caller's "scoped wins for duplicate names" merge depends on that order.
+     */
+    @Query("""
+        select v from ProcessVariableEntity v
+        where v.processInstanceId = :processInstanceId
+          and (v.scopeId is null or v.scopeId = :scopeId)
+        order by case when v.scopeId is null then 0 else 1 end, v.name
+        """)
+    List<ProcessVariableEntity> findRootAndScoped(@Param("processInstanceId") UUID processInstanceId,
+            @Param("scopeId") UUID scopeId);
 
     void deleteByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 }

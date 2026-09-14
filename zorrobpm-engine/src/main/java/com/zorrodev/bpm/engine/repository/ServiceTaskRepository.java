@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ServiceTaskRepository extends JpaRepository<ServiceTaskEntity, UUID>, JpaSpecificationExecutor<ServiceTaskEntity> {
@@ -58,4 +59,12 @@ public interface ServiceTaskRepository extends JpaRepository<ServiceTaskEntity, 
 
     @Query("SELECT e.bpmnElementId AS bpmnElementId, COUNT(e.id) AS count FROM ServiceTaskEntity e WHERE e.processDefinitionId = :processDefinitionId AND e.completedAt IS NOT NULL GROUP BY e.bpmnElementId")
     List<BpmnElementStatistics> findCompletedStatsByProcessDefinitionId(UUID processDefinitionId);
+
+    /**
+     * WO-REL-31 CR-4: definition key in one join query. The entity carries
+     * processDefinitionId directly (set from the instance at creation), so the old
+     * serviceTask→instance→definition three-step resolution collapses to one.
+     */
+    @Query("SELECT pd.key FROM ServiceTaskEntity st JOIN ProcessDefinitionEntity pd ON pd.id = st.processDefinitionId WHERE st.id = :id")
+    Optional<String> findDefinitionKeyById(UUID id);
 }

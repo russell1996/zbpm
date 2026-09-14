@@ -267,59 +267,70 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * only subscriptions whose stored key matches are woken (targeted delivery — this disambiguates
      * multiple instances waiting on the same message name); otherwise the message correlates by name
      * (optionally narrowed to {@code processInstanceId}).
+     *
+     * <p><b>WO-REL-31 CR-3:</b> subscriptions are fetched in keyset-paged batches (≤500 rows per
+     * page, id-DESC order, cursor = previous page min id). This prevents OOM on wide fan-outs
+     * (10k+ subscribers) and gives deterministic ordering — concurrent correlations touch
+     * the same batch boundaries, reducing contention hot spots.</p>
      */
     @Override
     public void correlateMessage(String messageName, String correlationKey, UUID processInstanceId, List<ProcessVariable> variables) {
-        List<MessageSubscription> subscriptions;
-        if (correlationKey != null) {
-            subscriptions = dbService.findMessageSubscriptionsByKey(messageName, correlationKey);
-            if (processInstanceId != null) {
-                subscriptions = subscriptions.stream()
-                    .filter(s -> processInstanceId.equals(s.getProcessInstanceId()))
-                    .toList();
-            }
-        } else {
-            subscriptions = dbService.findMessageSubscriptions(messageName, processInstanceId);
-        }
-
         // untargeted correlation by name (no instance, no key) may also start new instances via message starts
         List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> startSubscriptions =
             (processInstanceId == null && correlationKey == null) ? dbService.findMessageStartSubscriptions(messageName) : List.of();
 
-        if (subscriptions.isEmpty() && startSubscriptions.isEmpty()) {
+        if (!startSubscriptions.isEmpty()) {
+            for (com.zorrodev.bpm.engine.dto.MessageStartSubscription start : startSubscriptions) {
+                log.info("Message '{}' starting a new instance of {} at {}", messageName, start.getProcessDefinitionId(), start.getElementId());
+                eventTrigger.startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables, this);
+            }
+        }
+
+        // WO-REL-31 CR-3: keyset-paged fan-out — never loads the full subscription set at once
+        // (10k+ subscribers = OOM) and iterates in deterministic id-DESC order.
+        // Pages of non-interrupting event-subprocess subscriptions (consumed=false kept) are
+        // never revisited: ids from earlier pages are always > cursor, so no infinite loop.
+        boolean sawSubscriptions = false;
+        UUID cursor = null;
+        while (true) {
+            List<MessageSubscription> page = correlationKey != null
+                ? dbService.findMessageSubscriptionsByKey(messageName, correlationKey, cursor)
+                : dbService.findMessageSubscriptions(messageName, processInstanceId, cursor);
+            if (page.isEmpty()) {
+                break;
+            }
+            sawSubscriptions = true;
+            UUID nextCursor = page.get(page.size() - 1).getId(); // min id in this page (id-DESC ordering)
+            for (MessageSubscription subscription : page) {
+                if (processInstanceId != null && !processInstanceId.equals(subscription.getProcessInstanceId())) {
+                    continue; // key-path narrowing: key query may return sibling instances — filtered post-fetch
+                }
+                if (subscription.getEventSubprocessId() != null) {
+                    boolean interrupting = eventTrigger.isInterruptingEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId());
+                    boolean shouldFire = interrupting ? dbService.consumeMessageSubscription(subscription.getId()) : true;
+                    if (shouldFire) {
+                        log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
+                        eventTrigger.triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, this);
+                    }
+                    continue;
+                }
+                if (dbService.consumeMessageSubscription(subscription.getId())) {
+                    if (subscription.getBoundaryElementId() != null) {
+                        log.info("Correlating message '{}' to boundary {} on instance {} activity {}", messageName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                        eventTrigger.fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, this);
+                    } else {
+                        log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                        signal(subscription.getActivityId(), variables);
+                    }
+                }
+            }
+            if (page.size() < DBService.FAN_OUT_BATCH_SIZE) {
+                break; // last page — fewer than a full page means no more rows beyond the cursor
+            }
+            cursor = nextCursor;
+        }
+        if (!sawSubscriptions && startSubscriptions.isEmpty()) {
             log.info("No active subscription for message '{}' (instance {}, key {})", messageName, processInstanceId, correlationKey);
-            return;
-        }
-
-        for (com.zorrodev.bpm.engine.dto.MessageStartSubscription start : startSubscriptions) {
-            log.info("Message '{}' starting a new instance of {} at {}", messageName, start.getProcessDefinitionId(), start.getElementId());
-            eventTrigger.startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables, this);
-        }
-
-        for (MessageSubscription subscription : subscriptions) {
-            if (subscription.getEventSubprocessId() != null) {
-                // message-started event sub-process: an interrupting handler must fire EXACTLY once.
-                // CAS-consume the subscription first (WO-SEC-59 #2); only the winning correlation triggers
-                // the subprocess. A non-interrupting handler re-fires on every message and keeps listening.
-                boolean interrupting = eventTrigger.isInterruptingEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId());
-                boolean shouldFire = interrupting ? dbService.consumeMessageSubscription(subscription.getId()) : true;
-                if (shouldFire) {
-                    log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
-                    eventTrigger.triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, this);
-                }
-                continue;
-            }
-            if (dbService.consumeMessageSubscription(subscription.getId())) {
-                if (subscription.getBoundaryElementId() != null) {
-                    // message boundary: fire the boundary (interrupt/non-interrupt the host)
-                    log.info("Correlating message '{}' to boundary {} on instance {} activity {}", messageName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
-                    eventTrigger.fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, this);
-                } else {
-                    // message catch: signal the waiting activity
-                    log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
-                    signal(subscription.getActivityId(), variables);
-                }
-            }
         }
     }
 

@@ -15,9 +15,11 @@ import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -133,7 +135,12 @@ public class FlowNavigator {
         // One indexed read of the instance's active activities per proceedToOutgoing call
         // (created/in-progress only — usually a handful of rows). No new DB surface: the
         // repository method already exists (cancel paths use it).
+        // WO-REL-31 CR-4: this single read replaces the former re-reads inside
+        // evaluateScopeDone/finishAdHocScope ("getActive on every proceed again").
+        // Cancelled ids are tracked in {@code cancelled} so the snapshot stays exactly
+        // equivalent to a fresh query (cancelled rows must disappear from later views).
         List<Activity> active = dbService.getActiveActivities(processInstanceId);
+        Set<UUID> cancelled = new HashSet<>();
         List<Activity> scopes = active.stream()
             .filter(a -> tokenId.equals(a.getToken()) && a.getType() == BpmnElementType.AD_HOC_SUB_PROCESS)
             .toList();
@@ -167,9 +174,10 @@ public class FlowNavigator {
                 if (!isChainMiddle) {
                     // Chain end of some activated root (or an unrelated dead end on this token):
                     // the chain settled — evaluate even without an arrival of its own.
-                    if (evaluateScopeDone(processInstanceId, bpmn, scope, state)) {
-                        finishAdHocScope(processInstanceId, tokenId, bpmn, scope,
-                            state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor, null);
+                    if (evaluateScopeDone(processInstanceId, bpmn, scope, state, active, cancelled)) {
+                        finishAdHocScope0(processInstanceId, tokenId, bpmn, scope,
+                            state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor, null,
+                            active, cancelled);
                         consumed = true;
                     }
                 }
@@ -183,7 +191,7 @@ public class FlowNavigator {
                 // only an early completionCondition (whose cancel semantics covers the
                 // not-yet-created downstream: the scope takes over, the chain never runs).
                 if (adHocConditionMet(processInstanceId, bpmn, scope)) {
-                    finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor, null);
+                    finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor, null, active, cancelled);
                     consumed = true;
                 } else {
                     log.info("{}/{}: Ad-hoc subprocess {} root {} done, chain continues",
@@ -191,8 +199,8 @@ public class FlowNavigator {
                 }
                 continue;
             }
-            if (evaluateScopeDone(processInstanceId, bpmn, scope, state)) {
-                finishAdHocScope(processInstanceId, tokenId, bpmn, scope, key, executor, null);
+            if (evaluateScopeDone(processInstanceId, bpmn, scope, state, active, cancelled)) {
+                finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor, null, active, cancelled);
                 consumed = true;
             } else {
                 Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
@@ -207,9 +215,11 @@ public class FlowNavigator {
     /**
      * WO-C8-32 (HOLD-fix): full done-test for a settled chain end — condition, or the
      * counter plus quiescence. Null state (parked scope without bookkeeping) never finishes.
+     * WO-REL-31 CR-4: quiescence reads the traversal snapshot (minus activities cancelled
+     * during this same traversal), not a fresh query — equivalent by construction.
      */
     private boolean evaluateScopeDone(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
-            Activity scope, AdHocJoin.ScopeState state) {
+            Activity scope, AdHocJoin.ScopeState state, List<Activity> active, Set<UUID> cancelled) {
         if (state == null) {
             return false;
         }
@@ -226,8 +236,8 @@ public class FlowNavigator {
         // (the completing element itself is already COMPLETED — its tail ran before this
         // hook). Evaluated ONLY here, never on a middle: a middle's own downstream is not
         // created yet at hook time, so "quiet" would lie for it.
-        List<Activity> active = dbService.getActiveActivities(processInstanceId);
         return active.stream()
+            .filter(a -> !cancelled.contains(a.getId()))
             .noneMatch(a -> scope.getToken() != null && scope.getToken().equals(a.getToken())
                 && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS);
     }
@@ -290,13 +300,26 @@ public class FlowNavigator {
     /**
      * WO-C8-32: scope-done tail — clear bookkeeping, complete the container, cancel the
      * rest, continue. Public for the WO-C8-33 worker-driven finish (same tail, the worker
-     * only supplies the decision + its own cancel flag).
+     * only supplies the decision + its own cancel flag): fresh read of active activities,
+     * standalone traversal.
      *
      * @param cancelRemainingOverride WO-C8-33 worker flag; null = resolve the BPMN
      *        {@code cancelRemainingInstances} attribute (docs default true), as internal mode does
      */
     public void finishAdHocScope(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             Activity scope, String key, TokenExecutor executor, Boolean cancelRemainingOverride) {
+        finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor,
+            cancelRemainingOverride, null, new HashSet<>());
+    }
+
+    /**
+     * WO-REL-31 CR-4: core shared by the worker path (fresh snapshot, {@code activeSnapshot}
+     * null) and the internal traversal (single hoisted snapshot + cancelled-id tracking, so
+     * the mate list stays exactly what a fresh query would return).
+     */
+    private void finishAdHocScope0(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            Activity scope, String key, TokenExecutor executor, Boolean cancelRemainingOverride,
+            List<Activity> activeSnapshot, Set<UUID> cancelled) {
         if (key != null) {
             dbService.clearParallelGatewayArrivals(processInstanceId, key);
         }
@@ -314,11 +337,15 @@ public class FlowNavigator {
             // finishes must not wipe its outer scope — only the token-mate elements go).
             // Approximation, documented in the WO-C8-32 report: an outer scope's unfinished
             // non-container siblings share this token and are cancelled as well.
-            List<Activity> mates = dbService.getActiveActivities(processInstanceId).stream()
-                .filter(a -> tokenId.equals(a.getToken()) && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS)
+            List<Activity> active = activeSnapshot != null
+                ? activeSnapshot : dbService.getActiveActivities(processInstanceId);
+            List<Activity> mates = active.stream()
+                .filter(a -> !cancelled.contains(a.getId())
+                    && tokenId.equals(a.getToken()) && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS)
                 .toList();
             for (Activity mate : mates) {
                 dbService.cancelActivity(mate.getId());
+                cancelled.add(mate.getId());
             }
         }
         log.info("{}/{}: Completing {}: {}/{} (cancelRemaining={})", processInstanceId, tokenId,

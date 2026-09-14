@@ -663,7 +663,7 @@ public class ActivityServiceImplTests {
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(dbService.getVariables(processInstanceId)).thenReturn(List.of());
-        when(dbService.findMessageSubscriptions("ping", null)).thenReturn(List.of());
+        when(dbService.findMessageSubscriptions("ping", null, null)).thenReturn(List.of());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("msgThrow"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
@@ -672,7 +672,7 @@ public class ActivityServiceImplTests {
 
         activityService.execute(processInstanceId, token, "startEvent");
 
-        verify(dbService).findMessageSubscriptions("ping", null);
+        verify(dbService).findMessageSubscriptions("ping", null, null);
         verify(dbService, times(1)).createActivity(processInstanceId, token, bpmn.getElement("endEvent"));
         verify(dbService, times(1)).completeProcessInstance(processInstanceId);
     }
@@ -719,7 +719,7 @@ public class ActivityServiceImplTests {
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow1"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
-        when(dbService.findMessageSubscriptions("order-approved", processInstanceId)).thenReturn(List.of(subscription));
+        when(dbService.findMessageSubscriptions("order-approved", processInstanceId, null)).thenReturn(List.of(subscription));
         // WO-SEC-59 #2: consume* now returns boolean (true == this call won the CAS).
         // Old behaviour was "void / always succeeds", so default existing tests to true.
         when(dbService.consumeMessageSubscription(any())).thenReturn(true);
