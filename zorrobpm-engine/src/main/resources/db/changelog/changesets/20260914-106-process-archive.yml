@@ -1,0 +1,31 @@
+databaseChangeLog:
+  - logicalFilePath: 20260914-106
+  - changeSet:
+      id: 20260914-106
+      author: zorrodev
+      comment: "WO-ENG-9: архивация схем процессов по key (process.archived) — видимость реестра, не runtime"
+      changes:
+        - addColumn:
+            tableName: process
+            columns:
+              - column:
+                  name: archived
+                  type: boolean
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: archived_at
+                  type: datetime with timezone
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON TABLE process IS 'Реестр процессов (одна строка на definitionKey) — членство, архивация';
+              COMMENT ON COLUMN process.archived IS 'Архивирован ли процесс (скрыт из списка по умолчанию, WO-ENG-9)';
+              COMMENT ON COLUMN process.archived_at IS 'Когда процесс архивирован (null если не архивирован)';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON TABLE process IS 'Реестр процессов (одна строка на definitionKey) — членство, архивация';
+              COMMENT ON COLUMN process.archived IS 'Архивирован ли процесс (скрыт из списка по умолчанию, WO-ENG-9)';
+              COMMENT ON COLUMN process.archived_at IS 'Когда процесс архивирован (null если не архивирован)';

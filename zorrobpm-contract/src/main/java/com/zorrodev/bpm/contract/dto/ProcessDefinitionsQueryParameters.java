@@ -16,4 +16,6 @@ public class ProcessDefinitionsQueryParameters {
     private Boolean latestVersionOnly;
     /** Sort direction: "asc" (default) or "desc". Applied to (name, version). */
     private String order;
+    /** WO-ENG-9: when true, archived process keys are included in the list (default: hidden). */
+    private Boolean includeArchived;
 }

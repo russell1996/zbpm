@@ -62,6 +62,20 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
         }
     }
 
+    @Override
+    public void archiveProcess(String key) {
+        requireDeployAccessByKey(key);
+        processDefinitionService.archiveProcess(key);
+        auditLogService.record(getPrincipal(), "ARCHIVE_PROCESS", key, key);
+    }
+
+    @Override
+    public void unarchiveProcess(String key) {
+        requireDeployAccessByKey(key);
+        processDefinitionService.unarchiveProcess(key);
+        auditLogService.record(getPrincipal(), "UNARCHIVE_PROCESS", key, key);
+    }
+
     /**
      * ADR-2: deploy → SUPER_ADMIN only.
      * ADR-2: deploy→owner auto-assignment REMOVED.
@@ -111,6 +125,20 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
         ProcessDefinition result = processDefinitionService.addProcessDefinition(dto.getBpmn());
         auditLogService.record(getPrincipal(), "DEPLOY", result.getKey(), result.getId().toString());
         return result;
+    }
+
+    private void requireDeployAccessByKey(String key) {
+        Principal principal = getPrincipal();
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        // Ensure registry exists
+        processRepository.findByDefinitionKey(key)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process not found: " + key));
+        if (!authorizationService.canOperate(principal, key, AuthorizationService.Action.DEPLOY)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Archiving requires OWNER or DESIGNER role on this process");
+        }
     }
 
     /**

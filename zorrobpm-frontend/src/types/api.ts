@@ -17,6 +17,7 @@ export interface ProcessDefinition {
   sha256: string
   createdAt: string
   startFormKey: string | null
+  archived?: boolean
 }
 
 export interface ProcessInstance {
@@ -150,6 +151,7 @@ export interface ProcessDefinitionsQuery {
   processDefinitionVersion?: number
   latestVersionOnly?: boolean
   order?: 'asc' | 'desc'
+  includeArchived?: boolean
 }
 
 export interface ProcessInstanceQuery {

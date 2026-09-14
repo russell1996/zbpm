@@ -8,7 +8,9 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.FileService;
-import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +36,7 @@ import java.util.UUID;
 public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
 
     private final ProcessDefinitionRepository processDefinitionRepository;
+    private final ProcessRepository processRepository;
     private final BpmnParseService bpmnParseService;
     private final FileService fileService;
     private final com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository bindingRepository;
@@ -215,6 +218,13 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         if (Boolean.TRUE.equals(parameters.getLatestVersionOnly())) {
             specifications.add(ProcessDefinitionRepository.latestVersion());
         }
+        // WO-ENG-9: archived keys hidden by default; includeArchived=true shows them
+        if (!Boolean.TRUE.equals(parameters.getIncludeArchived())) {
+            java.util.Set<String> archivedKeys = archivedKeys();
+            if (!archivedKeys.isEmpty()) {
+                specifications.add((root, q, cb) -> cb.not(root.get("key").in(archivedKeys)));
+            }
+        }
 
         Page<ProcessDefinitionEntity> page =
             processDefinitionRepository.findAll(Specification.allOf(specifications), pageRequest);
@@ -226,6 +236,12 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         data.setData(page.getContent().stream().map(this::fromEntity).toList());
 
         return data;
+    }
+
+    private java.util.Set<String> archivedKeys() {
+        return processRepository.findByArchivedTrue().stream()
+            .map(com.zorrodev.bpm.engine.entity.ProcessEntity::getDefinitionKey)
+            .collect(java.util.stream.Collectors.toSet());
     }
 
     @Override
@@ -259,6 +275,12 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             if (Boolean.TRUE.equals(parameters.getLatestVersionOnly())) {
                 specs.add(ProcessDefinitionRepository.latestVersion());
             }
+            if (!Boolean.TRUE.equals(parameters.getIncludeArchived())) {
+                java.util.Set<String> archivedKeys = archivedKeys();
+                if (!archivedKeys.isEmpty()) {
+                    specs.add((root, q, cb) -> cb.not(root.get("key").in(archivedKeys)));
+                }
+            }
 
             Page<ProcessDefinitionEntity> page =
                 processDefinitionRepository.findAll(Specification.allOf(specs), pageRequest);
@@ -273,6 +295,28 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         return getProcessDefinitions(parameters);
     }
 
+    @Override
+    public void archiveProcess(String key) {
+        com.zorrodev.bpm.engine.entity.ProcessEntity process = processRepository.findByDefinitionKey(key)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Process not found: " + key));
+        if (!process.isArchived()) {
+            process.setArchived(true);
+            process.setArchivedAt(java.time.Instant.now());
+            processRepository.save(process);
+        }
+    }
+
+    @Override
+    public void unarchiveProcess(String key) {
+        com.zorrodev.bpm.engine.entity.ProcessEntity process = processRepository.findByDefinitionKey(key)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Process not found: " + key));
+        if (process.isArchived()) {
+            process.setArchived(false);
+            process.setArchivedAt(null);
+            processRepository.save(process);
+        }
+    }
+
     private ProcessDefinition fromEntity(ProcessDefinitionEntity processDefinitionEntity) {
         ProcessDefinition processDefinition = new ProcessDefinition();
         processDefinition.setId(processDefinitionEntity.getId());
@@ -282,6 +326,10 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         processDefinition.setSha256(processDefinitionEntity.getSha256());
         processDefinition.setCreatedAt(processDefinitionEntity.getCreatedAt());
         processDefinition.setStartFormKey(processDefinitionEntity.getStartFormKey());
+        // WO-ENG-9: archived flag from registry (process table, one row per key)
+        boolean archived = processRepository.findByDefinitionKey(processDefinitionEntity.getKey())
+            .map(com.zorrodev.bpm.engine.entity.ProcessEntity::isArchived).orElse(false);
+        processDefinition.setArchived(archived);
         return processDefinition;
     }
 

@@ -16,4 +16,6 @@ public class ProcessDefinition {
     private String sha256;
     private Instant createdAt;
     private String startFormKey;
+    /** WO-ENG-9: whether the definition's key is archived (hidden by default). */
+    private boolean archived;
 }
