@@ -18,6 +18,7 @@ import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
+import com.zorrodev.bpm.engine.service.SchemaMapService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -45,8 +46,9 @@ import static org.mockito.Mockito.when;
 
 /**
  * WO-DEBT-4e — unit tests for the SchemaMap domain slice. Real
- * {@link SchemaMapOperationsImpl}, mocked repositories/BpmnService/ObjectMapper/
- * validator/support.
+ * {@link SchemaMapOperationsImpl} over a real {@link SchemaMapService} with
+ * mocked repositories/BpmnService/ObjectMapper/validator/support (WO-DEBT-7 S5:
+ * only the wiring moved — all 19 expectations unchanged).
  */
 class SchemaMapOperationsImplTest {
 
@@ -73,8 +75,11 @@ class SchemaMapOperationsImplTest {
         objectMapper = mock(ObjectMapper.class);
         jsonSchemaValidator = mock(JsonSchemaValidator.class);
         formAccessSupport = mock(FormAccessSupport.class);
-        impl = new SchemaMapOperationsImpl(processDefinitionRepository, formRepository,
-            bindingRepository, bpmnService, objectMapper, jsonSchemaValidator, formAccessSupport);
+        // WO-DEBT-7 S5: the impl is now a thin facade — test through it into a
+        // real service over the same mocks (assertions below unchanged).
+        SchemaMapService schemaMapService = new SchemaMapService(processDefinitionRepository,
+            formRepository, bindingRepository, bpmnService, objectMapper, jsonSchemaValidator);
+        impl = new SchemaMapOperationsImpl(schemaMapService, formAccessSupport);
     }
 
     private static ProcessDefinitionEntity pd(String key, int version) {

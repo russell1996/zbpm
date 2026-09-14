@@ -9,9 +9,11 @@ import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
+import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
+import com.zorrodev.bpm.engine.service.SchemaMapService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -40,9 +42,21 @@ class FormResourceSchemaMapLogTest {
     private FormRepository formRepository;
     @Mock
     private FormAccessSupport formAccessSupport;
+    @Mock
+    private tools.jackson.databind.ObjectMapper objectMapper;
+    @Mock
+    private JsonSchemaValidator jsonSchemaValidator;
 
-    @InjectMocks
     private SchemaMapOperationsImpl schemaMapOperations;
+
+    // WO-DEBT-7 S5: the impl is a thin facade — construct it over a real service
+    // with the same mocks (assertions below unchanged).
+    @BeforeEach
+    void setup() {
+        SchemaMapService schemaMapService = new SchemaMapService(processDefinitionRepository,
+            formRepository, bindingRepository, bpmnService, objectMapper, jsonSchemaValidator);
+        schemaMapOperations = new SchemaMapOperationsImpl(schemaMapService, formAccessSupport);
+    }
 
     @Test
     void getSchemaMap_continuesWhenOneProcessDefinitionFailsToParse() {
