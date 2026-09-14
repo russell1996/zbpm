@@ -70,7 +70,7 @@ class TokenServiceAlgVerificationTest {
     @Test
     void verify_validHS256Token_accepted() {
         UUID userId = UUID.randomUUID();
-        String token = tokenService.issue(userId, "alice", "ADMIN");
+        String token = tokenService.issue(userId, "alice", "ADMIN", 0);
         TokenService.Claims claims = tokenService.verify(token);
         assertThat(claims).isNotNull();
         assertThat(claims.userId()).isEqualTo(userId);

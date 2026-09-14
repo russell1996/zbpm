@@ -189,12 +189,31 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         // Resolve principal — may verify token (JWT or API key)
         TokenService.Claims claims = null;
+        // WO-SEC-63: the per-request user-state projection loaded for the JWT path
+        // (active/role/tokenVersion). Reused later for the forcePasswordChange check,
+        // so the whole filter does at most ONE indexed PK lookup per JWT request.
+        UiUserLookupService.UserSecurityState jwtState = null;
         Principal principal;
 
         if (token != null && token.startsWith(API_KEY_PREFIX)) {
             principal = resolveApiKey(token);
         } else if (token != null) {
             claims = tokenService.verify(token);
+            if (claims != null) {
+                // WO-SEC-63 (F01): the JWT path now performs the same live user-state check the
+                // API-key path already does (WO-ACL-5). A token is valid ONLY if the user still
+                // exists, is active, and the claim version matches the current token_version
+                // (logout / password change bumps it → all previously issued access tokens die).
+                // Claim role is compared as defense-in-depth: a role change bumps the version on
+                // write, so mismatch here indicates a missed bump — fail closed, never use a stale
+                // role beyond its access TTL.
+                jwtState = userLookupService.securityState(claims.userId()).orElse(null);
+                if (jwtState == null || !jwtState.active()
+                    || jwtState.tokenVersion() != claims.tokenVersion()
+                    || !jwtState.role().equals(claims.role())) {
+                    claims = null;
+                }
+            }
             principal = (claims != null) ? new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role()) : null;
         } else {
             principal = null;
@@ -222,8 +241,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // (prod default: true; test default: false unless overridden)
         if (principal instanceof Principal.UserPrincipal userPrincipal) {
             String reqPath = PathNormalizer.normalize(request.getRequestURI());
-            if (forcePasswordEnforce && !isAuthExempt(reqPath)
-                && userLookupService.isForcePasswordChange(userPrincipal.userId())) {
+            // WO-SEC-63: jwtState was already loaded for the version/active/role check above —
+            // reuse it instead of the previous separate isForcePasswordChange repository lookup.
+            boolean forceChange = jwtState != null && jwtState.forcePasswordChange();
+            if (forcePasswordEnforce && !isAuthExempt(reqPath) && forceChange) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json");
                 response.getWriter().write("{\"code\":\"PASSWORD_CHANGE_REQUIRED\",\"message\":\"Password change required\"}");

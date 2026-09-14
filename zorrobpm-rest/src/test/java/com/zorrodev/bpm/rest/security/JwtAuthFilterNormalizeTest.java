@@ -9,7 +9,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -28,14 +31,21 @@ import static org.mockito.Mockito.when;
 class JwtAuthFilterNormalizeTest {
 
     private TokenService tokenService;
+    private com.zorrodev.bpm.engine.security.UiUserLookupService userLookup;
     private JwtAuthFilter filter;
 
     @BeforeEach
     void setUp() {
         tokenService = mock(TokenService.class);
+        userLookup = mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class);
         var env = mock(org.springframework.core.env.Environment.class);
-        filter = new JwtAuthFilter(tokenService, mock(ApiKeyRepository.class), mock(ApiKeyGrantRepository.class), mock(com.zorrodev.bpm.engine.security.UiUserLookupService.class), mock(com.zorrodev.bpm.engine.security.AuthorizationService.class), env);
+        filter = new JwtAuthFilter(tokenService, mock(ApiKeyRepository.class), mock(ApiKeyGrantRepository.class), userLookup, mock(com.zorrodev.bpm.engine.security.AuthorizationService.class), env);
         filter.setRequireApiAuth(true);
+        // WO-SEC-63: stub a default securityState for any userId; most tests use USER role,
+        // which matches this default and exercises the path-based guard (403).
+        when(userLookup.securityState(any())).thenReturn(java.util.Optional.of(
+            new com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState(
+                null, "anyuser", "USER", true, 0, false)));
     }
 
     private int doFilter(String path) throws Exception {
@@ -176,10 +186,16 @@ class JwtAuthFilterNormalizeTest {
 
     @Test
     void be4_traversalUsersPath_superAdmin_returns200() throws Exception {
-        // SUPER_ADMIN can access /users
+        // SUPER_ADMIN can access /users — securityState must match both role and userId
+        UUID adminId = UUID.randomUUID();
         TokenService.Claims claims = mock(TokenService.Claims.class);
+        when(claims.userId()).thenReturn(adminId);
         when(claims.role()).thenReturn("SUPER_ADMIN");
+        when(claims.tokenVersion()).thenReturn(0);
         when(tokenService.verify("admin-token")).thenReturn(claims);
+        when(userLookup.securityState(adminId)).thenReturn(java.util.Optional.of(
+            new com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState(
+                adminId, "admin", "SUPER_ADMIN", true, 0, false)));
         int status = doFilter("/auth/../users/123", "admin-token");
         // Filter passes through → 200 (no downstream handler in test), which means
         // the filter did NOT reject it

@@ -127,4 +127,43 @@ class RefreshTokenIntegrationTest {
                         .cookie(new jakarta.servlet.http.Cookie("refresh_token", "totally-invalid-token")))
                 .andExpect(status().isUnauthorized());
     }
+
+    // --- WO-SEC-63 (F02): refresh must set a fresh zbpm_token access cookie so the SPA
+    // can silently re-authenticate without triggering a forced re-login. Both login and
+    // refresh endpoints must set the cookie; criterion 1 already proves login, this one
+    // proves the refresh path specifically.
+
+    @Test
+    void refresh_setsZbpmTokenAccessCookie() throws Exception {
+        LoginResult login = loginWithRefreshToken();
+        org.assertj.core.api.Assertions.assertThat(login.refreshToken()).isNotNull();
+
+        MvcResult refreshResult = mockMvc.perform(post("/auth/refresh")
+                        .cookie(new jakarta.servlet.http.Cookie("refresh_token", login.refreshToken())))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        Collection<String> headers = refreshResult.getResponse().getHeaders("Set-Cookie");
+        String zbpmToken = extractCookieFromHeaders(headers, "zbpm_token");
+        org.assertj.core.api.Assertions.assertThat(zbpmToken)
+                .as("refresh must set zbpm_token access cookie (F02)")
+                .isNotNull()
+                .isNotBlank();
+    }
+
+    @Test
+    void login_setsZbpmTokenAccessCookie() throws Exception {
+        MvcResult result = mockMvc.perform(post("/auth/login")
+                        .content(mapper.writeValueAsString(validLogin()))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        Collection<String> headers = result.getResponse().getHeaders("Set-Cookie");
+        String zbpmToken = extractCookieFromHeaders(headers, "zbpm_token");
+        org.assertj.core.api.Assertions.assertThat(zbpmToken)
+                .as("login must set zbpm_token access cookie")
+                .isNotNull()
+                .isNotBlank();
+    }
 }

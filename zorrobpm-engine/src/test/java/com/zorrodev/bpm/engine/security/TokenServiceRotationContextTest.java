@@ -32,7 +32,7 @@ class TokenServiceRotationContextTest {
     void configuredLegacySecret_isAcceptedByRealBean() {
         // token issued by the OLD active key (now legacy) must still verify after rotation
         TokenService oldService = new TokenService(LEGACY_KEY, 60, "", new MockEnvironment());
-        String oldToken = oldService.issue(UUID.randomUUID(), "alice", "ADMIN");
+        String oldToken = oldService.issue(UUID.randomUUID(), "alice", "ADMIN", 0);
 
         TokenService.Claims claims = tokenService.verify(oldToken);
         assertThat(claims).isNotNull();
@@ -42,7 +42,7 @@ class TokenServiceRotationContextTest {
     @Test
     void activeKeyStillIssuesAndVerifies() {
         UUID userId = UUID.randomUUID();
-        String token = tokenService.issue(userId, "bob", "USER");
+        String token = tokenService.issue(userId, "bob", "USER", 0);
         TokenService.Claims claims = tokenService.verify(token);
         assertThat(claims).isNotNull();
         assertThat(claims.userId()).isEqualTo(userId);
