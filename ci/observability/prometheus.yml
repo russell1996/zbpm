@@ -10,7 +10,11 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
+  # --web.route-prefix=/prometheus/ (docker-compose.observability.yml) moves ALL of
+  # Prometheus's own served paths under that prefix, including its self-scrape target's
+  # metrics endpoint -- without the prefix here this job 404s against itself every scrape.
   - job_name: 'prometheus'
+    metrics_path: '/prometheus/metrics'
     static_configs:
       - targets: ['localhost:9090']
 
