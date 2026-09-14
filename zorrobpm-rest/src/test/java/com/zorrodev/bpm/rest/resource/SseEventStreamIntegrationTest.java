@@ -306,8 +306,11 @@ class SseEventStreamIntegrationTest {
         assertThat(stubResult).isNull(); // proves: old stub → null → sees everything
 
         // GREEN proof: the REAL resolver returns a filtered set
-        EventAuthzResolver resolver = new EventAuthzResolver(processRepository, processDefinitionRepository,
-            processMemberRepository);
+        // WO-DEBT-7 S8: EventAuthzResolver is now a thin facade over ProcessAuthzService — wire both
+        com.zorrodev.bpm.engine.service.ProcessAuthzService processAuthzService =
+            new com.zorrodev.bpm.engine.service.ProcessAuthzService(processRepository, processDefinitionRepository,
+                processMemberRepository);
+        EventAuthzResolver resolver = new EventAuthzResolver(processAuthzService);
         Collection<UUID> resolved = resolver.readableRuntimePdIds(restrictedPrincipal, null);
 
         // The resolver must NOT return null (which would be the old stub behavior)
