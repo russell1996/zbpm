@@ -25,5 +25,11 @@ public interface SignalSubscriptionDbOperations {
 
     List<SignalSubscription> findSignalSubscriptions(String signalName);
 
+    /**
+     * WO-REL-31 CR-3: keyset-paged variant — returns up to {@code FAN_OUT_BATCH_SIZE} (500)
+     * unconsumed subscriptions in deterministic id-DESC order.
+     */
+    List<SignalSubscription> findSignalSubscriptions(String signalName, UUID cursorId);
+
     boolean consumeSignalSubscription(UUID subscriptionId);
 }

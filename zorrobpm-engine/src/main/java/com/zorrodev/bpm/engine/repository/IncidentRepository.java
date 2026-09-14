@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID>, JpaSpecificationExecutor<IncidentEntity> {
@@ -95,4 +96,18 @@ public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID>,
     List<BpmnElementStatistics> findStatsByProcessInstanceId(UUID processInstanceId);
 
     List<IncidentEntity> findByActivityIdInAndCompletedAtIsNull(Collection<UUID> activityIds);
+
+    /**
+     * WO-REL-31 CR-4: definition key in one join query (incident→activity→instance→definition)
+     * instead of four two-step resolutions. Empty when any link is missing — same branches
+     * the old chain used to skip.
+     */
+    @Query("""
+        SELECT pd.key FROM IncidentEntity i
+        JOIN ActivityEntity a ON a.id = i.activityId
+        JOIN ProcessInstanceEntity pi ON pi.id = a.processInstanceId
+        JOIN ProcessDefinitionEntity pd ON pd.id = pi.processDefinitionId
+        WHERE i.id = :id
+        """)
+    Optional<String> findDefinitionKeyById(UUID id);
 }

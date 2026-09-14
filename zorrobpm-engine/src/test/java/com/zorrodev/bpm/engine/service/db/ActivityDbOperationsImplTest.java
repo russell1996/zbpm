@@ -78,7 +78,7 @@ class ActivityDbOperationsImplTest {
     void getActiveActivities_returnsMapped() {
         UUID pi = UUID.randomUUID();
         ActivityEntity e = new ActivityEntity(); e.setId(UUID.randomUUID()); e.setBpmnElementId("x"); e.setType(BpmnElementType.USER_TASK); e.setStatus(ActivityStatus.CREATED); e.setProcessInstanceId(pi); e.setToken(UUID.randomUUID());
-        when(activityRepository.findByProcessInstanceIdAndStatusIn(eq(pi), any(List.class))).thenReturn(List.of(e));
+        when(activityRepository.findByProcessInstanceIdAndStatusInOrderByIdAsc(eq(pi), any(List.class))).thenReturn(List.of(e));
         List<Activity> result = db.getActiveActivities(pi);
         assertThat(result).hasSize(1);
     }

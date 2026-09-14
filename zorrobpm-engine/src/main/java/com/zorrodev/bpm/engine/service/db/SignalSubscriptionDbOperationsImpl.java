@@ -108,6 +108,29 @@ public class SignalSubscriptionDbOperationsImpl implements SignalSubscriptionDbO
             .toList();
     }
 
+    /**
+     * WO-REL-31 CR-3: keyset-paged variant — returns up to 500 unconsumed subscriptions
+     * in deterministic id-DESC order, enabling batched fan-out without OOM.
+     */
+    @Override
+    public List<SignalSubscription> findSignalSubscriptions(String signalName, UUID cursorId) {
+        List<SignalSubscriptionEntity> entities = cursorId == null
+            ? signalSubscriptionRepository.findFirst500ByConsumedFalseAndSignalNameOrderByIdDesc(signalName)
+            : signalSubscriptionRepository.findFirst500ByConsumedFalseAndSignalNameAndIdLessThanOrderByIdDesc(signalName, cursorId);
+        return entities.stream()
+            .map(e -> {
+                SignalSubscription sub = new SignalSubscription();
+                sub.setId(e.getId());
+                sub.setProcessInstanceId(e.getProcessInstanceId());
+                sub.setActivityId(e.getActivityId());
+                sub.setSignalName(e.getSignalName());
+                sub.setBoundaryElementId(e.getBoundaryElementId());
+                sub.setEventSubprocessId(e.getEventSubprocessId());
+                return sub;
+            })
+            .toList();
+    }
+
     @Override
     @Transactional
     public boolean consumeSignalSubscription(UUID subscriptionId) {

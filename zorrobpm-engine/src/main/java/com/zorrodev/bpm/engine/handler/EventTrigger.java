@@ -295,7 +295,11 @@ public class EventTrigger {
                                 List<ProcessVariable> variables, TokenExecutor executor) {
         UUID processInstanceId = dbService.createProcessInstance(parentActivityId, processDefinitionId, variables);
 
-        dbService.setVariables(processInstanceId, variables);
+        // WO-REL-31 CR-2: NO second variable write here. createProcessInstance already INSERTs the
+        // initial variables; a redundant find-then-UPDATE (one SELECT per variable, multi-instance
+        // start excluded) left a stale {name:"update"} in the thread-local change map — an unrelated
+        // later variable change matched an update-only conditionalFilter on that stale record and
+        // spuriously re-evaluated the condition.
 
         UUID parentTokenId = null;
         if (parentActivityId != null) {
@@ -344,49 +348,60 @@ public class EventTrigger {
      * instances (1:N). Each waiting activity is signalled under its own per-instance lock, so
      * concurrent broadcasts/correlations stay isolated per instance.
      *
+     * <p><b>WO-REL-31 CR-3:</b> subscriptions are fetched in keyset-paged batches (≤500 rows per
+     * page, id-DESC order). This prevents OOM on wide fan-outs and gives deterministic ordering.</p>
+     *
      * @param signalFn callback to signal a waiting activity (avoids circular dependency with CompletionService)
      */
     public void broadcastSignal(String signalName, List<ProcessVariable> variables, TokenExecutor executor,
                                 java.util.function.BiConsumer<UUID, List<ProcessVariable>> signalFn) {
-        List<SignalSubscription> subscriptions = dbService.findSignalSubscriptions(signalName);
         List<com.zorrodev.bpm.engine.dto.SignalStartSubscription> startSubscriptions =
             dbService.findSignalStartSubscriptions(signalName);
 
-        if (subscriptions.isEmpty() && startSubscriptions.isEmpty()) {
+        if (!startSubscriptions.isEmpty()) {
+            for (com.zorrodev.bpm.engine.dto.SignalStartSubscription start : startSubscriptions) {
+                log.info("Signal '{}' starting a new instance of {} at {}", signalName, start.getProcessDefinitionId(), start.getElementId());
+                startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables, executor);
+            }
+        }
+
+        // WO-REL-31 CR-3: keyset-paged fan-out (same strategy as correlateMessage)
+        boolean sawSubscriptions = false;
+        UUID cursor = null;
+        while (true) {
+            List<SignalSubscription> page = dbService.findSignalSubscriptions(signalName, cursor);
+            if (page.isEmpty()) {
+                break;
+            }
+            sawSubscriptions = true;
+            UUID nextCursor = page.get(page.size() - 1).getId(); // min id in this page
+            for (SignalSubscription subscription : page) {
+                if (subscription.getEventSubprocessId() != null) {
+                    boolean interrupting = isInterruptingEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId());
+                    boolean shouldFire = interrupting ? dbService.consumeSignalSubscription(subscription.getId()) : true;
+                    if (shouldFire) {
+                        log.info("Broadcasting signal '{}' to event sub-process {} on instance {}", signalName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
+                        triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, executor);
+                    }
+                    continue;
+                }
+                if (dbService.consumeSignalSubscription(subscription.getId())) {
+                    if (subscription.getBoundaryElementId() != null) {
+                        log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
+                        fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, executor);
+                    } else {
+                        log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
+                        signalFn.accept(subscription.getActivityId(), variables);
+                    }
+                }
+            }
+            if (page.size() < DBService.FAN_OUT_BATCH_SIZE) {
+                break;
+            }
+            cursor = nextCursor;
+        }
+        if (!sawSubscriptions && startSubscriptions.isEmpty()) {
             log.info("No active subscription for signal '{}'", signalName);
-            return;
-        }
-
-        // signal start: every subscribed definition starts a fresh instance (broadcast)
-        for (com.zorrodev.bpm.engine.dto.SignalStartSubscription start : startSubscriptions) {
-            log.info("Signal '{}' starting a new instance of {} at {}", signalName, start.getProcessDefinitionId(), start.getElementId());
-            startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables, executor);
-        }
-
-        for (SignalSubscription subscription : subscriptions) {
-            if (subscription.getEventSubprocessId() != null) {
-                // signal-started event sub-process: an interrupting handler must fire EXACTLY once.
-                // CAS-consume the subscription first (WO-SEC-59 #2); only the winning correlation triggers
-                // the subprocess. A non-interrupting handler re-fires on every signal and keeps listening.
-                boolean interrupting = isInterruptingEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId());
-                boolean shouldFire = interrupting ? dbService.consumeSignalSubscription(subscription.getId()) : true;
-                if (shouldFire) {
-                    log.info("Broadcasting signal '{}' to event sub-process {} on instance {}", signalName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
-                    triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, executor);
-                }
-                continue;
-            }
-            if (dbService.consumeSignalSubscription(subscription.getId())) {
-                if (subscription.getBoundaryElementId() != null) {
-                    // signal boundary: fire the boundary (interrupt/non-interrupt the host)
-                    log.info("Broadcasting signal '{}' to boundary {} on instance {} activity {}", signalName, subscription.getBoundaryElementId(), subscription.getProcessInstanceId(), subscription.getActivityId());
-                    fireBoundary(subscription.getActivityId(), subscription.getBoundaryElementId(), variables, executor);
-                } else {
-                    // signal catch: signal the waiting activity
-                    log.info("Broadcasting signal '{}' to instance {} activity {}", signalName, subscription.getProcessInstanceId(), subscription.getActivityId());
-                    signalFn.accept(subscription.getActivityId(), variables);
-                }
-            }
         }
     }
 
