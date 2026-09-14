@@ -29,17 +29,18 @@ const router = createRouter({
 })
 
 describe('WO-UI-10 Phase 3: AdminSettings tab hub', () => {
-  it('renders three admin tabs and navigates between them', async () => {
+  it('renders four admin tabs and navigates between them', async () => {
     router.push('/admin/settings')
     await router.isReady()
     const wrapper = mount(AdminSettings, { global: { plugins: [router] }, attachTo: document.body })
 
     const tabs = wrapper.findAll('[role="tab"]')
-    expect(tabs.length).toBe(3)
+    expect(tabs.length).toBe(4)
     const labels = tabs.map((t) => t.text())
     expect(labels).toContain('mailSettings')
     expect(labels).toContain('users')
     expect(labels).toContain('submissionQueue')
+    expect(labels).toContain('registrationQueue')
 
     // navigate to the users tab
     await tabs[1].trigger('click')
