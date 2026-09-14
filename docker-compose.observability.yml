@@ -51,6 +51,19 @@ services:
     image: grafana/grafana:11.4.0
     container_name: zorrobpm-grafana
     restart: unless-stopped
+    # WO-OBS-6 follow-up (live-caught 2026-09-14): entrypoint-whitelist.sh resolves
+    # `frontend`'s IP via Docker's embedded DNS at container start. Without this
+    # dependency, grafana could start (and resolve) before frontend's own container
+    # recreation had fully settled -- caught live: grafana started 1.3s after frontend's
+    # own StartedAt timestamp but still resolved a stale IP (auth-proxy.invalid-ip
+    # rejecting every real request afterwards, forcing Grafana's native login instead of
+    # the ZBPM SSO flow -- the reported "falls back to Grafana's own blank login page").
+    # `service_healthy` waits for frontend's Dockerfile HEALTHCHECK to pass, which is a
+    # much stronger guarantee that its network attachment has fully settled than a fixed
+    # sleep would be.
+    depends_on:
+      frontend:
+        condition: service_healthy
     entrypoint: ["/entrypoint-whitelist.sh"]
     environment:
       GF_SECURITY_ADMIN_USER: admin
