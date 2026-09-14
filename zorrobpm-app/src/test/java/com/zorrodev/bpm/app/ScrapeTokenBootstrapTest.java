@@ -50,7 +50,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 @AutoConfigureMockMvc
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class ScrapeTokenBootstrapIT {
+class ScrapeTokenBootstrapTest {
 
     // Static init (not @TempDir): @DynamicPropertySource callbacks need the path
     // before any extension ordering can be relied upon — class-load order is certain.
@@ -84,7 +84,7 @@ class ScrapeTokenBootstrapIT {
 
     @Test
     void startup_provisionsSystemAccountKeyAndFile_scrapeWorksLoginFails() throws Exception {
-        UiUserEntity scraper = userRepository.findByUsername("prom-scraper").orElseThrow();
+        UiUserEntity scraper = userRepository.findByUsername(ScrapeTokenBootstrap.SCRAPER_USERNAME).orElseThrow();
         assertEquals("SYSTEM", scraper.getUserType(), "scraper must be a SYSTEM account");
         assertTrue(scraper.isActive(), "scraper must be active (resolveApiKey rejects inactive owners)");
 
@@ -102,7 +102,7 @@ class ScrapeTokenBootstrapIT {
 
         // SYSTEM account cannot log in (no usable password by design, WO-INT-4).
         LoginDTO login = new LoginDTO();
-        login.setUsername("prom-scraper");
+        login.setUsername(ScrapeTokenBootstrap.SCRAPER_USERNAME);
         login.setPassword("anything-at-all");
         mockMvc.perform(post("/auth/login")
                 .content(mapper.writeValueAsString(login))
@@ -132,7 +132,7 @@ class ScrapeTokenBootstrapIT {
     @Test
     void missingKey_reissuesFreshKeyAndRewritesFile() throws Exception {
         String before = Files.readString(TOKEN_FILE);
-        UUID scraperId = userRepository.findByUsername("prom-scraper").orElseThrow().getId();
+        UUID scraperId = userRepository.findByUsername(ScrapeTokenBootstrap.SCRAPER_USERNAME).orElseThrow().getId();
         apiKeyRepository.findAllByOwnerUserId(scraperId).forEach(apiKeyRepository::delete);
 
         bootstrap.run(null);
