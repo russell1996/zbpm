@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.ElementBindingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -34,7 +35,9 @@ import static org.mockito.Mockito.when;
 
 /**
  * WO-DEBT-4c — unit tests for the ElementBinding domain slice. Real
- * {@link ElementBindingOperationsImpl}, mocked repositories + FormAccessSupport.
+ * {@link ElementBindingOperationsImpl} over a real {@link ElementBindingService}
+ * with mocked repositories + FormAccessSupport (WO-DEBT-7 S6: only the wiring
+ * moved — all 15 expectations unchanged).
  */
 class ElementBindingOperationsImplTest {
 
@@ -55,8 +58,11 @@ class ElementBindingOperationsImplTest {
         formRepository = mock(FormRepository.class);
         bindingRepository = mock(ElementArtifactBindingRepository.class);
         formAccessSupport = mock(FormAccessSupport.class);
-        impl = new ElementBindingOperationsImpl(
-            processDefinitionRepository, formRepository, bindingRepository, formAccessSupport);
+        // WO-DEBT-7 S6: the impl is now a thin facade — test through it into a
+        // real service over the same mocks (assertions below unchanged).
+        ElementBindingService elementBindingService = new ElementBindingService(
+            processDefinitionRepository, formRepository, bindingRepository);
+        impl = new ElementBindingOperationsImpl(elementBindingService, formAccessSupport);
     }
 
     private static ProcessDefinitionEntity pd(String key, int version) {
