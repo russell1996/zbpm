@@ -33,6 +33,7 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
     private final DBService dbService;
     private final ActivityService activityService;
     private final ElementSupport elementSupport;
+    private final ExecutionContext executionContext;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.CALL_ACTIVITY; }
@@ -69,47 +70,55 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
             throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' processId expression '" + rawProcessId + "' resolved to null/blank — check instance variables and FEEL syntax");
         }
 
-        Integer version;
-        String bindingType = Optional.ofNullable(bpmnElement.getExtensions())
-            .map(BpmnElementExtensionModel::getCallActivityExtension)
-            .map(CallActivityExtensionModel::getBindingType)
-            .orElse(null);
-        if ("versionTag".equals(bindingType)) {
-            // WO-C8-3: resolve the latest version carrying the requested tag (NOT latest overall).
-            String tag = Optional.ofNullable(bpmnElement.getExtensions())
+        // WO-REL-29: recursion/depth guard — must run BEFORE any DB/version lookup so a cycle
+        // never reaches the synchronous startProcessInstance recursion. Throws
+        // IllegalStateException so ActivityServiceImpl parks it as an incident (managed error).
+        executionContext.enterCall(key, bpmnElement.getId(), processInstanceId);
+        try {
+            Integer version;
+            String bindingType = Optional.ofNullable(bpmnElement.getExtensions())
                 .map(BpmnElementExtensionModel::getCallActivityExtension)
-                .map(CallActivityExtensionModel::getVersionTag)
-                .filter(s -> !s.isBlank())
-                .orElseThrow(() -> new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has bindingType=\"versionTag\" but no versionTag attribute"));
-            version = dbService.getMaxProcessDefinitionVersionByKeyAndVersionTag(key, tag);
-            if (version == null || version == 0) {
-                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' with versionTag '" + tag + "' which has no matching deployed version");
+                .map(CallActivityExtensionModel::getBindingType)
+                .orElse(null);
+            if ("versionTag".equals(bindingType)) {
+                // WO-C8-3: resolve the latest version carrying the requested tag (NOT latest overall).
+                String tag = Optional.ofNullable(bpmnElement.getExtensions())
+                    .map(BpmnElementExtensionModel::getCallActivityExtension)
+                    .map(CallActivityExtensionModel::getVersionTag)
+                    .filter(s -> !s.isBlank())
+                    .orElseThrow(() -> new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has bindingType=\"versionTag\" but no versionTag attribute"));
+                version = dbService.getMaxProcessDefinitionVersionByKeyAndVersionTag(key, tag);
+                if (version == null || version == 0) {
+                    throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' with versionTag '" + tag + "' which has no matching deployed version");
+                }
+            } else if ("deployment".equals(bindingType)) {
+                // WO-C8-3b: resolve the child version laid down TOGETHER WITH the currently running
+                // parent version (shared deployment_id from POST /deployments) — NOT latest overall.
+                // A singly-deployed parent (deployment_id NULL) or a child missing from the deployment
+                // is an explicit incident, never a silent latest fallback (same philosophy as WO-C8-17).
+                UUID parentPdId = dbService.getProcessInstance(processInstanceId).getProcessDefinitionId();
+                UUID deploymentId = dbService.getDeploymentIdByProcessDefinitionId(parentPdId);
+                if (deploymentId == null) {
+                    throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has bindingType=\"deployment\" but its process version was laid down singly (no deployment) — redeploy parent and child together via POST /deployments");
+                }
+                version = dbService.getMaxProcessDefinitionVersionByKeyAndDeploymentId(key, deploymentId);
+                if (version == null || version == 0) {
+                    throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no version deployed together with deployment '" + deploymentId + "' (bindingType=\"deployment\") — deploy parent and child together via POST /deployments");
+                }
+            } else {
+                // "latest" (default) — latest overall wins, historical behaviour.
+                version = dbService.getMaxProcessDefinitionVersionByKey(key);
+                if (version == null || version == 0) {
+                    throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no deployed definition");
+                }
             }
-        } else if ("deployment".equals(bindingType)) {
-            // WO-C8-3b: resolve the child version laid down TOGETHER WITH the currently running
-            // parent version (shared deployment_id from POST /deployments) — NOT latest overall.
-            // A singly-deployed parent (deployment_id NULL) or a child missing from the deployment
-            // is an explicit incident, never a silent latest fallback (same philosophy as WO-C8-17).
-            UUID parentPdId = dbService.getProcessInstance(processInstanceId).getProcessDefinitionId();
-            UUID deploymentId = dbService.getDeploymentIdByProcessDefinitionId(parentPdId);
-            if (deploymentId == null) {
-                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' has bindingType=\"deployment\" but its process version was laid down singly (no deployment) — redeploy parent and child together via POST /deployments");
-            }
-            version = dbService.getMaxProcessDefinitionVersionByKeyAndDeploymentId(key, deploymentId);
-            if (version == null || version == 0) {
-                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no version deployed together with deployment '" + deploymentId + "' (bindingType=\"deployment\") — deploy parent and child together via POST /deployments");
-            }
-        } else {
-            // "latest" (default) — latest overall wins, historical behaviour.
-            version = dbService.getMaxProcessDefinitionVersionByKey(key);
-            if (version == null || version == 0) {
-                throw new IllegalStateException("Call activity '" + bpmnElement.getId() + "' references process '" + key + "' which has no deployed definition");
-            }
-        }
-        ProcessDefinition pd = dbService.getProcessDefinition(key, version);
-        UUID processDefinitionId = pd.getId();
+            ProcessDefinition pd = dbService.getProcessDefinition(key, version);
+            UUID processDefinitionId = pd.getId();
 
-        activityService.startProcessInstance(activityId, processDefinitionId, variables);
+            activityService.startProcessInstance(activityId, processDefinitionId, variables);
+        } finally {
+            executionContext.exitCall();
+        }
     }
 
     /**
