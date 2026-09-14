@@ -35,6 +35,9 @@ public interface ActivityDbOperations {
 
     boolean hasActiveActivityOnTokenAndElement(UUID tokenId, String bpmnElementId);
 
+    /** WO-REL-28: COMPLETED activity on (token, element) — guard against re-execution after manual completion. */
+    boolean hasCompletedActivityOnTokenAndElement(UUID tokenId, String bpmnElementId);
+
     Activity getActivity(UUID activityId);
 
     /**
