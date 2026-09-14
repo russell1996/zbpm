@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import type { User, UserRole } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
@@ -27,6 +27,9 @@ const editForm = reactive<{ fullName: string; email: string; role: UserRole; act
 })
 // WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
 const typeFilter = ref<'ALL' | 'HUMAN' | 'SYSTEM'>('ALL')
+// WO-UI-16: server-side active filter (default: only active); ALL = no active param, INACTIVE = active:false
+const activeFilter = ref<'ACTIVE' | 'ALL' | 'INACTIVE'>('ACTIVE')
+const activeParam = computed(() => (activeFilter.value === 'ACTIVE' ? true : activeFilter.value === 'INACTIVE' ? false : undefined))
 
 const visibleUsers = computed(() =>
   typeFilter.value === 'ALL' ? users.value : users.value.filter((u) => u.userType === typeFilter.value),
@@ -46,7 +49,7 @@ const formUserType = ref<'HUMAN' | 'SYSTEM'>('HUMAN')
 async function loadUsers() {
   loading.value = true
   try {
-    const result = await getUsers({ username: search.value || undefined })
+    const result = await getUsers({ username: search.value || undefined, active: activeParam.value })
     users.value = result.data
     totalCount.value = result.totalElements
   } finally {
@@ -152,6 +155,8 @@ async function save() {
   }
 }
 
+watch(activeFilter, () => { loadUsers() })
+
 onMounted(loadUsers)
 </script>
 
@@ -184,6 +189,17 @@ onMounted(loadUsers)
           <SelectItem value="ALL" data-testid="user-type-filter-ALL">{{ t('filterAllUsers') }}</SelectItem>
           <SelectItem value="HUMAN" data-testid="user-type-filter-HUMAN">{{ t('filterHumanUsers') }}</SelectItem>
           <SelectItem value="SYSTEM" data-testid="user-type-filter-SYSTEM">{{ t('filterSystemUsers') }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <!-- WO-UI-16: active filter — server-side, default ACTIVE -->
+      <Select v-model="activeFilter" class="w-48">
+        <SelectTrigger data-testid="user-active-filter" class="w-48 px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="ACTIVE" data-testid="user-active-filter-ACTIVE">{{ t('filterActiveOnly') }}</SelectItem>
+          <SelectItem value="ALL" data-testid="user-active-filter-ALL">{{ t('filterAllStatuses') }}</SelectItem>
+          <SelectItem value="INACTIVE" data-testid="user-active-filter-INACTIVE">{{ t('filterInactiveOnly') }}</SelectItem>
         </SelectContent>
       </Select>
       <span class="text-sm text-muted-foreground">{{ totalCount }} {{ t('usersCount') }}</span>
