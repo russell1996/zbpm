@@ -372,16 +372,16 @@ deploy:
     # generated once on the host) — it lived under ci/, a plain top-level dir with no exclusion
     # here, so every deploy silently wiped it and Prometheus lost its app-scrape credential the
     # moment the *next*, unrelated deploy ran. Back it up and restore it after the sync.
-    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then cp "$DEPLOY_DIR/ci/observability/scrape-token" /tmp/scrape-token.bak; fi
+    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" /tmp/scrape-token.bak; fi
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
     - cp -a ./ "$DEPLOY_DIR"/
-    - if [ -f /tmp/scrape-token.bak ]; then mv /tmp/scrape-token.bak "$DEPLOY_DIR/ci/observability/scrape-token"; chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    - if [ -f /tmp/scrape-token.bak ]; then sudo mv /tmp/scrape-token.bak "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
     # WO-OBS-6: a brand-new host has no scrape-token at all -- without this, Docker's bind
     # mount creates it as an empty DIRECTORY on first `up` (same bug class fixed live on
     # 2026-09-14), and Prometheus fails with "is a directory" instead of just an auth error.
     # An empty placeholder file scrapes as unauthorized (safe, diagnosable) until the real
     # token is provisioned, rather than breaking the mount entirely.
-    - if [ ! -e "$DEPLOY_DIR/ci/observability/scrape-token" ]; then touch "$DEPLOY_DIR/ci/observability/scrape-token"; chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    - if [ ! -e "$DEPLOY_DIR/ci/observability/scrape-token" ]; then touch "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
     - cd "$DEPLOY_DIR"
     # WO-OBS-6: Grafana refuses to start without GF_SECURITY_ADMIN_PASSWORD (docker-compose.observability.yml
     # uses the `:?` hard-fail form on purpose -- no static default for an admin account). Generate
