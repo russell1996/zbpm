@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.BpmnProcessStructure;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
+import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,7 +23,7 @@ public interface ProcessDefinitionContract {
     void unarchiveProcess(@PathVariable("key") String key);
 
     @PostExchange(value = "/process-definitions", accept = MediaType.APPLICATION_JSON_VALUE, contentType = MediaType.APPLICATION_JSON_VALUE)
-    ProcessDefinition addProcessDefinition(@RequestBody AddProcessDefinitionDTO dto);
+    ProcessDefinition addProcessDefinition(@Valid @RequestBody AddProcessDefinitionDTO dto);
 
     /**
      * WO-ACL-4 (ADR-8 п.3): new version of an EXISTING process — authorized by the target
@@ -30,7 +31,7 @@ public interface ProcessDefinitionContract {
      * the uploaded XML must match the target process's key (it cannot be changed).
      */
     @PostExchange(value = "/process-definitions/{id}/versions", accept = MediaType.APPLICATION_JSON_VALUE, contentType = MediaType.APPLICATION_JSON_VALUE)
-    ProcessDefinition addProcessDefinitionVersion(@PathVariable("id") UUID id, @RequestBody AddProcessDefinitionDTO dto);
+    ProcessDefinition addProcessDefinitionVersion(@PathVariable("id") UUID id, @Valid @RequestBody AddProcessDefinitionDTO dto);
 
     @GetExchange(url = "/process-definitions", accept = MediaType.APPLICATION_JSON_VALUE)
     PagedDataDTO<ProcessDefinition> getProcessDefinitions(ProcessDefinitionsQueryParameters parameters);
