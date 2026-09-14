@@ -7,6 +7,7 @@ import { useProcessStore } from '@/stores/process'
 import { usePagination } from '@/composables/usePagination'
 import { getMyMemberships } from '@/services/adminService'
 import { archiveProcess, unarchiveProcess } from '@/services/processService'
+import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import MySubmissions from '@/pages/processes/MySubmissions.vue'
@@ -17,6 +18,7 @@ const router = useRouter()
 const store = useProcessStore()
 const { t } = useI18n()
 const { formatDate } = useDateFormat()
+const toast = useToast()
 
 const search = ref('')
 const latestOnly = ref(true)
