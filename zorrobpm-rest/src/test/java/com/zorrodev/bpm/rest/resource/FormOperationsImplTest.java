@@ -9,6 +9,7 @@ import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
+import com.zorrodev.bpm.engine.service.FormDeploymentService;
 import com.zorrodev.bpm.engine.service.JsonSchemaValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,9 @@ import static org.mockito.Mockito.when;
 
 /**
  * WO-DEBT-4e — unit tests for the Forms domain slice. Real
- * {@link FormOperationsImpl}, mocked repositories/ObjectMapper/validator/support.
+ * {@link FormOperationsImpl} over a real {@link FormDeploymentService} with
+ * mocked repositories/ObjectMapper/validator/support (WO-DEBT-7 S7: only the
+ * wiring moved — all 15 expectations unchanged).
  */
 class FormOperationsImplTest {
 
@@ -59,9 +62,11 @@ class FormOperationsImplTest {
         jsonSchemaValidator = mock(JsonSchemaValidator.class);
         formAccessSupport = mock(FormAccessSupport.class);
         advisoryDeployLock = mock(AdvisoryDeployLock.class);
-        impl = new FormOperationsImpl(
-            formRepository, bindingRepository, objectMapper, jsonSchemaValidator, formAccessSupport,
-            advisoryDeployLock);
+        // WO-DEBT-7 S7: the impl is now a thin facade — test through it into a
+        // real service over the same mocks (assertions below unchanged).
+        FormDeploymentService formDeploymentService = new FormDeploymentService(
+            formRepository, bindingRepository, objectMapper, jsonSchemaValidator, advisoryDeployLock);
+        impl = new FormOperationsImpl(formDeploymentService, formAccessSupport);
     }
 
     private static FormEntity form(String key, int version) {
