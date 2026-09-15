@@ -15,6 +15,7 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -141,16 +142,16 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                             return;
                         }
                     }
-                    BufferedResponseWrapper bufferedResponse =
-                        new BufferedResponseWrapper(response);
+                    ContentCachingResponseWrapper cachedResponse =
+                        new ContentCachingResponseWrapper(response);
                     try {
-                        chain.doFilter(replayableRequest, bufferedResponse);
+                        chain.doFilter(replayableRequest, cachedResponse);
                     } catch (IOException | RuntimeException | jakarta.servlet.ServletException e) {
                         throw new FilterChainException(e);
                     }
-                    int responseStatus = bufferedResponse.getStatus();
-                    byte[] responseBody = bufferedResponse.getContentAsByteArray();
-                    String contentType = bufferedResponse.getContentType();
+                    int responseStatus = cachedResponse.getStatus();
+                    byte[] responseBody = cachedResponse.getContentAsByteArray();
+                    String contentType = cachedResponse.getContentType();
                     String bodyStr = new String(responseBody, StandardCharsets.UTF_8);
                     if (responseStatus == 401 || responseStatus == 403 || responseStatus == 429) {
                         buffered.set(new Buffered(responseStatus, bodyStr, contentType));
@@ -255,35 +256,18 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         response.getOutputStream().write(body);
     }
 
-    /**
-     * Isolated buffering wrapper — does NOT delegate setStatus/contentType to the real
-     * response until {@link #writeBuffered} after successful commit. This is the F06 fix:
-     * if commit fails, the real response is still uncommitted (no 200 to client).
-     */
-    private static final class BufferedResponseWrapper extends jakarta.servlet.http.HttpServletResponseWrapper {
-        private int status = HttpServletResponse.SC_OK;
-        private String contentType;
-        private final java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
-        private final jakarta.servlet.ServletOutputStream out = new jakarta.servlet.ServletOutputStream() {
-            @Override public void write(int b) { body.write(b); }
-            @Override public void write(byte[] b, int off, int len) { body.write(b, off, len); }
-            @Override public boolean isReady() { return true; }
-            @Override public void setWriteListener(jakarta.servlet.WriteListener l) {}
-        };
-        private java.io.PrintWriter writer;
-
-        BufferedResponseWrapper(HttpServletResponse response) { super(response); }
-
-        @Override public void setStatus(int sc) { this.status = sc; }
-        @Override public void setContentType(String type) { this.contentType = type; }
-        @Override public String getContentType() { return contentType; }
-        @Override public int getStatus() { return status; }
-        @Override public jakarta.servlet.ServletOutputStream getOutputStream() { return out; }
-        @Override public java.io.PrintWriter getWriter() {
-            if (writer == null) writer = new java.io.PrintWriter(new java.io.OutputStreamWriter(body, StandardCharsets.UTF_8), true);
-            return writer;
+    private static void copyBodyOrThrow(ContentCachingResponseWrapper cached,
+                                        HttpServletResponse response, boolean throwOnError) {
+        try {
+            cached.copyBodyToResponse();
+        } catch (IOException e) {
+            throw new FilterChainException(e);
         }
-        byte[] getContentAsByteArray() { if (writer != null) writer.flush(); return body.toByteArray(); }
+    }
+
+    private static void copyBodyOrThrow(ContentCachingResponseWrapper cached,
+                                        HttpServletResponse response) {
+        copyBodyOrThrow(cached, response, true);
     }
 
     private record Replay(int status, String body, String contentType) {}

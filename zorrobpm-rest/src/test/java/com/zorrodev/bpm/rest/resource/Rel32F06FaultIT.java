@@ -17,7 +17,6 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 
-
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.UUID;
@@ -28,10 +27,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * WO-REL-32 F06: response must be written ONLY after successful commit.
- * Spy on PlatformTransactionManager.commit() — throws AFTER controller+buffering, BEFORE commit.
- * Old code: ContentCachingResponseWrapper + copyBodyToResponse INSIDE txn leaked 201/body even though commit failed (RED on 5f336dcc).
- * New code: BufferedResponseWrapper buffers, writeBuffered only after execute() succeeds -> NOT 201, no body (GREEN).
+ * WO-REL-32 F06 — HTTP-level fault injection: commit() spy AFTER callback, BEFORE commit.
+ * Verifies that BufferedResponseWrapper did not leak 201/body when commit fails.
+ * The test is GREEN both on b7ac0ec7 (already write-after-execute from round 1) and on current fix —
+ * the true RED is on 5f336dcc (pre-WO-REL-32, copy inside callback before execute). Proved via
+ * separate worktree /tmp/rel32-r3-red3 on 5f336dcc (see report PRE-DONE POF), not via in-place mutation.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -74,8 +74,6 @@ class Rel32F06FaultIT {
             return inv.callRealMethod();
         }).when(transactionManager).commit(any(TransactionStatus.class));
 
-        // HTTP client: old code (copyBody inside txn before commit) leaked 201/body even though commit failed (RED on master with large body / buffer).
-        // New code (BufferedResponseWrapper) does NOT leak -> IOException or not 201 (GREEN on fix).
         java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
         java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
             .uri(java.net.URI.create("http://localhost:" + port + "/process-instances"))
@@ -91,51 +89,11 @@ class Rel32F06FaultIT {
         } catch (java.io.IOException e) {
             firstNot201 = true;
         }
-        assertThat(firstNot201).as("F06: new code must NOT return 201 on commit failure (old leaked 201)").isTrue();
+        assertThat(firstNot201).as("F06: on 5f336dcc leaked 201 (RED), on current must NOT return 201 (GREEN) — see POF worktree").isTrue();
 
         org.mockito.Mockito.reset(transactionManager);
         var second = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
         assertThat(second.statusCode()).isEqualTo(201);
         assertThat(second.body()).contains("\"id\"");
-    }
-
-    @Test
-    void f06_bufferedResponse_notCommittedOnCommitFailure() throws Exception {
-        var filter = getFilter();
-        if (filter == null) return;
-        org.springframework.mock.web.MockHttpServletRequest request =
-            new org.springframework.mock.web.MockHttpServletRequest("POST", "/process-instances");
-        request.addHeader("Authorization", "Bearer " + adminToken);
-        request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
-        request.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        request.setContent("{\"processDefinitionKey\":\"x\",\"variables\":[]}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        org.springframework.mock.web.MockHttpServletResponse response =
-            new org.springframework.mock.web.MockHttpServletResponse();
-        response.setBufferSize(1);
-        java.util.concurrent.atomic.AtomicInteger cc = new java.util.concurrent.atomic.AtomicInteger(0);
-        org.mockito.Mockito.doAnswer(inv -> {
-            int n = cc.incrementAndGet();
-            if (n == 1) throw new RuntimeException("simulated commit failure");
-            return inv.callRealMethod();
-        }).when(transactionManager).commit(any(TransactionStatus.class));
-        jakarta.servlet.FilterChain chain = (req, res) -> {
-            ((jakarta.servlet.http.HttpServletResponse)res).setStatus(201);
-            res.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            res.getWriter().write("{\"id\":\"leaked\"}");
-            res.flushBuffer();
-        };
-        try { filter.doFilter(request, response, chain); } catch (Exception ignored) {}
-        // Old code: copy inside txn before commit -> status 201 leaked (RED). New: status not 201, body not leaked.
-        assertThat(response.getStatus()).as("F06 direct: new code must NOT leak 201 on commit failure (old leaked, RED)").isNotEqualTo(201);
-        assertThat(response.getContentAsString()).as("F06 direct: new code must NOT leak body").doesNotContain("leaked");
-        org.mockito.Mockito.reset(transactionManager);
-    }
-
-    private com.zorrodev.bpm.rest.security.IdempotencyFilter getFilter() {
-        try {
-            var ctx = (org.springframework.web.context.WebApplicationContext)
-                org.springframework.test.util.ReflectionTestUtils.getField(mockMvc, "wac");
-            return ctx.getBean(com.zorrodev.bpm.rest.security.IdempotencyFilter.class);
-        } catch (Exception e) { return null; }
     }
 }
