@@ -18,10 +18,12 @@ public class ActivityQueryOperationsImpl implements ActivityQueryOperations {
 
     @Override
     public List<ActivityInstance> getActivities(UUID processInstanceId) {
-        return getActivities(processInstanceId, 0, 100).getData();
+        return activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(processInstanceId).stream()
+            .map(activityInstanceMapper::toDTO)
+            .toList();
     }
 
-    public com.zorrodev.bpm.contract.dto.PagedDataDTO<ActivityInstance> getActivities(UUID processInstanceId, Integer pageIndex, Integer pageSize) {
+    public com.zorrodev.bpm.contract.dto.PagedDataDTO<ActivityInstance> getActivitiesPaged(UUID processInstanceId, Integer pageIndex, Integer pageSize) {
         var page = new com.zorrodev.bpm.engine.service.query.QueryPaginationSupport()
             .clampedPage(pageIndex, pageSize, org.springframework.data.domain.Sort.by("createdAt").ascending());
         var result = activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(processInstanceId, page);

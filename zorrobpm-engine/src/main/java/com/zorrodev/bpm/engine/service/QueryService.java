@@ -25,7 +25,7 @@ public interface QueryService {
 
     List<ActivityInstance> getActivities(UUID processInstanceId);
 
-    PagedDataDTO<ActivityInstance> getActivities(UUID processInstanceId, Integer pageIndex, Integer pageSize);
+    PagedDataDTO<ActivityInstance> getActivitiesPaged(UUID processInstanceId, Integer pageIndex, Integer pageSize);
 
     /** WO-ARCH-1b: allowedPdIds = null → see all; non-null → filter; empty → deny. */
     PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query, Collection<UUID> allowedPdIds);

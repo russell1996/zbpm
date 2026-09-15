@@ -87,7 +87,7 @@ public class QueryResource implements QueryContract {
                                                                               @org.springframework.web.bind.annotation.RequestParam(required = false) Integer pageSize) {
         ProcessInstance instance = queryService.getProcessInstance(id);
         requireResourceAccess(instance.getProcessDefinitionId());
-        return queryService.getActivities(id, pageIndex, pageSize);
+        return queryService.getActivitiesPaged(id, pageIndex, pageSize);
     }
 
     /** WO-ARCH-1b: tenant-filtered incidents */
