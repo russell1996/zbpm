@@ -32,10 +32,11 @@ import java.util.stream.Collectors;
  * 403. Same-origin fetch/XHR always send {@code Origin} on mutating methods,
  * so legit SPA traffic is unaffected (criterion 1).
  *
- * <p>Runs AFTER {@code JwtAuthFilter} in the chain (order constant below) —
- * it does not authenticate, it only checks the already-resolved transport
- * (cookie present + no Bearer header). CORS preflights (OPTIONS) are already
- * passed through by {@code JwtAuthFilter}.
+ * <p>Runs BEFORE {@code JwtAuthFilter} in the chain ({@code ORDER =
+ * LOWEST_PRECEDENCE - 100} sorts earlier than the plain-component default) —
+ * it does not authenticate, it only checks the raw transport (cookie present
+ * + no Bearer header). CORS preflights (OPTIONS) are passed through by both
+ * filters independently.
  */
 @Slf4j
 public class CsrfFilter extends OncePerRequestFilter {

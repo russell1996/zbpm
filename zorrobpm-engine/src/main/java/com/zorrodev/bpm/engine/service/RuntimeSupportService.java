@@ -49,6 +49,18 @@ public class RuntimeSupportService {
      * verifiable — the named user has to be the task assignee or a candidate for it.
      * Otherwise 403. (The trust boundary is unchanged: we trust the system, not its claim.)
      */
+    /**
+     * WO-SEC-64 HOLD (S-RBAC-3, вторая половина): существование OBO-принципала.
+     * Fail-closed 404 — «нет такого юзера», до любой работы. Вызывается из
+     * {@code RuntimeOperationSupport.checkedOnBehalfOf()} (все пути: start +
+     * оба task-пути), а не только в task-сверке (та была до WO и start не крыла).
+     */
+    public void requireOnBehalfExists(String username) {
+        if (!uiUserRepository.existsByUsername(username)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "X-On-Behalf-Of user not found");
+        }
+    }
+
     public void requireOnBehalfMatchesTask(String assignee, String candidateGroups,
             UUID processInstanceId, String username) {
         UiUserEntity namedUser = uiUserRepository.findByUsername(username).orElse(null);
