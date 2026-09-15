@@ -22,8 +22,9 @@ public class RuntimeOperationSupport {
      * WO-SEC-64 (S-RBAC-3): strict format for X-On-Behalf-Of — a username, not
      * an arbitrary string. 1–64 chars, letters/digits plus {@code . _ - @}
      * (covers login names and email-style attributions, rejects markup/
-     * control chars). Existence is verified separately at use time
-     * ({@code requireOnBehalfMatchesTask} fails closed on unknown names).
+     * control chars). Existence is verified right below in
+     * {@link #checkedOnBehalfOf} via {@code requireOnBehalfExists} (fail-closed
+     * 404); task-scoped matching stays in {@code requireOnBehalfMatchesTask}.
      */
     static final Pattern ON_BEHALF_OF_FORMAT =
         Pattern.compile("^[A-Za-z0-9._\\-@]{1,64}$");
@@ -57,9 +58,9 @@ public class RuntimeOperationSupport {
      * (WO-INT-4 §3). Returns the raw claimed username, or null when the header is absent.
      *
      * <p>WO-SEC-64 (S-RBAC-3): the claim must additionally match
-     * {@link #ON_BEHALF_OF_FORMAT} — garbage never travels further. Existence is
-     * verified at use time ({@code requireOnBehalfMatchesTask} fails closed on
-     * unknown names); a malformed value is logged as a signal (possible probe).
+     * {@link #ON_BEHALF_OF_FORMAT} — garbage never travels further — and name an
+     * existing user ({@code requireOnBehalfExists}, fail-closed 404); a malformed
+     * value is logged as a signal (possible probe).
      */
     public String checkedOnBehalfOf() {
         String raw = rawOnBehalfOf();
