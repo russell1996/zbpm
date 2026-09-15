@@ -17,6 +17,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 /**
  * WO-SEC-58: "My profile" self-service. Any authenticated user; operates strictly
@@ -33,7 +34,7 @@ public class MyProfileResource implements MyProfileContract {
     private final HttpServletRequest request;
 
     @Override
-    public IdDTO changeMyPassword(@RequestBody ChangeMyPasswordDTO dto) {
+    public IdDTO changeMyPassword(@Valid @RequestBody ChangeMyPasswordDTO dto) {
         Principal.UserPrincipal self = selfPrincipal();
         if (dto == null || dto.getCurrentPassword() == null || dto.getNewPassword() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "currentPassword and newPassword are required");

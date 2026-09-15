@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 /**
  * WO-REG-5: SUPER_ADMIN queue — approve/reject/listPending. Mirrors
@@ -68,7 +69,7 @@ public class RegistrationAdminResource implements RegistrationAdminContract {
     }
 
     @Override
-    public void rejectRegistration(@PathVariable UUID id, @RequestBody RejectRegistrationDTO dto) {
+    public void rejectRegistration(@PathVariable UUID id, @Valid @RequestBody RejectRegistrationDTO dto) {
         Principal principal = requireSuperAdminPrincipal();
         String reason = dto == null ? null : dto.getReason();
         adminService.rejectRegistration(id, reason, principal);

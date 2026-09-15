@@ -67,7 +67,8 @@ class ProcessInstanceRuntimeOperationsImplTest {
         com.zorrodev.bpm.engine.dto.IdDTO engineId = new com.zorrodev.bpm.engine.dto.IdDTO();
         UUID id = UUID.randomUUID();
         engineId.setId(id);
-        when(runtimeService.startProcessInstance(dto)).thenReturn(engineId);
+        // WO-API-1 (API-7): фасад зовёт startProcessInstance(dto, claimed=null).
+        when(runtimeService.startProcessInstance(eq(dto), isNull())).thenReturn(engineId);
         IdDTO expected = new IdDTO();
         expected.setId(id);
         when(runtimeOperationSupport.toDTO(engineId)).thenReturn(expected);
@@ -77,7 +78,7 @@ class ProcessInstanceRuntimeOperationsImplTest {
         assertThat(result).isEqualTo(expected);
         verify(runtimeOperationSupport).requireOperate(definitionKey, AuthorizationService.Action.START);
         verify(runtimeSupportService).resolveTargetDefinition(dto);
-        verify(runtimeService).startProcessInstance(dto);
+        verify(runtimeService).startProcessInstance(eq(dto), isNull());
         verify(auditLogService).record(principal, "START", definitionKey, id.toString(), null);
     }
 

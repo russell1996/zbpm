@@ -37,6 +37,9 @@ class UserTaskRuntimeOperationsImplTest {
     @Mock private com.zorrodev.bpm.engine.service.ActivityService activityService;
     @Mock private AuditLogService auditLogService;
     @Mock private FormArtifactService formArtifactService;
+    // WO-API-1 (F16): complete читает UserTaskFormData + versionTag + deploymentId.
+    @Mock private com.zorrodev.bpm.engine.service.TaskFormDataService taskFormDataService;
+    @Mock private com.zorrodev.bpm.engine.service.BpmnService bpmnService;
     @Mock private DBService dbService;
     @Mock private com.zorrodev.bpm.engine.security.AuthorizationService authorizationService;
     @Mock private RuntimeOperationSupport runtimeOperationSupport;
@@ -52,6 +55,10 @@ class UserTaskRuntimeOperationsImplTest {
         task.setProcessInstanceId(UUID.randomUUID());
         task.setCandidateGroups("group1");
         task.setFormKey(null);
+        // WO-API-1 (F16): complete читает эффективную схему через TaskFormDataService.
+        lenient().when(taskFormDataService.loadUserTaskFormData(id)).thenReturn(
+            new com.zorrodev.bpm.engine.service.TaskFormDataService.UserTaskFormData(
+                id, null, null, null, task.getProcessInstanceId(), "elem", UUID.randomUUID()));
         Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "alice", "USER");
         when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
         when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));

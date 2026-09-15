@@ -2,6 +2,7 @@ package com.zorrodev.bpm.contract.dto;
 
 import lombok.Getter;
 import lombok.Setter;
+import jakarta.validation.constraints.NotBlank;
 
 /**
  * Body of POST /process-submissions/{id}/reject (WO-ACL-3). The reason is mandatory —
@@ -11,5 +12,6 @@ import lombok.Setter;
 @Getter
 @Setter
 public class RejectSubmissionDTO {
+    @NotBlank(message = "reason is required")
     private String reason;
 }

@@ -89,7 +89,7 @@ class ClaimUserTaskIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -235,7 +235,7 @@ class ClaimUserTaskIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(startDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID processInstanceId = UUID.fromString(
             mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
@@ -302,7 +302,7 @@ class ClaimUserTaskIntegrationTest {
         if (status == 409) {
             return userRepository.findByUsername(username).orElseThrow().getId();
         }
-        if (status != 200) {
+        if (status != 200 && status != 201) {
             throw new IllegalStateException("createUserViaHttp(" + username + ") failed: " + status
                 + " " + result.getResponse().getContentAsString());
         }
@@ -312,7 +312,7 @@ class ClaimUserTaskIntegrationTest {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }

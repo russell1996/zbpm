@@ -79,7 +79,7 @@ class CancelProcessInstanceTest {
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         return "cancel-test-process";
     }
 
@@ -90,7 +90,7 @@ class CancelProcessInstanceTest {
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
     }
@@ -111,7 +111,7 @@ class CancelProcessInstanceTest {
     private void completeTask(UUID taskId) throws Exception {
         mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
                         .header("Authorization", "Bearer " + token)
-                        .content(mapper.writeValueAsString(new CompleteTaskDTO()))
+                        .content(mapper.writeValueAsString(emptyCompleteTaskDTO()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
     }
@@ -123,7 +123,7 @@ class CancelProcessInstanceTest {
         String processId = startProcess(deployAndGetProcessKey());
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
+                .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.id").value(processId));
     }
 
@@ -143,7 +143,7 @@ class CancelProcessInstanceTest {
         // Cancel the process
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
+                .andExpect(status().isAccepted());
 
         // Verify the task is now CANCELLED
         mockMvc.perform(get("/user-tasks/" + taskId)
@@ -174,7 +174,7 @@ class CancelProcessInstanceTest {
         // First cancel
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
+                .andExpect(status().isAccepted());
 
         // Second cancel → 409
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
@@ -195,7 +195,7 @@ class CancelProcessInstanceTest {
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Start process — creates timer_job
         String processId = startProcess("zombie-timer-process");
@@ -210,7 +210,7 @@ class CancelProcessInstanceTest {
         // Cancel the process
         mockMvc.perform(post("/process-instances/" + processId + "/cancel")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
+                .andExpect(status().isAccepted());
 
         // Verify timer_jobs are deleted — no more pending timer jobs for this instance
         List<TimerJobEntity> afterCancel = timerJobRepository.findAll();
@@ -218,5 +218,24 @@ class CancelProcessInstanceTest {
             .filter(t -> t.getProcessInstanceId() != null && t.getProcessInstanceId().toString().equals(processId))
             .count();
         assertThat(remaining).as("All timer_jobs for cancelled instance must be deleted").isEqualTo(0);
+    }
+
+    // WO-API-1: пустой DTO обязан нести variables=[] (null отклоняется @NotNull).
+    private static com.zorrodev.bpm.contract.dto.CompleteTaskDTO emptyCompleteTaskDTO() {
+        com.zorrodev.bpm.contract.dto.CompleteTaskDTO dto = new com.zorrodev.bpm.contract.dto.CompleteTaskDTO();
+        dto.setVariables(java.util.List.of());
+        return dto;
+    }
+
+    private static com.zorrodev.bpm.contract.dto.ResolveIncidentDTO emptyResolveIncidentDTO() {
+        com.zorrodev.bpm.contract.dto.ResolveIncidentDTO dto = new com.zorrodev.bpm.contract.dto.ResolveIncidentDTO();
+        dto.setVariables(java.util.List.of());
+        return dto;
+    }
+
+    private static com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO emptyEvaluateDecisionDTO() {
+        com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO dto = new com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO();
+        dto.setVariables(java.util.List.of());
+        return dto;
     }
 }

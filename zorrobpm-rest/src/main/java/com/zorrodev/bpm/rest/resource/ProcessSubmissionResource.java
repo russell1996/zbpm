@@ -7,15 +7,18 @@ import com.zorrodev.bpm.contract.dto.SubmitProcessSubmissionDTO;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.ProcessSubmissionService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 /**
  * WO-ACL-3: process submissions. Submitting and listing one's own submissions require any
@@ -27,6 +30,7 @@ public class ProcessSubmissionResource implements ProcessSubmissionContract {
 
     private final ProcessSubmissionService submissionService;
     private final HttpServletRequest request;
+    private final HttpServletResponse httpResponse;
 
     private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
@@ -52,13 +56,22 @@ public class ProcessSubmissionResource implements ProcessSubmissionContract {
         }
     }
 
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут: тело то же,
+     * статус/заголовок — через `@ResponseStatus` + инжектированный response).
+     */
     @Override
-    public ProcessSubmissionDTO submit(@RequestBody SubmitProcessSubmissionDTO dto) {
+    @ResponseStatus(HttpStatus.CREATED)
+    public ProcessSubmissionDTO submit(@Valid @RequestBody SubmitProcessSubmissionDTO dto) {
         Principal principal = requireUserPrincipal();
         if (dto == null || dto.getBpmn() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "BPMN XML is required");
         }
-        return submissionService.submit(dto.getBpmn(), principal);
+        ProcessSubmissionDTO result = submissionService.submit(dto.getBpmn(), principal);
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/process-submissions/" + result.getId());
+        }
+        return result;
     }
 
     @Override
@@ -91,7 +104,7 @@ public class ProcessSubmissionResource implements ProcessSubmissionContract {
     }
 
     @Override
-    public ProcessSubmissionDTO reject(@PathVariable UUID id, @RequestBody RejectSubmissionDTO dto) {
+    public ProcessSubmissionDTO reject(@PathVariable UUID id, @Valid @RequestBody RejectSubmissionDTO dto) {
         requireSuperAdmin();
         String reason = dto == null ? null : dto.getReason();
         return submissionService.reject(id, reason, requireUserPrincipal());

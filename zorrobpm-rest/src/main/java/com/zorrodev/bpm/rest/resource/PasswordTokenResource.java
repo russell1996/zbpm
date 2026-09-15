@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import jakarta.validation.Valid;
 
 /**
  * WO-ACL-18: public, unauthenticated endpoints for the one-time password links.
@@ -27,7 +28,7 @@ public class PasswordTokenResource implements PasswordTokenContract {
     private final RateLimitFilter rateLimitFilter;
 
     @Override
-    public void forgotPassword(@RequestBody ForgotPasswordDTO dto) {
+    public void forgotPassword(@Valid @RequestBody ForgotPasswordDTO dto) {
         // WO-ACL-18 criterion 12: enumeration-safe — always 200, identical response
         // regardless of whether the email maps to a real account.
         // B5 (HOLD): use the proxy-aware client IP (honors X-Forwarded-For behind a
@@ -46,7 +47,7 @@ public class PasswordTokenResource implements PasswordTokenContract {
     }
 
     @Override
-    public void resetPassword(@RequestBody ResetPasswordDTO dto) {
+    public void resetPassword(@Valid @RequestBody ResetPasswordDTO dto) {
         try {
             invitationService.consumeToken(dto.getToken(), dto.getPassword());
         } catch (Exception e) {
@@ -55,7 +56,7 @@ public class PasswordTokenResource implements PasswordTokenContract {
     }
 
     @Override
-    public void acceptInvitation(@RequestBody ResetPasswordDTO dto) {
+    public void acceptInvitation(@Valid @RequestBody ResetPasswordDTO dto) {
         try {
             invitationService.consumeToken(dto.getToken(), dto.getPassword());
         } catch (Exception e) {

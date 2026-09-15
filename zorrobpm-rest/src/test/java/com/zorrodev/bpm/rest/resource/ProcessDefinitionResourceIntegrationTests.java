@@ -80,7 +80,7 @@ class ProcessDefinitionResourceIntegrationTests {
                         .header("Authorization", "Bearer " + validToken)
                         .content(requestJson)
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
 
         String responseJson = result.getResponse().getContentAsString();
@@ -146,6 +146,6 @@ class ProcessDefinitionResourceIntegrationTests {
                 .header("Authorization", "Bearer " + validToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 }

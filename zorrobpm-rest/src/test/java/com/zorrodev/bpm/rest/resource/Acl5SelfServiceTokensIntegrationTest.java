@@ -76,7 +76,7 @@ class Acl5SelfServiceTokensIntegrationTest {
         // Issue own key → 200, secret present (show-once)
         MvcResult createResult = mockMvc.perform(post("/me/api-key")
                         .header("Authorization", "Bearer " + userToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         JsonNode createBody = mapper.readTree(createResult.getResponse().getContentAsString());
         String issuedKey = createBody.get("key").asText();
@@ -162,7 +162,7 @@ class Acl5SelfServiceTokensIntegrationTest {
         setMyGrants(userToken, processKey, "START");
 
         // Before revocation: START works
-        startProcess(processKey, key).andExpect(status().isOk());
+        startProcess(processKey, key).andExpect(status().isCreated());
 
         // Revoke access: demote OWNER → VIEWER through the real member endpoint.
         // changeRole does NOT delete key grants — the grant stays in the DB, only the
@@ -196,7 +196,7 @@ class Acl5SelfServiceTokensIntegrationTest {
         setMyGrants(userToken, processKey, "START");
 
         // Active owner: key works
-        startProcess(processKey, key).andExpect(status().isOk());
+        startProcess(processKey, key).andExpect(status().isCreated());
 
         // Deactivate the owner through the real user-management endpoint
         mockMvc.perform(put("/users/" + userId)
@@ -220,7 +220,7 @@ class Acl5SelfServiceTokensIntegrationTest {
         // Create on behalf of the user
         MvcResult createResult = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + superAdminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         String firstKey = mapper.readTree(createResult.getResponse().getContentAsString()).get("key").asText();
 
@@ -237,7 +237,7 @@ class Acl5SelfServiceTokensIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         String rotatedKey = mapper.readTree(rotateResult.getResponse().getContentAsString()).get("key").asText();
-        startProcess(processKey, rotatedKey).andExpect(status().isOk());
+        startProcess(processKey, rotatedKey).andExpect(status().isCreated());
         startProcess(processKey, firstKey).andExpect(status().isUnauthorized());
 
         // Revoke on behalf of the user → dead
@@ -311,7 +311,7 @@ class Acl5SelfServiceTokensIntegrationTest {
                         .header("Authorization", "Bearer " + superAdminToken)
                         .content("{\"bpmn\":" + mapper.writeValueAsString(bpmn) + "}")
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         return key;
     }
 
@@ -326,7 +326,7 @@ class Acl5SelfServiceTokensIntegrationTest {
     private String createMyApiKey(String userToken) throws Exception {
         MvcResult result = mockMvc.perform(post("/me/api-key")
                         .header("Authorization", "Bearer " + userToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }

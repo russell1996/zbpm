@@ -34,12 +34,20 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
+        return createProcessInstance(parentActivityId, processDefinitionId, variables, null);
+    }
+
+    @Override
+    public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId,
+            List<ProcessVariable> variables, String claimedInitiator) {
         UUID id = UUID.randomUUID();
         ProcessInstanceEntity entity = new ProcessInstanceEntity();
         entity.setId(id);
         entity.setProcessDefinitionId(processDefinitionId);
         entity.setStartedAt(Instant.now());
         entity.setParentActivityId(parentActivityId);
+        // WO-API-1 (API-7): initiator в том же INSERT — атомарно со стартом.
+        entity.setInitiator(claimedInitiator);
         processInstanceRepository.save(entity);
         List<ProcessVariableEntity> vs = new LinkedList<>();
         for (ProcessVariable variable : Optional.ofNullable(variables).orElse(List.of())) {

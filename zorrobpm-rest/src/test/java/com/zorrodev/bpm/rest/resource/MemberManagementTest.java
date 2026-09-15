@@ -150,7 +150,7 @@ class MemberManagementTest {
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return result.getResponse().getContentAsString();
     }
@@ -180,7 +180,7 @@ class MemberManagementTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     // ==================== Criterion #3: OWNER of his own process adds member → 200 ====================
@@ -240,7 +240,7 @@ class MemberManagementTest {
                         .header("Authorization", "Bearer " + ownerToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"processDefinitionKey\":\"" + key + "\",\"variables\":[]}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     // ==================== Criterion #6: /users under ADMIN → 403; SUPER_ADMIN → 200 ====================

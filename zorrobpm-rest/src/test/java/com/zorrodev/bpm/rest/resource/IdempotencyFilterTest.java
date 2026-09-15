@@ -198,14 +198,14 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", key)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         MvcResult second = mockMvc.perform(post("/process-instances")
                 .header("Authorization", "Bearer " + adminToken)
                 .header("Idempotency-Key", key)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
 
         JsonNode firstJson = mapper.readTree(first.getResponse().getContentAsString());
@@ -227,13 +227,13 @@ class IdempotencyFilterTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         MvcResult second = mockMvc.perform(post("/process-instances")
                 .header("Authorization", "Bearer " + adminToken)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
 
         JsonNode firstJson = mapper.readTree(first.getResponse().getContentAsString());
@@ -263,14 +263,14 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", idemKey)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         MvcResult second = mockMvc.perform(post("/deployments")
                 .header("Authorization", "Bearer " + adminToken)
                 .header("Idempotency-Key", idemKey)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
 
         JsonNode firstJson = mapper.readTree(first.getResponse().getContentAsString());
@@ -298,14 +298,14 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", idemKey)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         MvcResult second = mockMvc.perform(post("/dmn")
                 .header("Authorization", "Bearer " + adminToken)
                 .header("Idempotency-Key", idemKey)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
 
         // A re-execution would create version 2 — identical bytes prove version 1 served twice.
@@ -328,14 +328,14 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", idemKey)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         MvcResult second = mockMvc.perform(post("/forms")
                 .header("Authorization", "Bearer " + adminToken)
                 .header("Idempotency-Key", idemKey)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
 
         JsonNode firstJson = mapper.readTree(first.getResponse().getContentAsString());
@@ -364,7 +364,7 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", key)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String adminId = mapper.readTree(adminCall.getResponse().getContentAsString()).get("id").asText();
 
@@ -374,7 +374,7 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", key)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String userId = mapper.readTree(userCall.getResponse().getContentAsString()).get("id").asText();
 
@@ -398,7 +398,7 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", key)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         Thread.sleep(1100);
         String rotatedToken = loginAndGetToken("admin", "admin");
@@ -411,7 +411,7 @@ class IdempotencyFilterTest {
                 .header("Idempotency-Key", key)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
 
         String firstId = mapper.readTree(first.getResponse().getContentAsString()).get("id").asText();
@@ -439,7 +439,7 @@ class IdempotencyFilterTest {
                 .header("Origin", "http://localhost:5173")
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String idA = mapper.readTree(callA.getResponse().getContentAsString()).get("id").asText();
 
@@ -450,7 +450,7 @@ class IdempotencyFilterTest {
                 .header("Origin", "http://localhost:5173")
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String idB = mapper.readTree(callB.getResponse().getContentAsString()).get("id").asText();
 
@@ -542,6 +542,6 @@ class IdempotencyFilterTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 }

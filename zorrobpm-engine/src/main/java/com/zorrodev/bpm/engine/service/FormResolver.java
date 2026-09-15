@@ -11,6 +11,16 @@ import org.springframework.http.HttpStatus;
 /**
  * WO-FORM-5: Shared form resolution logic (P-14 — used by FormResource + RuntimeResource).
  * Resolves formKey → type/schema/data/url.
+ *
+ * <p>WO-API-1 (F16): единый резолвер эффективной схемы для рендера И сабмита.
+ * Раньше чтение (`TaskFormOperationsImpl`: formId/deployment/versionTag) и
+ * валидация сабмита (`FormArtifactService`: formKey+latest) шли двумя разными
+ * путями — запиненная v1 валидировалась по latest v2. Теперь обе стороны идут
+ * через {@link #resolveEffectiveSchema}: formId-ветка (deployment/versionTag/
+ * latest) имеет приоритет над formKey, как в рендере (C8-22). Принимает готовые
+ * скаляры (JPA остаётся у вызывающих — P-24, новых зависимостей нет).
+ * Null-схема = валидация не применима (та же no-op семантика, что раньше при
+ * missing form / external-URL / kind не FORM_JS).
  */
 @Component
 @RequiredArgsConstructor
@@ -130,5 +140,64 @@ public class FormResolver {
         return formRepository.findTopByFormKeyOrderByVersionDesc(formKey)
             .map(FormEntity::getSchemaJson)
             .orElse(null);
+    }
+
+    /** WO-API-1 (F16): эффективная сущность + её происхождение (для диагностики). */
+    public record EffectiveSchema(FormEntity form, String origin) {
+        public String schemaJson() {
+            return form != null ? form.getSchemaJson() : null;
+        }
+    }
+
+    /**
+     * WO-API-1 (F16): единая резолюция эффективной схемы. Порядок веток зеркалит
+     * рендер (`TaskFormOperationsImpl.getUserTaskForm`): formId (deployment →
+     * versionTag → latest) выигрывает у formKey (C8-22); formKey → latest;
+     * external-URL → null (рендер отдаёт type=external без схемы — валидировать
+     * нечего). Kind-гейт НЕ здесь, а в `FormArtifactService` (VARIABLE_SCHEMA →
+     * no-op, как раньше) — резолвер отдаёт схему, фасад решает применимость.
+     *
+     * @param formId связанный id формы (nullable — key/external-модели)
+     * @param bindingType deployment/versionTag/null
+     * @param formKey скалярный ключ (nullable)
+     * @param versionTagForElement статический тег элемента (nullable)
+     * @param deploymentId деплоймент версии процесса (nullable)
+     */
+    public EffectiveSchema resolveEffectiveSchema(String formId, String bindingType,
+            String formKey, String versionTagForElement, java.util.UUID deploymentId) {
+        if (formId != null && !formId.isBlank()) {
+            if ("deployment".equals(bindingType)) {
+                var form = (deploymentId == null) ? null
+                    : formRepository.findFirstByFormIdAndDeploymentIdOrderByVersionDesc(formId, deploymentId)
+                        .orElse(null);
+                if (form != null) {
+                    return new EffectiveSchema(form,
+                        "formId=" + formId + " deployment=" + deploymentId);
+                }
+                // WO-C8-23: пин без пары — явный null (валидация неприменима),
+                // не тихий latest (та же fail-closed дисциплина, что 404 рендера).
+                return null;
+            }
+            if ("versionTag".equals(bindingType)) {
+                var form = (versionTagForElement == null || versionTagForElement.isBlank()) ? null
+                    : formRepository.findFirstByFormIdAndVersionTagOrderByVersionDesc(formId, versionTagForElement)
+                        .orElse(null);
+                if (form != null) {
+                    return new EffectiveSchema(form,
+                        "formId=" + formId + " versionTag=" + versionTagForElement);
+                }
+                return null;
+            }
+            var latest = formRepository.findTopByFormIdOrderByVersionDesc(formId).orElse(null);
+            if (latest != null) {
+                return new EffectiveSchema(latest, "formId=" + formId + " latest");
+            }
+            return null;
+        }
+        if (formKey == null || formKey.isBlank()) return null;
+        if (formKey.startsWith("http://") || formKey.startsWith("https://")) return null;
+        var keyed = formRepository.findTopByFormKeyOrderByVersionDesc(formKey).orElse(null);
+        if (keyed == null) return null;
+        return new EffectiveSchema(keyed, "formKey=" + formKey + " latest");
     }
 }

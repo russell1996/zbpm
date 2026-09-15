@@ -107,7 +107,7 @@ class DmnDeployIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content("{\"dmn\":" + mapper.writeValueAsString(DMN_DISCOUNT) + "}")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         assertThat(decisionIds(deploy)).contains("discount");
 
@@ -188,7 +188,7 @@ class DmnDeployIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content("{\"dmn\":" + mapper.writeValueAsString(dmn) + "}")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         assertThat(decisionIds(deploy)).contains(decision);
 
@@ -204,7 +204,7 @@ class DmnDeployIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(java.util.Map.of("bpmn", bpmn)))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         UUID pdId = UUID.fromString(mapper.readTree(deployed.getResponse().getContentAsString()).get("id").asText());
 
@@ -214,7 +214,7 @@ class DmnDeployIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content("{\"processDefinitionId\":\"" + pdId + "\",\"variables\":[{\"name\":\"category\",\"value\":\"gold\",\"type\":\"STRING\"}]}")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         UUID piId = UUID.fromString(mapper.readTree(started.getResponse().getContentAsString()).get("id").asText());
 
@@ -249,7 +249,7 @@ class DmnDeployIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(body)
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 
     private Set<String> decisionIds(MvcResult result) throws Exception {
@@ -295,7 +295,7 @@ class DmnDeployIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(java.util.Map.of("bpmn", bpmn)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
     }
@@ -319,7 +319,7 @@ class DmnDeployIntegrationTest {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }

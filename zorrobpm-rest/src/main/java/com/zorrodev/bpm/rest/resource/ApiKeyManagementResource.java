@@ -5,16 +5,19 @@ import com.zorrodev.bpm.contract.dto.*;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.ApiKeyService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 /**
  * WO-DEBT-7 S3 — thin facade over {@link ApiKeyService}: auth checks +
@@ -29,14 +32,23 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
 
     private final ApiKeyService apiKeyService;
     private final HttpServletRequest request;
+    private final HttpServletResponse httpResponse;
 
     // ==================== Super-admin endpoints ====================
 
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут).
+     */
     @Transactional
     @Override
+    @ResponseStatus(HttpStatus.CREATED)
     public ApiKeyWithSecretDTO createApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        return apiKeyService.issueKeyForUser(userId, getPrincipal());
+        ApiKeyWithSecretDTO result = apiKeyService.issueKeyForUser(userId, getPrincipal());
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/admin/users/" + userId + "/api-keys/" + result.getId());
+        }
+        return result;
     }
 
     @Override
@@ -47,7 +59,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
 
     @Transactional
     @Override
-    public List<ApiKeyGrantDTO> setGrants(@PathVariable UUID userId, @RequestBody SetGrantsDTO dto) {
+    public List<ApiKeyGrantDTO> setGrants(@PathVariable UUID userId, @Valid @RequestBody SetGrantsDTO dto) {
         requireSuperAdmin();
         return apiKeyService.setGrantsForUser(userId, dto, getPrincipal());
     }
@@ -83,11 +95,19 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
      * semantics as the super-admin path (409 while an active key exists, replacement
      * after revoke) — shared implementation, not a copy.
      */
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут).
+     */
     @Transactional
     @Override
+    @ResponseStatus(HttpStatus.CREATED)
     public ApiKeyWithSecretDTO createMyApiKey() {
         Principal.UserPrincipal user = selfPrincipal();
-        return apiKeyService.issueKeyForUser(user.userId(), user);
+        ApiKeyWithSecretDTO result = apiKeyService.issueKeyForUser(user.userId(), user);
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/me/api-key");
+        }
+        return result;
     }
 
     /**
@@ -97,7 +117,7 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
      */
     @Transactional
     @Override
-    public List<ApiKeyGrantDTO> setMyGrants(@RequestBody SetGrantsDTO dto) {
+    public List<ApiKeyGrantDTO> setMyGrants(@Valid @RequestBody SetGrantsDTO dto) {
         Principal.UserPrincipal user = selfPrincipal();
         return apiKeyService.setOwnGrants(user.userId(), dto, user);
     }
@@ -134,6 +154,10 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
 
     @Transactional
     @Override
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут).
+     */
+    @ResponseStatus(HttpStatus.CREATED)
     public ApiKeyWithSecretDTO createAdditionalApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
         // WO-INT-4 criterion 5: multiple concurrent keys are a SYSTEM-account feature
@@ -141,7 +165,11 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         // open a second key through this endpoint → 409 — enforced inside
         // issueKeyForUser (same query, same exception, same message as the removed
         // duplicate guard here).
-        return apiKeyService.issueKeyForUser(userId, getPrincipal());
+        ApiKeyWithSecretDTO result = apiKeyService.issueKeyForUser(userId, getPrincipal());
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/admin/users/" + userId + "/api-keys/" + result.getId());
+        }
+        return result;
     }
 
     @Transactional
