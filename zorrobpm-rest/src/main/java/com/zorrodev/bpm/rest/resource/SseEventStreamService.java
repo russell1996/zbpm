@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
@@ -17,7 +18,9 @@ import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.rabbit.listener.adapter.MessageListenerAdapter;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -26,12 +29,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * SSE bridge: subscribes to zorrobpm.events (exclusive queue per instance)
  * and pushes events to connected SSE clients with AuthZ filtering (ADR-7, WO-EVT-4).
+ *
+ * WO-PERF-6 (P-3): per-client executor, timeout+drop, maxClients→429,
+ * cursor+limit catchup, UUID.fromString hoisted.
  */
 @Slf4j
 @Service
@@ -45,9 +56,9 @@ public class SseEventStreamService implements SmartLifecycle {
 
     @Autowired
     public SseEventStreamService(DomainEventRepository domainEventRepository,
-                                  EventAuthzResolver eventAuthzResolver,
-                                  @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
-                                  tools.jackson.databind.ObjectMapper objectMapper) {
+                                   EventAuthzResolver eventAuthzResolver,
+                                   @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
+                                   tools.jackson.databind.ObjectMapper objectMapper) {
         this.domainEventRepository = domainEventRepository;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
@@ -56,6 +67,20 @@ public class SseEventStreamService implements SmartLifecycle {
 
     /** Connected SSE clients: emitterId → client info */
     private final Map<String, SseClientInfo> clients = new ConcurrentHashMap<>();
+
+    /** Per-client fan-out executor — not the RabbitMQ consumer thread (WO-PERF-6 head-of-line) */
+    private final ExecutorService sseExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r);
+        t.setName("sse-send-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
+
+    @Value("${zorrobpm.sse.max-clients:1000}")
+    private int maxClients = 1000;
+
+    @Value("${zorrobpm.sse.send-timeout-ms:5000}")
+    private long sendTimeoutMs = 5000;
 
     /** RabbitMQ listener container for this instance */
     private volatile SimpleMessageListenerContainer listenerContainer;
@@ -97,9 +122,13 @@ public class SseEventStreamService implements SmartLifecycle {
 
     /**
      * Registers an SSE client and starts RabbitMQ subscription if this is the first client.
+     * Throws 429 if maxClients exceeded (WO-PERF-6: FD exhaustion guard).
      */
     public String registerClient(SseEmitter emitter, Principal principal, String typeFilter,
-                                  String processInstanceIdFilter, String processDefinitionKeyFilter) {
+                                   String processInstanceIdFilter, String processDefinitionKeyFilter) {
+        if (clients.size() >= maxClients) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many SSE clients");
+        }
         String clientId = UUID.randomUUID().toString();
         Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
 
@@ -147,6 +176,8 @@ public class SseEventStreamService implements SmartLifecycle {
     /**
      * Called when a domain event arrives from RabbitMQ.
      * Pushes to all connected clients that match the filter and AuthZ.
+     * Runs on RabbitMQ consumer thread — fan-out is offloaded to sseExecutor
+     * so one slow client never blocks the others (WO-PERF-6).
      */
     public void onDomainEvent(String messageBody) {
         Map<String, Object> envelope;
@@ -163,35 +194,87 @@ public class SseEventStreamService implements SmartLifecycle {
         Object sequenceObj = envelope.get("sequence");
         long sequence = sequenceObj instanceof Number n ? n.longValue() : 0;
 
-        for (SseClientInfo client : clients.values()) {
+        // WO-PERF-6: hoist UUID.fromString outside the per-client loop
+        UUID pdUuid = null;
+        if (processDefinitionId != null) {
             try {
-                // Check type filter
-                if (client.typeFilter != null && !client.typeFilter.isBlank()
-                    && !client.typeFilter.equals(eventType)) {
+                pdUuid = UUID.fromString(processDefinitionId);
+            } catch (IllegalArgumentException ex) {
+                log.warn("Invalid processDefinitionId UUID {}", processDefinitionId);
+                // fail-closed: no client matches an unparsable pdId
+                return;
+            }
+        }
+
+        for (SseClientInfo client : clients.values()) {
+            // Check type filter
+            if (client.typeFilter != null && !client.typeFilter.isBlank()
+                && !client.typeFilter.equals(eventType)) {
+                continue;
+            }
+
+            // Check processInstanceId filter
+            if (client.processInstanceIdFilter != null && !client.processInstanceIdFilter.isBlank()
+                && !client.processInstanceIdFilter.equals(processInstanceId)) {
+                continue;
+            }
+
+            // Check AuthZ: processDefinitionId must be in allowed set (fail-closed: G-L)
+            if (client.allowedPdIds != null) {
+                if (pdUuid == null || !client.allowedPdIds.contains(pdUuid)) {
                     continue;
                 }
+            }
 
-                // Check processInstanceId filter
-                if (client.processInstanceIdFilter != null && !client.processInstanceIdFilter.isBlank()
-                    && !client.processInstanceIdFilter.equals(processInstanceId)) {
-                    continue;
-                }
+            // Per-client async send — not on the RabbitMQ thread (WO-PERF-6 head-of-line)
+            SseEmitter.SseEventBuilder event = SseEmitter.event()
+                .id(String.valueOf(sequence))
+                .name(eventType)
+                .data(envelope)
+                .reconnectTime(3000);
 
-                // Check AuthZ: processDefinitionId must be in allowed set (fail-closed: G-L)
-                if (client.allowedPdIds != null) {
-                    if (processDefinitionId == null || !client.allowedPdIds.contains(UUID.fromString(processDefinitionId))) {
-                        continue;
+            try {
+                sseExecutor.execute(() -> {
+                    // Notify listeners (test hook — one call per matching client)
+                    for (EventDispatchListener listener : eventListeners) {
+                        try {
+                            listener.onEventSent(client.clientId, envelope);
+                        } catch (Exception ex) {
+                            log.warn("Event listener error", ex);
+                        }
                     }
-                }
 
-                // Push event to client
-                SseEmitter.SseEventBuilder event = SseEmitter.event()
-                    .id(String.valueOf(sequence))
-                    .name(eventType)
-                    .data(envelope)
-                    .reconnectTime(3000);
-
-                // Notify listeners (test/observability hook)
+                    // Send with 5s timeout — slow client is dropped, not blocked
+                    CompletableFuture<Void> cf = CompletableFuture.runAsync(() -> {
+                        try {
+                            client.emitter.send(event);
+                        } catch (IOException e) {
+                            throw new java.util.concurrent.CompletionException(e);
+                        }
+                    });
+                    try {
+                        cf.get(sendTimeoutMs, TimeUnit.MILLISECONDS);
+                    } catch (TimeoutException te) {
+                        log.warn("Slow SSE client {} timed out ({}ms), dropping", client.clientId, sendTimeoutMs);
+                        cf.cancel(true);
+                        clients.remove(client.clientId);
+                        try { client.emitter.complete(); } catch (Exception ignore) {}
+                    } catch (java.util.concurrent.ExecutionException ee) {
+                        Throwable cause = ee.getCause();
+                        if (cause != null && cause.getCause() instanceof IOException) {
+                            log.warn("Failed to send event to client {}: {}", client.clientId, cause.getCause().getMessage());
+                        } else {
+                            log.warn("Failed to send event to client {}: {}", client.clientId, cause != null ? cause.getMessage() : ee.getMessage());
+                        }
+                        clients.remove(client.clientId);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        log.error("Error sending event to client {}", client.clientId, e);
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException re) {
+                // After shutdown executor is terminated — fallback direct dispatch so tests still fire
                 for (EventDispatchListener listener : eventListeners) {
                     try {
                         listener.onEventSent(client.clientId, envelope);
@@ -199,22 +282,16 @@ public class SseEventStreamService implements SmartLifecycle {
                         log.warn("Event listener error", ex);
                     }
                 }
-
-                client.emitter.send(event);
-            } catch (IOException e) {
-                log.warn("Failed to send event to client {}: {}", client.clientId, e.getMessage());
-                clients.remove(client.clientId);
-            } catch (Exception e) {
-                log.error("Error sending event to client {}", client.clientId, e);
             }
         }
     }
 
     /**
      * Sends catchup events from the database for reconnect (Last-Event-ID).
+     * Cursor-based (sinceSequence) + limit — not bare 100 without cursor.
      */
     public void sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
-                                   String processDefinitionKeyFilter) {
+                                    String processDefinitionKeyFilter) {
         Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
 
         int limit = 100;
@@ -222,6 +299,9 @@ public class SseEventStreamService implements SmartLifecycle {
         if (allowedPdIds == null) {
             events = domainEventRepository.findSince(sinceSequence, limit);
         } else {
+            if (allowedPdIds.isEmpty()) {
+                return;
+            }
             events = domainEventRepository.findSinceForPrincipal(sinceSequence, allowedPdIds, limit);
         }
 
@@ -492,6 +572,9 @@ public class SseEventStreamService implements SmartLifecycle {
             stopAndDestroy(doomed);
             log.info("SSE shutdown: listener stopped");
         }
+        // WO-PERF-6: do not kill in-flight emits — shutdown() would reject them (RejectedExecution)
+        sseExecutor.shutdown();
+        try { sseExecutor.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         callback.run();
     }
 

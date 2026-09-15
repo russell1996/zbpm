@@ -36,7 +36,7 @@ class TimerBatchProcessorLimitTest {
     void processBatch_passesBatchSizeToDb() throws Exception {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
         setBatchSize(processor, 50);
 
         when(dbService.findDueTimerJobsLocked(any(), eq(50))).thenReturn(List.of());
@@ -52,7 +52,7 @@ class TimerBatchProcessorLimitTest {
     void processBatch_withLimit_processesOnlyReturnedJobs() throws Exception {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
         setBatchSize(processor, 100);
 
         TimerJob job1 = new TimerJob();
