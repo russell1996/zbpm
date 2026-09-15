@@ -66,8 +66,16 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
      * older than the dispatch-timeout cutoff. Uses FOR UPDATE SKIP LOCKED via
      * the batch processor's short TX so concurrent watchdog instances don't
      * duplicate incidents. Batch size limits locking.
+     *
+     * <p>WO-REL-35 (F09): the {@code NOT EXISTS} open-incident filter sits in
+     * the SQL itself, BEFORE {@code LIMIT}. The old Java-side post-filter
+     * re-selected the same incidented rows every cycle: with the first
+     * {@code batchSize} tasks incidented-but-unresolved, every later stuck task
+     * starved forever behind the page. Same native SQL on PostgreSQL and H2.
      */
-    @Query(value = "SELECT * FROM activities WHERE type = 'SERVICE_TASK' AND status = 'CREATED' AND created_at < :cutoff ORDER BY created_at LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    @Query(value = "SELECT * FROM activities a WHERE a.type = 'SERVICE_TASK' AND a.status = 'CREATED' AND a.created_at < :cutoff "
+        + "AND NOT EXISTS (SELECT 1 FROM incidents i WHERE i.activity_id = a.id AND i.completed_at IS NULL) "
+        + "ORDER BY a.created_at LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
     List<ActivityEntity> findStuckServiceTasksLocked(Instant cutoff, int limit);
 
 }
