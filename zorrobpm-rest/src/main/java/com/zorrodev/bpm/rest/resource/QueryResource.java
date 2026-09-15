@@ -82,6 +82,14 @@ public class QueryResource implements QueryContract {
         return queryService.getActivities(id);
     }
 
+    public PagedDataDTO<ActivityInstance> getProcessInstanceActivitiesPaged(@PathVariable UUID id,
+                                                                              @org.springframework.web.bind.annotation.RequestParam(required = false) Integer pageIndex,
+                                                                              @org.springframework.web.bind.annotation.RequestParam(required = false) Integer pageSize) {
+        ProcessInstance instance = queryService.getProcessInstance(id);
+        requireResourceAccess(instance.getProcessDefinitionId());
+        return queryService.getActivities(id, pageIndex, pageSize);
+    }
+
     /** WO-ARCH-1b: tenant-filtered incidents */
     public PagedDataDTO<Incident> getIncidents(@ParameterObject IncidentQuery query) {
         return queryService.findIncidents(query, resolveAllowedPdIds());

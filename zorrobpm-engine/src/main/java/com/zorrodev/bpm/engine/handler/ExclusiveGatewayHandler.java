@@ -49,10 +49,11 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
                 .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
                 .orElse(null);
 
+            List<com.zorrodev.bpm.contract.model.ProcessVariable> cachedVariables = dbService.getVariables(processInstanceId);
             String matchedOutgoing = null;
             for (String outgoing : outgoings) {
                 Boolean defaultFlow = Objects.equals(outgoing, defaultFlowId);
-                UUID flowActivityId = flowNavigator.processFlow(processInstanceId, token, outgoing, true, defaultFlow);
+                UUID flowActivityId = flowNavigator.processFlow(processInstanceId, token, outgoing, true, defaultFlow, cachedVariables);
                 if (flowActivityId != null) {
                     matchedOutgoing = outgoing;
                     break;
