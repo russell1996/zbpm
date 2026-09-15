@@ -44,6 +44,8 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
 
     List<ActivityEntity> findByProcessInstanceIdOrderByCreatedAtAsc(UUID processInstanceId);
 
+    org.springframework.data.domain.Page<ActivityEntity> findByProcessInstanceIdOrderByCreatedAtAsc(UUID processInstanceId, org.springframework.data.domain.Pageable pageable);
+
     List<ActivityEntity> findByTokenAndStatusIn(UUID token, Collection<ActivityStatus> statuses);
 
     List<ActivityEntity> findByTokenAndBpmnElementIdAndStatusIn(UUID token, String bpmnElementId, Collection<ActivityStatus> statuses);

@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -14,6 +15,8 @@ public interface ProcessMemberRepository extends JpaRepository<ProcessMemberEnti
     List<ProcessMemberEntity> findByProcessId(UUID processId);
 
     List<ProcessMemberEntity> findByUserId(UUID userId);
+
+    List<ProcessMemberEntity> findByProcessIdInAndUserId(Collection<UUID> processIds, UUID userId);
 
     /**
      * WO-REL-31 CR-4: membership check in one query against a process registry key

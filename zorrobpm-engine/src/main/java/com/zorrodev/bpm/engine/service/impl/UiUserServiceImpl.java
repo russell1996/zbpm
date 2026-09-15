@@ -17,6 +17,7 @@ import com.zorrodev.bpm.engine.security.AdminPasswordValidator;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.UiUserService;
+import com.zorrodev.bpm.engine.service.query.QueryPaginationSupport;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -106,7 +107,11 @@ public class UiUserServiceImpl implements UiUserService {
         List<Specification<UiUserEntity>> specs = new LinkedList<>();
         if (query.getUsername() != null) specs.add(UiUserRepository.byUsernameContains(query.getUsername()));
         if (query.getActive() != null) specs.add(UiUserRepository.byActive(query.getActive()));
-        PageRequest page = PageRequest.of(query.getPageIndex(), query.getPageSize(), Sort.by("username").ascending());
+        int clampedPageIndex = query.getPageIndex() != null ? Math.max(0, query.getPageIndex()) : 0;
+        int clampedPageSize = com.zorrodev.bpm.engine.service.query.QueryPaginationSupport.MAX_PAGE_SIZE;
+        int reqSize = query.getPageSize() != null ? query.getPageSize() : 10;
+        clampedPageSize = Math.min(QueryPaginationSupport.MAX_PAGE_SIZE, Math.max(1, reqSize));
+        PageRequest page = PageRequest.of(clampedPageIndex, clampedPageSize, Sort.by("username").ascending());
         Page<UiUserEntity> result = repository.findAll(Specification.allOf(specs), page);
 
         PagedDataDTO<UiUser> dto = new PagedDataDTO<>();
@@ -114,11 +119,16 @@ public class UiUserServiceImpl implements UiUserService {
         dto.setPageIndex(result.getNumber());
         dto.setPageSize(result.getSize());
         List<UiUser> data = new ArrayList<>();
-        for (UiUserEntity e : result.getContent()) {
+        java.util.Set<UUID> pendingIds = java.util.Set.of();
+        List<UiUserEntity> content = result.getContent();
+        if (!content.isEmpty()) {
+            List<UUID> ids = content.stream().map(UiUserEntity::getId).toList();
+            pendingIds = new java.util.HashSet<>(passwordTokenRepository
+                .findUserIdsWithPendingInvite(ids, "INVITE", Instant.now()));
+        }
+        for (UiUserEntity e : content) {
             UiUser u = mapper.toDTO(e);
-            // WO-ACL-18 criterion 5: surface an outstanding invitation to the admin list.
-            u.setPendingInvitation(passwordTokenRepository
-                .existsByUserIdAndTypeAndUsedFalseAndExpiresAtAfter(e.getId(), "INVITE", Instant.now()));
+            u.setPendingInvitation(pendingIds.contains(e.getId()));
             data.add(u);
         }
         dto.setData(data);

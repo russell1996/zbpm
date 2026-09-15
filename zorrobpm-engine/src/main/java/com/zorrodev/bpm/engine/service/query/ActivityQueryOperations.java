@@ -8,4 +8,6 @@ import java.util.UUID;
 public interface ActivityQueryOperations {
 
     List<ActivityInstance> getActivities(UUID processInstanceId);
+
+    com.zorrodev.bpm.contract.dto.PagedDataDTO<ActivityInstance> getActivities(UUID processInstanceId, Integer pageIndex, Integer pageSize);
 }

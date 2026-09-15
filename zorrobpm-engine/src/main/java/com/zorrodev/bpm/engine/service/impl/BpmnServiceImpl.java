@@ -26,15 +26,27 @@ public class BpmnServiceImpl implements BpmnService {
     public BpmnServiceImpl(
         FileService fileService,
         BpmnParseService bpmnParseService,
+        int maxSize,
+        int ttlMinutes) {
+        this(fileService, bpmnParseService, maxSize, ttlMinutes, 100);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BpmnServiceImpl(
+        FileService fileService,
+        BpmnParseService bpmnParseService,
         @Value("${zorrobpm.engine.bpmn-cache-max-size:500}") int maxSize,
-        @Value("${zorrobpm.engine.bpmn-cache-ttl-minutes:60}") int ttlMinutes) {
+        @Value("${zorrobpm.engine.bpmn-cache-ttl-minutes:60}") int ttlMinutes,
+        @Value("${zorrobpm.engine.bpmn-cache-max-weight-mb:100}") int maxWeightMb) {
         this.fileService = fileService;
         this.bpmnParseService = bpmnParseService;
+        long maxWeightBytes = (long) maxWeightMb * 1024 * 1024;
         this.cache = Caffeine.newBuilder()
-            .maximumSize(maxSize)
+            .maximumWeight(maxWeightBytes)
+            .weigher((UUID k, BpmnProcessDefinitionModel v) -> 5 * 1024 * 1024)
             .expireAfterWrite(Duration.ofMinutes(ttlMinutes))
             .build();
-        log.info("BPMN cache initialized: maxSize={}, ttlMinutes={}", maxSize, ttlMinutes);
+        log.info("BPMN cache initialized: maxSize={}, maxWeightMb={}, ttlMinutes={}", maxSize, maxWeightMb, ttlMinutes);
     }
 
     @Override

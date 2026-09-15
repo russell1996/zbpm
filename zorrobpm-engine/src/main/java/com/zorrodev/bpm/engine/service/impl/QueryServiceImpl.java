@@ -61,6 +61,11 @@ public class QueryServiceImpl implements QueryService {
     }
 
     @Override
+    public PagedDataDTO<ActivityInstance> getActivities(UUID processInstanceId, Integer pageIndex, Integer pageSize) {
+        return activityQueryOperations.getActivities(processInstanceId, pageIndex, pageSize);
+    }
+
+    @Override
     public PagedDataDTO<ServiceTask> findServiceTasks(ServiceTaskQuery query, Collection<UUID> allowedPdIds) {
         return serviceTaskQueryOperations.findServiceTasks(query, allowedPdIds);
     }
