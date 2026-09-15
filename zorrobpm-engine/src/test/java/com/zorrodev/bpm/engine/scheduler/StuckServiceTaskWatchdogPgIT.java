@@ -90,16 +90,15 @@ public class StuckServiceTaskWatchdogPgIT extends PostgresIT {
         UUID serviceTaskId = firstCreatedId(pi, "serviceTask1");
         assertThat(serviceTaskId).isNotNull();
 
-        // not stuck yet — should not trigger
-        int raisedFresh = tx.execute(s -> watchdog.processBatch());
-        assertThat(raisedFresh).isEqualTo(0);
+        // not stuck yet — should not trigger (WO-REL-35: real @Scheduled path,
+        // no TransactionTemplate wrapper — the wrapper masked F08)
+        watchdog.checkStuckTasks();
         assertThat(countOpenIncidents(serviceTaskId)).isEqualTo(0L);
 
         // make it stuck: shift 10m ago (>5m timeout)
         shiftCreatedAt(serviceTaskId, Duration.ofMinutes(10));
 
-        int raised = tx.execute(s -> watchdog.processBatch());
-        assertThat(raised).isEqualTo(1);
+        watchdog.checkStuckTasks();
         assertThat(countOpenIncidents(serviceTaskId)).isEqualTo(1L);
 
         // incident message contains dispatch-timeout marker
@@ -113,12 +112,10 @@ public class StuckServiceTaskWatchdogPgIT extends PostgresIT {
         UUID serviceTaskId = firstCreatedId(pi, "serviceTask1");
         shiftCreatedAt(serviceTaskId, Duration.ofMinutes(10));
 
-        int first = tx.execute(s -> watchdog.processBatch());
-        assertThat(first).isEqualTo(1);
+        watchdog.checkStuckTasks();
         assertThat(countOpenIncidents(serviceTaskId)).isEqualTo(1L);
 
-        int second = tx.execute(s -> watchdog.processBatch());
-        assertThat(second).isEqualTo(0);
+        watchdog.checkStuckTasks();
         assertThat(countOpenIncidents(serviceTaskId)).isEqualTo(1L);
     }
 
@@ -129,8 +126,7 @@ public class StuckServiceTaskWatchdogPgIT extends PostgresIT {
         UUID serviceTaskId = firstCreatedId(pi, "serviceTask1");
         shiftCreatedAt(serviceTaskId, Duration.ofMinutes(10));
 
-        int raised = tx.execute(s -> watchdog.processBatch());
-        assertThat(raised).isEqualTo(0);
+        watchdog.checkStuckTasks();
         assertThat(countOpenIncidents(serviceTaskId)).isEqualTo(0L);
     }
 
@@ -139,8 +135,7 @@ public class StuckServiceTaskWatchdogPgIT extends PostgresIT {
         UUID pi = startServiceTaskProcess();
         UUID serviceTaskId = firstCreatedId(pi, "serviceTask1");
         // created just now, well within 5m
-        int raised = tx.execute(s -> watchdog.processBatch());
-        assertThat(raised).isEqualTo(0);
+        watchdog.checkStuckTasks();
         assertThat(countOpenIncidents(serviceTaskId)).isEqualTo(0L);
     }
 }
