@@ -67,7 +67,7 @@ class TimerSchedulerTest {
         DBService dbServiceMock = org.mockito.Mockito.mock(DBService.class);
         TimerJobExecutor executorMock = org.mockito.Mockito.mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutorMock = org.mockito.Mockito.mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbServiceMock, executorMock, startExecutorMock);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbServiceMock, executorMock, startExecutorMock, Runnable::run);
         Field f = TimerBatchProcessor.class.getDeclaredField("batchSize");
         f.setAccessible(true);
         f.setInt(batchProcessor, 100);
