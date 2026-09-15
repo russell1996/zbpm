@@ -5,15 +5,28 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.RuntimeSupportService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class RuntimeOperationSupport {
+
+    /**
+     * WO-SEC-64 (S-RBAC-3): strict format for X-On-Behalf-Of — a username, not
+     * an arbitrary string. 1–64 chars, letters/digits plus {@code . _ - @}
+     * (covers login names and email-style attributions, rejects markup/
+     * control chars). Existence is verified separately at use time
+     * ({@code requireOnBehalfMatchesTask} fails closed on unknown names).
+     */
+    static final Pattern ON_BEHALF_OF_FORMAT =
+        Pattern.compile("^[A-Za-z0-9._\\-@]{1,64}$");
 
     private final HttpServletRequest request;
     private final AuthorizationService authorizationService;
@@ -42,6 +55,11 @@ public class RuntimeOperationSupport {
      * WO-INT-4 criteria 9-10: X-On-Behalf-Of is accepted from ANY key. The rule is about the
      * authentication method, not the account type — a key is a key, whoever it was issued to
      * (WO-INT-4 §3). Returns the raw claimed username, or null when the header is absent.
+     *
+     * <p>WO-SEC-64 (S-RBAC-3): the claim must additionally match
+     * {@link #ON_BEHALF_OF_FORMAT} — garbage never travels further. Existence is
+     * verified at use time ({@code requireOnBehalfMatchesTask} fails closed on
+     * unknown names); a malformed value is logged as a signal (possible probe).
      */
     public String checkedOnBehalfOf() {
         String raw = rawOnBehalfOf();
@@ -53,6 +71,10 @@ public class RuntimeOperationSupport {
         if (!(principal instanceof Principal.ServicePrincipal)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "X-On-Behalf-Of is only accepted from API keys");
+        }
+        if (!ON_BEHALF_OF_FORMAT.matcher(raw).matches()) {
+            log.warn("Suspicious X-On-Behalf-Of value rejected: length={}", raw.length());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid X-On-Behalf-Of format");
         }
         return raw;
     }

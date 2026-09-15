@@ -9,7 +9,6 @@ import com.zorrodev.bpm.contract.dto.query.UiUserQuery;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.security.Principal;
-import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.UserInvitationService;
 import com.zorrodev.bpm.engine.service.UiUserService;
@@ -92,10 +91,15 @@ public class UserResource implements UserContract {
         }
     }
 
+    /**
+     * WO-SEC-64 (S-RBAC-2): read the already-resolved {@code principal}, not
+     * {@code authClaims}. The claims attribute is empty for service principals
+     * (API key) — the old code returned null there and broke every service-key
+     * path through this resource, where the principal works.
+     */
     private Principal principalFromRequest() {
-        TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
-        if (claims == null) return null;
-        return new Principal.UserPrincipal(claims.userId(), claims.username(), claims.role());
+        Object attr = request.getAttribute("principal");
+        return attr instanceof Principal p ? p : null;
     }
 
     private IdDTO id(UUID value) {

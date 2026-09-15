@@ -113,16 +113,20 @@ class LogoutSecurityIntegrationTest {
                 .andReturn();
 
         // Otherwise a stale Secure-cookie may survive clearing (audit §7 S2).
-        for (String name : new String[]{"zbpm_token", "refresh_token"}) {
+        // WO-SEC-64: access cookie is __Host- (Path=/), refresh narrowed to
+        // Path=/auth/refresh — clear-paths must match set-paths, else the
+        // browser keeps the cookie. Legacy zbpm_token cleared too (rotation).
+        for (String[] spec : new String[][]{
+                {"__Host-zbpm_token", "/"}, {"zbpm_token", "/"}, {"refresh_token", "/auth/refresh"}}) {
             jakarta.servlet.http.Cookie cleared =
-                logoutResult.getResponse().getCookie(name);
-            assertThat(cleared).as(name + " cleared cookie present").isNotNull();
-            assertThat(cleared.getMaxAge()).as(name + " clear Max-Age=0").isZero();
-            assertThat(cleared.isHttpOnly()).as(name + " clear HttpOnly").isTrue();
-            assertThat(cleared.getSecure()).as(name + " clear Secure").isTrue();
+                logoutResult.getResponse().getCookie(spec[0]);
+            assertThat(cleared).as(spec[0] + " cleared cookie present").isNotNull();
+            assertThat(cleared.getMaxAge()).as(spec[0] + " clear Max-Age=0").isZero();
+            assertThat(cleared.isHttpOnly()).as(spec[0] + " clear HttpOnly").isTrue();
+            assertThat(cleared.getSecure()).as(spec[0] + " clear Secure").isTrue();
             assertThat(cleared.getAttribute("SameSite"))
-                .as(name + " clear SameSite=Strict").isEqualTo("Strict");
-            assertThat(cleared.getPath()).as(name + " clear Path=/").isEqualTo("/");
+                .as(spec[0] + " clear SameSite=Strict").isEqualTo("Strict");
+            assertThat(cleared.getPath()).as(spec[0] + " clear Path=" + spec[1]).isEqualTo(spec[1]);
         }
     }
 
