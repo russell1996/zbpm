@@ -391,7 +391,9 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
 
     @Test
     void completeUserTask_onBehalfOf_matching_200() throws Exception {
-        // ServicePrincipal (API key) + X-On-Behalf-Of where named user IS the assignee
+        // ServicePrincipal (API key) + X-On-Behalf-Of where named user IS the assignee.
+        // WO-SEC-64 HOLD: start/task-пути требуют существующего OBO-принципала —
+        // мокаем existsByUsername (реальный RuntimeSupportService в контексте).
         UUID id = UUID.randomUUID();
         UUID piId = UUID.randomUUID();
         UserTaskEntity task = new UserTaskEntity();
@@ -400,6 +402,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         when(authorizationService.canCompleteUserTask(any(), eq(piId), eq("g1"))).thenReturn(true);
         UiUserEntity named = new UiUserEntity(); named.setId(UUID.randomUUID()); named.setUsername("alice");
         when(uiUserRepository.findByUsername("alice")).thenReturn(Optional.of(named));
+        when(uiUserRepository.existsByUsername("alice")).thenReturn(true);
         UUID resultId = UUID.randomUUID();
         when(runtimeService.completeUserTask(eq(id), any())).thenReturn(new com.zorrodev.bpm.engine.dto.IdDTO(resultId));
 

@@ -76,6 +76,10 @@ public class RuntimeOperationSupport {
             log.warn("Suspicious X-On-Behalf-Of value rejected: length={}", raw.length());
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid X-On-Behalf-Of format");
         }
+        // WO-SEC-64 HOLD (S-RBAC-3, вторая половина): существование принципала —
+        // fail-closed 404 до любой работы. JPA живёт в сервисе (граница слоёв),
+        // фасад только делегирует — как requireOnBehalfMatchesTask рядом.
+        runtimeSupportService.requireOnBehalfExists(raw);
         return raw;
     }
 

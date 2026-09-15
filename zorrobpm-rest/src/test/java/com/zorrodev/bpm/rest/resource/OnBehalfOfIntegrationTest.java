@@ -92,6 +92,32 @@ class OnBehalfOfIntegrationTest {
             createUser("int2User", "USER");
         }
 
+        // WO-SEC-64 HOLD (S-RBAC-3, existence-гейт): start-путь теперь требует
+        // существующего OBO-принципала — фикстурные claimed-имена обязаны
+        // существовать в БД, иначе fail-closed 404 (а не молчаливый [claimed]).
+        if (!userRepository.existsByUsername("emp42")) {
+            createUser("emp42", "USER");
+        }
+        if (!userRepository.existsByUsername("emp99")) {
+            createUser("emp99", "USER");
+        }
+        if (!userRepository.existsByUsername("claimed-user")) {
+            createUser("claimed-user", "USER");
+        }
+        // WO-SEC-28 POF-имя обязано существовать (тот же existence-гейт)
+        if (!userRepository.existsByUsername("ceo@company.com")) {
+            UiUserEntity ceo = new UiUserEntity();
+            ceo.setId(UUID.randomUUID());
+            ceo.setUsername("ceo@company.com");
+            ceo.setPasswordHash(passwordHasher.hash("pass"));
+            ceo.setFullName("ceo@company.com");
+            ceo.setRole("USER");
+            ceo.setActive(true);
+            ceo.setCreatedAt(Instant.now());
+            ceo.setUpdatedAt(Instant.now());
+            userRepository.save(ceo);
+        }
+
         // Deploy assignee-task.bpmn (assignee=user1, process key=assignee-process)
         String bpmn = Files.readString(
             Paths.get("src/test/files/assignee-task.bpmn"), StandardCharsets.UTF_8);

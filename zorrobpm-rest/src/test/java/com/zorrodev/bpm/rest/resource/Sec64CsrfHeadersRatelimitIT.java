@@ -61,6 +61,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class Sec64CsrfHeadersRatelimitIT {
 
     @Autowired MockMvc mockMvc;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired com.zorrodev.bpm.rest.security.RateLimitFilter rateLimitFilter;
     @Autowired UiUserRepository userRepository;
     @Autowired PasswordHasher passwordHasher;
@@ -76,6 +77,11 @@ class Sec64CsrfHeadersRatelimitIT {
     @org.junit.jupiter.api.BeforeEach
     void resetBuckets() {
         rateLimitFilter.reset();
+    }
+
+    private long countProcessInstances() {
+        Long n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_instances", Long.class);
+        return n != null ? n : 0L;
     }
 
     @BeforeAll
@@ -273,21 +279,48 @@ class Sec64CsrfHeadersRatelimitIT {
     void srbac3_onBehalfOf_garbage_rejected() throws Exception {
         // Чистый regex-уровень: POST /process-instances читает OBO ПЕРВЫМ
         // делом (до requireOperate/старта): 400 здесь доказывает именно
-        // regex-гейт. Валидный-но-чужой проходит regex и падает позже
-        // (authz/старт — не 400), что доказывает разделение слоёв.
-        // Claim-путь для 400 НЕ годится: там OBO читается после гардов задачи.
+        // regex-гейт. Claim-путь для 400 НЕ годится: там OBO читается после
+        // гардов задачи.
         String body = "{\"processDefinitionKey\":\"sec64-dummy\"}";
         mockMvc.perform(post("/process-instances")
                         .header("Authorization", "Bearer " + serviceApiKey)
                         .header("X-On-Behalf-Of", "!!!not-a-user!!!")
                         .content(body).contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
-        int validStatus = mockMvc.perform(post("/process-instances")
+    }
+
+    // WO-SEC-64 HOLD (блокер): ghost-username форматно валиден, но такого
+    // юзера НЕТ — обязан отклоняться именно по причине OBO (404 до старта,
+    // процесс не стартует, счётчик инстансов стоит), а живой username
+    // (не caller) — идти как раньше (не 404). RED на коде без гейта: ghost
+    // падал на requireOperate-гарде (403), а не на OBO — гейта не было вовсе.
+    @Test
+    void srbac3_onBehalfOf_ghostUsername_rejectedByExistence() throws Exception {
+        String ghost = "ghost-" + UUID.randomUUID().toString().substring(0, 8);
+        String body = "{\"processDefinitionKey\":\"sec64-dummy\"}";
+        long before = countProcessInstances();
+        mockMvc.perform(post("/process-instances")
                         .header("Authorization", "Bearer " + serviceApiKey)
-                        .header("X-On-Behalf-Of", "ghost-" + UUID.randomUUID().toString().substring(0, 8))
+                        .header("X-On-Behalf-Of", ghost)
+                        .content(body).contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound());
+        assertThat(countProcessInstances())
+                .as("ghost-OBO не стартует процесс — инстансов не прибавилось")
+                .isEqualTo(before);
+    }
+
+    @Test
+    void srbac3_onBehalfOf_liveUsername_startsAsBefore() throws Exception {
+        // живой username, не caller: проходит existence-гейт, дальше — как раньше
+        // (authz/старт по правам ключа; здесь ключ без гранта на sec64-dummy → 403,
+        // но НЕ 404-по-OBO — разделение слоёв доказано именно этим).
+        String body = "{\"processDefinitionKey\":\"sec64-dummy\"}";
+        int code = mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + serviceApiKey)
+                        .header("X-On-Behalf-Of", "admin")
                         .content(body).contentType(MediaType.APPLICATION_JSON))
                 .andReturn().getResponse().getStatus();
-        assertThat(validStatus).as("валидный OBO проходит regex-гейт (падает позже, не 400)").isNotEqualTo(400);
+        assertThat(code).as("живой OBO проходит existence-гейт (падает позже, не 404)").isNotEqualTo(404);
     }
 
     // ── T7: cookie-флаги — __Host-префикс + Path refresh ──
