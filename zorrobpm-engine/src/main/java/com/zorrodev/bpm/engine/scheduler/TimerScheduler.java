@@ -12,32 +12,47 @@ import java.util.concurrent.Executor;
  * Delegates to TimerBatchProcessor (@Transactional) so that FOR UPDATE SKIP LOCKED
  * row locks are held until commit (L6 fix).
  *
- * WO-PERF-6 (P-1): offloads batch to dedicated {@code timerExecutor} (4-8 threads),
- * not the shared scheduling pool (size 4, also used by Outbox/Watchdog). The
- * scheduler thread returns immediately after dispatch — it never blocks on
- * per-job I/O.
+ * WO-PERF-6 (P-1): offloads batch to dedicated {@code timerDispatcherExecutor}
+ * (1-2 threads) so the scheduling pool (Outbox/Watchdog) never blocks on timer
+ * I/O. The actual job parallelism lives on {@code timerExecutor} (4-8 threads)
+ * inside {@code TimerBatchProcessor} — dispatcher and workers never share a pool.
+ * An {@code AtomicBoolean} guard prevents overlapping batches: if a batch
+ * outlives the fixedDelay (e.g. >5s under load), the next tick is skipped
+ * and logged instead of piling up rejections.
  */
 @Slf4j
 @Component
 public class TimerScheduler {
 
     private final TimerBatchProcessor batchProcessor;
-    private final Executor timerExecutor;
+    private final Executor timerDispatcherExecutor;
+    private final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public TimerScheduler(TimerBatchProcessor batchProcessor,
-                          @Qualifier("timerExecutor") Executor timerExecutor) {
+                          @Qualifier("timerDispatcherExecutor") Executor timerDispatcherExecutor) {
         this.batchProcessor = batchProcessor;
-        this.timerExecutor = timerExecutor;
+        this.timerDispatcherExecutor = timerDispatcherExecutor;
     }
 
     @Scheduled(fixedDelayString = "${zorrobpm.engine.timer-poll-interval-ms:5000}")
     public void fireDueTimers() {
-        timerExecutor.execute(() -> {
+        if (!running.compareAndSet(false, true)) {
+            log.warn("Timer batch still running, skipping tick");
+            return;
+        }
+        timerDispatcherExecutor.execute(() -> {
             try {
                 batchProcessor.processBatch();
             } catch (Exception e) {
                 log.error("Timer batch failed", e);
+            } finally {
+                running.set(false);
             }
         });
+    }
+
+    // visible for test
+    boolean isRunning() {
+        return running.get();
     }
 }
