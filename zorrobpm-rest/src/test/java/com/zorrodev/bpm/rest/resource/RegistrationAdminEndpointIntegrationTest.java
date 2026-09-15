@@ -85,7 +85,7 @@ class RegistrationAdminEndpointIntegrationTest {
                         .header("Authorization", "Bearer " + admin)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body.getBytes(StandardCharsets.UTF_8)))
-                .andExpect(status().isOk()).andReturn();
+                .andExpect(status().isCreated()).andReturn();
         return UUID.fromString(mapper.readTree(r.getResponse().getContentAsString()).get("id").asText());
     }
 

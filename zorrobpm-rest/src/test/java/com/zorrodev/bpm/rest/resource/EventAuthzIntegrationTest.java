@@ -216,7 +216,7 @@ class EventAuthzIntegrationTest {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                 .header("Authorization", "Bearer " + adminToken))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         ObjectMapper mapper = new ObjectMapper();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();

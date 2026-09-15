@@ -125,7 +125,7 @@ class Acl4OwnerUpdatesModelIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         createdKeys.add(key);
         return mapper.readValue(result.getResponse().getContentAsString(), ProcessDefinition.class).getId();

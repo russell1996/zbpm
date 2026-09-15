@@ -94,7 +94,7 @@ class ValidationIntegrationTest {
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Now start process by key "process1" → must return 200
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
@@ -104,7 +104,7 @@ class ValidationIntegrationTest {
                         .header("Authorization", "Bearer " + token)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(notNullValue()));
     }
 

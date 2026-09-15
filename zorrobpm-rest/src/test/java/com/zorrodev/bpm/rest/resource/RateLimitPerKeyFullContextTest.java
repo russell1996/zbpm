@@ -91,7 +91,7 @@ class RateLimitPerKeyFullContextTest {
                 .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                 .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(addDto)))
                 .build(), HttpResponse.BodyHandlers.ofString());
-        assertThat(deployResp.statusCode()).isEqualTo(200);
+        assertThat(deployResp.statusCode()).isEqualTo(201);
         processKey = mapper.readTree(deployResp.body()).get("key").asText();
         ProcessEntity process = processRepository.findByDefinitionKey(processKey).orElseThrow();
         processId = process.getId();
@@ -174,7 +174,7 @@ class RateLimitPerKeyFullContextTest {
         if (resp.statusCode() == 409) {
             return uiUserRepository.findByUsername(username).orElseThrow().getId();
         }
-        assertThat(resp.statusCode()).isEqualTo(200);
+        assertThat(resp.statusCode()).isEqualTo(201);
         return UUID.fromString(mapper.readTree(resp.body()).get("id").asText());
     }
 
@@ -184,7 +184,7 @@ class RateLimitPerKeyFullContextTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build(), HttpResponse.BodyHandlers.ofString());
-        assertThat(resp.statusCode()).isEqualTo(200);
+        assertThat(resp.statusCode()).isEqualTo(201);
         return mapper.readTree(resp.body()).get("key").asText();
     }
 
@@ -194,7 +194,7 @@ class RateLimitPerKeyFullContextTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build(), HttpResponse.BodyHandlers.ofString());
-        assertThat(resp.statusCode()).isEqualTo(200);
+        assertThat(resp.statusCode()).isEqualTo(201);
         return mapper.readTree(resp.body()).get("key").asText();
     }
 

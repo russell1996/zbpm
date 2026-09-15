@@ -75,7 +75,7 @@ class PasswordTokenIntegrationTest {
 
         String id = mockMvc.perform(post("/users").header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(dto)))
-                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         Map<String, Object> created = mapper.readValue(id, Map.class);
         UUID userId = UUID.fromString(String.valueOf(created.get("id")));
 
@@ -116,7 +116,7 @@ class PasswordTokenIntegrationTest {
         dto.setCreationMode("INVITE");
         mockMvc.perform(post("/users").header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(dto)))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         String token = extractTokenFromLastMail();
         mockMvc.perform(post("/auth/reset-password")
@@ -178,7 +178,7 @@ class PasswordTokenIntegrationTest {
 
         mockMvc.perform(post("/users").header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(dto)))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // PASSWORD path → usable password immediately, no invitation link needed.
         LoginDTO login = new LoginDTO();

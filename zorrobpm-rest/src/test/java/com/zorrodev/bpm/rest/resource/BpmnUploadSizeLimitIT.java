@@ -102,7 +102,7 @@ class BpmnUploadSizeLimitIT {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         assertThat(mapper.readTree(result.getResponse().getContentAsString()).get("key").asText())
             .isNotBlank();

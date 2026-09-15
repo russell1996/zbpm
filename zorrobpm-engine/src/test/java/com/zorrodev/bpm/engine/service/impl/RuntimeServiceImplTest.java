@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -43,7 +44,7 @@ class RuntimeServiceImplTest {
         List<ProcessVariable> vars = List.of();
         dto.setVariables(vars);
 
-        when(activityService.startProcessInstance(null, processDefinitionId, vars)).thenReturn(processInstanceId);
+        when(activityService.startProcessInstance(eq(null), eq(processDefinitionId), eq(vars), isNull())).thenReturn(processInstanceId);
 
         IdDTO result = runtimeService.startProcessInstance(dto);
 
@@ -63,7 +64,7 @@ class RuntimeServiceImplTest {
         ProcessDefinition pd = new ProcessDefinition();
         pd.setId(processDefinitionId);
         when(dbService.getProcessDefinition("k", 2)).thenReturn(pd);
-        when(activityService.startProcessInstance(eq(null), eq(processDefinitionId), any())).thenReturn(processInstanceId);
+        when(activityService.startProcessInstance(eq(null), eq(processDefinitionId), any(), isNull())).thenReturn(processInstanceId);
 
         IdDTO result = runtimeService.startProcessInstance(dto);
 
@@ -82,7 +83,7 @@ class RuntimeServiceImplTest {
         pd.setId(processDefinitionId);
         when(dbService.getMaxProcessDefinitionVersionByKey("k")).thenReturn(3);
         when(dbService.getProcessDefinition("k", 3)).thenReturn(pd);
-        when(activityService.startProcessInstance(eq(null), eq(processDefinitionId), any())).thenReturn(processInstanceId);
+        when(activityService.startProcessInstance(eq(null), eq(processDefinitionId), any(), isNull())).thenReturn(processInstanceId);
 
         IdDTO result = runtimeService.startProcessInstance(dto);
 
@@ -97,7 +98,7 @@ class RuntimeServiceImplTest {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(processDefinitionId);
 
-        when(activityService.startProcessInstance(eq(parentId), eq(processDefinitionId), any())).thenReturn(processInstanceId);
+        when(activityService.startProcessInstance(eq(parentId), eq(processDefinitionId), any(), isNull())).thenReturn(processInstanceId);
 
         IdDTO result = runtimeService.startProcessInstance(parentId, dto);
 

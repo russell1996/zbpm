@@ -10,12 +10,15 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DeploymentService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import jakarta.validation.Valid;
 
 @RestController
 @RequiredArgsConstructor
@@ -25,6 +28,7 @@ public class DeploymentResource implements DeploymentContract {
     private final DeploymentService deploymentService;
     private final AuditLogService auditLogService;
     private final HttpServletRequest request;
+    private final HttpServletResponse httpResponse;
 
     /**
      * WO-C8-18: atomic batch deploy (BPMN processes + DMN decisions in one transaction).
@@ -32,8 +36,12 @@ public class DeploymentResource implements DeploymentContract {
      * non-admin → 403. DMN parse failures map to 400 like the single DMN path; BPMN failures
      * propagate exactly as the single BPMN path produces them (same service call).
      */
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут).
+     */
     @Override
-    public DeploymentDTO deployBatch(@RequestBody DeployBatchDTO dto) {
+    @ResponseStatus(HttpStatus.CREATED)
+    public DeploymentDTO deployBatch(@Valid @RequestBody DeployBatchDTO dto) {
         requireSuperAdmin();
         DeploymentDTO result;
         try {
@@ -53,6 +61,11 @@ public class DeploymentResource implements DeploymentContract {
         for (DeployedDecisionDTO decision : result.getDecisions()) {
             auditLogService.record(getPrincipal(), "DEPLOY", decision.getDecisionId(),
                 decision.getDecisionId() + ":v" + decision.getVersion());
+        }
+        // WO-API-1: nullable-guard как везде (unit без response-контекста).
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/deployments/"
+                + (result.getProcesses().isEmpty() ? "batch" : result.getProcesses().get(0).getKey()));
         }
         return result;
     }

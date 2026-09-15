@@ -353,12 +353,19 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     @Override
     public UUID startProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
+        return startProcessInstance(parentActivityId, processDefinitionId, variables, null);
+    }
+
+    @Override
+    public UUID startProcessInstance(UUID parentActivityId, UUID processDefinitionId,
+            List<ProcessVariable> variables, String claimedInitiator) {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processDefinitionId);
         if (bpmn.getStartEvent() == null) {
             throw new EngineException("Process definition " + processDefinitionId
                 + " has no plain start event; it can only be started by a message or timer start event");
         }
-        return eventTrigger.startProcessInstanceAt(parentActivityId, processDefinitionId, bpmn.getStartEvent().getId(), variables, this);
+        return eventTrigger.startProcessInstanceAt(parentActivityId, processDefinitionId,
+            bpmn.getStartEvent().getId(), variables, claimedInitiator, this);
     }
 
     @Override

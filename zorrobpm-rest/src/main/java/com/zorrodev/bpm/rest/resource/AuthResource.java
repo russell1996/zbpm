@@ -24,6 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 @RestController
 @RequiredArgsConstructor
@@ -49,7 +50,7 @@ public class AuthResource implements AuthContract {
     private long jwtTtlMinutes;
 
     @Override
-    public AuthResponse login(@RequestBody LoginDTO dto) {
+    public AuthResponse login(@Valid @RequestBody LoginDTO dto) {
         AuthResponse authResponse = userService.login(dto)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password"));
 

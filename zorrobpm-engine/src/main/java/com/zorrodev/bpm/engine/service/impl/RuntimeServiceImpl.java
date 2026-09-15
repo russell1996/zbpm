@@ -41,6 +41,21 @@ public class RuntimeServiceImpl implements RuntimeService {
 
     @Override
     public IdDTO startProcessInstance(UUID parentProcessInstanceId, StartProcessInstanceDTO dto) {
+        return startProcessInstance(parentProcessInstanceId, dto, null);
+    }
+
+    /**
+     * WO-API-1 (API-7): перегрузка с initiator — та же транзакция, тот же путь,
+     * только create несёт initiator сразу. Старый двухаргументный метод —
+     * делегация с null (поведение побайтово).
+     */
+    @Override
+    public IdDTO startProcessInstance(StartProcessInstanceDTO dto, String claimedInitiator) {
+        return startProcessInstance(null, dto, claimedInitiator);
+    }
+
+    private IdDTO startProcessInstance(UUID parentProcessInstanceId, StartProcessInstanceDTO dto,
+            String claimedInitiator) {
         UUID processDefinitionId = dto.getProcessDefinitionId();
         if (processDefinitionId == null) {
             String key = dto.getProcessDefinitionKey();
@@ -53,7 +68,8 @@ public class RuntimeServiceImpl implements RuntimeService {
         }
         List<ProcessVariable> variables = dto.getVariables();
 
-        UUID processInstanceId = activityService.startProcessInstance(parentProcessInstanceId, processDefinitionId, variables);
+        UUID processInstanceId = activityService.startProcessInstance(
+            parentProcessInstanceId, processDefinitionId, variables, claimedInitiator);
         bpmMetrics.processStarted();
         bpmMetrics.incrementActiveInstances();
 

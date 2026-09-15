@@ -63,7 +63,7 @@ class ElementArtifactKindIntegrationTest {
                             setSchema(schema);
                         }}))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Deploy BPMN with start formKey="orderForm"
         String bpmn = new String(Files.readAllBytes(Paths.get("src/test/files/validation-start.bpmn")));
@@ -73,7 +73,7 @@ class ElementArtifactKindIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -136,7 +136,7 @@ class ElementArtifactKindIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.key").value(key))
                 .andExpect(jsonPath("$.kind").value("FORM_JS"))
                 .andExpect(jsonPath("$.version").value(1));
@@ -156,7 +156,7 @@ class ElementArtifactKindIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.key").value(key))
                 .andExpect(jsonPath("$.kind").value("VARIABLE_SCHEMA"));
     }
@@ -174,7 +174,7 @@ class ElementArtifactKindIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         mockMvc.perform(get("/forms/" + key)
                         .header("Authorization", "Bearer " + adminToken))
@@ -225,7 +225,7 @@ class ElementArtifactKindIntegrationTest {
                             setSchema(jsonSchema);
                         }}))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Deploy BPMN with start formKey pointing to VARIABLE_SCHEMA artifact
         String bpmnVs = """
@@ -259,7 +259,7 @@ class ElementArtifactKindIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID vsPdId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -275,7 +275,7 @@ class ElementArtifactKindIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(startDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     private ProcessVariable createVar(String name, String value, ProcessVariableType type) {

@@ -56,6 +56,11 @@ class RuntimeResourceCharacterizationTest {
     @MockitoBean private AuditLogService auditLogService;
     @MockitoBean private AuthorizationService authorizationService;
     @MockitoBean private FormArtifactService formArtifactService;
+    // WO-API-1 (F16): сабмит читает UserTaskFormData (formId/binding/formKey) +
+    // versionTag элемента + deploymentId — стабы ниже (реальный прод-путь в
+    // UserTaskRuntimeOperationsImpl.completeUserTask; strict-stub требует
+    // стабить ТОЛЬКО используемый путь — см. formValidation-тест).
+    @MockitoBean private com.zorrodev.bpm.engine.service.TaskFormDataService taskFormDataService;
     @MockitoBean private UserTaskRepository userTaskRepository;
     @MockitoBean private ServiceTaskRepository serviceTaskRepository;
     @MockitoBean private ProcessInstanceRepository processInstanceRepository;
@@ -125,14 +130,18 @@ class RuntimeResourceCharacterizationTest {
         when(processDefinitionRepository.findMaxByKey("test-key")).thenReturn(Optional.of(1));
         when(authorizationService.canOperate(any(), eq("test-key"), eq(AuthorizationService.Action.START))).thenReturn(true);
         UUID resultId = UUID.randomUUID();
-        when(runtimeService.startProcessInstance(any())).thenReturn(new com.zorrodev.bpm.engine.dto.IdDTO(resultId));
+        // WO-API-1 (API-7): фасад зовёт startProcessInstance(dto, claimed) —
+        // стаб старой одноаргументной сигнатуры мёртв (strict-stub роняет).
+        // Сигнатуры (UUID,DTO) vs (DTO,String): any() неоднозначен — типизируем.
+        StartProcessInstanceDTO anyDto = any();
+        when(runtimeService.startProcessInstance(anyDto, isNull())).thenReturn(new com.zorrodev.bpm.engine.dto.IdDTO(resultId));
         when(processInstanceRepository.findById(resultId)).thenReturn(Optional.empty());
 
         mockMvc.perform(post("/process-instances")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         verify(auditLogService).record(any(), eq("START"), eq("test-key"), eq(resultId.toString()), any());
     }
@@ -191,7 +200,7 @@ class RuntimeResourceCharacterizationTest {
         mockMvc.perform(post("/service-tasks/" + id + "/complete")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isOk());
 
         verify(auditLogService).record(any(), eq("COMPLETE_SERVICE_TASK"), eq("svc-key"), eq(id.toString()));
@@ -214,7 +223,7 @@ class RuntimeResourceCharacterizationTest {
         mockMvc.perform(post("/service-tasks/" + id + "/complete")
                 .header("Authorization", "Bearer " + USER_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isForbidden());
 
         verify(runtimeService, never()).completeServiceTask(any(), any());
@@ -228,7 +237,7 @@ class RuntimeResourceCharacterizationTest {
         mockMvc.perform(post("/service-tasks/" + id + "/complete")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isNotFound());
     }
 
@@ -313,7 +322,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         mockMvc.perform(post("/user-tasks/" + id + "/complete")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isOk());
 
         verify(auditLogService).record(any(), eq("COMPLETE_USER_TASK"), any(), eq(id.toString()), any());
@@ -331,7 +340,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         mockMvc.perform(post("/user-tasks/" + id + "/complete")
                 .header("Authorization", "Bearer " + USER_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isForbidden());
 
         verify(runtimeService, never()).completeUserTask(any(), any());
@@ -345,7 +354,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         mockMvc.perform(post("/user-tasks/" + id + "/complete")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isNotFound());
     }
 
@@ -357,7 +366,15 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         task.setId(id); task.setProcessInstanceId(piId); task.setFormKey("form1"); task.setCandidateGroups("g1");
         when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
         when(authorizationService.canCompleteUserTask(any(), eq(piId), eq("g1"))).thenReturn(true);
-        when(formArtifactService.validateFormIfApplicable(eq("form1"), any()))
+        // WO-API-1 (F16): сабмит идёт через validateTaskSubmit — стаб мёртвого
+        // validateFormIfApplicable заменён (strict-stub: мёртвый стаб роняет тест).
+        // Скаляры задачи — через реальный TaskFormDataService-бин? Нет: здесь мок
+        // репозитория userTaskRepository отдаёт task с formKey=form1 напрямую.
+        when(taskFormDataService.loadUserTaskFormData(id)).thenReturn(
+            new com.zorrodev.bpm.engine.service.TaskFormDataService.UserTaskFormData(
+                id, null, null, "form1", piId, "elem1", UUID.randomUUID()));
+        when(taskFormDataService.findDeploymentId(any())).thenReturn(null);
+        when(formArtifactService.validateTaskSubmit(isNull(), isNull(), eq("form1"), isNull(), isNull(), any()))
             .thenReturn(List.of(new FormValidator.ValidationError("field1", "required")));
 
         CompleteTaskDTO dto = new CompleteTaskDTO();
@@ -383,7 +400,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
                 .header("Authorization", "Bearer " + USER_TOKEN)
                 .header("X-On-Behalf-Of", "alice")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isForbidden());
 
         verify(runtimeService, never()).completeUserTask(any(), any());
@@ -402,6 +419,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         when(authorizationService.canCompleteUserTask(any(), eq(piId), eq("g1"))).thenReturn(true);
         UiUserEntity named = new UiUserEntity(); named.setId(UUID.randomUUID()); named.setUsername("alice");
         when(uiUserRepository.findByUsername("alice")).thenReturn(Optional.of(named));
+        // WO-SEC-64 HOLD: existence-гейт требует существующего OBO-принципала.
         when(uiUserRepository.existsByUsername("alice")).thenReturn(true);
         UUID resultId = UUID.randomUUID();
         when(runtimeService.completeUserTask(eq(id), any())).thenReturn(new com.zorrodev.bpm.engine.dto.IdDTO(resultId));
@@ -410,7 +428,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
                 .header("Authorization", "Bearer " + SERVICE_KEY)
                 .header("X-On-Behalf-Of", "alice")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new CompleteTaskDTO())))
+                .content(objectMapper.writeValueAsString(emptyCompleteTaskDTO())))
                 .andExpect(status().isOk());
     }
 
@@ -583,7 +601,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         mockMvc.perform(post("/incidents/" + id + "/resolve")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new ResolveIncidentDTO())))
+                .content(objectMapper.writeValueAsString(emptyResolveIncidentDTO())))
                 .andExpect(status().isOk());
 
         verify(auditLogService).record(any(), eq("RESOLVE_INCIDENT"), eq("inc-key"), eq(id.toString()));
@@ -609,7 +627,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         mockMvc.perform(post("/incidents/" + id + "/resolve")
                 .header("Authorization", "Bearer " + USER_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new ResolveIncidentDTO())))
+                .content(objectMapper.writeValueAsString(emptyResolveIncidentDTO())))
                 .andExpect(status().isForbidden());
 
         verify(runtimeService, never()).resolveIncident(any(), any());
@@ -623,7 +641,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         mockMvc.perform(post("/incidents/" + id + "/resolve")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new ResolveIncidentDTO())))
+                .content(objectMapper.writeValueAsString(emptyResolveIncidentDTO())))
                 .andExpect(status().isNotFound());
     }
 
@@ -644,7 +662,7 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
 
         mockMvc.perform(post("/process-instances/" + id + "/cancel")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))
-                .andExpect(status().isOk());
+                .andExpect(status().isAccepted());
 
         verify(auditLogService).record(any(), eq("CANCEL"), eq("cancel-key"), eq(id.toString()));
     }
@@ -678,5 +696,24 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         mockMvc.perform(post("/process-instances/" + id + "/cancel")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))
                 .andExpect(status().isConflict());
+    }
+
+    // WO-API-1: пустой DTO обязан нести variables=[] (null отклоняется @NotNull).
+    private static com.zorrodev.bpm.contract.dto.CompleteTaskDTO emptyCompleteTaskDTO() {
+        com.zorrodev.bpm.contract.dto.CompleteTaskDTO dto = new com.zorrodev.bpm.contract.dto.CompleteTaskDTO();
+        dto.setVariables(java.util.List.of());
+        return dto;
+    }
+
+    private static com.zorrodev.bpm.contract.dto.ResolveIncidentDTO emptyResolveIncidentDTO() {
+        com.zorrodev.bpm.contract.dto.ResolveIncidentDTO dto = new com.zorrodev.bpm.contract.dto.ResolveIncidentDTO();
+        dto.setVariables(java.util.List.of());
+        return dto;
+    }
+
+    private static com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO emptyEvaluateDecisionDTO() {
+        com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO dto = new com.zorrodev.bpm.contract.dto.EvaluateDecisionDTO();
+        dto.setVariables(java.util.List.of());
+        return dto;
     }
 }

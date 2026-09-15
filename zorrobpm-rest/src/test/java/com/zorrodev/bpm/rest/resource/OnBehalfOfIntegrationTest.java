@@ -127,7 +127,7 @@ class OnBehalfOfIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -180,7 +180,7 @@ class OnBehalfOfIntegrationTest {
         if (status == 409) {
             return userRepository.findByUsername(username).orElseThrow().getId();
         }
-        if (status != 200) {
+        if (status != 200 && status != 201) {
             throw new IllegalStateException("createUserViaHttp(" + username + ") failed: " + status
                 + " " + result.getResponse().getContentAsString());
         }
@@ -190,7 +190,7 @@ class OnBehalfOfIntegrationTest {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }
@@ -219,7 +219,7 @@ class OnBehalfOfIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
     }
@@ -235,7 +235,7 @@ class OnBehalfOfIntegrationTest {
                         .header("X-On-Behalf-Of", "emp42")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID instanceId = UUID.fromString(
             mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
@@ -258,7 +258,7 @@ class OnBehalfOfIntegrationTest {
                         .header("X-On-Behalf-Of", "emp99")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         List<AuditLogEntity> audits = auditLogRepository.findByFilters(null, null, null, null);
         assertThat(audits.size()).isGreaterThan(beforeCount);
@@ -319,7 +319,7 @@ class OnBehalfOfIntegrationTest {
                         .header("Authorization", "Bearer " + systemKey)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID instanceId = UUID.fromString(
             mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
@@ -342,7 +342,7 @@ class OnBehalfOfIntegrationTest {
                         .header("X-On-Behalf-Of", "ceo@company.com")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         AuditLogEntity latest = auditLogRepository.findByFilters(null, null, null, null).get(0);
         // POF: without fix, this would be "ceo@company.com" (looks like confirmed identity)

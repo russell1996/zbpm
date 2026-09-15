@@ -77,6 +77,15 @@ public interface ActivityService {
     UUID startProcessInstance(UUID parentProcessInstanceId, UUID processDefinitionId, List<ProcessVariable> variables);
 
     /**
+     * WO-API-1 (API-7): тот же старт, но initiator пишется в том же INSERT
+     * create (атомарно). Null = без инициатора (старый путь).
+     */
+    default UUID startProcessInstance(UUID parentProcessInstanceId, UUID processDefinitionId,
+            List<ProcessVariable> variables, String claimedInitiator) {
+        return startProcessInstance(parentProcessInstanceId, processDefinitionId, variables);
+    }
+
+    /**
      * Starts a new instance beginning at a specific start element (used by message/timer start
      * triggers, which begin at their own start node).
      */

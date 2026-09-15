@@ -152,7 +152,7 @@ class WriteEnforcementIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     // --- #1: Non-member starts foreign process → 403 ---
@@ -181,7 +181,7 @@ class WriteEnforcementIntegrationTest {
                         .header("Authorization", "Bearer " + ownerToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     // --- #3: Non-member cancels foreign instance → 403 ---
@@ -195,7 +195,7 @@ class WriteEnforcementIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         String instanceId = mapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
 

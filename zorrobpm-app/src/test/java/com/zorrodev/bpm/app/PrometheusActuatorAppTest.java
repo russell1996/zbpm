@@ -103,7 +103,7 @@ class PrometheusActuatorAppTest {
 
         MvcResult keyResult = mockMvc.perform(post("/admin/users/" + svcUser.getId() + "/api-key")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         String apiKey = mapper.readTree(keyResult.getResponse().getContentAsString()).get("key").asText();
 

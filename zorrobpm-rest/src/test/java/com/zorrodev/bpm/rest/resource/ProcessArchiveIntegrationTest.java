@@ -73,7 +73,7 @@ class ProcessArchiveIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk()).andReturn();
+            .andExpect(status().isCreated()).andReturn();
         String deployedKey = mapper.readTree(deploy.getResponse().getContentAsString()).get("key").asText();
 
         // default list contains it
@@ -133,7 +133,7 @@ class ProcessArchiveIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
 
         mockMvc.perform(post("/processes/" + key + "/archive")
                 .header("Authorization", "Bearer " + userToken))
@@ -159,7 +159,7 @@ class ProcessArchiveIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk()).andReturn();
+            .andExpect(status().isCreated()).andReturn();
         String deployedKey = mapper.readTree(deploy.getResponse().getContentAsString()).get("key").asText();
         UUID pdId = UUID.fromString(mapper.readTree(deploy.getResponse().getContentAsString()).get("id").asText());
 
@@ -170,7 +170,7 @@ class ProcessArchiveIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(startDto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk()).andReturn();
+            .andExpect(status().isCreated()).andReturn();
         UUID piId = UUID.fromString(mapper.readTree(start.getResponse().getContentAsString()).get("id").asText());
 
         // archive while instance is active

@@ -317,7 +317,7 @@ class Acl9SubmissionIdentityIntegrationTest {
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(dto)))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         ProcessSubmissionDTO submission = mapper.readValue(result, ProcessSubmissionDTO.class);
         createdSubmissionIds.add(submission.getId());

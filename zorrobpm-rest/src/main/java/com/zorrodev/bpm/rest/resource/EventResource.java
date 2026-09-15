@@ -54,6 +54,16 @@ public class EventResource {
             return ResponseEntity.status(401).build();
         }
 
+        // WO-API-1: отрицательный limit — 400 через явный guard ресурса, а не
+        // 500 из глубины query-слоя и не молчаливое обрезание окна.
+        if (limit != null && limit < 0) {
+            PagedDataDTO<Map<String, Object>> error = new PagedDataDTO<>();
+            error.setData(List.of(Map.of(
+                "code", "VALIDATION_ERROR",
+                "message", "limit must be non-negative")));
+            return ResponseEntity.badRequest().body(error);
+        }
+
         // Validate processInstanceId UUID
         UUID piId = null;
         if (processInstanceId != null && !processInstanceId.isBlank()) {

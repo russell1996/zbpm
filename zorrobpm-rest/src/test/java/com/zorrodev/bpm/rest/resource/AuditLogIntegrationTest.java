@@ -97,7 +97,7 @@ class AuditLogIntegrationTest {
                 .header("Authorization", "Bearer " + userAToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"processDefinitionKey\":\"" + processKey + "\",\"variables\":[]}"))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
 
         // Verify audit entry was created
         long afterCount = auditLogRepository.count();
@@ -119,7 +119,7 @@ class AuditLogIntegrationTest {
         // Create API key for userA
         MvcResult createResult = mockMvc.perform(post("/admin/users/" + userAId + "/api-key")
                 .header("Authorization", "Bearer " + superAdminToken))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
 
         // Verify audit entry for KEY_CREATE with correct target
@@ -243,7 +243,7 @@ class AuditLogIntegrationTest {
         UUID freshUserId = createUser("mt10-fresh");
         MvcResult createResult = mockMvc.perform(post("/admin/users/" + freshUserId + "/api-key")
                 .header("Authorization", "Bearer " + superAdminToken))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         JsonNode body = mapper.readTree(createResult.getResponse().getContentAsString());
         String rawKey = body.get("key").asText();
@@ -303,7 +303,7 @@ class AuditLogIntegrationTest {
                 .header("Authorization", "Bearer " + superAdminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
         return key;
     }
 }

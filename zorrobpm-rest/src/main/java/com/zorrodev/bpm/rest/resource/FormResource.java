@@ -9,18 +9,23 @@ import com.zorrodev.bpm.contract.dto.SchemaMapDTO;
 import com.zorrodev.bpm.contract.dto.SchemaMapElementDTO;
 import com.zorrodev.bpm.contract.dto.SaveElementSchemaDTO;
 import com.zorrodev.bpm.contract.dto.TaskFormDTO;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 @RestController
 @RequiredArgsConstructor
 public class FormResource implements FormContract {
 
     private final ElementBindingOperations elementBindingOperations;
+    private final HttpServletResponse httpResponse;
     private final TaskFormOperations taskFormOperations;
     private final FormOperations formOperations;
     private final SchemaMapOperations schemaMapOperations;
@@ -31,8 +36,17 @@ public class FormResource implements FormContract {
     }
 
     @Override
-    public FormDTO deployForm(@RequestBody DeployFormDTO dto) {
-        return formOperations.deployForm(dto);
+    /**
+     * WO-API-1 (API-1): create → 201 + Location. Статус — здесь (ресурс владеет
+     * HTTP-семантикой); Location — по ключу формы.
+     */
+    @ResponseStatus(HttpStatus.CREATED)
+    public FormDTO deployForm(@Valid @RequestBody DeployFormDTO dto) {
+        FormDTO result = formOperations.deployForm(dto);
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/forms/" + result.getKey());
+        }
+        return result;
     }
 
     @Override

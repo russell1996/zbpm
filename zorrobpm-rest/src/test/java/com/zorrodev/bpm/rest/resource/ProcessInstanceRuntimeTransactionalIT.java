@@ -107,7 +107,7 @@ class ProcessInstanceRuntimeTransactionalIT {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(addDto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
         String key = deploy.get("key").asText();
         // add OWNER membership directly via DB
         var proc = processRepository.findByDefinitionKey(key).orElseThrow();
@@ -192,7 +192,7 @@ class ProcessInstanceRuntimeTransactionalIT {
                 .header("X-On-Behalf-Of", "happy-user")
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk()).andReturn();
+            .andExpect(status().isCreated()).andReturn();
         String piId = mapper.readTree(res.getResponse().getContentAsString()).get("id").asText();
         String initiator = jdbc.queryForObject("SELECT initiator FROM process_instances WHERE id = ?", String.class, UUID.fromString(piId));
         assertThat(initiator).isEqualTo("[claimed] happy-user");

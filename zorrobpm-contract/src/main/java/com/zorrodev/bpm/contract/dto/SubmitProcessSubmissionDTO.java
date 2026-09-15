@@ -2,6 +2,7 @@ package com.zorrodev.bpm.contract.dto;
 
 import lombok.Getter;
 import lombok.Setter;
+import jakarta.validation.constraints.NotBlank;
 
 /**
  * Body of POST /process-submissions (WO-ACL-3): the raw BPMN XML of the process
@@ -11,5 +12,6 @@ import lombok.Setter;
 @Getter
 @Setter
 public class SubmitProcessSubmissionDTO {
+    @NotBlank(message = "bpmn is required")
     private String bpmn;
 }

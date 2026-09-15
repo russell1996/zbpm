@@ -293,7 +293,17 @@ public class EventTrigger {
      */
     public UUID startProcessInstanceAt(UUID parentActivityId, UUID processDefinitionId, String startEventId,
                                 List<ProcessVariable> variables, TokenExecutor executor) {
-        UUID processInstanceId = dbService.createProcessInstance(parentActivityId, processDefinitionId, variables);
+        return startProcessInstanceAt(parentActivityId, processDefinitionId, startEventId, variables, null, executor);
+    }
+
+    /**
+     * WO-API-1 (API-7): перегрузка с initiator — create несёт его в том же
+     * INSERT (атомарно со стартом). Null = старый путь побайтово.
+     */
+    public UUID startProcessInstanceAt(UUID parentActivityId, UUID processDefinitionId, String startEventId,
+                                List<ProcessVariable> variables, String claimedInitiator, TokenExecutor executor) {
+        UUID processInstanceId = dbService.createProcessInstance(
+            parentActivityId, processDefinitionId, variables, claimedInitiator);
 
         // WO-REL-31 CR-2: NO second variable write here. createProcessInstance already INSERTs the
         // initial variables; a redundant find-then-UPDATE (one SELECT per variable, multi-instance

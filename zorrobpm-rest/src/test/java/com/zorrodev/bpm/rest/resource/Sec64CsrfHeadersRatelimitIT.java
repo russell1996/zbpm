@@ -261,7 +261,7 @@ class Sec64CsrfHeadersRatelimitIT {
                         .header("Authorization", "Bearer " + adminToken)
                         .header("Idempotency-Key", "sec64-" + UUID.randomUUID())
                         .content(body).contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk()).andReturn();
+                .andExpect(status().isCreated()).andReturn();
         String newId = mapper.readTree(r.getResponse().getContentAsString()).get("id").asText();
         assertThat(userRepository.findById(UUID.fromString(newId))).isPresent();
     }

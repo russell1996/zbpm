@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.NoSuchElementException;
+import jakarta.validation.Valid;
 
 /**
  * WO-REG-3/4: public, unauthenticated self-registration + email verification
@@ -30,7 +31,7 @@ public class RegistrationResource implements RegistrationContract {
     private final RateLimitFilter rateLimitFilter;
 
     @Override
-    public void register(@RequestBody RegisterDTO dto) {
+    public void register(@Valid @RequestBody RegisterDTO dto) {
         // B5 (HOLD precedent from forgot-password): proxy-aware client IP so the
         // per-IP register bucket is not collapsed onto the proxy address.
         String clientIp = rateLimitFilter.getClientIp(request);
@@ -38,7 +39,7 @@ public class RegistrationResource implements RegistrationContract {
     }
 
     @Override
-    public void verifyEmail(@RequestBody VerifyEmailDTO dto) {
+    public void verifyEmail(@Valid @RequestBody VerifyEmailDTO dto) {
         String token = dto == null ? null : dto.getToken();
         try {
             registrationService.verifyEmail(token);

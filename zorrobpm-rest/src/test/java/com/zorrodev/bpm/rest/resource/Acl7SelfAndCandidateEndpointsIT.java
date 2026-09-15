@@ -461,7 +461,7 @@ class Acl7SelfAndCandidateEndpointsIT {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 
     private void addMember(String key, UUID userId, String role) throws Exception {
@@ -479,7 +479,7 @@ class Acl7SelfAndCandidateEndpointsIT {
                 .header("Authorization", "Bearer " + token)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         return mapper.readValue(result.getResponse().getContentAsString(), ProcessSubmissionDTO.class);
     }
