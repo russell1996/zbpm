@@ -9,5 +9,5 @@ public interface ActivityQueryOperations {
 
     List<ActivityInstance> getActivities(UUID processInstanceId);
 
-    com.zorrodev.bpm.contract.dto.PagedDataDTO<ActivityInstance> getActivities(UUID processInstanceId, Integer pageIndex, Integer pageSize);
+    com.zorrodev.bpm.contract.dto.PagedDataDTO<ActivityInstance> getActivitiesPaged(UUID processInstanceId, Integer pageIndex, Integer pageSize);
 }
