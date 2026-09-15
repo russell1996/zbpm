@@ -48,7 +48,7 @@ class TimerBatchProcessorConcurrencyTest {
 
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
         setBatchSize(batchProcessor, 100);
 
         // Both "pollers" see the same due job (simulates race before SKIP LOCKED)
@@ -93,7 +93,7 @@ class TimerBatchProcessorConcurrencyTest {
 
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
         setBatchSize(batchProcessor, 100);
 
         when(dbService.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of(job));
@@ -108,7 +108,7 @@ class TimerBatchProcessorConcurrencyTest {
     void noDueJobs_noFire() throws Exception {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
         setBatchSize(batchProcessor, 100);
 
         when(dbService.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of());
