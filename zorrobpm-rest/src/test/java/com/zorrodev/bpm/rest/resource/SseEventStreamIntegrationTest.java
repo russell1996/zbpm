@@ -197,21 +197,23 @@ class SseEventStreamIntegrationTest {
             Map.of(processIdB, new Principal.Grant(Set.of("READ"), false))
         );
 
-        // Track event dispatches per client
+        // Register clients BEFORE listener so we capture correct clientIds
+        String clientA = sseEventStreamService.registerClient(emitterA, principalA, null, null, null);
+        String clientB = sseEventStreamService.registerClient(emitterB, principalB, null, null, null);
+
+        // Track event dispatches per client (after registration, before push)
         Map<String, List<String>> eventsByClient = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(4);
         sseEventStreamService.clearEventListeners();
         sseEventStreamService.addEventListener((clientId, envelope) -> {
             String pdId = (String) envelope.get("processDefinitionId");
             if (pdId != null) {
                 eventsByClient.computeIfAbsent(clientId, k -> new CopyOnWriteArrayList<>()).add(pdId);
             }
+            latch.countDown();
         });
 
-        // Register clients with their respective principals
-        String clientA = sseEventStreamService.registerClient(emitterA, principalA, null, null, null);
-        String clientB = sseEventStreamService.registerClient(emitterB, principalB, null, null, null);
-
-        // Push an event for PD-A
+        // Push events (now 4 dispatches: 2 clients × 2 events, but only 2 pass AuthZ)
         sseEventStreamService.onDomainEvent(
             "{\"sequence\":1,\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
             + "\"version\":1,\"occurredAt\":\"2026-07-20T10:00:00Z\","
@@ -219,7 +221,6 @@ class SseEventStreamIntegrationTest {
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
             + "\"data\":{}}");
 
-        // Push an event for PD-B
         sseEventStreamService.onDomainEvent(
             "{\"sequence\":2,\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
             + "\"version\":1,\"occurredAt\":\"2026-07-20T10:00:01Z\","
@@ -227,17 +228,18 @@ class SseEventStreamIntegrationTest {
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
             + "\"data\":{}}");
 
+        latch.await(3, java.util.concurrent.TimeUnit.SECONDS);
+        Thread.sleep(200);
+
         // Clean up
         sseEventStreamService.removeClient(clientA);
         sseEventStreamService.removeClient(clientB);
 
         // POF GREEN: with real resolver, isolation is enforced
-        // Client A received ONLY PD-A events (not PD-B)
         List<String> aEvents = eventsByClient.getOrDefault(clientA, List.of());
         assertThat(aEvents).hasSize(1);
         assertThat(aEvents.get(0)).isEqualTo(pdIdA.toString());
 
-        // Client B received ONLY PD-B events (not PD-A)
         List<String> bEvents = eventsByClient.getOrDefault(clientB, List.of());
         assertThat(bEvents).hasSize(1);
         assertThat(bEvents.get(0)).isEqualTo(pdIdB.toString());
@@ -347,15 +349,13 @@ class SseEventStreamIntegrationTest {
     }
 
     @Test
-    void pof_authzIsolation_adminSeesAll() {
-        // Client with SUPER_ADMIN principal should receive all events
+    void pof_authzIsolation_adminSeesAll() throws Exception {
         SseEmitter emitter = new SseEmitter(5000L);
         Principal adminPrincipal = new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
-
         String clientId = sseEventStreamService.registerClient(emitter, adminPrincipal, null, null, null);
 
-        // Track events sent to admin
         Map<String, List<String>> eventsByClient = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         sseEventStreamService.clearEventListeners();
         sseEventStreamService.addEventListener((cid, envelope) -> {
             if (cid.equals(clientId)) {
@@ -364,9 +364,9 @@ class SseEventStreamIntegrationTest {
                     eventsByClient.computeIfAbsent(cid, k -> new CopyOnWriteArrayList<>()).add(pdId);
                 }
             }
+            latch.countDown();
         });
 
-        // Push an event — should NOT throw (admin sees all)
         String pdId = UUID.randomUUID().toString();
         sseEventStreamService.onDomainEvent(
             "{\"sequence\":1,\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
@@ -375,9 +375,10 @@ class SseEventStreamIntegrationTest {
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
             + "\"data\":{}}");
 
+        latch.await(3, java.util.concurrent.TimeUnit.SECONDS);
+        Thread.sleep(200);
         sseEventStreamService.removeClient(clientId);
 
-        // Admin received the event
         List<String> adminEvents = eventsByClient.getOrDefault(clientId, List.of());
         assertThat(adminEvents).hasSize(1);
         assertThat(adminEvents.get(0)).isEqualTo(pdId);

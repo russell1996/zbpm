@@ -42,7 +42,7 @@ public class SseEventStreamController {
         SseEmitter emitter = new SseEmitter(0L); // no timeout
 
         try {
-            // Send catchup events if Last-Event-ID is provided
+            // Send catchup events if Last-Event-ID is provided (cursor+limit, WO-PERF-6)
             if (lastEventId != null && !lastEventId.isBlank()) {
                 try {
                     long sinceSequence = Long.parseLong(lastEventId);
@@ -52,11 +52,13 @@ public class SseEventStreamController {
                 }
             }
 
-            // Register client for future events
+            // Register client for future events (429 if maxClients exceeded, WO-PERF-6)
             String clientId = sseEventStreamService.registerClient(emitter, principal, type, processInstanceId, processDefinitionKey);
 
             log.info("SSE stream opened: clientId={}, type={}, processInstanceId={}, processDefinitionKey={}, lastEventId={}",
                 clientId, type, processInstanceId, processDefinitionKey, lastEventId);
+        } catch (org.springframework.web.server.ResponseStatusException rse) {
+            throw rse;
         } catch (Exception e) {
             log.error("Error setting up SSE stream", e);
             emitter.completeWithError(e);
