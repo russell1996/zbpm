@@ -3,11 +3,8 @@ package com.zorrodev.bpm.engine.service;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
-
-import java.util.UUID;
 
 /**
  * WO-DEBT-7 S10: JPA-backed process-instance lifecycle reads and writes, moved
@@ -35,7 +32,6 @@ import java.util.UUID;
 public class ProcessInstanceLifecycleService {
 
     private final ProcessDefinitionRepository processDefinitionRepository;
-    private final ProcessInstanceRepository processInstanceRepository;
 
     /**
      * Resolves the definitionKey for the START auth check from the DTO.
@@ -52,14 +48,7 @@ public class ProcessInstanceLifecycleService {
         return definitionKey;
     }
 
-    /**
-     * Persists the initiator marker after a successful start. The runtime has
-     * already created the instance; this only annotates it.
-     */
-    public void recordInitiator(UUID instanceId, String claimed) {
-        processInstanceRepository.findById(instanceId).ifPresent(pi -> {
-            pi.setInitiator(claimed);
-            processInstanceRepository.save(pi);
-        });
-    }
+    // recordInitiator удалён в WO-API-1 (HOLД-находка CTO): после
+    // перевода на атомарный create(start, initiator) вызывающих 0,
+    // оставлять ловушку P-14 нельзя.
 }
