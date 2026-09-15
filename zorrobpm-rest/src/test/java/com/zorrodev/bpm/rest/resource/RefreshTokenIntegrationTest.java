@@ -144,9 +144,9 @@ class RefreshTokenIntegrationTest {
                 .andReturn();
 
         Collection<String> headers = refreshResult.getResponse().getHeaders("Set-Cookie");
-        String zbpmToken = extractCookieFromHeaders(headers, "zbpm_token");
+        String zbpmToken = extractCookieFromHeaders(headers, "__Host-zbpm_token");
         org.assertj.core.api.Assertions.assertThat(zbpmToken)
-                .as("refresh must set zbpm_token access cookie (F02)")
+                .as("refresh must set __Host-zbpm_token access cookie (F02, __Host- since SEC-64)")
                 .isNotNull()
                 .isNotBlank();
     }
@@ -160,9 +160,9 @@ class RefreshTokenIntegrationTest {
                 .andReturn();
 
         Collection<String> headers = result.getResponse().getHeaders("Set-Cookie");
-        String zbpmToken = extractCookieFromHeaders(headers, "zbpm_token");
+        String zbpmToken = extractCookieFromHeaders(headers, "__Host-zbpm_token");
         org.assertj.core.api.Assertions.assertThat(zbpmToken)
-                .as("login must set zbpm_token access cookie")
+                .as("login must set __Host-zbpm_token access cookie (__Host- since SEC-64)")
                 .isNotNull()
                 .isNotBlank();
     }

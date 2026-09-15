@@ -354,6 +354,10 @@ class SystemUserIntegrationTest {
 
     // --- #9: X-On-Behalf-Of must match the task (assignee/candidate/member) ---
 
+    // WO-SEC-64 HOLD: чужой "stranger" не существует в БД — fail-closed 404
+    // от existence-гейта (а не 403 от task-сверки). Разделение доказывает, что
+    // гейт стоит до работы; 403-кейс для существующего-но-чужого — ниже.
+
     @Test
     void criterion9_completeWithOnBehalfOf_realAssignee200_foreign403() throws Exception {
         addMember(processKey, systemUserId, "OWNER");
@@ -363,7 +367,10 @@ class SystemUserIntegrationTest {
         UUID taskId = startTaskAndGetId(); // assignee=sysuser1 (seeded by BPMN)
         assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("sysuser1");
 
-        // A foreign name is NOT the assignee -> 403 (POF: old code accepted any X-On-Behalf-Of)
+        // A foreign EXISTING name is NOT the assignee -> 403 (task-сверка).
+        // (Несуществующий — 404 от existence-гейта, отдельный слой; здесь
+        //  нужен существующий юзер, чтобы достичь именно task-сверки.)
+        createUser("stranger", "HUMAN", "MyStr0ng!P@ssw0rd");
         CompleteTaskDTO foreign = new CompleteTaskDTO();
         foreign.setVariables(List.of());
         mockMvc.perform(post("/user-tasks/" + taskId + "/complete")
@@ -400,7 +407,9 @@ class SystemUserIntegrationTest {
                 .andExpect(status().isOk());
         assertThat(userTaskRepository.findById(taskId).orElseThrow().getAssignee()).isEqualTo("int4manager");
 
-        // A name that is neither candidate nor assignee nor member -> 403, task untouched
+        // An EXISTING name that is neither candidate nor assignee nor member
+        // -> 403 от task-сверки, task untouched. (WO-SEC-64 HOLD: несуществующий
+        // даёт 404 от existence-гейта — отдельный слой, здесь нужен живой юзер.)
         UUID taskId2 = startClaimableTask();
         mockMvc.perform(post("/user-tasks/" + taskId2 + "/claim")
                         .header("Authorization", "Bearer " + systemKey)
@@ -433,7 +442,7 @@ class SystemUserIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
 
-        // A foreign name is NOT the assignee -> 403
+        // A foreign EXISTING name is NOT the assignee -> 403 (task-сверка).
         UUID taskId2 = startTaskAndGetId();
         mockMvc.perform(post("/user-tasks/" + taskId2 + "/complete")
                         .header("Authorization", "Bearer " + humanKey)

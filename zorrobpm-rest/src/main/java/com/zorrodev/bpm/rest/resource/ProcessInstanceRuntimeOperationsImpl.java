@@ -46,6 +46,9 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
     @Transactional
     @Override
     public IdDTO startProcessInstance(StartProcessInstanceDTO dto) {
+        // WO-SEC-64 (S-RBAC-3): OBO формат-гейт ПЕРВЫМ — мусор отклоняется до
+        // authz/старта (400, не 403/404-masking снизу). Порядок важен для T6.
+        String onBehalfOfEarly = runtimeOperationSupport.checkedOnBehalfOf();
         // Resolve definitionKey from DTO (JPA inside the service for the id→key path)
         String definitionKey = processInstanceLifecycleService.resolveDefinitionKey(dto);
         runtimeOperationSupport.requireOperate(definitionKey, AuthorizationService.Action.START);
@@ -68,7 +71,7 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
             }
         }
 
-        String onBehalfOf = runtimeOperationSupport.checkedOnBehalfOf();
+        String onBehalfOf = onBehalfOfEarly;
         IdDTO result = Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(runtimeOperationSupport::toDTO).orElseThrow();
 
         // WO-INT-2: persist initiator on process instance

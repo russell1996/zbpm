@@ -323,11 +323,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private String extractTokenFromCookie(HttpServletRequest request) {
         jakarta.servlet.http.Cookie[] cookies = request.getCookies();
         if (cookies == null) return null;
+        String legacy = null;
         for (jakarta.servlet.http.Cookie cookie : cookies) {
-            if ("zbpm_token".equals(cookie.getName())) {
+            // WO-SEC-64 (S-3): __Host- name first; legacy zbpm_token accepted as
+            // fallback during rotation (set nowhere new since SEC-64).
+            if ("__Host-zbpm_token".equals(cookie.getName())) {
                 return cookie.getValue();
             }
+            if ("zbpm_token".equals(cookie.getName())) {
+                legacy = cookie.getValue();
+            }
         }
-        return null;
+        return legacy;
     }
 }
