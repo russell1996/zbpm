@@ -105,6 +105,60 @@ class RuntimeOperationSupportTest {
         assertThat(support.checkedOnBehalfOf()).isNull();
     }
 
+    // WO-SEC-64 (S-RBAC-3): format gate — garbage never travels further
+
+    @Test
+    void checkedOnBehalfOf_rejectsGarbageFormat() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("!!!not-a-user!!!");
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        assertThatThrownBy(() -> support.checkedOnBehalfOf())
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void checkedOnBehalfOf_rejectsTooLong() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("a".repeat(65));
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        assertThatThrownBy(() -> support.checkedOnBehalfOf())
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
+    }
+
+    // WO-SEC-64 HOLD (S-RBAC-3, existence): ghost проходит regex, но такого
+    // юзера нет — сервис отвечает 404 (fail-closed до любой работы).
+
+    @Test
+    void checkedOnBehalfOf_rejectsGhostUsername() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("ghost-abc123");
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        org.mockito.Mockito.doThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "X-On-Behalf-Of user not found"))
+            .when(runtimeSupportService).requireOnBehalfExists("ghost-abc123");
+        assertThatThrownBy(() -> support.checkedOnBehalfOf())
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void checkedOnBehalfOf_acceptsLiveUsername() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("admin");
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        // exists — mock void-метода молчит
+        assertThat(support.checkedOnBehalfOf()).isEqualTo("admin");
+    }
+
+    @Test
+    void checkedOnBehalfOf_acceptsEmailStyle() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("bob@example.com");
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        assertThat(support.checkedOnBehalfOf()).isEqualTo("bob@example.com");
+    }
+
     // requireOperate
     @Test
     void requireOperate_allowsWhenCanOperate() {

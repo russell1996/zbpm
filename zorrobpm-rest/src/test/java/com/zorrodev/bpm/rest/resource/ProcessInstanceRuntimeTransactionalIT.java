@@ -77,6 +77,24 @@ class ProcessInstanceRuntimeTransactionalIT {
         u.setCreatedAt(Instant.now());
         u.setUpdatedAt(Instant.now());
         userRepository.save(u);
+        // WO-SEC-64 HOLD (S-RBAC-3, existence-гейт): фикстурные OBO-имена обязаны
+        // существовать в БД, иначе fail-closed 404 (а не молчаливый [claimed]).
+        for (String name : new String[]{"claimed-user", "happy-user"}) {
+            UiUserEntity e = new UiUserEntity();
+            e.setId(UUID.randomUUID());
+            e.setUsername(name);
+            e.setPasswordHash(passwordHasher.hash("pass"));
+            e.setFullName(name);
+            e.setRole("USER");
+            e.setActive(true);
+            e.setCreatedAt(Instant.now());
+            e.setUpdatedAt(Instant.now());
+            try {
+                userRepository.save(e);
+            } catch (Exception ex) {
+                // уже есть от прошлого прогона shared-H2 — идемпотентный сетап
+            }
+        }
     }
 
     private String deployProcessAndGrant() throws Exception {

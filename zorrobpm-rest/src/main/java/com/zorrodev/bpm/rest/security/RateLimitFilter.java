@@ -246,7 +246,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private boolean isDataEndpoint(String method, String path) {
-        if ("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method)) {
+        // WO-SEC-64 (S-16): all mutating methods share the data bucket — PUT/PATCH/DELETE
+        // used to bypass the limit entirely (GET/POST only). Reads stay covered as before.
+        if ("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method)
+                || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)
+                || "DELETE".equalsIgnoreCase(method)) {
             return path.startsWith("/events") || path.startsWith("/variables")
                 || path.startsWith("/process-instances") || path.startsWith("/user-tasks")
                 || path.startsWith("/service-tasks") || path.startsWith("/incidents")

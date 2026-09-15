@@ -72,10 +72,12 @@ public class AuthResource implements AuthContract {
             refreshTokenRepository.save(entity);
 
             // Set refresh token httpOnly cookie
+            // WO-SEC-64 (S-3): narrowed to Path=/auth/refresh — the only endpoint
+            // that reads it. A leaked XSS elsewhere no longer carries it ambiently.
             Cookie refreshCookie = new Cookie("refresh_token", refreshToken);
             refreshCookie.setHttpOnly(true);
             refreshCookie.setSecure(cookieSecure);
-            refreshCookie.setPath("/");
+            refreshCookie.setPath("/auth/refresh");
             refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
             refreshCookie.setAttribute("SameSite", "Strict");
             response.addCookie(refreshCookie);
@@ -174,11 +176,11 @@ public class AuthResource implements AuthContract {
         newEntity.setCreatedAt(Instant.now());
         refreshTokenRepository.save(newEntity);
 
-        // Set new refresh cookie
+        // Set new refresh cookie (WO-SEC-64: Path=/auth/refresh, see login())
         Cookie refreshCookie = new Cookie("refresh_token", newRefreshToken);
         refreshCookie.setHttpOnly(true);
         refreshCookie.setSecure(cookieSecure);
-        refreshCookie.setPath("/");
+        refreshCookie.setPath("/auth/refresh");
         refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
         refreshCookie.setAttribute("SameSite", "Strict");
         response.addCookie(refreshCookie);
@@ -227,18 +229,24 @@ public class AuthResource implements AuthContract {
             refreshTokenRepository.revokeAllByUserId(userId);
         }
 
-        // S4: Clear access cookie (zbpm_token)
-        Cookie clearAccess = new Cookie("zbpm_token", "");
-        clearAccess.setPath("/");
-        clearAccess.setMaxAge(0);
-        clearAccess.setHttpOnly(true);
-        clearAccess.setSecure(cookieSecure);
-        clearAccess.setAttribute("SameSite", "Strict");
-        response.addCookie(clearAccess);
+        // S4: Clear access cookie (both __Host- and legacy names — a clear must
+        // match the cookie's name AND Path, otherwise the browser keeps it)
+        for (String name : new String[]{"__Host-zbpm_token", "zbpm_token"}) {
+            Cookie clearAccess = new Cookie(name, "");
+            clearAccess.setPath("/");
+            clearAccess.setMaxAge(0);
+            clearAccess.setHttpOnly(true);
+            if (cookieSecure) {
+                // __Host- requires Secure; legacy clear keeps the old flag behavior
+                clearAccess.setSecure(true);
+            }
+            clearAccess.setAttribute("SameSite", "Strict");
+            response.addCookie(clearAccess);
+        }
 
-        // Clear refresh cookie
+        // Clear refresh cookie (WO-SEC-64: Path must match the narrowed set-path)
         Cookie clearRefresh = new Cookie("refresh_token", "");
-        clearRefresh.setPath("/");
+        clearRefresh.setPath("/auth/refresh");
         clearRefresh.setMaxAge(0);
         clearRefresh.setHttpOnly(true);
         clearRefresh.setSecure(cookieSecure);
@@ -257,14 +265,19 @@ public class AuthResource implements AuthContract {
     }
 
     /**
-     * WO-SEC-63 (F02): single place that sets the {@code zbpm_token} HttpOnly access cookie.
+     * WO-SEC-63 (F02): single place that sets the HttpOnly access cookie.
      * login() and refresh() must produce byte-identical attributes — the SPA only ever sends
      * this cookie, so a JSON-only refresh would silently log the user out at the TTL boundary.
+     *
+     * <p>WO-SEC-64 (S-3): {@code __Host-} prefix — the browser then enforces Secure +
+     * Path=/ + no-Domain on its side (defense in depth over SameSite=Strict).
+     * The legacy {@code zbpm_token} name is cleared on logout but no longer set:
+     * {@code JwtAuthFilter} still accepts it as fallback during rotation.
      */
     private void addAccessCookie(String token) {
-        Cookie cookie = new Cookie("zbpm_token", token);
+        Cookie cookie = new Cookie("__Host-zbpm_token", token);
         cookie.setHttpOnly(true);
-        cookie.setSecure(cookieSecure);
+        cookie.setSecure(true);
         cookie.setPath("/");
         cookie.setMaxAge((int) (jwtTtlMinutes * 60)); // sync with JWT expiry
         cookie.setAttribute("SameSite", "Strict");
