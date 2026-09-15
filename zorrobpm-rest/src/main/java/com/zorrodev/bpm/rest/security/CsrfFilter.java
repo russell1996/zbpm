@@ -87,11 +87,12 @@ public class CsrfFilter extends OncePerRequestFilter {
         }
         String path = PathNormalizer.normalize(request.getRequestURI());
         // No ambient session on these paths yet — nothing to forge.
-        // /process-instances is idempotency-scoped, not CSRF-scoped: the
-        // Idempotency-Key binds (key, endpoint, credential), so a forged
-        // cross-site POST cannot replay another user's credential scope.
-        if (JwtAuthFilter.isPublicPath(path) || "/auth/logout".equals(path) || "/auth/me".equals(path)
-                || "/process-instances".equals(path)) {
+        // (WO-SEC-64 HOLD: earlier carve-outs for /process-instances and
+        // /auth/logout removed — Idempotency-Key is OPTIONAL (IdempotencyFilter
+        // passes keyless requests straight through), so it cannot substitute a
+        // CSRF layer; logout-CSRF is a real nuisance. Existing tests now send
+        // Origin like the SPA does.)
+        if (JwtAuthFilter.isPublicPath(path) || "/auth/me".equals(path)) {
             return false;
         }
         // Bearer present → not cookie-auth → not CSRF-able.

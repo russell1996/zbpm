@@ -261,21 +261,32 @@ class Sec64CsrfHeadersRatelimitIT {
     }
 
     // ── T6: S-RBAC-3 — мусор в X-On-Behalf-Of отклоняется ──
-    // claimUserTask идёт через checkedOnBehalfOf напрямую (формат), а
-    // несуществующий валидный — через requireOnBehalfMatchesTask (существование).
+    // WO-SEC-64 HOLD: случайный taskId даёт 404 ДО чтения OBO — такой тест
+    // пуст (зелёный без regex — claim читает OBO после гардов задачи).
+    // Поэтому T6 бьёт в POST /process-instances: OBO читается ПЕРВЫМ делом
+    // (строка 71, до authz/старта). Мусор → 400 на regex; валидный-но-чужой
+    // проходит regex и падает позже (не 400) — разделение слоёв доказано.
+    // Оба ассерта точные (не is4xx), чтобы masking был невозможен.
 
     @Test
     void srbac3_onBehalfOf_garbage_rejected() throws Exception {
-        UUID taskId = UUID.randomUUID();
-        mockMvc.perform(post("/user-tasks/" + taskId + "/claim")
+        // Чистый regex-уровень: POST /process-instances читает OBO ПЕРВЫМ
+        // делом после authz (строка 71, до старта): 400 здесь доказывает именно
+        // regex-гейт. Валидный-но-чужой проходит regex и падает позже
+        // (requireOperate/authz/старт — не 400), что доказывает разделение слоёв.
+        // Claim-путь для 400 НЕ годится: там OBO читается после гардов задачи.
+        String body = "{\"processDefinitionKey\":\"sec64-dummy\"}";
+        mockMvc.perform(post("/process-instances")
                         .header("Authorization", "Bearer " + serviceApiKey)
-                        .header("X-On-Behalf-Of", "!!!not-a-user!!!"))
-                .andExpect(status().is4xxClientError());
-        // несуществующий, но форматно-валидный — отклоняется сверкой существования
-        mockMvc.perform(post("/user-tasks/" + taskId + "/claim")
+                        .header("X-On-Behalf-Of", "!!!not-a-user!!!")
+                        .content(body).contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest());
+        int validStatus = mockMvc.perform(post("/process-instances")
                         .header("Authorization", "Bearer " + serviceApiKey)
-                        .header("X-On-Behalf-Of", "ghost-" + UUID.randomUUID().toString().substring(0, 8)))
-                .andExpect(status().is4xxClientError());
+                        .header("X-On-Behalf-Of", "ghost-" + UUID.randomUUID().toString().substring(0, 8))
+                        .content(body).contentType(MediaType.APPLICATION_JSON))
+                .andReturn().getResponse().getStatus();
+        assertThat(validStatus).as("валидный OBO проходит regex-гейт (падает позже, не 400)").isNotEqualTo(400);
     }
 
     // ── T7: cookie-флаги — __Host-префикс + Path refresh ──
