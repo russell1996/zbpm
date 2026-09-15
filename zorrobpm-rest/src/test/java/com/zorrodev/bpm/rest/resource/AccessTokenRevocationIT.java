@@ -204,8 +204,10 @@ class AccessTokenRevocationIT {
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk())
             .andReturn();
-        Cookie loginAccess = loginResult.getResponse().getCookie("zbpm_token");
-        assertThat(loginAccess).as("login must set zbpm_token").isNotNull();
+        // WO-SEC-64: access cookie is __Host- since SEC-64 (Secure+Path=/ enforced
+        // browser-side); legacy name no longer set, only cleared on logout.
+        Cookie loginAccess = loginResult.getResponse().getCookie("__Host-zbpm_token");
+        assertThat(loginAccess).as("login must set __Host-zbpm_token").isNotNull();
         Collection<String> loginHeaders = loginResult.getResponse().getHeaders("Set-Cookie");
         String refreshToken = extractCookie(loginHeaders, "refresh_token");
         assertThat(refreshToken).as("login must set refresh_token").isNotBlank();
@@ -218,8 +220,8 @@ class AccessTokenRevocationIT {
             .andExpect(status().isOk())
             .andReturn();
 
-        Cookie refreshAccess = refreshResult.getResponse().getCookie("zbpm_token");
-        assertThat(refreshAccess).as("refresh must set zbpm_token cookie (F02)").isNotNull();
+        Cookie refreshAccess = refreshResult.getResponse().getCookie("__Host-zbpm_token");
+        assertThat(refreshAccess).as("refresh must set __Host-zbpm_token cookie (F02)").isNotNull();
         assertThat(refreshAccess.getValue()).as("refreshed cookie must carry a fresh token").isNotBlank();
         assertThat(refreshAccess.getValue()).as("refreshed token must differ").isNotEqualTo(loginAccess.getValue());
         // byte-identical flags to login (F02): SPA relies on the cookie, not the JSON

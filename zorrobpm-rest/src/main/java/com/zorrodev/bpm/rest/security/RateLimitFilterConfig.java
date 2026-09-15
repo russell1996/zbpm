@@ -19,6 +19,8 @@ import java.util.stream.Collectors;
  * Auth endpoints: /auth/login (per-IP + per-account), /auth/refresh (per-user).
  * Data endpoints: /events, /variables, /process-instances, /user-tasks,
  *                 /service-tasks, /incidents (per-IP generous limit).
+ * WO-SEC-64 (S-16): the same data paths now cover PUT/PATCH/DELETE, not only
+ * GET/POST (method check lives in the filter; registration is path-based).
  *
  * WO-SCALE-2: rate-limit state is stored in PostgreSQL via {@code PgRateLimiter}
  * (cluster-safe), not in per-instance Caffeine caches.

@@ -105,6 +105,36 @@ class RuntimeOperationSupportTest {
         assertThat(support.checkedOnBehalfOf()).isNull();
     }
 
+    // WO-SEC-64 (S-RBAC-3): format gate — garbage never travels further
+
+    @Test
+    void checkedOnBehalfOf_rejectsGarbageFormat() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("!!!not-a-user!!!");
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        assertThatThrownBy(() -> support.checkedOnBehalfOf())
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void checkedOnBehalfOf_rejectsTooLong() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("a".repeat(65));
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        assertThatThrownBy(() -> support.checkedOnBehalfOf())
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void checkedOnBehalfOf_acceptsEmailStyle() {
+        when(request.getHeader("X-On-Behalf-Of")).thenReturn("bob@example.com");
+        Principal.ServicePrincipal sp = new Principal.ServicePrincipal(UUID.randomUUID(), UUID.randomUUID(), Map.of());
+        when(request.getAttribute("principal")).thenReturn(sp);
+        assertThat(support.checkedOnBehalfOf()).isEqualTo("bob@example.com");
+    }
+
     // requireOperate
     @Test
     void requireOperate_allowsWhenCanOperate() {
