@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import static org.springframework.http.HttpStatus.FORBIDDEN;
 import static org.springframework.http.HttpStatus.UNAUTHORIZED;
+import jakarta.validation.Valid;
 
 /**
  * WO-INT-6: in-app mail settings management endpoints.
@@ -42,13 +43,13 @@ public class MailResource implements MailContract {
     }
 
     @Override
-    public MailSettingsDTO saveMailSettings(@RequestBody MailSettingsDTO dto) {
+    public MailSettingsDTO saveMailSettings(@Valid @RequestBody MailSettingsDTO dto) {
         requireSuperAdmin();
         return mailSettingsService.saveSettings(dto, getPrincipal());
     }
 
     @Override
-    public MailCheckResultDTO checkMailSettings(@RequestBody MailSettingsDTO dto) {
+    public MailCheckResultDTO checkMailSettings(@Valid @RequestBody MailSettingsDTO dto) {
         requireSuperAdmin();
         return mailSettingsService.checkConnection(dto, getPrincipal());
     }

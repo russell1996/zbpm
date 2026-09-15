@@ -112,7 +112,7 @@ class IdempotencyRacePgIT {
                             .header("Idempotency-Key", key)
                             .content(body)
                             .contentType(MediaType.APPLICATION_JSON))
-                        .andExpect(status().isOk())
+                        .andExpect(status().isCreated())
                         .andReturn();
                 } catch (Throwable t) {
                     errors.add(t);
@@ -163,6 +163,6 @@ class IdempotencyRacePgIT {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 }

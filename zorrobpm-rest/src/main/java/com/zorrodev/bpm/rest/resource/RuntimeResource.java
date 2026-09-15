@@ -10,8 +10,10 @@ import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -25,28 +27,34 @@ public class RuntimeResource implements RuntimeContract {
     private final ServiceTaskRuntimeOperations serviceTaskRuntimeOperations;
     private final UserTaskRuntimeOperations userTaskRuntimeOperations;
 
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (Location ставит имплементация,
+     * статус — здесь: маппинг висит на этом методе, `@ResponseStatus` на
+     * имплементации `*Operations` игнорируется роутером).
+     */
     @Override
+    @ResponseStatus(HttpStatus.CREATED)
     public IdDTO startProcessInstance(@Valid @RequestBody StartProcessInstanceDTO dto) {
         return processInstanceRuntimeOperations.startProcessInstance(dto);
     }
 
     @Override
-    public IdDTO completeServiceTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
+    public IdDTO completeServiceTask(@PathVariable UUID id, @Valid @RequestBody CompleteTaskDTO dto) {
         return serviceTaskRuntimeOperations.completeServiceTask(id, dto);
     }
 
     @Override
-    public IdDTO completeAdHocScopeJob(@PathVariable UUID id, @RequestBody AdHocJobResultDTO dto) {
+    public IdDTO completeAdHocScopeJob(@PathVariable UUID id, @Valid @RequestBody AdHocJobResultDTO dto) {
         return serviceTaskRuntimeOperations.completeAdHocScopeJob(id, dto);
     }
 
     @Override
-    public IdDTO failServiceTask(@PathVariable UUID id, @RequestBody FailServiceTaskDTO dto) {
+    public IdDTO failServiceTask(@PathVariable UUID id, @Valid @RequestBody FailServiceTaskDTO dto) {
         return serviceTaskRuntimeOperations.failServiceTask(id, dto);
     }
 
     @Override
-    public IdDTO completeUserTask(@PathVariable UUID id, @RequestBody CompleteTaskDTO dto) {
+    public IdDTO completeUserTask(@PathVariable UUID id, @Valid @RequestBody CompleteTaskDTO dto) {
         return userTaskRuntimeOperations.completeUserTask(id, dto);
     }
 
@@ -61,16 +69,20 @@ public class RuntimeResource implements RuntimeContract {
     }
 
     @Override
-    public IdDTO assignUserTask(@PathVariable UUID id, @RequestBody AssignUserTaskDTO dto) {
+    public IdDTO assignUserTask(@PathVariable UUID id, @Valid @RequestBody AssignUserTaskDTO dto) {
         return userTaskRuntimeOperations.assignUserTask(id, dto);
     }
 
     @Override
-    public IdDTO resolveIncident(@PathVariable UUID id, @RequestBody ResolveIncidentDTO dto) {
+    public IdDTO resolveIncident(@PathVariable UUID id, @Valid @RequestBody ResolveIncidentDTO dto) {
         return incidentRuntimeOperations.resolveIncident(id, dto);
     }
 
+    /**
+     * WO-API-1 (API-1): cancel асинхронен (eventual) → 202 Accepted, не голый 200.
+     */
     @Override
+    @ResponseStatus(HttpStatus.ACCEPTED)
     public IdDTO cancelProcessInstance(@PathVariable UUID id) {
         return processInstanceRuntimeOperations.cancelProcessInstance(id);
     }

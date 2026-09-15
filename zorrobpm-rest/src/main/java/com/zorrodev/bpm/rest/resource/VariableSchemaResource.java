@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Set;
+import jakarta.validation.Valid;
 
 @RestController
 @RequiredArgsConstructor
@@ -25,7 +26,7 @@ public class VariableSchemaResource implements VariableSchemaContract {
     private final JsonSchemaValidator jsonSchemaValidator;
 
     @Override
-    public GeneratedSchemaDTO generateSchema(@RequestBody GenerateSchemaDTO dto) {
+    public GeneratedSchemaDTO generateSchema(@Valid @RequestBody GenerateSchemaDTO dto) {
         if (dto.getFields() == null || dto.getFields().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "fields must not be empty");
         }

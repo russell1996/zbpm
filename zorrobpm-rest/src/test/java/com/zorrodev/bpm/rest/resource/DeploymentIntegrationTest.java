@@ -132,7 +132,7 @@ class DeploymentIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(java.util.Map.of("bpmn", bpmn)))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         assertThat(mapper.readTree(redeployed.getResponse().getContentAsString()).get("version").asInt()).isEqualTo(1);
     }
@@ -150,7 +150,7 @@ class DeploymentIntegrationTest {
                     + "{\"type\":\"DMN\",\"content\":" + mapper.writeValueAsString(DMN_DISCOUNT) + "},"
                     + "{\"type\":\"BPMN\",\"content\":" + mapper.writeValueAsString(bpmn) + "}]}")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         JsonNode body = mapper.readTree(deployed.getResponse().getContentAsString());
         UUID deploymentId = UUID.fromString(body.get("id").asText());
@@ -168,7 +168,7 @@ class DeploymentIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content("{\"processDefinitionId\":\"" + pdId + "\",\"variables\":[{\"name\":\"category\",\"value\":\"gold\",\"type\":\"STRING\"}]}")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         UUID piId = UUID.fromString(mapper.readTree(started.getResponse().getContentAsString()).get("id").asText());
         MvcResult vars = mockMvc.perform(get("/variables?processInstanceId=" + piId)
@@ -195,7 +195,7 @@ class DeploymentIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(java.util.Map.of("bpmn", bpmn)))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         UUID pdId = UUID.fromString(mapper.readTree(pd.getResponse().getContentAsString()).get("id").asText());
         assertThat(processDefinitionRepository.findById(pdId).orElseThrow().getDeploymentId()).isNull();
@@ -206,7 +206,7 @@ class DeploymentIntegrationTest {
                 .content("{\"dmn\":" + mapper.writeValueAsString(
                     DMN_DISCOUNT.replace("Definitions_discount", "Definitions_" + decision).replace("id=\"discount\"", "id=\"" + decision + "\"")) + "}")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
         assertThat(dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decision).orElseThrow().getDeploymentId())
             .isNull();
     }

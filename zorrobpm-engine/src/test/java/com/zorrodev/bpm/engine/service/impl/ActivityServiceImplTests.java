@@ -613,7 +613,7 @@ public class ActivityServiceImplTests {
         // WO-C8-3b: this fixture binds with bindingType="deployment", so the pinned lookup
         // replaces the latest lookup below (removed as dead — strict stubs enforce it).
         when(dbService.getProcessDefinition(eq("dummy-process"), any())).thenReturn(dummyProcessDefinition);
-        when(dbService.createProcessInstance(any(UUID.class), eq(dummyProcessDefinitionId), any())).thenReturn(dummyProcessInstanceId);
+        when(dbService.createProcessInstance(any(UUID.class), eq(dummyProcessDefinitionId), any(), any())).thenReturn(dummyProcessInstanceId);
         when(dbService.getProcessInstance(eq(dummyProcessInstanceId))).thenReturn(dummyPi);
         when(dbService.getProcessInstance(eq(processInstanceId))).thenReturn(pi);
         when(dbService.createActivity(eq(processInstanceId), any(UUID.class), eq(bpmn.getElement("startEvent1")))).thenReturn(UUID.randomUUID());

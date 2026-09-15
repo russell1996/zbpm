@@ -2,6 +2,7 @@ package com.zorrodev.bpm.contract.dto;
 
 import lombok.Getter;
 import lombok.Setter;
+import jakarta.validation.constraints.NotBlank;
 
 /**
  * WO-SEC-58: self-service password change. Exactly two fields — the caller can
@@ -11,6 +12,8 @@ import lombok.Setter;
 @Getter
 @Setter
 public class ChangeMyPasswordDTO {
+    @NotBlank(message = "currentPassword is required")
     private String currentPassword;
+    @NotBlank(message = "newPassword is required")
     private String newPassword;
 }

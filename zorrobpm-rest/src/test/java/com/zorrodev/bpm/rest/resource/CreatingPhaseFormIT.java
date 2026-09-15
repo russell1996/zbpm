@@ -64,7 +64,7 @@ class CreatingPhaseFormIT {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID pdId = UUID.fromString(mapper.readTree(deployed.getResponse().getContentAsString()).get("id").asText());
 
@@ -75,7 +75,7 @@ class CreatingPhaseFormIT {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(start))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID piId = UUID.fromString(mapper.readTree(started.getResponse().getContentAsString()).get("id").asText());
 

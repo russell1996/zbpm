@@ -108,7 +108,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.key").value(key))
                 .andExpect(jsonPath("$.version").value(1))
                 .andExpect(jsonPath("$.schema").value(schema));
@@ -126,7 +126,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(deployForm(key, schema)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.version").value(1));
 
         // Second deploy (same key)
@@ -134,7 +134,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(deployForm(key, schema)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.version").value(2));
     }
 
@@ -151,12 +151,12 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(deployForm(key, schemaV1)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         mockMvc.perform(post("/forms")
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(deployForm(key, schemaV2)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // GET returns v2
         mockMvc.perform(get("/forms/" + key)
@@ -213,7 +213,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID pdId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -230,7 +230,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(startDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID instanceId = UUID.fromString(
             mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
@@ -255,7 +255,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(deployForm("orderForm", schema)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Start process and get task
         String taskId = startProcessAndGetTaskId();
@@ -277,7 +277,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(deployForm("prefillForm", schema)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         String taskId = startProcessAndGetTaskId();
 
@@ -304,7 +304,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID pdId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -315,7 +315,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(startDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID instanceId = UUID.fromString(
             mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
@@ -350,7 +350,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID pdId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -361,7 +361,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(startDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID instanceId = UUID.fromString(
             mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());
@@ -400,7 +400,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(new DeployFormDTO() {{ setKey(formKey); setKind("FORM_JS"); setSchema(schema); }}))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Deploy BPMN with startFormKey
         String bpmn = """
@@ -434,7 +434,7 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // GET /process-definitions/{key}/start-form → 200 + schema
         mockMvc.perform(get("/process-definitions/audit3-process/start-form")

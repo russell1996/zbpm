@@ -13,7 +13,9 @@ import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.UserInvitationService;
 import com.zorrodev.bpm.engine.service.UiUserService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpStatus;
@@ -24,6 +26,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 @RestController
 @RequiredArgsConstructor
@@ -34,6 +37,7 @@ public class UserResource implements UserContract {
     private final UserInvitationService invitationService;
     private final AuditLogService auditLogService;
     private final HttpServletRequest request;
+    private final HttpServletResponse httpResponse;
 
     @Override
     public PagedDataDTO<UiUser> getUsers(@ParameterObject UiUserQuery query) {
@@ -49,8 +53,12 @@ public class UserResource implements UserContract {
         }
     }
 
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут).
+     */
     @Override
-    public IdDTO createUser(@RequestBody CreateUiUserDTO dto) {
+    @ResponseStatus(HttpStatus.CREATED)
+    public IdDTO createUser(@Valid @RequestBody CreateUiUserDTO dto) {
         try {
             UUID id = userService.create(dto);
             // WO-ACL-18: the chosen creation path is recorded (criterion 3), and an
@@ -61,6 +69,9 @@ public class UserResource implements UserContract {
             } else {
                 auditLogService.record(principalFromRequest(), "USER_CREATE_PASSWORD", null, id.toString());
             }
+            if (httpResponse != null) {
+                httpResponse.setHeader("Location", "/users/" + id);
+            }
             return id(id);
         } catch (EngineException e) {
             log.warn("Failed to create user: {}", e.getMessage());
@@ -69,7 +80,7 @@ public class UserResource implements UserContract {
     }
 
     @Override
-    public IdDTO updateUser(@PathVariable UUID id, @RequestBody UpdateUiUserDTO dto) {
+    public IdDTO updateUser(@PathVariable UUID id, @Valid @RequestBody UpdateUiUserDTO dto) {
         try {
             return id(userService.update(id, dto));
         } catch (NoSuchElementException e) {

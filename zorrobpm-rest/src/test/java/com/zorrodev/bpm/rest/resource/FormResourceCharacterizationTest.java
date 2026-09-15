@@ -212,7 +212,7 @@ class FormResourceCharacterizationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(deploy("orderForm", "FORM_JS",
                     "{\"id\": \"order-form\", \"versionTag\": \"v1\", \"components\":[]}"))))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
 
         verify(formRepository).save(captor.capture());
         assertThat(captor.getValue().getFormId()).isEqualTo("order-form");
@@ -231,7 +231,7 @@ class FormResourceCharacterizationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(deploy("orderForm", "FORM_JS",
                     "{\"components\":[]}"))))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
 
         verify(formRepository).save(captor.capture());
         assertThat(captor.getValue().getVersionTag()).isNull();
@@ -245,7 +245,7 @@ class FormResourceCharacterizationTest {
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(deploy("orderForm", "FORM_JS", "{\"components\":[]}"))))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andExpect(jsonPath("$.key").value("orderForm"))
             .andExpect(jsonPath("$.version").value(3))
             .andExpect(jsonPath("$.kind").value("FORM_JS"));
@@ -261,7 +261,7 @@ class FormResourceCharacterizationTest {
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(deploy("orderForm", "FORM_JS", "{\"components\":[]}"))))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andExpect(jsonPath("$.version").value(6));
     }
 
@@ -365,7 +365,7 @@ class FormResourceCharacterizationTest {
                 .header("Authorization", "Bearer " + ADMIN_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(deploy("vars", "VARIABLE_SCHEMA", "{\"type\":\"object\"}"))))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andExpect(jsonPath("$.version").value(1));
     }
 

@@ -20,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 /**
  * WO-DEBT-7 S4 — thin facade over {@link ProcessMemberService}: auth checks +
@@ -107,14 +108,14 @@ public class MemberResource implements MemberContract {
 
     @Transactional
     @Override
-    public MemberDTO addMember(@PathVariable String key, @RequestBody AddMemberDTO dto) {
+    public MemberDTO addMember(@PathVariable String key, @Valid @RequestBody AddMemberDTO dto) {
         requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
         return processMemberService.addMember(key, dto, getPrincipal());
     }
 
     @Transactional
     @Override
-    public MemberDTO changeRole(@PathVariable String key, @PathVariable UUID userId, @RequestBody ChangeRoleDTO dto) {
+    public MemberDTO changeRole(@PathVariable String key, @PathVariable UUID userId, @Valid @RequestBody ChangeRoleDTO dto) {
         requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
         return processMemberService.changeRole(key, userId, dto, getPrincipal());
     }

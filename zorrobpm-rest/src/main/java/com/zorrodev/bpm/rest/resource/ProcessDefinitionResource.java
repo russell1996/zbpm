@@ -19,7 +19,10 @@ import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springdoc.core.annotations.ParameterObject;
@@ -46,6 +49,7 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
     private final AuthorizationService authorizationService;
     private final BpmnParseService bpmnParseService;
     private final HttpServletRequest request;
+    private final HttpServletResponse httpResponse;
     private final EventAuthzResolver eventAuthzResolver;
 
     private Collection<UUID> resolveAllowedPdIds() {
@@ -82,12 +86,21 @@ public class ProcessDefinitionResource implements ProcessDefinitionContract {
      * ADR-2: deploy→owner auto-assignment REMOVED.
      * Process registry entity IS created (needed for member management).
      */
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут).
+     */
     @Override
+    @ResponseStatus(HttpStatus.CREATED)
     public ProcessDefinition addProcessDefinition(@Valid AddProcessDefinitionDTO dto) {
         requireSuperAdmin();
         ProcessDefinition result = processDefinitionService.addProcessDefinition(dto.getBpmn());
         ensureProcessRegistry(result.getKey());
         auditLogService.record(getPrincipal(), "DEPLOY", result.getKey(), result.getId().toString());
+        // WO-API-1: Location через nullable-response (unit-тесты с @InjectMocks без
+        // response-контекста не должны NPE — заголовок опционален, статус 201 главный).
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/process-definitions/" + result.getId());
+        }
         return result;
     }
 

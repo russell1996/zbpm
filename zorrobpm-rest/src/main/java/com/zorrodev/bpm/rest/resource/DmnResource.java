@@ -9,11 +9,13 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import jakarta.validation.Valid;
 
 @RestController
 @RequiredArgsConstructor
@@ -32,6 +35,7 @@ public class DmnResource implements DmnContract {
     private final DmnService dmnService;
     private final EventAuthzResolver eventAuthzResolver;
     private final HttpServletRequest request;
+    private final HttpServletResponse httpResponse;
     private final AuditLogService auditLogService;
 
     /**
@@ -75,8 +79,12 @@ public class DmnResource implements DmnContract {
      * SUPER_ADMIN only — no principal → 401, non-admin → 403. An endpoint uploading executable
      * logic must not be weaker than the BPMN one.
      */
+    /**
+     * WO-API-1 (API-1): create → 201 + Location (контракт не тронут).
+     */
     @Override
-    public List<DmnDecision> deployDmn(@RequestBody DeployDmnDTO dto) {
+    @ResponseStatus(HttpStatus.CREATED)
+    public List<DmnDecision> deployDmn(@Valid @RequestBody DeployDmnDTO dto) {
         requireSuperAdmin();
         Map<String, Integer> before;
         try {
@@ -96,6 +104,10 @@ public class DmnResource implements DmnContract {
                 auditLogService.record(getPrincipal(), "DEPLOY", decision.getId(),
                     decision.getId() + ":v" + decision.getVersion());
             }
+        }
+        // WO-API-1: Location по первой задеплоенной decision (nullable-guard как везде).
+        if (httpResponse != null && !after.isEmpty()) {
+            httpResponse.setHeader("Location", "/dmn/" + after.get(0).getId());
         }
         return after;
     }
@@ -139,7 +151,7 @@ public class DmnResource implements DmnContract {
     }
 
     @Override
-    public Object evaluateDecision(@PathVariable String decisionId, @RequestBody EvaluateDecisionDTO dto) {
+    public Object evaluateDecision(@PathVariable String decisionId, @Valid @RequestBody EvaluateDecisionDTO dto) {
         requireDecisionAccess(decisionId);
         Object result;
         try {

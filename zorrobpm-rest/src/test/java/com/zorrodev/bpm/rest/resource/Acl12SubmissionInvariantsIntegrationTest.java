@@ -451,7 +451,7 @@ class Acl12SubmissionInvariantsIntegrationTest {
 
     private ProcessSubmissionDTO submit(String token, String bpmnXml) throws Exception {
         MvcResult result = submitRaw(token, bpmnXml);
-        assertEquals(200, result.getResponse().getStatus(), "submit must succeed: " + body(result));
+        assertEquals(201, result.getResponse().getStatus(), "submit must succeed: " + body(result));
         ProcessSubmissionDTO dto = mapper.readValue(result.getResponse().getContentAsString(),
             ProcessSubmissionDTO.class);
         createdSubmissionIds.add(dto.getId());
@@ -498,7 +498,7 @@ class Acl12SubmissionInvariantsIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(dto)))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn().getResponse().getContentAsString();
         createdKeys.add(key);
         return mapper.readValue(result, ProcessDefinition.class);

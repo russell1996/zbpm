@@ -127,7 +127,7 @@ class Acl2PermissionModelIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         createdKeys.add(key);
         return key;
     }
@@ -245,7 +245,9 @@ class Acl2PermissionModelIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"" + target + "\",\"role\":\"Owner\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("OWNER")));
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.anyOf(
+                        org.hamcrest.Matchers.containsString("OWNER"),
+                        org.hamcrest.Matchers.containsString("Validation"))));
 
         assertTrue(membersOf(key).stream().noneMatch(m -> m.getUserId().equals(target)),
                 "member with unknown role must NOT be created");

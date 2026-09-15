@@ -73,7 +73,7 @@ class UserMembershipIT {
                 .header("Authorization", "Bearer " + superAdminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 
     // --- Criterion #1: super-admin → 200 + list matches memberships ---

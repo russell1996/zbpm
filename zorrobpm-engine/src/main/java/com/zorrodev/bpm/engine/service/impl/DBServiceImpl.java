@@ -57,6 +57,13 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId,
+            List<ProcessVariable> variables, String claimedInitiator) {
+        return processInstanceDbOperations.createProcessInstance(
+            parentActivityId, processDefinitionId, variables, claimedInitiator);
+    }
+
+    @Override
     public UUID createActivity(UUID processInstanceId, UUID token, BpmnElementModel element) {
         return activityDbOperations.createActivity(processInstanceId, token, element);
     }

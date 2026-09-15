@@ -99,7 +99,7 @@ class JsonSchemaValidationIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(vsDto("vs-valid-" + UUID.randomUUID().toString().substring(0, 8), validSchema)))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.kind").value("VARIABLE_SCHEMA"));
     }
 
@@ -116,7 +116,7 @@ class JsonSchemaValidationIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.kind").value("FORM_JS"));
     }
 }
