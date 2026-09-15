@@ -33,10 +33,11 @@ class TimerDedicatedPoolTest {
 
     @Test
     void timerScheduler_usesDedicatedExecutor() throws Exception {
-        Field f = TimerScheduler.class.getDeclaredField("timerExecutor");
+        Field f = TimerScheduler.class.getDeclaredField("timerDispatcherExecutor");
         f.setAccessible(true);
         Executor timerExec = (Executor) f.get(scheduler);
         assertThat(timerExec).isNotNull();
+        assertThat(ctx.containsBean("timerDispatcherExecutor")).isTrue();
     }
 
     @Test

@@ -126,42 +126,44 @@ public class SseEventStreamService implements SmartLifecycle {
      */
     public String registerClient(SseEmitter emitter, Principal principal, String typeFilter,
                                    String processInstanceIdFilter, String processDefinitionKeyFilter) {
-        if (clients.size() >= maxClients) {
-            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many SSE clients");
+        synchronized (clients) {
+            if (clients.size() >= maxClients) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many SSE clients");
+            }
+            String clientId = UUID.randomUUID().toString();
+            Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
+
+            SseClientInfo info = new SseClientInfo(clientId, emitter, principal, allowedPdIds,
+                typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
+            clients.put(clientId, info);
+
+            emitter.onCompletion(() -> {
+                clients.remove(clientId);
+                log.info("SSE client {} disconnected (completion)", clientId);
+                stopRabbitMqListenerIfNoClients();
+            });
+            emitter.onTimeout(() -> {
+                clients.remove(clientId);
+                log.info("SSE client {} disconnected (timeout)", clientId);
+                stopRabbitMqListenerIfNoClients();
+            });
+            emitter.onError(e -> {
+                clients.remove(clientId);
+                log.info("SSE client {} disconnected (error: {})", clientId, e.getMessage());
+                stopRabbitMqListenerIfNoClients();
+            });
+
+            // If this is the first client, start RabbitMQ subscription.
+            // Never on the HTTP thread: declares + container.start() are blocking
+            // broker RPCs (consumer start waits up to 60s on a sick broker), and a
+            // stalled broker once hung GET /events/stream with zero response
+            // (WO-REL-20). The stream opens immediately; events flow once ready.
+            ensureBridgeStarted();
+
+            log.info("SSE client {} registered: type={}, processInstanceId={}, processDefinitionKey={}",
+                clientId, typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
+            return clientId;
         }
-        String clientId = UUID.randomUUID().toString();
-        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
-
-        SseClientInfo info = new SseClientInfo(clientId, emitter, principal, allowedPdIds,
-            typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
-        clients.put(clientId, info);
-
-        emitter.onCompletion(() -> {
-            clients.remove(clientId);
-            log.info("SSE client {} disconnected (completion)", clientId);
-            stopRabbitMqListenerIfNoClients();
-        });
-        emitter.onTimeout(() -> {
-            clients.remove(clientId);
-            log.info("SSE client {} disconnected (timeout)", clientId);
-            stopRabbitMqListenerIfNoClients();
-        });
-        emitter.onError(e -> {
-            clients.remove(clientId);
-            log.info("SSE client {} disconnected (error: {})", clientId, e.getMessage());
-            stopRabbitMqListenerIfNoClients();
-        });
-
-        // If this is the first client, start RabbitMQ subscription.
-        // Never on the HTTP thread: declares + container.start() are blocking
-        // broker RPCs (consumer start waits up to 60s on a sick broker), and a
-        // stalled broker once hung GET /events/stream with zero response
-        // (WO-REL-20). The stream opens immediately; events flow once ready.
-        ensureBridgeStarted();
-
-        log.info("SSE client {} registered: type={}, processInstanceId={}, processDefinitionKey={}",
-            clientId, typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
-        return clientId;
     }
 
     /**
@@ -244,14 +246,18 @@ public class SseEventStreamService implements SmartLifecycle {
                         }
                     }
 
-                    // Send with 5s timeout — slow client is dropped, not blocked
+                    // Send with 5s timeout — slow client is dropped, not blocked.
+                    // WO-PERF-6: cancel(true) does NOT interrupt a blocking network write
+                    // (Java IO without InterruptibleChannel) — the thread frees only when
+                    // emitter.complete()/IOException fires, non-deterministically. We at
+                    // least isolate the block to sseExecutor (not ForkJoinPool.commonPool).
                     CompletableFuture<Void> cf = CompletableFuture.runAsync(() -> {
                         try {
                             client.emitter.send(event);
                         } catch (IOException e) {
                             throw new java.util.concurrent.CompletionException(e);
                         }
-                    });
+                    }, sseExecutor);
                     try {
                         cf.get(sendTimeoutMs, TimeUnit.MILLISECONDS);
                     } catch (TimeoutException te) {
