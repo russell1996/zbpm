@@ -17,6 +17,13 @@ public interface DBService {
 
     UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables);
 
+    /**
+     * WO-API-1 (API-7): тот же create, но initiator пишется в том же INSERT.
+     * Null = без инициатора (старый путь побайтово).
+     */
+    UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId,
+        List<ProcessVariable> variables, String claimedInitiator);
+
     UUID createActivity(UUID processInstanceId, UUID tokenId, BpmnElementModel element);
 
     UUID createActivity(UUID processInstanceId, UUID tokenId, BpmnFlowModel element);

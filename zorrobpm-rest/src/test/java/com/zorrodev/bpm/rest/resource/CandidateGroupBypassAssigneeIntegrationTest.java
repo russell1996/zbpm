@@ -101,7 +101,7 @@ class CandidateGroupBypassAssigneeIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -200,7 +200,7 @@ class CandidateGroupBypassAssigneeIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(startDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID processInstanceId = UUID.fromString(
             mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());

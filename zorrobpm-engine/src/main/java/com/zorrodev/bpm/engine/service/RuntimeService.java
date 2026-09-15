@@ -14,6 +14,13 @@ public interface RuntimeService {
 
     IdDTO startProcessInstance(UUID parentProcessInstanceId, StartProcessInstanceDTO dto);
 
+    /**
+     * WO-API-1 (API-7): старт с initiator в том же вызове/транзакции — create
+     * пишет initiator в том же INSERT, без второго save после. Null =
+     * без инициатора (старое поведение побайтово).
+     */
+    IdDTO startProcessInstance(StartProcessInstanceDTO dto, String claimedInitiator);
+
     IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables);
 
     /**

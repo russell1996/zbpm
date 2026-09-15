@@ -247,7 +247,7 @@ class DmnAuthzIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
     }
@@ -263,7 +263,7 @@ class DmnAuthzIntegrationTest {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }

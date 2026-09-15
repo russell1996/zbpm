@@ -172,7 +172,7 @@ class SystemUserIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(body)
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID id = UUID.fromString(mapper.readTree(created.getResponse().getContentAsString()).get("id").asText());
         assertThat(userRepository.findById(id).orElseThrow().getUserType()).isEqualTo("HUMAN");
@@ -251,7 +251,7 @@ class SystemUserIntegrationTest {
         String key1 = createApiKeyForUser(systemUserId);          // POST /api-key
         MvcResult second = mockMvc.perform(post("/admin/users/" + systemUserId + "/api-keys")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         String key2 = mapper.readTree(second.getResponse().getContentAsString()).get("key").asText();
         String key2Id = mapper.readTree(second.getResponse().getContentAsString()).get("id").asText();
@@ -295,7 +295,7 @@ class SystemUserIntegrationTest {
         // Revoked: issue a key then revoke it by id
         MvcResult issued = mockMvc.perform(post("/admin/users/" + systemUserId + "/api-key")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         String revokedToken = mapper.readTree(issued.getResponse().getContentAsString()).get("key").asText();
         String revokedId = mapper.readTree(issued.getResponse().getContentAsString()).get("id").asText();
@@ -484,7 +484,7 @@ class SystemUserIntegrationTest {
         if (status == 409) {
             return userRepository.findByUsername(username).orElseThrow().getId();
         }
-        if (status != 200) {
+        if (status != 200 && status != 201) {
             throw new IllegalStateException("createUser(" + username + ") failed: " + status
                 + " " + result.getResponse().getContentAsString());
         }
@@ -499,7 +499,7 @@ class SystemUserIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
     }
@@ -523,7 +523,7 @@ class SystemUserIntegrationTest {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }
@@ -559,7 +559,7 @@ class SystemUserIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(startDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID processInstanceId = UUID.fromString(
             mapper.readTree(startResult.getResponse().getContentAsString()).get("id").asText());

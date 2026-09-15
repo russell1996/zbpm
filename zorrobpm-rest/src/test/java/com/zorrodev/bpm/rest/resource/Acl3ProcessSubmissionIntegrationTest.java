@@ -179,7 +179,7 @@ class Acl3ProcessSubmissionIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         createdKeys.add(key);
     }
 
@@ -213,7 +213,7 @@ class Acl3ProcessSubmissionIntegrationTest {
     @Test
     void criterion1_submissionNotVisibleInGeneralLists() throws Exception {
         String key = uniqueKey();
-        ProcessSubmissionDTO dto = submitAndExpect(userToken, bpmnFor(key), 200);
+        ProcessSubmissionDTO dto = submitAndExpect(userToken, bpmnFor(key), 201);
         assertEquals("PENDING", dto.getStatus());
         assertEquals(key, dto.getProcessKey());
         assertEquals(userId, dto.getSubmittedBy());
@@ -268,7 +268,7 @@ class Acl3ProcessSubmissionIntegrationTest {
     @Test
     void criterion4_approvalCreatesVersionProcessAndOwnerAtomically() throws Exception {
         String key = uniqueKey();
-        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 200);
+        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 201);
 
         approveAsAdmin(submission.getId(), 200);
 
@@ -299,7 +299,7 @@ class Acl3ProcessSubmissionIntegrationTest {
     @Test
     void criterion4b_atomicFailureLeavesNoHalf() throws Exception {
         String key = uniqueKey();
-        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 200);
+        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 201);
 
         MvcResult result = mockMvc.perform(post("/process-submissions/" + submission.getId() + "/approve")
                         .header("Authorization", "Bearer " + adminToken))
@@ -323,7 +323,7 @@ class Acl3ProcessSubmissionIntegrationTest {
     @Test
     void criterion5_onlySuperAdminCanApproveAndReject() throws Exception {
         String key = uniqueKey();
-        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 200);
+        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 201);
 
         mockMvc.perform(post("/process-submissions/" + submission.getId() + "/approve")
                         .header("Authorization", "Bearer " + userToken))
@@ -346,7 +346,7 @@ class Acl3ProcessSubmissionIntegrationTest {
     @Test
     void criterion6_rejectWithoutReasonFails() throws Exception {
         String key = uniqueKey();
-        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 200);
+        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 201);
         rejectAsAdmin(submission.getId(), "   ", 400);
         rejectAsAdmin(submission.getId(), null, 400);
         assertEquals("PENDING", submissionRepository.findById(submission.getId()).orElseThrow().getStatus());
@@ -355,7 +355,7 @@ class Acl3ProcessSubmissionIntegrationTest {
     @Test
     void criterion6b_rejectedSubmissionStaysVisibleToAuthorWithReason() throws Exception {
         String key = uniqueKey();
-        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 200);
+        ProcessSubmissionDTO submission = submitAndExpect(userToken, bpmnFor(key), 201);
         rejectAsAdmin(submission.getId(), "Company policy forbids this process", 200);
 
         MvcResult mine = mockMvc.perform(get("/process-submissions/mine")
@@ -384,7 +384,7 @@ class Acl3ProcessSubmissionIntegrationTest {
     void criterion7_secondPendingSubmissionConflictsNot500() throws Exception {
         String key = uniqueKey();
         String bpmnXml = bpmnFor(key);
-        ProcessSubmissionDTO first = submitAndExpect(userToken, bpmnXml, 200);
+        ProcessSubmissionDTO first = submitAndExpect(userToken, bpmnXml, 201);
 
         // WO-ACL-12 criterion 1: second PENDING for the same key is rejected with 409
         MvcResult second = submitRaw(userToken, bpmnXml);
@@ -409,12 +409,12 @@ class Acl3ProcessSubmissionIntegrationTest {
     @Test
     void criterion8_retentionDeletesTerminalSubmissions() throws Exception {
         String key = uniqueKey();
-        ProcessSubmissionDTO approved = submitAndExpect(userToken, bpmnFor(key), 200);
+        ProcessSubmissionDTO approved = submitAndExpect(userToken, bpmnFor(key), 201);
         approveAsAdmin(approved.getId(), 200);
 
         // PENDING submission must NOT be eligible
         String pendingKey = uniqueKey();
-        ProcessSubmissionDTO pending = submitAndExpect(userToken, bpmnFor(pendingKey), 200);
+        ProcessSubmissionDTO pending = submitAndExpect(userToken, bpmnFor(pendingKey), 201);
 
         List<UUID> eligible = retentionBatchProcessor.findEligibleSubmissions(Instant.now(), 10);
         assertTrue(eligible.contains(approved.getId()), "APPROVED submission must be eligible");

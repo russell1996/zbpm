@@ -218,7 +218,7 @@ class Acl17CandidateSearchIT {
                 .header("Authorization", "Bearer " + adminToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(addDef)))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 
     private void addMember(UUID userId, String processKey, String role) throws Exception {

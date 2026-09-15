@@ -91,7 +91,7 @@ class ElementBindingIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     // --- Criterion #2: POST …/element-bindings creates binding with pinned version ---
@@ -110,7 +110,7 @@ class ElementBindingIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         String pdKey = mapper.readTree(deployResult.getResponse().getContentAsString()).get("key").asText();
 
@@ -145,7 +145,7 @@ class ElementBindingIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Create binding
         CreateElementBindingDTO bindDto = new CreateElementBindingDTO();
@@ -185,7 +185,7 @@ class ElementBindingIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Create binding (pins to v1)
         CreateElementBindingDTO bindDto = new CreateElementBindingDTO();
@@ -238,7 +238,7 @@ class ElementBindingIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         String pdKey = mapper.readTree(deployResult.getResponse().getContentAsString()).get("key").asText();
 

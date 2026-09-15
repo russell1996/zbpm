@@ -16,6 +16,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.util.List;
 import java.util.Optional;
@@ -42,7 +43,13 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
     private final AuditLogService auditLogService;
     private final RuntimeSupportService runtimeSupportService;
     private final RuntimeOperationSupport runtimeOperationSupport;
+    private final HttpServletResponse httpResponse;
 
+    /**
+     * WO-API-1 (API-1): Location ставит имплементация (контракт не тронут:
+     * возвращаемый `IdDTO` тот же); статус 201 — на маппинге `RuntimeResource`
+     * (`@ResponseStatus` здесь игнорируется роутером).
+     */
     @Transactional
     @Override
     public IdDTO startProcessInstance(StartProcessInstanceDTO dto) {
@@ -72,20 +79,28 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
         }
 
         String onBehalfOf = onBehalfOfEarly;
-        IdDTO result = Optional.ofNullable(runtimeService.startProcessInstance(dto)).map(runtimeOperationSupport::toDTO).orElseThrow();
-
-        // WO-INT-2: persist initiator on process instance
-        if (onBehalfOf != null) {
-            // WO-SEC-28: the initiator is a claimed, unverified attribution — keep the marker.
-            String claimed = "[claimed] " + onBehalfOf;
-            processInstanceLifecycleService.recordInitiator(result.getId(), claimed);
-            auditLogService.record(runtimeOperationSupport.getPrincipal(), "START", definitionKey, result.getId().toString(), claimed);
-        } else {
-            auditLogService.record(runtimeOperationSupport.getPrincipal(), "START", definitionKey, result.getId().toString(), null);
+        // WO-API-1 (API-7): initiator идёт ВНУТРЬ start одним вызовом/одной
+        // транзакцией (create пишет initiator в том же INSERT), не вторым save
+        // после. recordInitiator-патч удалён — см. RuntimeService/ActivityService.
+        String claimed = onBehalfOf != null ? "[claimed] " + onBehalfOf : null;
+        IdDTO result = Optional.ofNullable(
+                runtimeService.startProcessInstance(dto, claimed))
+            .map(runtimeOperationSupport::toDTO).orElseThrow();
+        if (httpResponse != null) {
+            httpResponse.setHeader("Location", "/process-instances/" + result.getId());
         }
+
+        // WO-INT-2: initiator уже персистентен из create; здесь только audit.
+        // WO-SEC-28: the initiator is a claimed, unverified attribution — keep the marker.
+        auditLogService.record(runtimeOperationSupport.getPrincipal(), "START", definitionKey,
+            result.getId().toString(), claimed);
         return result;
     }
 
+    /**
+     * WO-API-1 (API-1): статус 202 — на маппинге `RuntimeResource`
+     * (`@ResponseStatus` здесь игнорируется роутером, как и 201 выше).
+     */
     @Transactional
     @Override
     public IdDTO cancelProcessInstance(UUID id) {

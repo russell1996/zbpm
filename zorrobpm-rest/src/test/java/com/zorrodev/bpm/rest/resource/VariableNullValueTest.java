@@ -81,7 +81,7 @@ class VariableNullValueTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -104,7 +104,7 @@ class VariableNullValueTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     @Test
@@ -122,7 +122,7 @@ class VariableNullValueTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
 
         UUID piId = UUID.fromString(

@@ -72,7 +72,7 @@ class StartFormVersionIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 
     private UUID deployBpmn(String fixtureFile) throws Exception {
@@ -83,7 +83,7 @@ class StartFormVersionIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(addDto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
     }
@@ -119,7 +119,7 @@ class StartFormVersionIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 
     // --- Criterion #2: explicit v1 id + v2-shaped variables (fieldB, missing fieldA) -> 400,
@@ -151,7 +151,7 @@ class StartFormVersionIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 
     // --- Criterion #3b (regression): explicit LATEST id (v2) + v2-shaped variables -> 200 ---
@@ -165,6 +165,6 @@ class StartFormVersionIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken)
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
     }
 }

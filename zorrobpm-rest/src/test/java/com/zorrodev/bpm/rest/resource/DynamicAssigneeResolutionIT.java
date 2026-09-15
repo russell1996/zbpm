@@ -155,7 +155,7 @@ class DynamicAssigneeResolutionIT {
                         .header("Authorization", "Bearer " + superAdminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         return key;
     }
 
@@ -176,7 +176,7 @@ class DynamicAssigneeResolutionIT {
                         .header("Authorization", "Bearer " + superAdminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).get("id").asText());
     }

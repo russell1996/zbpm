@@ -59,7 +59,7 @@ class FormValidationIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(new DeployFormDTO() {{ setKey("orderForm"); setKind("FORM_JS"); setSchema(schema); }}))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Deploy BPMN with start formKey="orderForm"
         String bpmn = new String(Files.readAllBytes(Paths.get("src/test/files/validation-start.bpmn")));
@@ -69,7 +69,7 @@ class FormValidationIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -120,7 +120,7 @@ class FormValidationIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     // --- Criterion #2: Missing required → 400 VALIDATION_ERROR ---
@@ -155,7 +155,7 @@ class FormValidationIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(addDto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID pdId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
@@ -170,7 +170,7 @@ class FormValidationIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
     }
 
     // --- Fail-open fix: variables=null with required field → 400 ---

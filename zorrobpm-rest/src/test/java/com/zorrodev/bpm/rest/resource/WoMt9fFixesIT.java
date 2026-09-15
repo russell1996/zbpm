@@ -99,7 +99,7 @@ class WoMt9fFixesIT {
         // Create key as super-admin
         MvcResult createResult = mockMvc.perform(post("/admin/users/" + testUserId + "/api-key")
                 .header("Authorization", "Bearer " + superAdminToken))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String firstKey = mapper.readTree(createResult.getResponse().getContentAsString()).get("key").asText();
 
@@ -120,7 +120,7 @@ class WoMt9fFixesIT {
         // Create again → 200 (NOT 500!) — this is the bug fix
         MvcResult recreateResult = mockMvc.perform(post("/admin/users/" + testUserId + "/api-key")
                 .header("Authorization", "Bearer " + superAdminToken))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String secondKey = mapper.readTree(recreateResult.getResponse().getContentAsString()).get("key").asText();
         assertNotNull(secondKey, "New key must be returned");
@@ -211,7 +211,7 @@ class WoMt9fFixesIT {
                 .header("Authorization", "Bearer " + apiKey)
                 .content("{\"processDefinitionKey\":\"" + processKey + "\",\"variables\":[]}")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk());
+            .andExpect(status().isCreated());
 
         // Need a second process for remove (avoid last OWNER constraint)
         String process2Key = deployProcess("mt9f-proc2");
@@ -315,7 +315,7 @@ class WoMt9fFixesIT {
                         .header("Authorization", "Bearer " + superAdminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         return key;
     }
 
@@ -330,7 +330,7 @@ class WoMt9fFixesIT {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + superAdminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }

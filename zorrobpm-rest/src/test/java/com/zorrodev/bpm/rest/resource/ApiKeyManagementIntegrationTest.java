@@ -132,7 +132,7 @@ class ApiKeyManagementIntegrationTest {
                         .header("Authorization", "Bearer " + userAKey)
                         .content("{\"processDefinitionKey\":\"" + process1Key + "\",\"variables\":[]}")
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // START on P4 → 403 (P4 only has COMPLETE_SERVICE_TASK, not START)
         mockMvc.perform(post("/process-instances")
@@ -296,7 +296,7 @@ class ApiKeyManagementIntegrationTest {
         // Create key
         MvcResult createResult = mockMvc.perform(post("/admin/users/" + testUserId + "/api-key")
                 .header("Authorization", "Bearer " + superAdminToken))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String firstKey = mapper.readTree(createResult.getResponse().getContentAsString()).get("key").asText();
 
@@ -314,7 +314,7 @@ class ApiKeyManagementIntegrationTest {
         // Create again → 200 (not 409!)
         MvcResult recreateResult = mockMvc.perform(post("/admin/users/" + testUserId + "/api-key")
                 .header("Authorization", "Bearer " + superAdminToken))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andReturn();
         String secondKey = mapper.readTree(recreateResult.getResponse().getContentAsString()).get("key").asText();
 
@@ -367,7 +367,7 @@ class ApiKeyManagementIntegrationTest {
                         .header("Authorization", "Bearer " + superAdminToken)
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
         return key;
     }
 
@@ -382,7 +382,7 @@ class ApiKeyManagementIntegrationTest {
     private String createApiKeyForUser(UUID userId) throws Exception {
         MvcResult result = mockMvc.perform(post("/admin/users/" + userId + "/api-key")
                         .header("Authorization", "Bearer " + superAdminToken))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readTree(result.getResponse().getContentAsString()).get("key").asText();
     }

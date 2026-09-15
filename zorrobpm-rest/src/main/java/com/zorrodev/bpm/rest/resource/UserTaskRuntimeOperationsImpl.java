@@ -10,9 +10,11 @@ import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.FormValidator;
+import com.zorrodev.bpm.engine.service.TaskFormDataService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +40,8 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
     private final DBService dbService;
     private final AuthorizationService authorizationService;
     private final RuntimeOperationSupport runtimeOperationSupport;
+    private final TaskFormDataService taskFormDataService;
+    private final BpmnService bpmnService;
 
     @Transactional
     @Override
@@ -60,10 +64,32 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
         runtimeOperationSupport.checkAssignee(principal, task.getAssignee(), task.getCandidateGroups(),
             task.getProcessInstanceId());
 
-        // ADR-6 §D9: form validation via FormArtifactService facade
-        if (dto.getVariables() != null && !dto.getVariables().isEmpty()) {
-            List<FormValidator.ValidationError> errors = formArtifactService.validateFormIfApplicable(
-                task.getFormKey(), dto.getVariables());
+        // ADR-6 §D9: form validation via FormArtifactService facade.
+        // WO-API-1 (F16): null/[] НЕ пропускают валидатор — required-поля при
+        // пустом сабмите обязаны отклоняться (раньше `!= null && !isEmpty`
+        // молча пропускал). Эффективная схема — та же, что рендер
+        // (formId/deployment/versionTag выигрывают у formKey, C8-22).
+        // TaskFormDataService.loadUserTaskFormData бросает 404 на неизвестной
+        // задаче — для валидации это «формы нет» (та же ветка, что 404 ниже
+        // от userTaskRepository): ловим и валидируем по скаляру task.getFormKey.
+        {
+            TaskFormDataService.UserTaskFormData data = null;
+            try {
+                data = taskFormDataService.loadUserTaskFormData(id);
+            } catch (ResponseStatusException e) {
+                if (e.getStatusCode() != HttpStatus.NOT_FOUND) throw e;
+            }
+            List<FormValidator.ValidationError> errors;
+            if (data != null) {
+                errors = formArtifactService.validateTaskSubmit(
+                    data.formId(), data.bindingType(), data.formKey(),
+                    userTaskVersionTag(data.processDefinitionId(), data.bpmnElementId()),
+                    taskFormDataService.findDeploymentId(data.processDefinitionId()),
+                    dto.getVariables());
+            } else {
+                errors = formArtifactService.validateFormIfApplicable(
+                    task.getFormKey(), dto.getVariables());
+            }
             if (!errors.isEmpty()) {
                 throw new FormValidationException(errors);
             }
@@ -218,5 +244,33 @@ public class UserTaskRuntimeOperationsImpl implements UserTaskRuntimeOperations 
         IdDTO result = new IdDTO();
         result.setId(id);
         return result;
+    }
+
+    /**
+     * WO-API-1 (F16): статический versionTag элемента user task — та же ветка,
+     * что рендер (`TaskFormOperationsImpl.userTaskVersionTag`), продублирована
+     * намеренно малой (5 строк): общий хелпер жил бы в третьем месте ради двух
+     * вызывающих в разных слоях (P-24 против копирования — здесь копия дешевле
+     * новой зависимости; обе ветки покрыты тестами).
+     */
+    private String userTaskVersionTag(UUID processDefinitionId, String elementId) {
+        if (processDefinitionId == null || elementId == null) {
+            return null;
+        }
+        try {
+            var model = bpmnService.getProcessDefinitionModelById(processDefinitionId);
+            if (model == null) return null;
+            var element = model.getElement(elementId);
+            if (element == null || element.getExtensions() == null
+                || element.getExtensions().getUserTaskExtension() == null) {
+                return null;
+            }
+            return element.getExtensions().getUserTaskExtension().getVersionTag();
+        } catch (RuntimeException e) {
+            // WO-API-1 (F16): мочная BPMN-модель (мок/удалённая дефиниция в
+            // characterization-тестах) — нет модели, нет versionTag-пина:
+            // валидация идёт по formKey/formId-latest, как раньше.
+            return null;
+        }
     }
 }
