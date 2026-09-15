@@ -9,10 +9,10 @@ import org.springframework.core.Ordered;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * WO-REL-21: registers {@link IdempotencyFilter} right after the rate limiter —
- * before auth, controllers, everything else. Auth interplay is handled inside the
- * filter itself (401/403 are never cached), so no security-file ordering is touched
- * (G-C). Exact paths only (never {@code /dmn/{id}/evaluate}, never GET).
+ * WO-REL-21/32: registers {@link IdempotencyFilter} AFTER auth (JwtAuth HIGHEST+20,
+ * Csrf HIGHEST+25) so a cache-hit still re-validates the credential (F04 — auth
+ * before replay) and keys on stable actor_id (F05). Order HIGHEST+30 — after
+ * auth, before controllers. Exact paths + mutation wildcards.
  */
 @Configuration
 public class IdempotencyFilterConfig {
@@ -32,13 +32,20 @@ public class IdempotencyFilterConfig {
     @Bean
     public FilterRegistrationBean<IdempotencyFilter> idempotencyFilterRegistration(IdempotencyFilter filter) {
         FilterRegistrationBean<IdempotencyFilter> registration = new FilterRegistrationBean<>(filter);
-        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 30);
         registration.addUrlPatterns(
             "/process-instances",
+            "/process-instances/*",
             "/deployments",
+            "/deployments/*",
             "/dmn",
+            "/dmn/*",
             "/forms",
-            "/auth/register"
+            "/forms/*",
+            "/auth/register",
+            "/user-tasks/*",
+            "/service-tasks/*",
+            "/incidents/*"
         );
         registration.setName("idempotencyFilter");
         return registration;

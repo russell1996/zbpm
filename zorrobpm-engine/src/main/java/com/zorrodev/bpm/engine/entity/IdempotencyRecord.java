@@ -11,10 +11,10 @@ import lombok.Setter;
 import java.time.Instant;
 
 /**
- * WO-REL-21: saved response of a create-mutation for {@code Idempotency-Key} replay.
- * Identity = (client key, endpoint, credential hash). Round 2: replay is scoped to
- * the credential that created it — key+body alone no longer suffice (see
- * {@code IdempotencyFilter}).
+ * WO-REL-21/32: saved response for {@code Idempotency-Key} replay.
+ * Identity = (client key, endpoint, actor_id). WO-REL-32 F05: actor_id —
+ * стабильный субъект (userId/ownerUserId), не hash токена; ротация не плодит
+ * дубли. Credential hash оставлен как deprecated-колонка, не PK.
  */
 @Getter
 @Setter
@@ -30,13 +30,11 @@ public class IdempotencyRecord {
     @Id
     private String endpoint;
 
-    /**
-     * WO-REL-21 раунд 2: SHA-256 сырых байтов {@code Authorization}-заголовка
-     * (пустая строка — анонимный вызов, легитимно для {@code /auth/register}).
-     * Часть PK: replay скоупирован на credential — чужой replay без токена
-     * невозможен, ротация токена даёт новую запись вместо чужого ответа.
-     */
     @Id
+    @Column(name = "actor_id", nullable = false)
+    private String actorId;
+
+    /** DEPRECATED с 109: оставлен для совместимости, не PK. */
     @Column(name = "credential_hash", nullable = false)
     private String credentialHash;
 

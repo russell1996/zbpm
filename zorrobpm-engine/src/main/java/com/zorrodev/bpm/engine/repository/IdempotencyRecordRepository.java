@@ -10,12 +10,10 @@ import java.util.List;
 
 public interface IdempotencyRecordRepository extends JpaRepository<IdempotencyRecord, IdempotencyRecordId> {
 
-    /**
-     * WO-REL-21 раунд 2: все записи под (key, endpoint) — обычно 0-1, по одной на
-     * credential. Вызывающий сравнивает ОБА хэша через {@code MessageDigest.isEqual}:
-     * совпали оба — replay; совпал только body — miss (чужой credential, исполнить
-     * заново, CTO запретил 422); совпал только credential — 422.
-     */
+    /** WO-REL-32 F05: ровно 0-1 запись под (key, endpoint, actor_id). */
+    java.util.Optional<IdempotencyRecord> findByIdemKeyAndEndpointAndActorId(String idemKey, String endpoint, String actorId);
+
+    /** DEPRECATED: for tests — find all under key+endpoint across actors. */
     List<IdempotencyRecord> findByIdemKeyAndEndpoint(String idemKey, String endpoint);
 
     /** WO-REL-21: TTL listing, paged — the table is high-volume, never full-scan it. */

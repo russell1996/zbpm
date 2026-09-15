@@ -64,7 +64,7 @@ public class IdempotencyCleanupJob {
             int pageDeleted = 0;
             for (IdempotencyRecord row : batch) {
                 IdempotencyRecordId id = new IdempotencyRecordId(
-                    row.getIdemKey(), row.getEndpoint(), row.getCredentialHash());
+                    row.getIdemKey(), row.getEndpoint(), row.getActorId());
                 try {
                     Boolean gone = transactionTemplate.execute(status -> {
                         if (!repository.existsById(id)) {
