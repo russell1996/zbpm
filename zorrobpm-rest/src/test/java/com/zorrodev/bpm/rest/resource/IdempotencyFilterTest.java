@@ -384,9 +384,9 @@ class IdempotencyFilterTest {
     }
 
     @Test
-    void credentialScope_rotatedToken_executesNot422() throws Exception {
-        // WO-REL-21 раунд 2: тот же клиент с ротированным токеном — обычное исполнение
-        // (НЕ replay чужого, НЕ 422 — у него то же тело, credential другой).
+    void credentialScope_rotatedToken_replaysSameActor() throws Exception {
+        // WO-REL-32 F05: тот же actor с ротированным токеном — replay, ОДИН эффект
+        // (раньше было два эффекта из-за credential_hash в PK).
         // JWT меняется только по exp/сек — слип гарантирует разные байты токена.
         String procKey = uniq("rotproc");
         deployProcess(procKey);
@@ -417,8 +417,8 @@ class IdempotencyFilterTest {
         String firstId = mapper.readTree(first.getResponse().getContentAsString()).get("id").asText();
         String secondId = mapper.readTree(second.getResponse().getContentAsString()).get("id").asText();
         assertThat(secondId)
-            .as("ротированный токен — новое исполнение, не replay и не 422")
-            .isNotEqualTo(firstId);
+            .as("WO-REL-32 F05: ротированный токен того же actor — replay, один инстанс")
+            .isEqualTo(firstId);
     }
 
     // ==================== WO-REL-21 раунд 2 F1: cookie-скоуп ====================

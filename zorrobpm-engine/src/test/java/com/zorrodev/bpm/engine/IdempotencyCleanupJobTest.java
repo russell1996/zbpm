@@ -35,6 +35,7 @@ class IdempotencyCleanupJobTest {
         IdempotencyRecord r = new IdempotencyRecord();
         r.setIdemKey(key);
         r.setEndpoint("/process-instances");
+        r.setActorId("actor-" + key);
         r.setCredentialHash("cred");
         r.setRequestHash("abc");
         r.setResponseStatus(200);
