@@ -264,16 +264,17 @@ class Sec64CsrfHeadersRatelimitIT {
     // WO-SEC-64 HOLD: случайный taskId даёт 404 ДО чтения OBO — такой тест
     // пуст (зелёный без regex — claim читает OBO после гардов задачи).
     // Поэтому T6 бьёт в POST /process-instances: OBO читается ПЕРВЫМ делом
-    // (строка 71, до authz/старта). Мусор → 400 на regex; валидный-но-чужой
-    // проходит regex и падает позже (не 400) — разделение слоёв доказано.
-    // Оба ассерта точные (не is4xx), чтобы masking был невозможен.
+    // (ProcessInstanceRuntimeOperationsImpl:51, до requireOperate/старта).
+    // Мусор → 400 на regex; валидный-но-чужой проходит regex и падает позже
+    // (не 400) — разделение слоёв доказано. Оба ассерта точные (не is4xx),
+    // чтобы masking был невозможен.
 
     @Test
     void srbac3_onBehalfOf_garbage_rejected() throws Exception {
         // Чистый regex-уровень: POST /process-instances читает OBO ПЕРВЫМ
-        // делом после authz (строка 71, до старта): 400 здесь доказывает именно
+        // делом (до requireOperate/старта): 400 здесь доказывает именно
         // regex-гейт. Валидный-но-чужой проходит regex и падает позже
-        // (requireOperate/authz/старт — не 400), что доказывает разделение слоёв.
+        // (authz/старт — не 400), что доказывает разделение слоёв.
         // Claim-путь для 400 НЕ годится: там OBO читается после гардов задачи.
         String body = "{\"processDefinitionKey\":\"sec64-dummy\"}";
         mockMvc.perform(post("/process-instances")
