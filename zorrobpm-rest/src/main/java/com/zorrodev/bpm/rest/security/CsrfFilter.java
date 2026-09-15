@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class CsrfFilter extends OncePerRequestFilter {
 
-    /** After JwtAuthFilter (plain @Component, default LOWEST_PRECEDENCE) — set in config. */
+    /** Before JwtAuthFilter (plain @Component, default LOWEST_PRECEDENCE) — set in config. */
     public static final int ORDER = Ordered.LOWEST_PRECEDENCE - 100;
 
     static final String ACCESS_COOKIE = "__Host-zbpm_token";
