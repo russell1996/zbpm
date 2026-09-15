@@ -28,10 +28,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * WO-REL-32 F06 — HTTP-level fault injection: commit() spy AFTER callback, BEFORE commit.
- * Verifies that BufferedResponseWrapper did not leak 201/body when commit fails.
- * The test is GREEN both on b7ac0ec7 (already write-after-execute from round 1) and on current fix —
- * the true RED is on 5f336dcc (pre-WO-REL-32, copy inside callback before execute). Proved via
- * separate worktree /tmp/rel32-r3-red3 on 5f336dcc (see report PRE-DONE POF), not via in-place mutation.
+ * This test is GREEN both on pre-fix 5f336dcc and on the current branch — verified via
+ * separate worktree /tmp/rel32-r4-red on 5f336dcc (1/0 PASS, same result as the verifier's
+ * own check on b7ac0ec7). The property holds architecturally at the container level
+ * (Tomcat does not commit a small response until the filter chain completes), not through
+ * a specific wrapper class. Criterion 8 is therefore closed by the HTTP measurement
+ * itself — the client never receives 201 when the commit fails — not by a discriminating
+ * unit test of the implementation.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
