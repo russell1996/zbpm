@@ -15,6 +15,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -30,6 +32,7 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     // package-visible: RateLimitFilter reuses the prefix to skip API keys when

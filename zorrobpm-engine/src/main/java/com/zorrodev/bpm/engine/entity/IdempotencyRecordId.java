@@ -4,22 +4,22 @@ import java.io.Serializable;
 import java.util.Objects;
 
 /**
- * WO-REL-21: composite PK of {@link IdempotencyRecord} (client key + endpoint +
- * credential hash, round 2 scoping).
+ * WO-REL-21/32: composite PK of {@link IdempotencyRecord} (client key + endpoint +
+ * actor_id — стабильный субъект, F05).
  */
 public class IdempotencyRecordId implements Serializable {
 
     private String idemKey;
     private String endpoint;
-    private String credentialHash;
+    private String actorId;
 
     public IdempotencyRecordId() {
     }
 
-    public IdempotencyRecordId(String idemKey, String endpoint, String credentialHash) {
+    public IdempotencyRecordId(String idemKey, String endpoint, String actorId) {
         this.idemKey = idemKey;
         this.endpoint = endpoint;
-        this.credentialHash = credentialHash;
+        this.actorId = actorId;
     }
 
     public String getIdemKey() {
@@ -38,12 +38,12 @@ public class IdempotencyRecordId implements Serializable {
         this.endpoint = endpoint;
     }
 
-    public String getCredentialHash() {
-        return credentialHash;
+    public String getActorId() {
+        return actorId;
     }
 
-    public void setCredentialHash(String credentialHash) {
-        this.credentialHash = credentialHash;
+    public void setActorId(String actorId) {
+        this.actorId = actorId;
     }
 
     @Override
@@ -51,11 +51,11 @@ public class IdempotencyRecordId implements Serializable {
         if (this == o) return true;
         if (!(o instanceof IdempotencyRecordId that)) return false;
         return Objects.equals(idemKey, that.idemKey) && Objects.equals(endpoint, that.endpoint)
-            && Objects.equals(credentialHash, that.credentialHash);
+            && Objects.equals(actorId, that.actorId);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(idemKey, endpoint, credentialHash);
+        return Objects.hash(idemKey, endpoint, actorId);
     }
 }
