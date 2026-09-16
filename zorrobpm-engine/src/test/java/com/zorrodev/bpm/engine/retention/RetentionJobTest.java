@@ -83,7 +83,7 @@ class RetentionJobTest {
         when(batchProcessor.findEligibleInstances(any(), eq(2))).thenReturn(java.util.List.of());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(2))).thenReturn(0);
         // one full batch (2) + one partial (1), then an empty poll ends the loop
-        when(batchProcessor.findEligibleSubmissions(any(), eq(2)))
+        when(batchProcessor.findEligibleSubmissions(any(), eq(2), any()))
             .thenReturn(java.util.List.of(id1, id2, id3), java.util.List.of());
         // row id2 is broken — the job must log a warning and continue with id3
         when(batchProcessor.deleteSubmission(id1)).thenReturn(1);

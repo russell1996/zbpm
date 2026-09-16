@@ -128,16 +128,31 @@ public class RetentionBatchProcessor {
      * than the TTL become eligible for cleanup. Oldest first, bounded by batch size — the same
      * shape as {@link #findEligibleInstances}, so a retention cycle never scans the whole table.
      *
+     * <p>WO-REL-33 F37: {@code skipIds} — уже виденные неудаляемые строки (F09-паттерн из
+     * WO-REL-35 наоборот: там курсор стоял, здесь курсор движется мимо плохих строк).
+     * Пустой/NULL skip-set — обычный опрос без исключений.
+     *
      * @return submission ids eligible for deletion (a partial batch means "no more left")
      */
     @Transactional(readOnly = true)
     public List<UUID> findEligibleSubmissions(Instant cutoff, int batchSize) {
+        return findEligibleSubmissions(cutoff, batchSize, java.util.Set.of());
+    }
+
+    @Transactional(readOnly = true)
+    public List<UUID> findEligibleSubmissions(Instant cutoff, int batchSize, java.util.Collection<UUID> skipIds) {
         MapSqlParameterSource params = new MapSqlParameterSource("cutoff", Timestamp.from(cutoff))
             .addValue("limit", batchSize);
+        String skipClause = "";
+        if (skipIds != null && !skipIds.isEmpty()) {
+            params.addValue("skipIds", skipIds);
+            skipClause = "  AND id NOT IN (:skipIds) ";
+        }
         return jdbc.queryForList(
             "SELECT id FROM process_submission " +
             "WHERE status IN ('APPROVED', 'REJECTED') " +
             "  AND submitted_at < :cutoff " +
+            skipClause +
             "ORDER BY submitted_at ASC LIMIT :limit",
             params, UUID.class);
     }
