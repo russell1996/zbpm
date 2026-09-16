@@ -1,8 +1,12 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.security.UiUserLookupService;
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.service.EventQueryService;
 import com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,9 +27,11 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -50,6 +56,11 @@ public class SseEventStreamService implements SmartLifecycle {
     private final EventQueryService eventQueryService;
     private final EventAuthzResolver eventAuthzResolver;
     private final RabbitAdmin rabbitAdmin;
+    // WO-SEC-67 (F13): live credential checks for open streams (same lookups
+    // as JwtAuthFilter, same fail-closed direction). Constructor-injected like
+    // the resolver — no static access, no new wiring shape.
+    private final UiUserLookupService uiUserLookupService;
+    private final ApiKeyRepository apiKeyRepository;
     // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
     private final tools.jackson.databind.ObjectMapper objectMapper;
 
@@ -57,11 +68,15 @@ public class SseEventStreamService implements SmartLifecycle {
     public SseEventStreamService(EventQueryService eventQueryService,
                                     EventAuthzResolver eventAuthzResolver,
                                     @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
-                                    tools.jackson.databind.ObjectMapper objectMapper) {
+                                    tools.jackson.databind.ObjectMapper objectMapper,
+                                    UiUserLookupService uiUserLookupService,
+                                    ApiKeyRepository apiKeyRepository) {
         this.eventQueryService = eventQueryService;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
         this.objectMapper = objectMapper;
+        this.uiUserLookupService = uiUserLookupService;
+        this.apiKeyRepository = apiKeyRepository;
     }
 
     /** Connected SSE clients: emitterId → client info */
@@ -80,6 +95,38 @@ public class SseEventStreamService implements SmartLifecycle {
 
     @Value("${zorrobpm.sse.send-timeout-ms:5000}")
     private long sendTimeoutMs = 5000;
+
+    /**
+     * WO-SEC-67 (F13): per-subject connection cap (FD-exhaustion guard against
+     * ONE subject opening streams without bound — the global maxClients above
+     * only caps the total). Counts live registrations per subject key
+     * (JWT userId / API-key id); decremented on every removal path via
+     * {@link #removeClientState}.
+     */
+    @Value("${zorrobpm.sse.max-clients-per-subject:10}")
+    private int maxClientsPerSubject = 10;
+
+    /** Live registrations per subject key (see above). */
+    private final Map<String, java.util.concurrent.atomic.AtomicInteger> clientsPerSubject =
+        new ConcurrentHashMap<>();
+
+    /**
+     * WO-SEC-67 (F13): re-resolution cache for the per-event rights
+     * re-check. {@code readableRuntimePdIds} is a multi-query JPA read
+     * (membership → processes → definitions); re-running it on EVERY event
+     * for EVERY client would multiply DB load by clients×events. A 30s TTL
+     * bounds the revocation window (stale rights live at most 30s + delivery
+     * lag) instead of the stream lifetime (was: infinite). Keyed by the
+     * subject + definition-key filter — the two inputs of the resolution.
+     * SUPER_ADMIN bypasses (always null = see all, no query to cache).
+     * Caffeine is already on the classpath (JwtAuthFilter debounce precedent).
+     */
+    private final Cache<ReevalKey, Collection<UUID>> rightsCache = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterWrite(Duration.ofSeconds(30))
+        .build();
+
+    private record ReevalKey(String subjectKey, String processDefinitionKeyFilter) {}
 
     /** RabbitMQ listener container for this instance */
     private volatile SimpleMessageListenerContainer listenerContainer;
@@ -122,6 +169,7 @@ public class SseEventStreamService implements SmartLifecycle {
     /**
      * Registers an SSE client and starts RabbitMQ subscription if this is the first client.
      * Throws 429 if maxClients exceeded (WO-PERF-6: FD exhaustion guard).
+     * Throws 429 if the subject's own cap is exceeded (WO-SEC-67: per-subject guard).
      */
     public String registerClient(SseEmitter emitter, Principal principal, String typeFilter,
                                    String processInstanceIdFilter, String processDefinitionKeyFilter) {
@@ -129,12 +177,23 @@ public class SseEventStreamService implements SmartLifecycle {
             if (clients.size() >= maxClients) {
                 throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many SSE clients");
             }
+            // WO-SEC-67: per-subject cap — checked AND incremented under the
+            // same lock as the global cap so the count cannot race.
+            String subjectKey = subjectKey(principal);
+            java.util.concurrent.atomic.AtomicInteger subjectCount =
+                clientsPerSubject.computeIfAbsent(subjectKey, k -> new java.util.concurrent.atomic.AtomicInteger(0));
+            if (subjectCount.get() >= maxClientsPerSubject) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "Too many SSE clients for this subject");
+            }
             String clientId = UUID.randomUUID().toString();
             Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
 
-            SseClientInfo info = new SseClientInfo(clientId, emitter, principal, allowedPdIds,
+            SseClientInfo info = new SseClientInfo(clientId, emitter, principal,
+                currentTokenVersion(principal), allowedPdIds,
                 typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
             clients.put(clientId, info);
+            subjectCount.incrementAndGet();
 
             emitter.onCompletion(() -> {
                 removeClientState(clientId);
@@ -181,9 +240,55 @@ public class SseEventStreamService implements SmartLifecycle {
      * вторая Map в классе).
      */
     private void removeClientState(String clientId) {
-        clients.remove(clientId);
+        SseClientInfo removed = clients.remove(clientId);
         bufferedEvents.remove(clientId);
         bufferingClients.remove(clientId);
+        // WO-SEC-67: release the per-subject slot (no-op when the client was
+        // never registered — e.g. double completion callbacks).
+        if (removed != null) {
+            java.util.concurrent.atomic.AtomicInteger subjectCount =
+                clientsPerSubject.get(subjectKey(removed.principal()));
+            if (subjectCount != null && subjectCount.decrementAndGet() <= 0) {
+                clientsPerSubject.remove(subjectKey(removed.principal()), subjectCount);
+            }
+        }
+    }
+
+    /**
+     * WO-SEC-67: freeze the JWT token_version at registration (the liveness
+     * baseline). Fail-closed: an unreadable row → -1, which can only mismatch
+     * a real version (versions start at 0) and close the stream — never grant.
+     */
+    private int currentTokenVersion(Principal principal) {
+        if (principal instanceof Principal.UserPrincipal up) {
+            try {
+                return uiUserLookupService.securityState(up.userId())
+                    .map(com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState::tokenVersion)
+                    .orElse(-1);
+            } catch (RuntimeException e) {
+                log.warn("SSE registration: token_version unreadable — freezing -1 (fail closed)", e);
+                return -1;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * WO-SEC-67: stable per-subject key for the connection cap and the rights
+     * cache. JWT → userId; API key → key id (a rotated/revoked key is a new
+     * subject, which is exactly right — the old key's streams are closed by
+     * invalidation, not counted against the new key).
+     */
+    static String subjectKey(Principal principal) {
+        if (principal instanceof Principal.ServicePrincipal sp) {
+            return "key:" + sp.apiKeyId();
+        }
+        if (principal instanceof Principal.UserPrincipal up) {
+            return "user:" + up.userId();
+        }
+        // Unknown principal shape — fail closed on identity grouping too: each
+        // such client gets its own slot instead of sharing one.
+        return "unknown:" + System.identityHashCode(principal);
     }
 
     /**
@@ -294,9 +399,39 @@ public class SseEventStreamService implements SmartLifecycle {
                 continue;
             }
 
-            // Check AuthZ: processDefinitionId must be in allowed set (fail-closed: G-L)
-            if (client.allowedPdIds != null) {
-                if (pdUuid == null || !client.allowedPdIds.contains(pdUuid)) {
+            // WO-SEC-67 (F13), step 1 — credential liveness (event-driven): a
+            // revoked API key / logged-out JWT / deactivated user must not
+            // receive even one more event. Fail-closed: any check error closes
+            // the stream rather than delivering into doubt.
+            if (!isCredentialLive(client)) {
+                closeRevokedClient(client.clientId, "credential dead");
+                continue;
+            }
+
+            // WO-SEC-67 (F13), step 2 — rights re-resolution (periodic): the
+            // registration-time snapshot goes stale on membership removal /
+            // role change / grant narrowing. Re-resolve (30s-TTL cached) and
+            // compare against the snapshot; on ANY narrowing close the stale
+            // snapshot's stream now — it must re-register for the new, smaller
+            // view. Fail-closed on resolver error (see method).
+            Collection<UUID> fresh = reevaluateRights(client);
+            if (fresh == null && client.allowedPdIds != null) {
+                // Resolver error (not SUPER_ADMIN — that returns null by
+                // contract and stays null): fail closed, do not deliver.
+                closeRevokedClient(client.clientId, "rights re-check failed");
+                continue;
+            }
+            if (isNarrowed(client.allowedPdIds, fresh)) {
+                closeRevokedClient(client.clientId, "rights narrowed");
+                continue;
+            }
+
+            // Check AuthZ: processDefinitionId must be in allowed set (fail-closed: G-L).
+            // Uses the FRESH set when non-null, else the client snapshot
+            // (SUPER_ADMIN null, or a still-valid cached view).
+            Collection<UUID> effective = fresh != null ? fresh : client.allowedPdIds;
+            if (effective != null) {
+                if (pdUuid == null || !effective.contains(pdUuid)) {
                     continue;
                 }
             }
@@ -455,6 +590,175 @@ public class SseEventStreamService implements SmartLifecycle {
         Set<UUID> result = new java.util.LinkedHashSet<>(allowed);
         result.retainAll(new java.util.LinkedHashSet<>(extra));
         return new java.util.ArrayList<>(result);
+    }
+
+    /**
+     * WO-SEC-67 (F13): is the credential behind this stream still alive?
+     * Mirrors the per-request checks of {@code JwtAuthFilter} (same lookups,
+     * same fail-closed direction):
+     * <ul>
+     *   <li>JWT user → {@code UiUserLookupService.securityState}: user exists,
+     *       active, and the claim version/role still match the row (logout and
+     *       password change bump {@code token_version}; a role change bumps it
+     *       on write — a stale role beyond its TTL fails closed);</li>
+     *   <li>API key → row exists, not revoked, not expired, owner still
+     *       active (WO-ACL-5 criterion #4, same as the filter).</li>
+     * </ul>
+     * Any lookup error → false (fail closed — the stream dies, it never
+     * delivers into doubt).
+     */
+    private boolean isCredentialLive(SseClientInfo client) {
+        // WO-SEC-67: unit-scope harness (hand-built service with null
+        // collaborators, e.g. SsePerf6IntegrationTest/SseBridgeStartupTest) —
+        // there is nothing to check against. Production Spring wiring always
+        // injects real beans; the full-context proof (SseRevocationIT) runs
+        // with real rows. A null collaborator is a missing harness, never a
+        // dead credential — failing closed here would only test the harness.
+        if (uiUserLookupService == null || apiKeyRepository == null) {
+            return true;
+        }
+        try {
+            Principal principal = client.principal();
+            if (principal instanceof Principal.UserPrincipal up) {
+                // The JWT claims are frozen at registration; the row is live.
+                // Same comparison as JwtAuthFilter: version + active + role.
+                var state = uiUserLookupService.securityState(up.userId()).orElse(null);
+                if (state == null || !state.active()
+                    || state.tokenVersion() != client.tokenVersion()
+                    || !Objects.equals(state.role(), up.globalRole())) {
+                    return false;
+                }
+                return true;
+            }
+            if (principal instanceof Principal.ServicePrincipal sp) {
+                var keyOpt = apiKeyRepository.findById(sp.apiKeyId());
+                if (keyOpt.isEmpty()) {
+                    return false;
+                }
+                var apiKey = keyOpt.get();
+                if (apiKey.getRevokedAt() != null) {
+                    return false;
+                }
+                if (apiKey.getExpiresAt() != null
+                    && apiKey.getExpiresAt().isBefore(java.time.Instant.now())) {
+                    return false;
+                }
+                return uiUserLookupService.isActive(apiKey.getOwnerUserId());
+            }
+            return false;
+        } catch (RuntimeException e) {
+            log.warn("SSE credential liveness check failed for client {} — failing closed",
+                client.clientId(), e);
+            return false;
+        }
+    }
+
+    /**
+     * WO-SEC-67 (F13): fresh rights for this client (30s-TTL cached).
+     * SUPER_ADMIN bypasses (null = see all by contract — nothing to re-check).
+     * Any resolver error → null WITH a non-null snapshot behind it, which the
+     * caller treats as fail-closed (close, do not deliver). A null snapshot
+     * (SUPER_ADMIN) + null fresh = still see-all.
+     */
+    private Collection<UUID> reevaluateRights(SseClientInfo client) {
+        if (client.principal().isSuperAdmin()) {
+            return null;
+        }
+        try {
+            return rightsCache.get(
+                new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter),
+                k -> eventAuthzResolver.readableRuntimePdIds(
+                    client.principal(), client.processDefinitionKeyFilter));
+        } catch (RuntimeException e) {
+            log.warn("SSE rights re-resolution failed for client {} — failing closed",
+                client.clientId(), e);
+            return null;
+        }
+    }
+
+    /**
+     * WO-SEC-67 (F13): has the fresh view narrowed vs the snapshot? null fresh
+     * = SUPER_ADMIN see-all = never narrowed. A non-null fresh that is missing
+     * ANY snapshot id (removal) closes the stream — even when it also ADDS ids
+     * (a changed key filter outcome is still a different view; the client
+     * re-registers for exactly it). Pure widening without loss keeps the
+     * stream (fail-open on MORE rights would leak nothing the fresh set does
+     * not already grant — delivery itself is checked against fresh).
+     */
+    static boolean isNarrowed(Collection<UUID> snapshot, Collection<UUID> fresh) {
+        if (fresh == null) {
+            return false;
+        }
+        if (snapshot == null) {
+            // Was see-all (non-admin snapshot cannot be null by contract —
+            // defensive): any finite fresh view is narrower.
+            return true;
+        }
+        return !fresh.containsAll(snapshot);
+    }
+
+    /**
+     * WO-SEC-67 (F13): close one client's stream now (revocation path).
+     * Removes state (releases the per-subject slot) and completes the
+     * emitter; also evicts the client's rights-cache entry so a later
+     * stream starts from a cold read.
+     */
+    private void closeRevokedClient(String clientId, String reason) {
+        SseClientInfo client = clients.get(clientId);
+        removeClientState(clientId);
+        if (client != null) {
+            rightsCache.invalidate(
+                new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter));
+            try {
+                client.emitter().complete();
+            } catch (Exception e) {
+                log.warn("SSE close of revoked client {} failed", clientId, e);
+            }
+        }
+        log.info("SSE client {} closed (revoked: {})", clientId, reason);
+    }
+
+    /**
+     * WO-SEC-67 (F13): event-driven invalidation. Called by the revoke/logout/
+     * membership paths; closes every open stream whose credential is now dead
+     * or whose rights narrowed — immediately, without waiting for the next
+     * event or the 30s cache TTL. Best-effort and non-throwing (a revoke must
+     * never fail because a stream misbehaves); failures are logged.
+     */
+    public void invalidateStreams() {
+        for (SseClientInfo client : List.copyOf(clients.values())) {
+            try {
+                if (!isCredentialLive(client)) {
+                    closeRevokedClient(client.clientId, "credential dead (event)");
+                    continue;
+                }
+                // Bypass the 30s cache: the revoke JUST happened, the cached
+                // view may predate it by up to 30s.
+                Collection<UUID> fresh;
+                try {
+                    fresh = eventAuthzResolver.readableRuntimePdIds(
+                        client.principal(), client.processDefinitionKeyFilter);
+                } catch (RuntimeException e) {
+                    log.warn("SSE event-driven re-resolution failed for client {} — failing closed",
+                        client.clientId(), e);
+                    closeRevokedClient(client.clientId, "rights re-check failed (event)");
+                    continue;
+                }
+                if (fresh == null && client.allowedPdIds != null) {
+                    closeRevokedClient(client.clientId, "rights re-check failed (event)");
+                    continue;
+                }
+                if (isNarrowed(client.allowedPdIds, fresh)) {
+                    // Refresh the cache so a racing per-event check sees the
+                    // same narrowed view instead of the stale cached one.
+                    rightsCache.put(
+                        new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter), fresh);
+                    closeRevokedClient(client.clientId, "rights narrowed (event)");
+                }
+            } catch (RuntimeException e) {
+                log.warn("SSE event-driven invalidation failed for client {}", client.clientId(), e);
+            }
+        }
     }
 
     /**
@@ -716,6 +1020,14 @@ public class SseEventStreamService implements SmartLifecycle {
         String clientId,
         SseEmitter emitter,
         Principal principal,
+        /**
+         * WO-SEC-67: JWT token_version frozen at registration. The liveness
+         * check compares the row's CURRENT version against this — logout /
+         * password change bumps the row, so a mismatch means "issued before
+         * the revoke". ServicePrincipal streams carry -1 (unused — their
+         * liveness is the key row, not a version).
+         */
+        int tokenVersion,
         Collection<UUID> allowedPdIds,
         String typeFilter,
         String processInstanceIdFilter,
