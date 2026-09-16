@@ -42,18 +42,26 @@ public class SseEventStreamController {
         SseEmitter emitter = new SseEmitter(0L); // no timeout
 
         try {
-            // Send catchup events if Last-Event-ID is provided (cursor+limit, WO-PERF-6)
+            // WO-REL-37 (F14): регистрация live-подписки ДО чтения catchup + буфер
+            // пересечения — событие между этими шагами раньше терялось навсегда.
+            // Drain: live-события с sequence <= границы catchup отбрасываются (дубль),
+            // новее — доставляются (не потеряны).
+            String clientId = sseEventStreamService.registerBufferedClient(
+                emitter, principal, type, processInstanceId, processDefinitionKey);
+
+            // Send catchup events if Last-Event-ID is provided (cursor+pages, WO-REL-37)
+            long boundary = 0;
             if (lastEventId != null && !lastEventId.isBlank()) {
                 try {
                     long sinceSequence = Long.parseLong(lastEventId);
-                    sseEventStreamService.sendCatchupEvents(emitter, sinceSequence, principal, processDefinitionKey);
+                    boundary = sseEventStreamService.sendCatchupEvents(
+                        emitter, sinceSequence, principal, processDefinitionKey, type, processInstanceId);
                 } catch (NumberFormatException e) {
                     log.warn("Invalid Last-Event-ID: {}", lastEventId);
                 }
             }
 
-            // Register client for future events (429 if maxClients exceeded, WO-PERF-6)
-            String clientId = sseEventStreamService.registerClient(emitter, principal, type, processInstanceId, processDefinitionKey);
+            sseEventStreamService.drainBufferedClient(clientId, boundary);
 
             log.info("SSE stream opened: clientId={}, type={}, processInstanceId={}, processDefinitionKey={}, lastEventId={}",
                 clientId, type, processInstanceId, processDefinitionKey, lastEventId);

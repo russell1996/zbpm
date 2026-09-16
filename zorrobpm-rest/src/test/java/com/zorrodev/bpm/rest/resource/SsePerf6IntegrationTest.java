@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
@@ -32,7 +33,7 @@ class SsePerf6IntegrationTest {
 
     private SseEventStreamService service() {
         when(eventAuthzResolver.readableRuntimePdIds(any(), any())).thenReturn(null);
-        return new SseEventStreamService(null, eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper());
+        return new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class), eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper());
     }
 
     private static Principal admin() {

@@ -47,7 +47,7 @@ public class DomainEventOutboxListener {
             new CorrelationData(event.getOutboxId()));
 
         log.info("Published domain event to {}: routingKey={}, eventId={}",
-            RabbitConfiguration.EVENTS_EXCHANGE, routingKey, envelope.get("eventId"));
+            RabbitConfiguration.EVENTS_EXCHANGE, routingKey, envelope.get("id"));
     }
 
     /**
