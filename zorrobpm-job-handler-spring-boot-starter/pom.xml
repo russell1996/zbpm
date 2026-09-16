@@ -64,6 +64,14 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
+        <!-- WO-REL-36: bounded result-cache для идемпотентной переотправки completion
+             (тот же Caffeine-паттерн, что в engine: F38/PERF-7 — maximumSize+expireAfterAccess).
+             Версия из Spring Boot dependency management, как в zorrobpm-engine. -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- WO-BE-5: explicit Jackson 2 databind for Jackson2JsonMessageConverter compatibility.
              spring-boot-starter-jackson in SB 4 provides tools.jackson (Jackson 3) by default.
              Jackson 2 uses com.fasterxml.jackson.databind.ObjectMapper which is required by

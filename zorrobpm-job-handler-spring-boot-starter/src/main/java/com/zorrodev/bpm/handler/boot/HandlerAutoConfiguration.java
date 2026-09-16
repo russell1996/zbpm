@@ -1,9 +1,6 @@
 package com.zorrodev.bpm.handler.boot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.zorrodev.bpm.exchange.JobDetailModel;
-import com.zorrodev.bpm.exchange.ProcessVariable;
-import com.zorrodev.bpm.exchange.ServiceTaskCompleteData;
 import com.zorrodev.bpm.handler.JobHandler;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +14,6 @@ import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -54,35 +50,10 @@ public class HandlerAutoConfiguration {
             }
             container.setQueueNames(queueName);
             log.info("Subscribing to {}", queueName);
-            container.setMessageListener(message -> {
-                try {
-                    JobDetailModel model = objectMapper.readValue(message.getBody(), JobDetailModel.class);
-
-                    ServiceTaskCompleteData completeData = new ServiceTaskCompleteData();
-                    completeData.setServiceTaskId(model.getServiceTaskId());
-                    try {
-                        List<ProcessVariable> result = handler.handleJob(model).stream().map(x -> {
-                            ProcessVariable v = new ProcessVariable();
-                            v.setName(x.getName());
-                            v.setValue(x.getValue());
-                            v.setType(x.getType().toString());
-                            return v;
-                        }).toList();
-                        completeData.setStatus("SUCCESS");
-                        completeData.setVariables(result);
-                    } catch (Exception e) {
-                        // the worker's logic failed: report the error back so the engine applies retries and,
-                        // once they are exhausted, raises an incident carrying this message
-                        completeData.setStatus("FAILED");
-                        completeData.setErrorMessage(e.getClass().getSimpleName()
-                            + (e.getMessage() != null ? ": " + e.getMessage() : ""));
-                        log.warn("Job '{}' handler failed: {}", handler.getJob(), completeData.getErrorMessage());
-                    }
-                    rabbitTemplate.convertAndSend("zorrobpm.complete-service-task", completeData);
-                } catch (Exception e) {
-                    log.error("Failed to deserialize message for queue {}: {}", queueName, e.getMessage());
-                }
-            });
+            // WO-REL-36: вся логика — в JobCompletionListener (разделение ошибок +
+            // идемпотентная переотправка); здесь только wiring.
+            container.setMessageListener(
+                new JobCompletionListener(handler, rabbitTemplate, objectMapper, queueName));
             container.start();
         }
 
