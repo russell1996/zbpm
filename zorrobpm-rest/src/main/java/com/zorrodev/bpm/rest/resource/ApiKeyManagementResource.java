@@ -63,7 +63,12 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public List<ApiKeyGrantDTO> setGrants(@PathVariable UUID userId, @Valid @RequestBody SetGrantsDTO dto) {
         requireSuperAdmin();
-        return apiKeyService.setGrantsForUser(userId, dto, getPrincipal());
+        List<ApiKeyGrantDTO> result = apiKeyService.setGrantsForUser(userId, dto, getPrincipal());
+        // WO-SEC-67 verifier HOLD #2: сужение/расширение грантов обязано
+        // переоценить открытые key-потоки немедленно (live-view закроет
+        // суженные на sweep; без hook idle-потоки висели бы до события).
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 
     @Transactional
@@ -128,7 +133,10 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public List<ApiKeyGrantDTO> setMyGrants(@Valid @RequestBody SetGrantsDTO dto) {
         Principal.UserPrincipal user = selfPrincipal();
-        return apiKeyService.setOwnGrants(user.userId(), dto, user);
+        List<ApiKeyGrantDTO> result = apiKeyService.setOwnGrants(user.userId(), dto, user);
+        // WO-SEC-67 verifier HOLD #2: см. setGrants выше — тот же hook.
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 
     @Transactional

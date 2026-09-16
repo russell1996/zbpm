@@ -771,6 +771,14 @@ public class SseEventStreamService implements SmartLifecycle {
     }
 
     private Collection<UUID> liveView(SseClientInfo client, boolean bypassCache) {
+        // WO-SEC-67 verifier HOLD: SUPER_ADMIN bypass — see-all неизменно
+        // (зеркало per-event reevaluateRights). Без него readableRuntimePdIds
+        // вернул бы null → rightsCache.put(key, null) → Caffeine-NPE → любой
+        // sweep закрывал бы ВСЕ admin-потоки. Credential-liveness админа
+        // проверяется отдельно выше (logout бампает его version).
+        if (client.principal().isSuperAdmin()) {
+            return null;
+        }
         if (client.principal() instanceof Principal.ServicePrincipal sp) {
             // Uncached: grant changes are rare, correctness beats one query
             // per event here.
