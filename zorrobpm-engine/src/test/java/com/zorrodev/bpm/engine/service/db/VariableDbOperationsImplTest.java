@@ -168,4 +168,100 @@ class VariableDbOperationsImplTest {
         db.deleteVariables(pi, scope);
         verify(variableRepository).deleteByProcessInstanceIdAndScopeId(pi, scope);
     }
+
+    // WO-REL-41 (B-8): проводка новых методов — SQL-форма и kind-репорт.
+
+    @Test
+    void getVariableTextValue_mapsRow() {
+        UUID pi = UUID.randomUUID();
+        ProcessVariableEntity e = new ProcessVariableEntity();
+        e.setTextValue("b-1");
+        when(variableRepository.findByProcessInstanceIdAndNameAndScopeIdIsNull(pi, "_mi_batch_mi"))
+            .thenReturn(java.util.Optional.of(e));
+
+        assertThat(db.getVariableTextValue(pi, "_mi_batch_mi")).hasValue("b-1");
+        verify(variableRepository, never()).findByProcessInstanceIdAndScopeIdIsNull(any());
+    }
+
+    @Test
+    void getVariableTextValue_emptyWhenAbsent() {
+        UUID pi = UUID.randomUUID();
+        when(variableRepository.findByProcessInstanceIdAndNameAndScopeIdIsNull(pi, "_mi_batch_mi"))
+            .thenReturn(java.util.Optional.empty());
+
+        assertThat(db.getVariableTextValue(pi, "_mi_batch_mi")).isEmpty();
+    }
+
+    @Test
+    void appendJsonElement_postgres_insert_recordsCreate() throws Exception {
+        givenProduct("PostgreSQL");
+        UUID pi = UUID.randomUUID();
+        when(jdbcTemplate.queryForObject(contains("jsonb"), eq(Boolean.class), any(), any(), any(), any(), any(), any()))
+            .thenReturn(Boolean.TRUE);
+
+        db.appendJsonElement(pi, "agg", "\"a\"");
+
+        verify(jdbcTemplate).queryForObject(contains("jsonb"), eq(Boolean.class), any(), any(), any(), any(), any(), any());
+        verify(executionContext).recordVariableChange("agg", "create");
+        verify(variableRepository, never()).saveAll(any());
+        verify(entityManager, never()).detach(any());
+    }
+
+    @Test
+    void appendJsonElement_postgres_conflict_recordsUpdateAndEvicts() throws Exception {
+        givenProduct("PostgreSQL");
+        UUID pi = UUID.randomUUID(); UUID rowId = UUID.randomUUID();
+        when(jdbcTemplate.queryForObject(contains("jsonb"), eq(Boolean.class), any(), any(), any(), any(), any(), any()))
+            .thenReturn(Boolean.FALSE);
+        when(jdbcTemplate.queryForList(contains("SELECT"), eq(UUID.class), any(Object[].class)))
+            .thenReturn(List.of(rowId));
+        ProcessVariableEntity ref = new ProcessVariableEntity();
+        when(entityManager.getReference(eq(ProcessVariableEntity.class), eq(rowId))).thenReturn(ref);
+
+        db.appendJsonElement(pi, "agg", "\"a\"");
+
+        verify(executionContext).recordVariableChange("agg", "update");
+        verify(entityManager).detach(ref);
+    }
+
+    @Test
+    void appendJsonElement_h2_updateHit_recordsUpdateWithoutInsert() throws Exception {
+        givenProduct("H2");
+        UUID pi = UUID.randomUUID();
+        when(jdbcTemplate.update(contains("SUBSTRING"), any(Object[].class))).thenReturn(1);
+
+        db.appendJsonElement(pi, "agg", "\"a\"");
+
+        verify(jdbcTemplate).update(contains("SUBSTRING"), any(Object[].class));
+        verify(jdbcTemplate, never()).update(contains("INSERT"), any(Object[].class));
+        verify(executionContext).recordVariableChange("agg", "update");
+    }
+
+    @Test
+    void appendJsonElement_h2_updateMiss_insertsAndRecordsCreate() throws Exception {
+        givenProduct("H2");
+        UUID pi = UUID.randomUUID();
+        when(jdbcTemplate.update(contains("SUBSTRING"), any(Object[].class))).thenReturn(0);
+        when(jdbcTemplate.update(contains("INSERT"), any(Object[].class))).thenReturn(1);
+
+        db.appendJsonElement(pi, "agg", "\"a\"");
+
+        verify(jdbcTemplate).update(contains("INSERT"), any(Object[].class));
+        verify(executionContext).recordVariableChange("agg", "create");
+        verify(entityManager, never()).detach(any());
+    }
+
+    @Test
+    void appendJsonElement_h2_insertRace_retriesUpdate() throws Exception {
+        givenProduct("H2");
+        UUID pi = UUID.randomUUID();
+        when(jdbcTemplate.update(contains("SUBSTRING"), any(Object[].class))).thenReturn(0, 1);
+        when(jdbcTemplate.update(contains("INSERT"), any(Object[].class)))
+            .thenThrow(new org.springframework.dao.DuplicateKeyException("race"));
+
+        db.appendJsonElement(pi, "agg", "\"a\"");
+
+        verify(jdbcTemplate).update(contains("INSERT"), any(Object[].class));
+        verify(executionContext).recordVariableChange("agg", "update");
+    }
 }

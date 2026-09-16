@@ -383,6 +383,16 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public Optional<String> getVariableTextValue(@NonNull UUID processInstanceId, String name) {
+        return variableDbOperations.getVariableTextValue(processInstanceId, name);
+    }
+
+    @Override
+    public void appendJsonElement(@NonNull UUID processInstanceId, String name, String jsonElement) {
+        variableDbOperations.appendJsonElement(processInstanceId, name, jsonElement);
+    }
+
+    @Override
     public void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId) {
         variableDbOperations.deleteVariables(processInstanceId, scopeId);
     }
