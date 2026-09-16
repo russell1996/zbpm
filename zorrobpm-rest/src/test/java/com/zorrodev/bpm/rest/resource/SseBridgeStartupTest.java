@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.timeout;
@@ -44,7 +45,7 @@ class SseBridgeStartupTest {
 
     private SseEventStreamService service() {
         when(eventAuthzResolver.readableRuntimePdIds(any(), any())).thenReturn(null);
-        return new SseEventStreamService(null, eventAuthzResolver, rabbitAdmin, new ObjectMapper());
+        return new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class), eventAuthzResolver, rabbitAdmin, new ObjectMapper());
     }
 
     private static Principal admin() {

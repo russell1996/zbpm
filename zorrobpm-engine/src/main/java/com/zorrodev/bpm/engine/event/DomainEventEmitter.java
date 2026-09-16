@@ -69,7 +69,7 @@ public class DomainEventEmitter {
         event.setElementId(elementId);
         event.setOwnerScope(ownerScope);
         event.setData(safeData);
-        domainEventRepository.save(event);
+        DomainEventEntity persisted = domainEventRepository.saveAndFlush(event);
 
         // WO-PERF-1 N3: resolve pdKey from cache (immutable process definitions, bounded)
         String processDefinitionKey = null;
@@ -81,10 +81,17 @@ public class DomainEventEmitter {
         }
 
         // Write to outbox for async delivery (reuse existing OutboxEntry pattern)
+        // WO-REL-37 (F11): единый типизированный envelope — сериализация ПОСЛЕ save,
+        // из СОХРАНЁННОЙ сущности: sequence (DB-generated IDENTITY) уже известен.
+        // Ключ "id" (не "eventId") + sequence + version — та же форма, что REST
+        // (EventQueryService.toEnvelope) и фронт (EventEnvelope: id+sequence).
+        // Прод-потребителей старого ключа "eventId" ноль (проверено grep) — замена безопасна.
         try {
             Map<String, Object> envelope = new HashMap<>();
-            envelope.put("eventId", eventId.toString());
+            envelope.put("id", eventId.toString());
+            envelope.put("sequence", persisted.getSequence());
             envelope.put("type", eventType.getValue());
+            envelope.put("version", persisted.getVersion());
             envelope.put("occurredAt", occurredAt.toString());
             envelope.put("processInstanceId", processInstanceId != null ? processInstanceId.toString() : null);
             envelope.put("processDefinitionId", processDefinitionId != null ? processDefinitionId.toString() : null);

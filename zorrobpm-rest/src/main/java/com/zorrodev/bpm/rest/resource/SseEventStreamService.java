@@ -1,8 +1,7 @@
 package com.zorrodev.bpm.rest.resource;
 
-import com.zorrodev.bpm.engine.repository.DomainEventRepository;
-import com.zorrodev.bpm.engine.entity.DomainEventEntity;
 import com.zorrodev.bpm.engine.security.Principal;
+import com.zorrodev.bpm.engine.service.EventQueryService;
 import com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,18 +47,18 @@ import java.util.concurrent.TimeoutException;
 @Service
 public class SseEventStreamService implements SmartLifecycle {
 
-    private final DomainEventRepository domainEventRepository;
+    private final EventQueryService eventQueryService;
     private final EventAuthzResolver eventAuthzResolver;
     private final RabbitAdmin rabbitAdmin;
     // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
     private final tools.jackson.databind.ObjectMapper objectMapper;
 
     @Autowired
-    public SseEventStreamService(DomainEventRepository domainEventRepository,
-                                   EventAuthzResolver eventAuthzResolver,
-                                   @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
-                                   tools.jackson.databind.ObjectMapper objectMapper) {
-        this.domainEventRepository = domainEventRepository;
+    public SseEventStreamService(EventQueryService eventQueryService,
+                                    EventAuthzResolver eventAuthzResolver,
+                                    @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
+                                    tools.jackson.databind.ObjectMapper objectMapper) {
+        this.eventQueryService = eventQueryService;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
         this.objectMapper = objectMapper;
@@ -171,9 +170,72 @@ public class SseEventStreamService implements SmartLifecycle {
      */
     public void removeClient(String clientId) {
         clients.remove(clientId);
+        bufferedEvents.remove(clientId);
         log.info("SSE client {} removed", clientId);
         stopRabbitMqListenerIfNoClients();
     }
+
+    /**
+     * WO-REL-37 (F14): регистрация live-подписки ДО чтения catchup.
+     * Клиент сразу виден live-рассылке, но его события буферизуются (не шлются),
+     * пока контроллер не вызовет {@link #drainBufferedClient} с границей catchup:
+     * события с sequence <= границы отбрасываются (дубль catchup), новее —
+     * доставляются. Окно потери между catchup-чтением и подпиской закрыто.
+     *
+     * @return clientId для {@link #drainBufferedClient}
+     */
+    public String registerBufferedClient(SseEmitter emitter, Principal principal, String typeFilter,
+                                    String processInstanceIdFilter, String processDefinitionKeyFilter) {
+        String clientId = registerClient(emitter, principal, typeFilter,
+            processInstanceIdFilter, processDefinitionKeyFilter);
+        bufferingClients.add(clientId);
+        return clientId;
+    }
+
+    /**
+     * WO-REL-37 (F14): слить буфер пересечения: отбросить дубль (sequence <=
+     * границы catchup), доставить новое (sequence > границы), перевести клиента
+     * в обычный live-режим.
+     */
+    public void drainBufferedClient(String clientId, long catchupBoundary) {
+        SseClientInfo client = clients.get(clientId);
+        if (client == null) {
+            bufferedEvents.remove(clientId);
+            bufferingClients.remove(clientId);
+            return;
+        }
+        List<Map<String, Object>> buffered = bufferedEvents.remove(clientId);
+        bufferingClients.remove(clientId);
+        if (buffered == null || buffered.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> envelope : buffered) {
+            Object seqObj = envelope.get("sequence");
+            long seq = seqObj instanceof Number n ? n.longValue() : 0;
+            if (seq <= catchupBoundary) {
+                continue;
+            }
+            SseEmitter.SseEventBuilder event = SseEmitter.event()
+                .id(String.valueOf(seq))
+                .name((String) envelope.get("type"))
+                .data(envelope)
+                .reconnectTime(3000);
+            sseExecutor.execute(() -> {
+                try {
+                    client.emitter().send(event);
+                } catch (IOException e) {
+                    log.warn("Failed to send drained event to client {}", clientId);
+                    clients.remove(clientId);
+                }
+            });
+        }
+    }
+
+    /** Буфер пересечения catchup→live: clientId → события, пришедшие до drain. */
+    private final Map<String, List<Map<String, Object>>> bufferedEvents = new ConcurrentHashMap<>();
+
+    /** Клиенты в режиме буферизации (зарегистрированы, но ещё не drained). */
+    private final Set<String> bufferingClients = ConcurrentHashMap.newKeySet();
 
     /**
      * Called when a domain event arrives from RabbitMQ.
@@ -226,6 +288,14 @@ public class SseEventStreamService implements SmartLifecycle {
                 if (pdUuid == null || !client.allowedPdIds.contains(pdUuid)) {
                     continue;
                 }
+            }
+
+            // WO-REL-37 (F14): клиент в режиме буферизации — событие в буфер
+            // пересечения, не на emitter (drain решит: дубль или новое).
+            if (bufferingClients.contains(client.clientId)) {
+                bufferedEvents.computeIfAbsent(client.clientId,
+                    k -> new CopyOnWriteArrayList<>()).add(envelope);
+                continue;
             }
 
             // Per-client async send — not on the RabbitMQ thread (WO-PERF-6 head-of-line)
@@ -294,50 +364,86 @@ public class SseEventStreamService implements SmartLifecycle {
 
     /**
      * Sends catchup events from the database for reconnect (Last-Event-ID).
-     * Cursor-based (sinceSequence) + limit — not bare 100 without cursor.
+     *
+     * <p>WO-REL-37 (F12/F14): единый путь с live и REST — тот же
+     * {@code EventQueryService.findEventEnvelopes} (тот же фильтр type/piId +
+     * гранты, та же пагинация maxResults+1/hasMore, фильтрация в SQL до окна).
+     * Envelope строит сервис (null-safe LinkedHashMap, не Map.of) — штатный
+     * null elementId больше не роняет весь backlog (F12). Возвращает границу
+     * (max sequence выданного, или since — если ничего не выдано) для дедупа
+     * пересечения catchup→live.
+     *
+     * @return max выданного sequence (exclusive-граница live-буфера)
      */
-    public void sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
+    public long sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
                                     String processDefinitionKeyFilter) {
-        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
+        return sendCatchupEvents(emitter, sinceSequence, principal, processDefinitionKeyFilter,
+            null, null);
+    }
 
-        int limit = 100;
-        List<DomainEventEntity> events;
-        if (allowedPdIds == null) {
-            events = domainEventRepository.findSince(sinceSequence, limit);
-        } else {
-            if (allowedPdIds.isEmpty()) {
-                return;
-            }
-            events = domainEventRepository.findSinceForPrincipal(sinceSequence, allowedPdIds, limit);
+    /**
+     * Полная форма с теми же фильтрами, что live-подписка (F14: один и тот же
+     * фильтр для catchup и live — type + processInstanceId).
+     */
+    public long sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
+                                    String processDefinitionKeyFilter,
+                                    String typeFilter, String processInstanceIdFilter) {
+        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, null);
+        List<UUID> keyPdIds = eventQueryService.resolveKeyPdIds(processDefinitionKeyFilter);
+        Collection<UUID> pdFilter = intersect(allowedPdIds, keyPdIds);
+        if (pdFilter != null && pdFilter.isEmpty()) {
+            return sinceSequence;
         }
 
-        for (DomainEventEntity event : events) {
+        UUID piId = null;
+        if (processInstanceIdFilter != null && !processInstanceIdFilter.isBlank()) {
             try {
-                Map<String, Object> envelope = Map.of(
-                    "sequence", event.getSequence(),
-                    "id", event.getId().toString(),
-                    "type", event.getType(),
-                    "version", event.getVersion(),
-                    "occurredAt", event.getOccurredAt().toString(),
-                    "processDefinitionId", event.getProcessDefinitionId() != null ? event.getProcessDefinitionId().toString() : null,
-                    "processInstanceId", event.getProcessInstanceId() != null ? event.getProcessInstanceId().toString() : null,
-                    "elementId", event.getElementId() != null ? event.getElementId() : null,
-                    "ownerScope", event.getOwnerScope() != null ? event.getOwnerScope() : null,
-                    "data", event.getData() != null ? event.getData() : Map.of()
-                );
+                piId = UUID.fromString(processInstanceIdFilter);
+            } catch (IllegalArgumentException e) {
+                return sinceSequence;
+            }
+        }
 
-                SseEmitter.SseEventBuilder sseEvent = SseEmitter.event()
-                    .id(String.valueOf(event.getSequence()))
-                    .name(event.getType())
-                    .data(envelope)
-                    .reconnectTime(3000);
-
-                emitter.send(sseEvent);
-            } catch (Exception e) {
-                log.error("Error sending catchup event {}", event.getSequence(), e);
+        // Пагинация за пределами 100: страницами по 100, пока есть hasMore (F14:
+        // "100 на страницу", не "100 на весь backlog").
+        long boundary = sinceSequence;
+        while (true) {
+            List<Map<String, Object>> envelopes =
+                eventQueryService.findEventEnvelopes(boundary, pdFilter, piId, typeFilter, 100);
+            boolean hasMore = envelopes.size() > 100;
+            List<Map<String, Object>> page = hasMore ? envelopes.subList(0, 100) : envelopes;
+            for (Map<String, Object> envelope : page) {
+                try {
+                    Object seqObj = envelope.get("sequence");
+                    long seq = seqObj instanceof Number n ? n.longValue() : boundary;
+                    SseEmitter.SseEventBuilder sseEvent = SseEmitter.event()
+                        .id(String.valueOf(seq))
+                        .name((String) envelope.get("type"))
+                        .data(envelope)
+                        .reconnectTime(3000);
+                    emitter.send(sseEvent);
+                    if (seq > boundary) {
+                        boundary = seq;
+                    }
+                } catch (Exception e) {
+                    // F12: одна битая запись не обрывает остаток backlog (было break).
+                    log.error("Error sending catchup event, continuing with the rest", e);
+                }
+            }
+            if (!hasMore) {
                 break;
             }
         }
+        return boundary;
+    }
+
+    /** null = unrestricted; пересечение "see all" с key-фильтром даёт key-фильтр. */
+    private static Collection<UUID> intersect(Collection<UUID> allowed, Collection<UUID> extra) {
+        if (allowed == null) return extra;
+        if (extra == null) return allowed;
+        Set<UUID> result = new java.util.LinkedHashSet<>(allowed);
+        result.retainAll(new java.util.LinkedHashSet<>(extra));
+        return new java.util.ArrayList<>(result);
     }
 
     /**

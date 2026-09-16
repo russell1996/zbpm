@@ -43,7 +43,6 @@ class RestRepositoryBoundaryTest {
             "AuthResource",
             "OutboxAdminResource",
             "ProcessDefinitionResource",
-            "SseEventStreamService",
             "UserTaskRuntimeOperationsImpl");
 
     private static Set<String> actualViolators() {
