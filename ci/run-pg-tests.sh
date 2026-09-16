@@ -16,6 +16,8 @@
 #   PG_USER     — database user (default: zorrodev)
 #   PG_PASSWORD — database password (default: zorrodev)
 #   MAVEN_OPTS  — JVM args for Maven (default: -Xmx1g)
+#   CI_PIPELINE_ID — when set (GitLab CI), project name gets suffixed so two
+#                    parallel pipelines never share one postgres (WO-OPS-11 F26a).
 
 set -euo pipefail
 
@@ -24,8 +26,23 @@ export PG_DB="${PG_DB:-zorrobpm-db}"
 export PG_USER="${PG_USER:-zorrodev}"
 export PG_PASSWORD="${PG_PASSWORD:-zorrodev}"
 
+# WO-OPS-11 F26: поговаривают, порты тоже фиксированы. PG_PORT уже параметризован
+# (CI ставит 55432), но два параллельных pipeline на одном раннере делят и порт, и
+# project. Разводим: суффикс по CI_PIPELINE_ID + порт со сдвигом от того же ID.
+# Локально (без CI_PIPELINE_ID) поведение побайтово прежнее.
+if [ -n "${CI_PIPELINE_ID:-}" ]; then
+  SUFFIX="$CI_PIPELINE_ID"
+  PROJECT="zbpm-pgci-${SUFFIX}"
+  # Сдвиг порта детерминирован от ID, в пределах 55432..57432 (2000 слотов, коллизия
+  # двух одновременно бегущих pipeline практически исключена, а выход за диапазон
+  # невозможен по построению).
+  PG_PORT="$((55432 + (SUFFIX % 2000)))"
+  export PG_PORT
+else
+  PROJECT="zbpm-pgci"
+fi
+
 COMPOSE="ci/docker-compose.pg.yml"
-PROJECT="zbpm-pgci"
 
 # Always tear postgres down — even if tests fail or the script is interrupted —
 # so no container/volume/port is leaked onto the shared runner between pipelines.

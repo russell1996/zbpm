@@ -16,6 +16,8 @@
 #   RABBIT_USER     — broker user (default: zorrodev)
 #   RABBIT_PASSWORD — broker password (default: zorrodev)
 #   MAVEN_OPTS      — JVM args for Maven (default: -Xmx1g)
+#   CI_PIPELINE_ID  — when set (GitLab CI), project name gets suffixed so two
+#                     parallel pipelines never share one broker (WO-OPS-11 F26a).
 
 set -euo pipefail
 
@@ -23,8 +25,17 @@ export RABBIT_PORT="${RABBIT_PORT:-5673}"
 export RABBIT_USER="${RABBIT_USER:-zorrodev}"
 export RABBIT_PASSWORD="${RABBIT_PASSWORD:-zorrodev}"
 
+# WO-OPS-11 F26: тот же развод, что в run-pg-tests.sh (суффикс + сдвиг порта).
+if [ -n "${CI_PIPELINE_ID:-}" ]; then
+  SUFFIX="$CI_PIPELINE_ID"
+  PROJECT="zbpm-rabbitci-${SUFFIX}"
+  RABBIT_PORT="$((5673 + (SUFFIX % 2000)))"
+  export RABBIT_PORT
+else
+  PROJECT="zbpm-rabbitci"
+fi
+
 COMPOSE="ci/docker-compose.rabbit.yml"
-PROJECT="zbpm-rabbitci"
 
 # Always tear the broker down — even if tests fail or the script is interrupted —
 # so no container/volume/port is leaked onto the shared runner between pipelines.
@@ -63,17 +74,22 @@ echo "=== rabbitmq is ready ==="
 # broker published on 127.0.0.1:$RABBIT_PORT. -Dgroups=rabbit selects @Tag("rabbit");
 # the test reads host/port/user/pass from RABBITMQ_* env (defaults = historic
 # localhost:5672/zorrodev, unchanged).
+# WO-OPS-11 F27: --user на mvn-контейнере (без него bind-mount создавал root-owned
+# target/, тот же класс поломки что WO-REL-22/WO-AUDIT-6) + явный maven.repo.local
+# на обычном пути (не /root/.m2 — туда без root не зайти).
 set +e
 docker run --rm \
+  --user "$(id -u):$(id -g)" \
   --network host \
   -v "${BUILD_DIR:-$(pwd)}":/build -w /build \
+  -v zbpm_m2:/tmp/.m2 \
   -e RABBITMQ_HOST=127.0.0.1 \
   -e RABBITMQ_PORT="$RABBIT_PORT" \
   -e RABBITMQ_USER="$RABBIT_USER" \
   -e RABBITMQ_PASSWORD="$RABBIT_PASSWORD" \
   -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
   maven:3.9.9-eclipse-temurin-21 \
-  mvn -B -ntp clean verify \
+  mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
     -pl zorrobpm-rest \
     -am \
     -Dsurefire.skip=true \

@@ -206,7 +206,12 @@ public class RegistrationAdminIntegrationTests {
         String rawPa1 = registerAndExtractToken("list-pa1", emailPa1);
         UiUserEntity pa1 = onlyUserWithEmail(emailPa1);
         registrationService.verifyEmail(rawPa1);
-        Thread.sleep(10);
+        // WO-OPS-11 п.2: вместо sleep(10) — детерминированный порядок через
+        // монотонный createdAt (мс-зернистость БД может склеить соседние метки,
+        // тогда «oldest first» — гонка часов, а не кода). +1мс гарантирует факт.
+        pa1 = userRepository.findById(pa1.getId()).orElseThrow();
+        pa1.setCreatedAt(pa1.getCreatedAt().minusMillis(1));
+        userRepository.save(pa1);
         String emailPa2 = "list-pa2-" + UUID.randomUUID().toString().substring(0, 8) + "@x.com";
         String rawPa2 = registerAndExtractToken("list-pa2", emailPa2);
         UiUserEntity pa2 = onlyUserWithEmail(emailPa2);

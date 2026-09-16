@@ -123,16 +123,22 @@ test:backend:
     # `--target test` runs `mvn -B clean verify` (full reactor: unit + integration) inside the build
     # WO-PERF-4: -Pcoverage keeps the jacoco coverage report active in CI (profile is off by default locally)
     # Mount target/ out to capture test reports after build
+    # WO-OPS-11 F27: уникальное имя контейнера на pipeline (фиксированный test-extract
+    # конфликтовал между параллельными job'ами) + trap-гарантия извлечения отчётов при
+    # ЛЮБОМ exit. Ключевое: `cp` живут ВНУТРИ trap-функции, а не в линейном script'е —
+    # линейный `docker build` при красном тесте даёт exit≠0, job обрывается, и линейные
+    # `cp` после него не выполняются никогда. Честная граница (доказана живой пробой
+    # /tmp/f27-proof/run.sh + run2.sh): красный тест ВНУТРИ `RUN mvn verify` роняет сам
+    # build-слой — образа нет, извлекать нечего, и это структурно не чинится обёрткой
+    # (нужен BuildKit --output или разбиение test-стадии — отдельный WO, не этот срез);
+    # trap тогда пишет маркер NO-REPORTS.txt вместо тишины, чтобы artifacts:when:always
+    # не молчали. Покрытый сценарий: build собран (отчёты в слое), job падает ПОСЛЕ —
+    # trap извлекает всё (проба run2.sh: TEST-red.xml извлечён при exit=1).
+    - export TEST_EXTRACT="test-extract-$CI_PIPELINE_ID-$CI_JOB_ID"
+    - mkdir -p target-out/zorrobpm-engine target-out/zorrobpm-rest
+    - extract_reports() { docker create --name "$TEST_EXTRACT" "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || return 1; docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports >/dev/null 2>&1; }
+    - cleanup_extract() { extract_reports || echo "F27: no test image — build failed before tests ran, no reports to extract" > target-out/NO-REPORTS.txt; docker rm -f "$TEST_EXTRACT" >/dev/null 2>&1 || true; docker image rm "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || true; }; trap cleanup_extract EXIT
     - docker build --target test --build-arg MAVEN_PROFILES=-Pcoverage -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
-    - docker run --rm -v "$CI_PROJECT_DIR/target-out":/out busybox sh -c 'rm -rf /out && true' || true
-    - docker create --name test-extract zorrobpm-app-test:$IMAGE_TAG || true
-    - docker cp test-extract:/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports || true
-    - docker cp test-extract:/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports || true
-    - docker cp test-extract:/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco || true
-    - docker cp test-extract:/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports || true
-    - docker cp test-extract:/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports || true
-    - docker rm -f test-extract || true
-    - docker image rm zorrobpm-app-test:$IMAGE_TAG || true
   rules: *rules-code-changes
 
 # ---------------------------------------------------------------------------
@@ -203,6 +209,9 @@ test:frontend:
 # 1 moderate, zero critical — see WO-AUDIT-1 report; NVD itself needs $NVD_API_KEY
 # and cannot run keyless locally, so the first CI run of THIS job is the final
 # arbiter — if it goes red, upgrade deps first per WO-AUDIT-1 fallback).
+# WO-OPS-11 F36: ТОЛЬКО Maven здесь (npm вынесен в cve:npm ниже): при красном
+# mvn-скане job падает ДО npm-шага, и npm-уязвимость терялась молча. Разделение
+# даёт независимые отчёты: каждая джоба — свои artifacts, свой exit.
 # ---------------------------------------------------------------------------
 
 cve:scan:
@@ -219,16 +228,20 @@ cve:scan:
     # NVD cache — dependency-check stores DB in its data dir; map to runner cache
     - mkdir -p .nvd-cache
     # Backend CVE scan: OWASP dependency-check against the built JARs
+    # WO-OPS-11 F27: --user + maven.repo.local (root-owned target, тот же класс).
     - >-
       docker run --rm
+      --user "$(id -u):$(id -g)"
       -v "$CI_PROJECT_DIR":/build -w /build
-      -v "$CI_PROJECT_DIR/.nvd-cache":/root/.m2/repository/org/owasp/dependency-check-data
-      -v zbpm_m2:/root/.m2
+      -v "$CI_PROJECT_DIR/.nvd-cache":/tmp/nvd-cache
+      -v zbpm_m2:/tmp/.m2
+      -e NVD_API_KEY=$NVD_API_KEY
       maven:3.9.9-eclipse-temurin-21
-      sh -c "mvn -B -ntp install -DskipTests -q && mvn -B -ntp org.owasp:dependency-check-maven:check
+      sh -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -DskipTests -q && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository org.owasp:dependency-check-maven:check
       -DfailBuildOnCVSS=9
       -DsuppressionFile=owasp-suppressions.xml
       -DnvdApiKey=$NVD_API_KEY
+      -DdataDirectory=/tmp/nvd-cache
       -DossindexAnalyzerEnabled=false
       -DnodeAuditSkipDevDependencies=true
       --no-transfer-progress"
@@ -243,9 +256,12 @@ cve:scan:
     name: cve-reports-$CI_COMMIT_SHORT_SHA
 
 # ---------------------------------------------------------------------------
-# Security — CVE report (advisory). Same scans at the informative threshold
-# (backend CVSS>=7, npm audit high+) with allow_failure: true — signal without
-# blocking while the >=9 gate above is the hard bar.
+# Security — CVE report (advisory). Same Maven scan at the informative threshold
+# (backend CVSS>=7) with allow_failure: true — signal without blocking while
+# the >=9 gate above is the hard bar.
+# WO-OPS-11 F36: БЕЗ npm-шага (вынесен в cve:npm): раньше npm audit шёл ПОСЛЕ
+# mvn-скана в том же script'е и не выполнялся при красном скане + маскировался
+# `|| echo`. Теперь advisory Maven-скан независим и самодостаточен.
 # ---------------------------------------------------------------------------
 
 cve:report:
@@ -260,25 +276,21 @@ cve:report:
     - mkdir -p .nvd-cache
     - >-
       docker run --rm
+      --user "$(id -u):$(id -g)"
       -v "$CI_PROJECT_DIR":/build -w /build
-      -v "$CI_PROJECT_DIR/.nvd-cache":/root/.m2/repository/org/owasp/dependency-check-data
-      -v zbpm_m2:/root/.m2
+      -v "$CI_PROJECT_DIR/.nvd-cache":/tmp/nvd-cache
+      -v zbpm_m2:/tmp/.m2
+      -e NVD_API_KEY=$NVD_API_KEY
       maven:3.9.9-eclipse-temurin-21
-      sh -c "mvn -B -ntp install -DskipTests -q && mvn -B -ntp org.owasp:dependency-check-maven:check
+      sh -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -DskipTests -q && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository org.owasp:dependency-check-maven:check
       -DfailBuildOnCVSS=7
       -DsuppressionFile=owasp-suppressions.xml
       -DnvdApiKey=$NVD_API_KEY
+      -DdataDirectory=/tmp/nvd-cache
       -DossindexAnalyzerEnabled=false
       -DnodeAuditSkipDevDependencies=true
       --no-transfer-progress"
     - echo "Backend CVE scan complete (CVSS>=7 = fail)"
-    # Frontend CVE scan: npm audit (containerized — the zbpm runner has no npm on host,
-    # same node:22-alpine base as zorrobpm-frontend/Dockerfile's builder stage)
-    - >-
-      docker run --rm
-      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
-      node:22-alpine
-      sh -c "npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev || echo 'npm audit found vulnerabilities (non-blocking)'"
   rules: *rules-code-changes
   artifacts:
     when: always
@@ -287,6 +299,37 @@ cve:report:
       - zorrobpm-engine/target/dependency-check-report.html
     expire_in: 30 days
     name: cve-advisory-$CI_COMMIT_SHORT_SHA
+
+# ---------------------------------------------------------------------------
+# Security — npm audit (WO-OPS-11 F36). НЕЗАВИСИМАЯ джоба: раньше жила в хвосте
+# cve:report ПОСЛЕ mvn-скана (не выполнялась при красном скане) и маскировалась
+# `|| echo` + allow_failure:true (уязвимость видна только в логе, не в отчёте).
+# Теперь: свой exit (high+ = красный advisory), свой artifacts-отчёт
+# (npm-audit.json — критерий (c) WO: намеренная npm-уязвимость попадает В ОТЧЁТ
+# независимо от состояния Maven-скана).
+# ---------------------------------------------------------------------------
+
+cve:npm:
+  stage: security
+  tags: [zbpm]
+  allow_failure: true
+  script:
+    # Frontend CVE scan: npm audit (containerized — the zbpm runner has no npm on host,
+    # same node:22-alpine base as zorrobpm-frontend/Dockerfile's builder stage)
+    - >-
+      docker run --rm
+      --user "$(id -u):$(id -g)"
+      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
+      node:22-alpine
+      sh -c "npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev --json > npm-audit.json; echo \"npm audit exit: $?\""
+    - cat npm-audit.json | head -c 2000; echo
+  rules: *rules-code-changes
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-frontend/npm-audit.json
+    expire_in: 30 days
+    name: cve-npm-$CI_COMMIT_SHORT_SHA
 
 # ---------------------------------------------------------------------------
 # Build — versioned runtime images (commit SHA + latest)
@@ -358,6 +401,24 @@ build:
 deploy:
   stage: deploy
   tags: [zbpm]
+  # WO-OPS-11 F26: сериализация production-операций — два параллельных deploy/rollback
+  # делят DEPLOY_DIR/compose-project и рвали бы друг другу стек. resource_group один
+  # на обоих (rollback ниже несёт тот же).
+  resource_group: zorrobpm-production
+  # WO-OPS-11 п.1: ручной deploy обязан ждать зелёных test/security/build джоб ТОГО ЖЕ
+  # пайплайна. Без needs ручную джобу можно сыграть при красных/скипнутых test:pg/
+  # test:rabbit (stage-порядок — только очередь, не гейт): аудит прав, дыра реальна.
+  # build в списке гарантирует и артефакты, и deploy-возможность (см. комментарий
+  # 2026-08-30 выше). rollback needs НЕ получает сознательно — он должен играться
+  # именно когда deploy упал (комментарий у rollback ниже).
+  needs:
+    - test:gate
+    - test:backend
+    - test:pg
+    - test:rabbit
+    - test:frontend
+    - cve:scan
+    - build
   script:
     - mkdir -p "$DEPLOY_DIR"
     # WO-OPS-3-DISK: disk gate BEFORE anything is written. On a full disk both
@@ -372,10 +433,17 @@ deploy:
     # generated once on the host) — it lived under ci/, a plain top-level dir with no exclusion
     # here, so every deploy silently wiped it and Prometheus lost its app-scrape credential the
     # moment the *next*, unrelated deploy ran. Back it up and restore it after the sync.
-    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" /tmp/scrape-token.bak; fi
+    # WO-OPS-11 F26: backup секрета — уникальный путь на pipeline (фиксированный
+    # /tmp/scrape-token.bak делился между параллельными deploy), плюс cleanup-trap:
+    # при любом exit временный файл не остаётся лежать в /tmp с секретом внутри.
+    - export SCRAPE_TOKEN_BAK="$(mktemp /tmp/scrape-token-bak-$CI_PIPELINE_ID-XXXXXX)"
+    - trap 'rm -f "$SCRAPE_TOKEN_BAK"' EXIT
+    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" "$SCRAPE_TOKEN_BAK"; fi
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
     - cp -a ./ "$DEPLOY_DIR"/
-    - if [ -f /tmp/scrape-token.bak ]; then sudo mv /tmp/scrape-token.bak "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    - if [ -f "$SCRAPE_TOKEN_BAK" ]; then sudo mv "$SCRAPE_TOKEN_BAK" "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    # ловушка больше не нужна — файл уже перемещён (mv) либо пуст; снимаем trap явно
+    - trap - EXIT; rm -f "$SCRAPE_TOKEN_BAK"
     # WO-OBS-6: a brand-new host has no scrape-token at all -- without this, Docker's bind
     # mount creates it as an empty DIRECTORY on first `up` (same bug class fixed live on
     # 2026-09-14), and Prometheus fails with "is a directory" instead of just an auth error.
@@ -445,6 +513,8 @@ deploy:
 rollback:
   stage: rollback
   tags: [zbpm]
+  # WO-OPS-11 F26: тот же production-mutex, что у deploy (см. выше).
+  resource_group: zorrobpm-production
   # needs: [] detaches this job from stage ordering entirely (DAG mode): it becomes playable the
   # moment the pipeline starts, independent of test/security/build/deploy outcome. Without this,
   # a `deploy` failure (allow_failure: false, by design) halts the stage-sequential pipeline BEFORE

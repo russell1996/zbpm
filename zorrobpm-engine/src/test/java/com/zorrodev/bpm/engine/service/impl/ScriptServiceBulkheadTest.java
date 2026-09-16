@@ -9,13 +9,16 @@ import org.camunda.feel.impl.script.FeelUnaryTestsScriptEngineFactory;
 import org.junit.jupiter.api.Test;
 
 import javax.script.ScriptEngine;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-A-02: Bulkhead POF — stuck worker does NOT block subsequent expressions.
@@ -96,8 +99,12 @@ class ScriptServiceBulkheadTest {
         String slowExpr = "for i in 1..5000 return for j in 1..5000 return i * j";
         Thread[] slowThreads = new Thread[3]; // pool=2 + queue=10, but let's be aggressive
 
+        // WO-OPS-11 п.2: ждём ФАКТ — все 3 задачи заняли слоты пула
+        // (активных 2 + 1 в очереди), а не фиксированные 200мс.
+        AtomicInteger submitted = new AtomicInteger(0);
         for (int i = 0; i < slowThreads.length; i++) {
             slowThreads[i] = new Thread(() -> {
+                submitted.incrementAndGet();
                 try {
                     service.evaluateExpression(slowExpr, List.of());
                 } catch (EngineException e) {
@@ -108,8 +115,8 @@ class ScriptServiceBulkheadTest {
             slowThreads[i].start();
         }
 
-        // Give threads time to fill the pool
-        Thread.sleep(200);
+        // Факт отправки всех задач (по счётчику, не по сну).
+        await().atMost(Duration.ofSeconds(5)).until(() -> submitted.get() == slowThreads.length);
 
         // Next submission should either queue (up to 10) or be rejected
         // With pool=2, queue=10, and 3 slow threads: 2 running + 1 in queue = capacity used

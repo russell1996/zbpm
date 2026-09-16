@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-REL-6: Real PostgreSQL integration test for atomic timer claim via FOR UPDATE SKIP LOCKED.
@@ -61,6 +62,11 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
+        // WO-OPS-11 п.2: вместо sleep(2000) — латч доказывает факт удержания lock'а,
+        // не фиксированное время. T1 сигналит СРАЗУ ПОСЛЕ взятия lock'а.
+        CountDownLatch t1HoldingLock = new CountDownLatch(1);
+        // T1 отпускает lock только после опроса T2 (координация фактами, не временем).
+        CountDownLatch t2Done = new CountDownLatch(1);
         AtomicInteger t1Count = new AtomicInteger(0);
         AtomicInteger t2Count = new AtomicInteger(0);
 
@@ -75,8 +81,16 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
                         "SELECT id FROM timer_jobs WHERE fired = false AND due_at <= now() FOR UPDATE",
                         UUID.class);
                     t1Count.set(locked.size());
-                    // Hold lock for 2 seconds so T2 can't get it
-                    try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                    t1HoldingLock.countDown();
+                    // Держим lock, пока T2 не опросит (сигнал снизу) — не фиксированные 2с.
+                    try {
+                        if (!t2Done.await(10, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("T2 не опросил вовремя");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                    }
                     return null;
                 });
             } catch (Exception e) {
@@ -89,13 +103,16 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
             try {
                 ready.countDown();
                 go.await(5, TimeUnit.SECONDS);
-                // Wait for T1 to acquire lock
-                try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                // Ждём ФАКТ: T1 держит lock (латч), а не фиксированные 500мс.
+                if (!t1HoldingLock.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("T1 не взял lock вовремя");
+                }
                 transactionTemplate.execute(status -> {
                     List<?> locked = jdbc.queryForList(
                         "SELECT id FROM timer_jobs WHERE fired = false AND due_at <= now() FOR UPDATE SKIP LOCKED",
                         UUID.class);
                     t2Count.set(locked.size());
+                    t2Done.countDown();
                     return null;
                 });
             } catch (Exception e) {
@@ -125,6 +142,9 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
+        // WO-OPS-11 п.2: координация фактами (латчи), не фиксированным временем.
+        CountDownLatch t1HoldingLock = new CountDownLatch(1);
+        CountDownLatch t2Done = new CountDownLatch(1);
         AtomicInteger t1Count = new AtomicInteger(0);
         AtomicInteger t2Count = new AtomicInteger(0);
 
@@ -137,7 +157,15 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
                         "SELECT id FROM timer_start_jobs WHERE fired = false AND due_at <= now() FOR UPDATE",
                         UUID.class);
                     t1Count.set(locked.size());
-                    try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                    t1HoldingLock.countDown();
+                    try {
+                        if (!t2Done.await(10, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("T2 не опросил вовремя");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                    }
                     return null;
                 });
             } catch (Exception e) {
@@ -149,12 +177,15 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
             try {
                 ready.countDown();
                 go.await(5, TimeUnit.SECONDS);
-                try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                if (!t1HoldingLock.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("T1 не взял lock вовремя");
+                }
                 transactionTemplate.execute(status -> {
                     List<?> locked = jdbc.queryForList(
                         "SELECT id FROM timer_start_jobs WHERE fired = false AND due_at <= now() FOR UPDATE SKIP LOCKED",
                         UUID.class);
                     t2Count.set(locked.size());
+                    t2Done.countDown();
                     return null;
                 });
             } catch (Exception e) {
