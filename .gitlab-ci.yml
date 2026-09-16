@@ -358,6 +358,10 @@ build:
 deploy:
   stage: deploy
   tags: [zbpm]
+  # WO-OPS-11 F26: сериализация production-операций — два параллельных deploy/rollback
+  # делят DEPLOY_DIR/compose-project и рвали бы друг другу стек. resource_group один
+  # на обоих (rollback ниже несёт тот же).
+  resource_group: zorrobpm-production
   # WO-OPS-11 п.1: ручной deploy обязан ждать зелёных test/security/build джоб ТОГО ЖЕ
   # пайплайна. Без needs ручную джобу можно сыграть при красных/скипнутых test:pg/
   # test:rabbit (stage-порядок — только очередь, не гейт): аудит прав, дыра реальна.
@@ -386,10 +390,17 @@ deploy:
     # generated once on the host) — it lived under ci/, a plain top-level dir with no exclusion
     # here, so every deploy silently wiped it and Prometheus lost its app-scrape credential the
     # moment the *next*, unrelated deploy ran. Back it up and restore it after the sync.
-    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" /tmp/scrape-token.bak; fi
+    # WO-OPS-11 F26: backup секрета — уникальный путь на pipeline (фиксированный
+    # /tmp/scrape-token.bak делился между параллельными deploy), плюс cleanup-trap:
+    # при любом exit временный файл не остаётся лежать в /tmp с секретом внутри.
+    - export SCRAPE_TOKEN_BAK="$(mktemp /tmp/scrape-token-bak-$CI_PIPELINE_ID-XXXXXX)"
+    - trap 'rm -f "$SCRAPE_TOKEN_BAK"' EXIT
+    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" "$SCRAPE_TOKEN_BAK"; fi
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
     - cp -a ./ "$DEPLOY_DIR"/
-    - if [ -f /tmp/scrape-token.bak ]; then sudo mv /tmp/scrape-token.bak "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    - if [ -f "$SCRAPE_TOKEN_BAK" ]; then sudo mv "$SCRAPE_TOKEN_BAK" "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    # ловушка больше не нужна — файл уже перемещён (mv) либо пуст; снимаем trap явно
+    - trap - EXIT; rm -f "$SCRAPE_TOKEN_BAK"
     # WO-OBS-6: a brand-new host has no scrape-token at all -- without this, Docker's bind
     # mount creates it as an empty DIRECTORY on first `up` (same bug class fixed live on
     # 2026-09-14), and Prometheus fails with "is a directory" instead of just an auth error.
@@ -459,6 +470,8 @@ deploy:
 rollback:
   stage: rollback
   tags: [zbpm]
+  # WO-OPS-11 F26: тот же production-mutex, что у deploy (см. выше).
+  resource_group: zorrobpm-production
   # needs: [] detaches this job from stage ordering entirely (DAG mode): it becomes playable the
   # moment the pipeline starts, independent of test/security/build/deploy outcome. Without this,
   # a `deploy` failure (allow_failure: false, by design) halts the stage-sequential pipeline BEFORE
