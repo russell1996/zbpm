@@ -16,6 +16,8 @@
 #   RABBIT_USER     — broker user (default: zorrodev)
 #   RABBIT_PASSWORD — broker password (default: zorrodev)
 #   MAVEN_OPTS      — JVM args for Maven (default: -Xmx1g)
+#   CI_PIPELINE_ID  — when set (GitLab CI), project name gets suffixed so two
+#                     parallel pipelines never share one broker (WO-OPS-11 F26a).
 
 set -euo pipefail
 
@@ -23,8 +25,17 @@ export RABBIT_PORT="${RABBIT_PORT:-5673}"
 export RABBIT_USER="${RABBIT_USER:-zorrodev}"
 export RABBIT_PASSWORD="${RABBIT_PASSWORD:-zorrodev}"
 
+# WO-OPS-11 F26: тот же развод, что в run-pg-tests.sh (суффикс + сдвиг порта).
+if [ -n "${CI_PIPELINE_ID:-}" ]; then
+  SUFFIX="$CI_PIPELINE_ID"
+  PROJECT="zbpm-rabbitci-${SUFFIX}"
+  RABBIT_PORT="$((5673 + (SUFFIX % 2000)))"
+  export RABBIT_PORT
+else
+  PROJECT="zbpm-rabbitci"
+fi
+
 COMPOSE="ci/docker-compose.rabbit.yml"
-PROJECT="zbpm-rabbitci"
 
 # Always tear the broker down — even if tests fail or the script is interrupted —
 # so no container/volume/port is leaked onto the shared runner between pipelines.
