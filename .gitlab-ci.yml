@@ -208,6 +208,9 @@ test:frontend:
 # 1 moderate, zero critical — see WO-AUDIT-1 report; NVD itself needs $NVD_API_KEY
 # and cannot run keyless locally, so the first CI run of THIS job is the final
 # arbiter — if it goes red, upgrade deps first per WO-AUDIT-1 fallback).
+# WO-OPS-11 F36: ТОЛЬКО Maven здесь (npm вынесен в cve:npm ниже): при красном
+# mvn-скане job падает ДО npm-шага, и npm-уязвимость терялась молча. Разделение
+# даёт независимые отчёты: каждая джоба — свои artifacts, свой exit.
 # ---------------------------------------------------------------------------
 
 cve:scan:
@@ -224,16 +227,20 @@ cve:scan:
     # NVD cache — dependency-check stores DB in its data dir; map to runner cache
     - mkdir -p .nvd-cache
     # Backend CVE scan: OWASP dependency-check against the built JARs
+    # WO-OPS-11 F27: --user + maven.repo.local (root-owned target, тот же класс).
     - >-
       docker run --rm
+      --user "$(id -u):$(id -g)"
       -v "$CI_PROJECT_DIR":/build -w /build
-      -v "$CI_PROJECT_DIR/.nvd-cache":/root/.m2/repository/org/owasp/dependency-check-data
-      -v zbpm_m2:/root/.m2
+      -v "$CI_PROJECT_DIR/.nvd-cache":/tmp/nvd-cache
+      -v zbpm_m2:/tmp/.m2
+      -e NVD_API_KEY=$NVD_API_KEY
       maven:3.9.9-eclipse-temurin-21
-      sh -c "mvn -B -ntp install -DskipTests -q && mvn -B -ntp org.owasp:dependency-check-maven:check
+      sh -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -DskipTests -q && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository org.owasp:dependency-check-maven:check
       -DfailBuildOnCVSS=9
       -DsuppressionFile=owasp-suppressions.xml
       -DnvdApiKey=$NVD_API_KEY
+      -DdataDirectory=/tmp/nvd-cache
       -DossindexAnalyzerEnabled=false
       -DnodeAuditSkipDevDependencies=true
       --no-transfer-progress"
@@ -248,9 +255,12 @@ cve:scan:
     name: cve-reports-$CI_COMMIT_SHORT_SHA
 
 # ---------------------------------------------------------------------------
-# Security — CVE report (advisory). Same scans at the informative threshold
-# (backend CVSS>=7, npm audit high+) with allow_failure: true — signal without
-# blocking while the >=9 gate above is the hard bar.
+# Security — CVE report (advisory). Same Maven scan at the informative threshold
+# (backend CVSS>=7) with allow_failure: true — signal without blocking while
+# the >=9 gate above is the hard bar.
+# WO-OPS-11 F36: БЕЗ npm-шага (вынесен в cve:npm): раньше npm audit шёл ПОСЛЕ
+# mvn-скана в том же script'е и не выполнялся при красном скане + маскировался
+# `|| echo`. Теперь advisory Maven-скан независим и самодостаточен.
 # ---------------------------------------------------------------------------
 
 cve:report:
@@ -265,25 +275,21 @@ cve:report:
     - mkdir -p .nvd-cache
     - >-
       docker run --rm
+      --user "$(id -u):$(id -g)"
       -v "$CI_PROJECT_DIR":/build -w /build
-      -v "$CI_PROJECT_DIR/.nvd-cache":/root/.m2/repository/org/owasp/dependency-check-data
-      -v zbpm_m2:/root/.m2
+      -v "$CI_PROJECT_DIR/.nvd-cache":/tmp/nvd-cache
+      -v zbpm_m2:/tmp/.m2
+      -e NVD_API_KEY=$NVD_API_KEY
       maven:3.9.9-eclipse-temurin-21
-      sh -c "mvn -B -ntp install -DskipTests -q && mvn -B -ntp org.owasp:dependency-check-maven:check
+      sh -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -DskipTests -q && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository org.owasp:dependency-check-maven:check
       -DfailBuildOnCVSS=7
       -DsuppressionFile=owasp-suppressions.xml
       -DnvdApiKey=$NVD_API_KEY
+      -DdataDirectory=/tmp/nvd-cache
       -DossindexAnalyzerEnabled=false
       -DnodeAuditSkipDevDependencies=true
       --no-transfer-progress"
     - echo "Backend CVE scan complete (CVSS>=7 = fail)"
-    # Frontend CVE scan: npm audit (containerized — the zbpm runner has no npm on host,
-    # same node:22-alpine base as zorrobpm-frontend/Dockerfile's builder stage)
-    - >-
-      docker run --rm
-      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
-      node:22-alpine
-      sh -c "npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev || echo 'npm audit found vulnerabilities (non-blocking)'"
   rules: *rules-code-changes
   artifacts:
     when: always
@@ -292,6 +298,37 @@ cve:report:
       - zorrobpm-engine/target/dependency-check-report.html
     expire_in: 30 days
     name: cve-advisory-$CI_COMMIT_SHORT_SHA
+
+# ---------------------------------------------------------------------------
+# Security — npm audit (WO-OPS-11 F36). НЕЗАВИСИМАЯ джоба: раньше жила в хвосте
+# cve:report ПОСЛЕ mvn-скана (не выполнялась при красном скане) и маскировалась
+# `|| echo` + allow_failure:true (уязвимость видна только в логе, не в отчёте).
+# Теперь: свой exit (high+ = красный advisory), свой artifacts-отчёт
+# (npm-audit.json — критерий (c) WO: намеренная npm-уязвимость попадает В ОТЧЁТ
+# независимо от состояния Maven-скана).
+# ---------------------------------------------------------------------------
+
+cve:npm:
+  stage: security
+  tags: [zbpm]
+  allow_failure: true
+  script:
+    # Frontend CVE scan: npm audit (containerized — the zbpm runner has no npm on host,
+    # same node:22-alpine base as zorrobpm-frontend/Dockerfile's builder stage)
+    - >-
+      docker run --rm
+      --user "$(id -u):$(id -g)"
+      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
+      node:22-alpine
+      sh -c "npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev --json > npm-audit.json; echo \"npm audit exit: $?\""
+    - cat npm-audit.json | head -c 2000; echo
+  rules: *rules-code-changes
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-frontend/npm-audit.json
+    expire_in: 30 days
+    name: cve-npm-$CI_COMMIT_SHORT_SHA
 
 # ---------------------------------------------------------------------------
 # Build — versioned runtime images (commit SHA + latest)
