@@ -447,26 +447,16 @@ public class ElementSupport {
     /**
      * WO-C8-32: appends {@code value} to the root JSON-list variable {@code name}
      * (creating it when absent). Generalised from the multi-instance output-collection
-     * append (moved here verbatim so MI and ad-hoc share one mechanism instead of two):
-     * root-scoped read, {@link #toJavaStructure} normalisation, root-scoped write.
+     * append (moved here verbatim so MI and ad-hoc share one mechanism instead of two).
+     * <p>
+     * WO-REL-41 (B-8, п.1): the read-modify-write now happens in ONE SQL statement
+     * ({@code DBService.appendJsonElement}) — the old root-scoped read, Java-side
+     * merge and root-scoped write lost elements when parallel MI branches (or
+     * ad-hoc flows) completed concurrently.
      */
     public void appendToJsonList(UUID processInstanceId, String name, Object value) {
-        List<Object> list = new ArrayList<>();
-        ProcessVariable existing = dbService.getVariables(processInstanceId).stream()
-            .filter(v -> v.getName().equals(name))
-            .findFirst().orElse(null);
-        if (existing != null && existing.getType() == ProcessVariableType.JSON
-            && existing.getValue() != null && !existing.getValue().isBlank()
-            && objectMapper.readValue(existing.getValue(), Object.class) instanceof List<?> current) {
-            list.addAll(current);
-        }
-        list.add(toJavaStructure(value));
-
-        ProcessVariable out = new ProcessVariable();
-        out.setName(name);
-        out.setType(ProcessVariableType.JSON);
-        out.setValue(objectMapper.writeValueAsString(list));
-        dbService.setVariables(processInstanceId, List.of(out));
+        dbService.appendJsonElement(processInstanceId, name,
+            objectMapper.writeValueAsString(toJavaStructure(value)));
     }
 
     // ─── Boundary helpers ────────────────────────────────────────────
