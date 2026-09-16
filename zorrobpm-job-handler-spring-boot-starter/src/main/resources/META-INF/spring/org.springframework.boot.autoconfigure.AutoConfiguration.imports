@@ -1,2 +1,1 @@
 com.zorrodev.bpm.handler.boot.HandlerAutoConfiguration
-com.zorrodev.bpm.handler.boot.RabbitListenerTuningConfiguration
