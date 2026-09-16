@@ -136,8 +136,12 @@ test:backend:
     # trap извлекает всё (проба run2.sh: TEST-red.xml извлечён при exit=1).
     - export TEST_EXTRACT="test-extract-$CI_PIPELINE_ID-$CI_JOB_ID"
     - mkdir -p target-out/zorrobpm-engine target-out/zorrobpm-rest
-    - extract_reports() { docker create --name "$TEST_EXTRACT" "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || return 1; docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports >/dev/null 2>&1; }
-    - cleanup_extract() { extract_reports || echo "F27: no test image — build failed before tests ran, no reports to extract" > target-out/NO-REPORTS.txt; docker rm -f "$TEST_EXTRACT" >/dev/null 2>&1 || true; docker image rm "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || true; }; trap cleanup_extract EXIT
+    # WO-OPS-11 F27-fix (357a2a1d): блочный скаляр >- вместо plain-строки — внутри
+    # незаквоченное "F27: " (двоеточие+пробел) строгий GitLab-парсер читал как mapping.
+    - >-
+      extract_reports() { docker create --name "$TEST_EXTRACT" "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || return 1; docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports >/dev/null 2>&1; }
+    - >-
+      cleanup_extract() { extract_reports || echo "F27: no test image — build failed before tests ran, no reports to extract" > target-out/NO-REPORTS.txt; docker rm -f "$TEST_EXTRACT" >/dev/null 2>&1 || true; docker image rm "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || true; }; trap cleanup_extract EXIT
     - docker build --target test --build-arg MAVEN_PROFILES=-Pcoverage -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
   rules: *rules-code-changes
 
