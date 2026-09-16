@@ -67,19 +67,35 @@ public class RetentionJob {
         // WO-ACL-3 criterion 8: purge terminal process submissions (APPROVED/REJECTED) past the
         // TTL. Rows are deleted one by one, each in its own transaction, so one failing row
         // (concurrent FK race, lock) logs a warning and the pass continues (P-42).
+        // WO-REL-33 F37: та же «застревание на первой странице», что F09 в WO-REL-35:
+        // если ни одна строка ПОЛНОЙ страницы не удалилась — выходим (как
+        // IdempotencyCleanupJob: pageDeleted==0 → выход), НО курсор продвигаем мимо
+        // «плохих» строк через skip-set, а не бросаем их навсегда: страница опрашивается
+        // с исключением уже виденных неудаляемых id, так что прогресс есть всегда —
+        // либо удаления, либо рост skip-set, либо пустая страница. Без skip-set один
+        // вечно неудаляемый рядок останавливал бы всю очередь навсегда.
         int submissionsDeleted = 0;
+        java.util.Set<UUID> skippedSubmissionIds = new java.util.HashSet<>();
         while (true) {
-            List<UUID> eligibleSubmissions = batchProcessor.findEligibleSubmissions(cutoff, config.getBatchSize());
+            // Снапшот skip-set на опрос: опрос видит фиксированное множество, мутации
+            // этого прохода (новые плохие строки) влияют только на следующий опрос.
+            List<UUID> eligibleSubmissions = batchProcessor.findEligibleSubmissions(
+                cutoff, config.getBatchSize(), java.util.Set.copyOf(skippedSubmissionIds));
             if (eligibleSubmissions.isEmpty()) break;
 
+            int pageDeleted = 0;
             for (UUID submissionId : eligibleSubmissions) {
                 try {
-                    submissionsDeleted += batchProcessor.deleteSubmission(submissionId);
+                    int gone = batchProcessor.deleteSubmission(submissionId);
+                    pageDeleted += gone;
+                    submissionsDeleted += gone;
                 } catch (RuntimeException e) {
                     log.warn("Retention: failed to delete process submission {} — continuing with the rest", submissionId, e);
+                    skippedSubmissionIds.add(submissionId);
                 }
             }
 
+            if (pageDeleted == 0) break; // полная страница без прогресса — выход, не вечный цикл
             if (eligibleSubmissions.size() < config.getBatchSize()) break; // last batch
         }
         if (submissionsDeleted > 0) {
