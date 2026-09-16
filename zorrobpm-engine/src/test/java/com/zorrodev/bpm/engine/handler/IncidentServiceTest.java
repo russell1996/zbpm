@@ -54,8 +54,9 @@ class IncidentServiceTest {
     }
 
     @Test
-    void raiseIncident_doesNotCreateIncidentWhenNoActivity() {
-        // Given
+    void raiseIncident_createsFallbackActivityWhenNoneExists() {
+        // Given — WO-REL-40 (B-6): no activity for the failed element must NOT
+        // drop the incident silently; a fallback activity carries it instead.
         UUID processInstanceId = UUID.randomUUID();
         UUID tokenId = UUID.randomUUID();
         BpmnElementModel element = new BpmnElementModel();
@@ -65,13 +66,16 @@ class IncidentServiceTest {
 
         when(dbService.getActivitiesByTokenAndBpmnElementId(tokenId, "serviceTask1"))
             .thenReturn(List.of());
+        UUID fallbackId = UUID.randomUUID();
+        when(dbService.createActivity(processInstanceId, tokenId, element)).thenReturn(fallbackId);
 
         // When
         incidentService.raiseIncident(processInstanceId, tokenId, element, e);
 
-        // Then
-        verify(dbService, never()).errorActivity(any());
-        verify(dbService, never()).createIncident(any(), any());
+        // Then — the fallback activity is parked ERROR with a recorded incident
+        verify(dbService).createActivity(processInstanceId, tokenId, element);
+        verify(dbService).errorActivity(fallbackId);
+        verify(dbService).createIncident(eq(fallbackId), any(String.class));
     }
 
     @Test
