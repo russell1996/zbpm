@@ -358,6 +358,20 @@ build:
 deploy:
   stage: deploy
   tags: [zbpm]
+  # WO-OPS-11 п.1: ручной deploy обязан ждать зелёных test/security/build джоб ТОГО ЖЕ
+  # пайплайна. Без needs ручную джобу можно сыграть при красных/скипнутых test:pg/
+  # test:rabbit (stage-порядок — только очередь, не гейт): аудит прав, дыра реальна.
+  # build в списке гарантирует и артефакты, и deploy-возможность (см. комментарий
+  # 2026-08-30 выше). rollback needs НЕ получает сознательно — он должен играться
+  # именно когда deploy упал (комментарий у rollback ниже).
+  needs:
+    - test:gate
+    - test:backend
+    - test:pg
+    - test:rabbit
+    - test:frontend
+    - cve:scan
+    - build
   script:
     - mkdir -p "$DEPLOY_DIR"
     # WO-OPS-3-DISK: disk gate BEFORE anything is written. On a full disk both
