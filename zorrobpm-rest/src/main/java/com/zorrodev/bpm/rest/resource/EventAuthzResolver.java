@@ -65,4 +65,17 @@ public class EventAuthzResolver {
     public Collection<UUID> readableRuntimePdIds(Principal principal, String processDefinitionKey) {
         return processAuthzService.readableRuntimePdIds(principal, processDefinitionKey);
     }
+
+    /**
+     * WO-SEC-67 (F13): LIVE view for a service-key stream — re-reads the key's
+     * CURRENT grant rows (frozen principal grants go stale on setGrants).
+     * Thin delegation, like every other method here.
+     *
+     * @return null only when the credential itself is dead (caller fails closed);
+     *         otherwise the live pdId set (possibly empty).
+     */
+    public Collection<UUID> readableRuntimePdIdsForKey(UUID apiKeyId, UUID ownerUserId,
+            String processDefinitionKey) {
+        return processAuthzService.readableRuntimePdIdsForKey(apiKeyId, ownerUserId, processDefinitionKey);
+    }
 }

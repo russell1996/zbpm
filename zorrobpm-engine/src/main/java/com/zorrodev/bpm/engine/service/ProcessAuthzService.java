@@ -3,9 +3,11 @@ package com.zorrodev.bpm.engine.service;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
+import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
+import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +48,12 @@ public class ProcessAuthzService {
     private final ProcessRepository processRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final ProcessMemberRepository processMemberRepository;
+    // WO-SEC-67 (F13): live key-grant reads for the SSE re-resolution path
+    // (frozen principal grants go stale on setGrants — the stream must see the
+    // rows, not the snapshot). Same engine-side ownership as the rest here.
+    private final ApiKeyGrantRepository apiKeyGrantRepository;
+    private final AuthorizationService authorizationService;
+    private final ApiKeyService apiKeyService;
 
     /**
      * Resolves the processDefinitionIds whose DEFINITIONS the principal may read.
@@ -113,6 +121,60 @@ public class ProcessAuthzService {
         List<ProcessDefinitionEntity> defs = processDefinitionRepository.findAll(
             (root, query, cb) -> root.get("key").in(definitionKeys));
 
+        return defs.stream()
+            .map(ProcessDefinitionEntity::getId)
+            .collect(Collectors.toSet());
+    }
+
+    /**
+     * WO-SEC-67 (F13): LIVE view for a service-key stream. Unlike
+     * {@link #readableRuntimePdIds} (which trusts the principal's frozen
+     * grants — correct for a single request, stale for a long-lived stream),
+     * this re-reads the key's CURRENT grant rows and intersects them with the
+     * owner's CURRENT membership via
+     * {@link AuthorizationService#effectiveGrants} — the same computation
+     * {@code JwtAuthFilter} runs per request. A narrowed/emptied grant set
+     * (setGrants, owner removed from the process) shows up here on the next
+     * re-resolution instead of living on in the snapshot until the timeout.
+     *
+     * @return null only when the key row itself is gone/revoked/expired or the
+     *         owner is deactivated (credential dead — the caller fails closed);
+     *         otherwise the live pdId set (possibly empty = see nothing).
+     */
+    public Collection<UUID> readableRuntimePdIdsForKey(UUID apiKeyId, UUID ownerUserId,
+            String processDefinitionKey) {
+        // Credential dead (row gone/revoked/expired/owner off) → null, the
+        // caller fails closed (same contract as the SUPER_ADMIN null, but the
+        // caller distinguishes by the non-null snapshot behind it).
+        if (!apiKeyService.isKeyLive(apiKeyId)) {
+            return null;
+        }
+        java.util.Map<UUID, Principal.Grant> liveGrants = apiKeyGrantRepository.findByApiKeyId(apiKeyId).stream()
+            .collect(Collectors.toMap(
+                com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity::getProcessId,
+                g -> new Principal.Grant(
+                    g.getPermissions() != null
+                        ? Set.of(g.getPermissions().split(","))
+                        : Set.of(),
+                    g.isFull())));
+        java.util.Map<UUID, Principal.Grant> effective =
+            authorizationService.effectiveGrants(ownerUserId, liveGrants);
+        if (effective.isEmpty()) {
+            return Set.of();
+        }
+        Set<UUID> processIds = effective.keySet();
+        List<ProcessEntity> processes = processRepository.findAllById(processIds);
+        Set<String> allKeys = processes.stream()
+            .map(ProcessEntity::getDefinitionKey)
+            .collect(Collectors.toSet());
+        Set<String> definitionKeys = (processDefinitionKey != null && !processDefinitionKey.isBlank())
+            ? allKeys.stream().filter(k -> processDefinitionKey.equals(k)).collect(Collectors.toSet())
+            : allKeys;
+        if (definitionKeys.isEmpty()) {
+            return Set.of();
+        }
+        List<ProcessDefinitionEntity> defs = processDefinitionRepository.findAll(
+            (root, query, cb) -> root.get("key").in(definitionKeys));
         return defs.stream()
             .map(ProcessDefinitionEntity::getId)
             .collect(Collectors.toSet());

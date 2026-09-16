@@ -277,9 +277,9 @@ public class SseEventStreamService implements SmartLifecycle {
 
     /**
      * WO-SEC-67: stable per-subject key for the connection cap and the rights
-     * cache. JWT → userId; API key → key id (a rotated/revoked key is a new
-     * subject, which is exactly right — the old key's streams are closed by
-     * invalidation, not counted against the new key).
+     * cache. JWT → userId; API key → key id (one row = one subject for cap
+     * purposes; rotation keeps the row id — streams on it are closed
+     * explicitly by invalidateStreamsForKey, not by re-slotting).
      */
     static String subjectKey(Principal principal) {
         if (principal instanceof Principal.ServicePrincipal sp) {
@@ -343,7 +343,9 @@ public class SseEventStreamService implements SmartLifecycle {
                     client.emitter().send(event);
                 } catch (IOException e) {
                     log.warn("Failed to send drained event to client {}", clientId);
-                    clients.remove(clientId);
+                    // WO-SEC-67 red-team #3: full state removal (per-subject
+                    // slot), not a bare map drop — the slot would leak.
+                    removeClientState(clientId);
                 }
             });
         }
@@ -481,7 +483,8 @@ public class SseEventStreamService implements SmartLifecycle {
                     } catch (TimeoutException te) {
                         log.warn("Slow SSE client {} timed out ({}ms), dropping", client.clientId, sendTimeoutMs);
                         cf.cancel(true);
-                        clients.remove(client.clientId);
+                        // WO-SEC-67 red-team #3: full state removal (slot back).
+                        removeClientState(client.clientId);
                         try { client.emitter.complete(); } catch (Exception ignore) {}
                     } catch (java.util.concurrent.ExecutionException ee) {
                         Throwable cause = ee.getCause();
@@ -490,7 +493,8 @@ public class SseEventStreamService implements SmartLifecycle {
                         } else {
                             log.warn("Failed to send event to client {}: {}", client.clientId, cause != null ? cause.getMessage() : ee.getMessage());
                         }
-                        clients.remove(client.clientId);
+                        // WO-SEC-67 red-team #3: full state removal (slot back).
+                        removeClientState(client.clientId);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     } catch (Exception e) {
@@ -600,9 +604,10 @@ public class SseEventStreamService implements SmartLifecycle {
      * same fail-closed direction):
      * <ul>
      *   <li>JWT user → {@code UiUserLookupService.securityState}: user exists,
-     *       active, and the claim version/role still match the row (logout and
-     *       password change bump {@code token_version}; a role change bumps it
-     *       on write — a stale role beyond its TTL fails closed);</li>
+     *       active, and the claim version/role still match the row (logout
+     *       bumps {@code token_version} — the only writer in prod; a role
+     *       change flows through the same version on write — a stale role
+     *       beyond its TTL fails closed);</li>
      *   <li>API key → row exists, not revoked, not expired, owner still
      *       active (WO-ACL-5 criterion #4, same as the filter).</li>
      * </ul>
@@ -648,6 +653,8 @@ public class SseEventStreamService implements SmartLifecycle {
     /**
      * WO-SEC-67 (F13): fresh rights for this client (30s-TTL cached).
      * SUPER_ADMIN bypasses (null = see all by contract — nothing to re-check).
+     * ServicePrincipal streams resolve the LIVE key view (current grant rows,
+     * not the frozen registration snapshot — setGrants must show up here).
      * Any resolver error → null WITH a non-null snapshot behind it, which the
      * caller treats as fail-closed (close, do not deliver). A null snapshot
      * (SUPER_ADMIN) + null fresh = still see-all.
@@ -657,10 +664,7 @@ public class SseEventStreamService implements SmartLifecycle {
             return null;
         }
         try {
-            return rightsCache.get(
-                new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter),
-                k -> eventAuthzResolver.readableRuntimePdIds(
-                    client.principal(), client.processDefinitionKeyFilter));
+            return liveView(client);
         } catch (RuntimeException e) {
             log.warn("SSE rights re-resolution failed for client {} — failing closed",
                 client.clientId(), e);
@@ -724,12 +728,13 @@ public class SseEventStreamService implements SmartLifecycle {
                     closeRevokedClient(client.clientId, "credential dead (event)");
                     continue;
                 }
-                // Bypass the 30s cache: the revoke JUST happened, the cached
-                // view may predate it by up to 30s.
+                // Single truth via liveView (POF-proven: a divergent inline
+                // copy here once hid revokes from this sweep — SseRevocationIT
+                // caught it). bypassCache=true: the revoke JUST happened, so
+                // any cached view predates it by up to 30s.
                 Collection<UUID> fresh;
                 try {
-                    fresh = eventAuthzResolver.readableRuntimePdIds(
-                        client.principal(), client.processDefinitionKeyFilter);
+                    fresh = liveView(client, true);
                 } catch (RuntimeException e) {
                     log.warn("SSE event-driven re-resolution failed for client {} — failing closed",
                         client.clientId(), e);
@@ -741,14 +746,65 @@ public class SseEventStreamService implements SmartLifecycle {
                     continue;
                 }
                 if (isNarrowed(client.allowedPdIds, fresh)) {
-                    // Refresh the cache so a racing per-event check sees the
-                    // same narrowed view instead of the stale cached one.
-                    rightsCache.put(
-                        new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter), fresh);
                     closeRevokedClient(client.clientId, "rights narrowed (event)");
                 }
             } catch (RuntimeException e) {
                 log.warn("SSE event-driven invalidation failed for client {}", client.clientId(), e);
+            }
+        }
+    }
+
+    /**
+     * WO-SEC-67 red-team #1: the CURRENT view for a client — live key rows for
+     * service keys (frozen registration grants would hide a setGrants
+     * narrowing forever), 30s-cached membership resolution for JWT users.
+     * Single truth for the per-event check and the event-driven invalidation
+     * (no double logic to diverge).
+     *
+     * @param bypassCache true on the event-driven path (the revoke JUST
+     *        happened — a cached view predates it) — resolves fresh AND
+     *        refreshes the cache so a racing per-event check sees the same
+     *        view; false on the per-event path (cache governs the 30s TTL).
+     */
+    private Collection<UUID> liveView(SseClientInfo client) {
+        return liveView(client, false);
+    }
+
+    private Collection<UUID> liveView(SseClientInfo client, boolean bypassCache) {
+        if (client.principal() instanceof Principal.ServicePrincipal sp) {
+            // Uncached: grant changes are rare, correctness beats one query
+            // per event here.
+            return eventAuthzResolver.readableRuntimePdIdsForKey(
+                sp.apiKeyId(), sp.ownerUserId(), client.processDefinitionKeyFilter);
+        }
+        ReevalKey key = new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter);
+        if (bypassCache) {
+            Collection<UUID> fresh = eventAuthzResolver.readableRuntimePdIds(
+                client.principal(), client.processDefinitionKeyFilter);
+            rightsCache.put(key, fresh);
+            return fresh;
+        }
+        return rightsCache.get(key,
+            k -> eventAuthzResolver.readableRuntimePdIds(
+                client.principal(), client.processDefinitionKeyFilter));
+    }
+
+    /**
+     * WO-SEC-67 red-team #2: key rotation replaces the key MATERIAL in place
+     * (same row id — liveness stays green), so the generic sweep cannot see
+     * it. Rotation kills the old credential explicitly: close every stream
+     * standing on this key id NOW, deterministically, without depending on
+     * string comparisons. Best-effort and non-throwing like the sweep.
+     */
+    public void invalidateStreamsForKey(UUID apiKeyId) {
+        for (SseClientInfo client : List.copyOf(clients.values())) {
+            try {
+                if (client.principal() instanceof Principal.ServicePrincipal sp
+                    && apiKeyId.equals(sp.apiKeyId())) {
+                    closeRevokedClient(client.clientId, "key rotated");
+                }
+            } catch (RuntimeException e) {
+                log.warn("SSE key invalidation failed for client {}", client.clientId(), e);
             }
         }
     }
@@ -1014,10 +1070,10 @@ public class SseEventStreamService implements SmartLifecycle {
         Principal principal,
         /**
          * WO-SEC-67: JWT token_version frozen at registration. The liveness
-         * check compares the row's CURRENT version against this — logout /
-         * password change bumps the row, so a mismatch means "issued before
-         * the revoke". ServicePrincipal streams carry -1 (unused — their
-         * liveness is the key row, not a version).
+         * check compares the row's CURRENT version against this — logout bumps
+         * the row (the only version writer in prod), so a mismatch means
+         * "issued before the revoke". ServicePrincipal streams carry -1
+         * (unused — their liveness is the key row, not a version).
          */
         int tokenVersion,
         Collection<UUID> allowedPdIds,

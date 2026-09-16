@@ -7,7 +7,11 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberId;
+import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
+import com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
+import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
+import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessMemberRepository;
 import com.zorrodev.bpm.engine.repository.ProcessRepository;
@@ -66,6 +70,8 @@ class SseRevocationIT {
     @Autowired ProcessRepository processRepository;
     @Autowired ProcessDefinitionRepository processDefinitionRepository;
     @Autowired ProcessMemberRepository processMemberRepository;
+    @Autowired ApiKeyRepository apiKeyRepository;
+    @Autowired ApiKeyGrantRepository apiKeyGrantRepository;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
@@ -149,8 +155,8 @@ class SseRevocationIT {
         String pdId = pdIdOf(processId);
         UUID revokedUser = createUser("sse-revoked");
         UUID survivorUser = createUser("sse-survivor");
-        addMember(processId, revokedUser, "OPERATOR");
-        addMember(processId, survivorUser, "OPERATOR");
+        addMember(processId, revokedUser, "OWNER");
+        addMember(processId, survivorUser, "OWNER");
 
         Principal revokedPrincipal = new Principal.UserPrincipal(revokedUser, "revoked", "USER");
         Principal survivorPrincipal = new Principal.UserPrincipal(survivorUser, "survivor", "USER");
@@ -215,7 +221,7 @@ class SseRevocationIT {
         UUID processId = seedProcessWithDefinition("sseReeval");
         String pdId = pdIdOf(processId);
         UUID user = createUser("sse-reeval");
-        addMember(processId, user, "OPERATOR");
+        addMember(processId, user, "OWNER");
         Principal principal = new Principal.UserPrincipal(user, "reeval", "USER");
 
         SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
@@ -259,9 +265,137 @@ class SseRevocationIT {
         }
     }
 
+    /**
+     * WO-SEC-67 red-team #1 (P-46: отдельный RED на новый guard у потребителя):
+     * сужение грантов API-ключа обязано закрыть открытый key-поток. Frozen
+     * grants принципала этого не видят — только живой view из строк.
+     */
     @Test
-    void perSubjectCap_exceeded_returns429AndReleasesSlotOnRemove() {
-        // Arrange: cap of 1 for this subject (reflection — same pattern as PERF-6 maxClients).
+    void narrowedKeyGrants_liveViewClosesStreamWhileFrozenSnapshotWouldLeak() throws Exception {
+        // Arrange: owner + key + grant on the process; stream on the key.
+        UUID processId = seedProcessWithDefinition("sseKeyNarrow");
+        String pdId = pdIdOf(processId);
+        UUID owner = createUser("sse-keyowner");
+        addMember(processId, owner, "OWNER");
+
+        UUID keyId = UUID.randomUUID();
+        ApiKeyEntity key = new ApiKeyEntity();
+        key.setId(keyId);
+        key.setOwnerUserId(owner);
+        key.setKeyHash("test-hash-" + keyId);
+        key.setPrefix("zbpm_sk_test");
+        key.setCreatedAt(Instant.now());
+        apiKeyRepository.save(key);
+
+        UUID grantId = null;
+        ApiKeyGrantEntity grant = new ApiKeyGrantEntity();
+        grant.setApiKeyId(keyId);
+        grant.setProcessId(processId);
+        grant.setPermissions("READ");
+        grant.setFull(false);
+        apiKeyGrantRepository.save(grant);
+
+        Principal keyPrincipal = new Principal.ServicePrincipal(keyId, owner,
+            Map.of(processId, new Principal.Grant(java.util.Set.of("READ"), false)));
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
+        String clientId = sseEventStreamService.registerClient(emitter, keyPrincipal, null, null, null);
+        try {
+            Map<String, List<String>> byClient = new ConcurrentHashMap<>();
+            CountDownLatch firstDelivered = new CountDownLatch(1);
+            sseEventStreamService.addEventListener((cid, envelope) -> {
+                if (cid.equals(clientId)) {
+                    byClient.computeIfAbsent(cid, k -> new CopyOnWriteArrayList<>())
+                        .add((String) envelope.get("processDefinitionId"));
+                    firstDelivered.countDown();
+                }
+            });
+
+            pushEvent(1, pdId);
+            assertThat(firstDelivered.await(3, TimeUnit.SECONDS)).isTrue();
+            assertThat(byClient.getOrDefault(clientId, List.of())).containsExactly(pdId);
+
+            // Act: narrow the grants away (the setGrants row delete) + sweep.
+            apiKeyGrantRepository.deleteById(
+                new com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity.ApiKeyGrantId(keyId, processId));
+            sseEventStreamService.invalidateStreams();
+
+            pushEvent(2, pdId);
+            Thread.sleep(500);
+
+            // Assert: frozen snapshot would still contain pdId — the live view
+            // must have closed the stream instead.
+            assertThat(byClient.getOrDefault(clientId, List.of()))
+                .as("narrowed key stream must NOT receive post-narrow events")
+                .containsExactly(pdId);
+        } finally {
+            sseEventStreamService.removeClient(clientId);
+        }
+    }
+
+    /**
+     * WO-SEC-67 red-team #2 (P-46): ротация ключа закрывает потоки на его id
+     * точечно — generic sweep видит живую строку и ничего не делает.
+     */
+    @Test
+    void rotatedKey_streamsOnItsIdClosedExplicitly() throws Exception {
+        // Arrange: owner + key + grant; stream on the key.
+        UUID processId = seedProcessWithDefinition("sseKeyRotate");
+        String pdId = pdIdOf(processId);
+        UUID owner = createUser("sse-keyrotowner");
+        addMember(processId, owner, "OWNER");
+
+        UUID keyId = UUID.randomUUID();
+        ApiKeyEntity key = new ApiKeyEntity();
+        key.setId(keyId);
+        key.setOwnerUserId(owner);
+        key.setKeyHash("test-hash-" + keyId);
+        key.setPrefix("zbpm_sk_test");
+        key.setCreatedAt(Instant.now());
+        apiKeyRepository.save(key);
+
+        ApiKeyGrantEntity grant = new ApiKeyGrantEntity();
+        grant.setApiKeyId(keyId);
+        grant.setProcessId(processId);
+        grant.setPermissions("READ");
+        grant.setFull(false);
+        apiKeyGrantRepository.save(grant);
+
+        Principal keyPrincipal = new Principal.ServicePrincipal(keyId, owner,
+            Map.of(processId, new Principal.Grant(java.util.Set.of("READ"), false)));
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
+        String clientId = sseEventStreamService.registerClient(emitter, keyPrincipal, null, null, null);
+        try {
+            Map<String, List<String>> byClient = new ConcurrentHashMap<>();
+            CountDownLatch firstDelivered = new CountDownLatch(1);
+            sseEventStreamService.addEventListener((cid, envelope) -> {
+                if (cid.equals(clientId)) {
+                    byClient.computeIfAbsent(cid, k -> new CopyOnWriteArrayList<>())
+                        .add((String) envelope.get("processDefinitionId"));
+                    firstDelivered.countDown();
+                }
+            });
+
+            pushEvent(1, pdId);
+            assertThat(firstDelivered.await(3, TimeUnit.SECONDS)).isTrue();
+            assertThat(byClient.getOrDefault(clientId, List.of())).containsExactly(pdId);
+
+            // Act: rotation (same row id — the sweep would see a live row) +
+            // the explicit per-key invalidation the rotate hook calls.
+            sseEventStreamService.invalidateStreamsForKey(keyId);
+
+            pushEvent(2, pdId);
+            Thread.sleep(500);
+
+            assertThat(byClient.getOrDefault(clientId, List.of()))
+                .as("rotated key stream must NOT receive post-rotate events")
+                .containsExactly(pdId);
+        } finally {
+            sseEventStreamService.removeClient(clientId);
+        }
+    }
+
+    @Test
+    void perSubjectCap_exceeded_returns429AndReleasesSlotOnRemove() {        // Arrange: cap of 1 for this subject (reflection — same pattern as PERF-6 maxClients).
         SseEventStreamService svc = sseEventStreamService;
         var field = org.springframework.test.util.ReflectionTestUtils.class;
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "maxClientsPerSubject", 1);
@@ -300,7 +434,7 @@ class SseRevocationIT {
         UUID processId = seedProcessWithDefinition("sseLogout");
         String pdId = pdIdOf(processId);
         UUID user = createUser("sse-logout");
-        addMember(processId, user, "OPERATOR");
+        addMember(processId, user, "OWNER");
         String username = userRepository.findById(user).orElseThrow().getUsername();
 
         LoginDTO dto = new LoginDTO();

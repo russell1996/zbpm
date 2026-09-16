@@ -71,8 +71,10 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     public ApiKeyWithSecretDTO rotateApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
         ApiKeyWithSecretDTO result = apiKeyService.rotateKeyForUser(userId, getPrincipal());
-        // WO-SEC-67 (F13): the old key material just died — close open streams now.
-        sseEventStreamService.invalidateStreams();
+        // WO-SEC-67 red-team #2: rotation replaces the key MATERIAL in place
+        // (same row — the generic sweep would see a live row and do nothing).
+        // Close streams on this key id explicitly and deterministically.
+        sseEventStreamService.invalidateStreamsForKey(result.getId());
         return result;
     }
 
@@ -138,8 +140,9 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         }
 
         ApiKeyWithSecretDTO result = apiKeyService.rotateOwnKey(u.userId());
-        // WO-SEC-67 (F13): the old key material just died — close open streams now.
-        sseEventStreamService.invalidateStreams();
+        // WO-SEC-67 red-team #2: rotation replaces the key MATERIAL in place
+        // (same row — the generic sweep would see a live row and do nothing).
+        sseEventStreamService.invalidateStreamsForKey(result.getId());
         return result;
     }
 
