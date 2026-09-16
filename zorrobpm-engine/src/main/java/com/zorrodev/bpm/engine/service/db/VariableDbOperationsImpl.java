@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -58,6 +59,40 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
 
     private static final String SELECT_ID_BY_KEY =
         "SELECT id FROM variables WHERE process_instance_id = ? AND name = ? AND %s";
+
+    /**
+     * WO-REL-41 (B-8, п.1): one statement, no Java-side read-modify-write.
+     * INSERT covers the absent row; ON CONFLICT merges the element into the
+     * stored JSON array. {@code jsonb_build_array} forces append-as-single —
+     * a bare {@code ||} would CONCATENATE an array-valued element instead of
+     * nesting it (Java {@code list.add} semantics). Only a stored JSON array
+     * is extended; anything else restarts a fresh single-element list.
+     * {@code RETURNING (xmax = 0)} reports create vs update like UPSERT_PG.
+     */
+    private static final String APPEND_PG =
+        "INSERT INTO variables (id, process_instance_id, scope_id, name, type, text_value) " +
+        "VALUES (?, ?, NULL, ?, 'JSON', '[' || ? || ']') " +
+        "ON CONFLICT (process_instance_id, name, scope_id) DO UPDATE " +
+        "SET type = 'JSON', " +
+        "    text_value = (CASE WHEN variables.type = 'JSON' AND variables.text_value ~ '^\\s*\\[' " +
+        "THEN (variables.text_value::jsonb || jsonb_build_array(?::jsonb))::text " +
+        "ELSE '[' || ? || ']' END) " +
+        "RETURNING (xmax = 0)";
+
+    /**
+     * WO-REL-41 (B-8, п.1), H2-путь (тесты): та же семантика текстовой
+     * хирургией — jsonb в H2 нет. TRIM + LIKE проверяют массив, SUBSTRING
+     * срезает закрывающую скобку; формат исходного текста сохраняется.
+     * Отдельная ветка под вырожденный `'[]'` (verifier WO-REL-41: иначе
+     * SUBSTRING дал бы `'[,"a"]'` — невалидный JSON).
+     */
+    private static final String APPEND_H2_UPDATE =
+        "UPDATE variables SET type = 'JSON', text_value = " +
+        "(CASE WHEN TRIM(text_value) = '[]' THEN '[' || ? || ']' " +
+        "WHEN TRIM(text_value) LIKE '[%]' " +
+        "THEN SUBSTRING(TRIM(text_value), 1, LENGTH(TRIM(text_value)) - 1) || ',' || ? || ']' " +
+        "ELSE '[' || ? || ']' END) " +
+        "WHERE process_instance_id = ? AND name = ? AND scope_id IS NULL";
 
     private final VariableRepository variableRepository;
     private final ExecutionContext executionContext;
@@ -207,6 +242,60 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
         } catch (Exception e) {
             log.warn("Failed to detect database product, assuming PostgreSQL", e);
             return "PostgreSQL";
+        }
+    }
+
+    @Override
+    public Optional<String> getVariableTextValue(@NonNull UUID processInstanceId, String name) {
+        return variableRepository.findByProcessInstanceIdAndNameAndScopeIdIsNull(processInstanceId, name)
+            .map(ProcessVariableEntity::getTextValue);
+    }
+
+    @Override
+    public void appendJsonElement(@NonNull UUID processInstanceId, String name, String jsonElement) {
+        boolean postgres = "PostgreSQL".equals(getDatabaseProduct());
+        String kind = postgres
+            ? appendJsonElementPostgres(processInstanceId, name, jsonElement)
+            : appendJsonElementGuarded(processInstanceId, name, jsonElement);
+        if ("update".equals(kind)) {
+            // Same stale-managed-copy reason as setVariables above: the write
+            // bypasses the persistence context via JDBC.
+            evictVariable(processInstanceId, null, name);
+        }
+        // WO-C8-29: same conditional tracking as a variable write.
+        executionContext.recordVariableChange(name, kind);
+    }
+
+    /**
+     * WO-REL-41 (B-8, п.1), прод-путь: один стейтмент, атомарно, безопасно
+     * внутри чужой транзакции (та же причина, что UPSERT_PG в CR-1).
+     *
+     * @return "create" если строка вставлена, "update" если расширена/перезаписана.
+     */
+    private String appendJsonElementPostgres(UUID processInstanceId, String name, String jsonElement) {
+        Boolean inserted = jdbcTemplate.queryForObject(APPEND_PG, Boolean.class,
+            UUID.randomUUID(), processInstanceId, name, jsonElement, jsonElement, jsonElement);
+        return Boolean.TRUE.equals(inserted) ? "create" : "update";
+    }
+
+    /**
+     * WO-REL-41 (B-8, п.1), H2-путь (тесты): UPDATE-хирургия, затем INSERT
+     * (INSERT_H2 с NULL-скоупом — корень); проигранная гонка на вставке
+     * сходится повторным UPDATE, как upsertGuarded.
+     *
+     * @return "create" если строка вставлена, "update" если расширена/перезаписана.
+     */
+    private String appendJsonElementGuarded(UUID processInstanceId, String name, String jsonElement) {
+        if (jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, jsonElement, processInstanceId, name) == 1) {
+            return "update";
+        }
+        try {
+            jdbcTemplate.update(INSERT_H2, UUID.randomUUID(), processInstanceId, null,
+                name, "JSON", "[" + jsonElement + "]");
+            return "create";
+        } catch (DuplicateKeyException insertRaceLost) {
+            jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, jsonElement, processInstanceId, name);
+            return "update";
         }
     }
 

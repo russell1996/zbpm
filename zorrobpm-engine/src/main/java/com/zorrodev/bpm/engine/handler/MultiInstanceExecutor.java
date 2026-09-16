@@ -65,8 +65,18 @@ public class MultiInstanceExecutor {
     public void enter(UUID processInstanceId, UUID token, BpmnElementModel bpmnElement, TokenExecutor executor) {
         MultiInstanceExtensionModel mi = bpmnElement.getExtensions().getMultiInstanceExtension();
         int count;
+        Object collection;
         try {
-            count = resolveCardinality(processInstanceId, bpmnElement);
+            // WO-REL-41 (B-8, п.3): ONE root read and ONE inputCollection FEEL
+            // eval per entry — shared by the cardinality resolution below and
+            // the spawn that follows, instead of each fetching/evaluating them
+            // again on the same transition.
+            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            collection = null;
+            if (mi.getInputCollection() != null && !mi.getInputCollection().isBlank()) {
+                collection = scriptService.evaluateExpression(mi.getInputCollection(), variables);
+            }
+            count = resolveCardinality(bpmnElement, variables, collection);
         } catch (EngineException e) {
             // WO-REL-31 F23: a failed cardinality resolution (fractional/out-of-int-range value,
             // missing characteristics) is an element failure — raise a visible incident on the
@@ -105,7 +115,6 @@ public class MultiInstanceExecutor {
         batchVar.setValue(batchUuid);
         dbService.setVariables(processInstanceId, List.of(batchVar));
         dbService.recordInclusiveExpected(processInstanceId, miId + "::" + batchUuid, count);
-        Object collection = miInputCollection(processInstanceId, mi);
         int spawn = mi.isSequential() ? 1 : count;
         for (int i = 0; i < spawn; i++) {
             spawnMiInstance(processInstanceId, token, bpmnElement, mi, collection, i);
@@ -196,14 +205,20 @@ public class MultiInstanceExecutor {
         boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, element);
     }
 
-    private int resolveCardinality(UUID processInstanceId, BpmnElementModel element) {
+    /**
+     * Resolves the instance count from the already-fetched root variables and
+     * the already-evaluated input collection (WO-REL-41, B-8 п.3 — the caller
+     * shares both instead of re-fetching/re-evaluating on the same transition).
+     * The sequential-continue path ({@link #multiInstanceContinue}) keeps its
+     * own fetch via {@link #miInputCollection(UUID, MultiInstanceExtensionModel)} —
+     * a different transition, not this one.
+     */
+    private int resolveCardinality(BpmnElementModel element, List<ProcessVariable> variables, Object collection) {
         MultiInstanceExtensionModel mi = Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
             .orElseThrow(() -> new EngineException("Multi-instance " + element.getId() + " has no loop characteristics"));
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
 
         if (mi.getInputCollection() != null && !mi.getInputCollection().isBlank()) {
-            Object collection = scriptService.evaluateExpression(mi.getInputCollection(), variables);
             return collectionSize(collection, element.getId());
         }
 
@@ -303,12 +318,11 @@ public class MultiInstanceExecutor {
      * merely opts out of iteration isolation for those instances (which may still suffer the old
      * bookkeeping collision, but that is pre-existing and will be resolved as those instances
      * complete their first MI entry).
+     * <p>
+     * WO-REL-41 (B-8, п.2): ONE pinpoint row read, not the full variable list.
      */
     private String resolveBatchUuid(UUID processInstanceId, String miId) {
-        return dbService.getVariables(processInstanceId).stream()
-            .filter(v -> ("_mi_batch_" + miId).equals(v.getName()))
-            .findFirst()
-            .map(ProcessVariable::getValue)
+        return dbService.getVariableTextValue(processInstanceId, "_mi_batch_" + miId)
             .orElse(miId);
     }
 
