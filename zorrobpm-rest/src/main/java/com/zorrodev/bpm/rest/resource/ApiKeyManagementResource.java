@@ -33,6 +33,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     private final ApiKeyService apiKeyService;
     private final HttpServletRequest request;
     private final HttpServletResponse httpResponse;
+    /** WO-SEC-67 (F13): close live SSE streams on key revoke (credential behind them is dead). */
+    private final SseEventStreamService sseEventStreamService;
 
     // ==================== Super-admin endpoints ====================
 
@@ -68,7 +70,10 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public ApiKeyWithSecretDTO rotateApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        return apiKeyService.rotateKeyForUser(userId, getPrincipal());
+        ApiKeyWithSecretDTO result = apiKeyService.rotateKeyForUser(userId, getPrincipal());
+        // WO-SEC-67 (F13): the old key material just died — close open streams now.
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 
     @Transactional
@@ -76,6 +81,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     public void revokeApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
         apiKeyService.revokeKeyForUser(userId, getPrincipal());
+        // WO-SEC-67 (F13): the key behind open streams just died — close them now.
+        sseEventStreamService.invalidateStreams();
     }
 
     // ==================== User self-service endpoints ====================
@@ -130,7 +137,10 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
 
-        return apiKeyService.rotateOwnKey(u.userId());
+        ApiKeyWithSecretDTO result = apiKeyService.rotateOwnKey(u.userId());
+        // WO-SEC-67 (F13): the old key material just died — close open streams now.
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 
     @Transactional
@@ -142,6 +152,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         }
 
         apiKeyService.revokeOwnKey(u.userId());
+        // WO-SEC-67 (F13): the key behind open streams just died — close them now.
+        sseEventStreamService.invalidateStreams();
     }
 
     // ==================== WO-INT-4: system accounts — multiple keys ====================
@@ -177,6 +189,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     public void revokeApiKeyById(@PathVariable UUID userId, @PathVariable UUID apiKeyId) {
         requireSuperAdmin();
         apiKeyService.revokeKeyById(userId, apiKeyId, getPrincipal());
+        // WO-SEC-67 (F13): the key behind open streams just died — close them now.
+        sseEventStreamService.invalidateStreams();
     }
 
     // ==================== Helpers (no JPA) ====================

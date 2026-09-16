@@ -48,8 +48,9 @@ class SseRel37CatchupTest {
 
     @BeforeEach
     void setUp() {
+        // WO-SEC-67: +2 ctor args (UiUserLookupService, ApiKeyRepository) — null = no live checks in unit scope.
         service = new SseEventStreamService(eventQueryService, eventAuthzResolver, null,
-            new tools.jackson.databind.ObjectMapper());
+            new tools.jackson.databind.ObjectMapper(), null, null);
         lenient().when(eventAuthzResolver.readableRuntimePdIds(any(), any())).thenReturn(null);
         // Прод resolveKeyPdIds(null) возвращает null (unrestricted); мок по умолчанию
         // отдал бы пустой список -> intersect дал бы empty -> ранний return без выборки.

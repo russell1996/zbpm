@@ -37,6 +37,8 @@ public class MemberResource implements MemberContract {
     private final ProcessMemberService processMemberService;
     private final AuthorizationService authorizationService;
     private final HttpServletRequest request;
+    /** WO-SEC-67 (F13): close/narrow live SSE streams on membership change. */
+    private final SseEventStreamService sseEventStreamService;
 
     private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
@@ -117,13 +119,19 @@ public class MemberResource implements MemberContract {
     @Override
     public MemberDTO changeRole(@PathVariable String key, @PathVariable UUID userId, @Valid @RequestBody ChangeRoleDTO dto) {
         requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
-        return processMemberService.changeRole(key, userId, dto, getPrincipal());
+        MemberDTO result = processMemberService.changeRole(key, userId, dto, getPrincipal());
+        // WO-SEC-67 (F13): rights may have narrowed — re-check open streams now.
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 
     @Transactional
     @Override
     public IdDTO removeMember(@PathVariable String key, @PathVariable UUID userId) {
         requireOperate(key, AuthorizationService.Action.MANAGE_MEMBERS);
-        return processMemberService.removeMember(key, userId, getPrincipal());
+        IdDTO result = processMemberService.removeMember(key, userId, getPrincipal());
+        // WO-SEC-67 (F13): membership gone — close that user's narrowed streams now.
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 }

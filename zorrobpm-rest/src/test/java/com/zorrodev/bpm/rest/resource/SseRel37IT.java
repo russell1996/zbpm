@@ -1,10 +1,14 @@
 package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.engine.entity.DomainEventEntity;
+import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
+import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -29,15 +33,39 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SseRel37IT {
 
     @Autowired private DomainEventRepository domainEventRepository;
     @Autowired private SseEventStreamService sseEventStreamService;
+    @Autowired private UiUserRepository uiUserRepository;
 
     private final List<Long> createdSequences = new ArrayList<>();
 
-    private static final Principal ADMIN =
-        new Principal.UserPrincipal(UUID.randomUUID(), "admin", "SUPER_ADMIN");
+    private static Principal ADMIN;
+
+    /**
+     * WO-SEC-67: the stream principal must stand on a LIVE credential — seed
+     * a real SUPER_ADMIN row once per class and build ADMIN from its id
+     * (the liveness gate closes streams whose user row is missing).
+     */
+    @BeforeAll
+    void seedLiveAdmin() {
+        UUID id = UUID.randomUUID();
+        UiUserEntity u = new UiUserEntity();
+        u.setId(id);
+        u.setUsername("sse-rel37-admin-" + id.toString().substring(0, 8));
+        u.setPasswordHash("x");
+        u.setFullName("SSE REL37 Admin");
+        u.setEmail("sse-rel37-admin-" + id.toString().substring(0, 8) + "@example.com");
+        u.setRole("SUPER_ADMIN");
+        u.setUserType("HUMAN");
+        u.setActive(true);
+        u.setCreatedAt(Instant.now());
+        u.setUpdatedAt(Instant.now());
+        uiUserRepository.save(u);
+        ADMIN = new Principal.UserPrincipal(id, "admin", "SUPER_ADMIN");
+    }
 
     @AfterEach
     void cleanup() {
