@@ -83,10 +83,13 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
      * WO-REL-41 (B-8, п.1), H2-путь (тесты): та же семантика текстовой
      * хирургией — jsonb в H2 нет. TRIM + LIKE проверяют массив, SUBSTRING
      * срезает закрывающую скобку; формат исходного текста сохраняется.
+     * Отдельная ветка под вырожденный `'[]'` (verifier WO-REL-41: иначе
+     * SUBSTRING дал бы `'[,"a"]'` — невалидный JSON).
      */
     private static final String APPEND_H2_UPDATE =
         "UPDATE variables SET type = 'JSON', text_value = " +
-        "(CASE WHEN TRIM(text_value) LIKE '[%]' " +
+        "(CASE WHEN TRIM(text_value) = '[]' THEN '[' || ? || ']' " +
+        "WHEN TRIM(text_value) LIKE '[%]' " +
         "THEN SUBSTRING(TRIM(text_value), 1, LENGTH(TRIM(text_value)) - 1) || ',' || ? || ']' " +
         "ELSE '[' || ? || ']' END) " +
         "WHERE process_instance_id = ? AND name = ? AND scope_id IS NULL";
@@ -283,7 +286,7 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
      * @return "create" если строка вставлена, "update" если расширена/перезаписана.
      */
     private String appendJsonElementGuarded(UUID processInstanceId, String name, String jsonElement) {
-        if (jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, processInstanceId, name) == 1) {
+        if (jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, jsonElement, processInstanceId, name) == 1) {
             return "update";
         }
         try {
@@ -291,7 +294,7 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
                 name, "JSON", "[" + jsonElement + "]");
             return "create";
         } catch (DuplicateKeyException insertRaceLost) {
-            jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, processInstanceId, name);
+            jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, jsonElement, processInstanceId, name);
             return "update";
         }
     }

@@ -129,6 +129,16 @@ class VariableUpsertIntegrationTests {
     }
 
     @Test
+    void appendJsonElement_emptyArray_extendsWithoutCorruption() {
+        // Verifier WO-REL-41: вырожденный '[]' обязан дать '["a"]', не '[,"a"]'.
+        variableDb.setVariables(pi, List.of(pv("e", "[]")));
+        variableDb.appendJsonElement(pi, "e", "\"a\"");
+
+        assertThat(countRows("e")).isEqualTo(1);
+        assertThat(textOf("e")).isEqualTo("[\"a\"]");
+    }
+
+    @Test
     void appendJsonElement_nestsArrayElementAsSingle() {
         // WO-REL-41: list.add-семантика — массив-элемент вкладывается, не конкатенируется.
         variableDb.appendJsonElement(pi, "n", "[1,2]");
