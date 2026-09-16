@@ -137,6 +137,79 @@ describe('createRefreshInterceptor', () => {
     expect(adapterSpy).toHaveBeenCalledTimes(1)
   })
 
+  // --- WO-AUTH-2 criterion 2: parallel 401s → exactly ONE /auth/refresh ---
+
+  function refreshCallCount(adapterSpy: ReturnType<typeof vi.fn>): number {
+    return adapterSpy.mock.calls.filter(
+      (args) => (args[0] as { url?: string })?.url === '/auth/refresh',
+    ).length
+  }
+
+  /**
+   * Faithful 401 harness: the thrown error carries the RECEIVED config (like
+   * real axios does), so request flags (`_retry`) survive into the handler.
+   * A mock that builds a fresh config would silently drop `_retry` and prove
+   * nothing about retry-guard behavior.
+   */
+  function err401WithCfg(cfg: InternalAxiosRequestConfig): AxiosError {
+    const error = new AxiosError('Request failed with status code 401')
+    error.response = {
+      data: null,
+      status: 401,
+      statusText: 'Unauthorized',
+      headers: new AxiosHeaders(),
+      config: cfg,
+    }
+    error.config = cfg
+    return error
+  }
+
+  it('parallel 401s trigger exactly one refresh call (single-flight)', async () => {
+    type Cfg = InternalAxiosRequestConfig & { _retry?: boolean }
+    const adapterSpy = vi.fn(async (cfg: Cfg) => {
+      if (cfg.url === '/auth/refresh') return { data: { token: 'new-token' }, status: 200 }
+      if (cfg._retry) return { data: [{ id: 'retry-ok' }], status: 200 }
+      throw err401WithCfg(cfg)
+    })
+
+    ;(instance.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    const [r1, r2, r3] = await Promise.all([
+      instance.get('/process-instances'),
+      instance.get('/user-tasks'),
+      instance.get('/variables'),
+    ])
+    expect(r1.status).toBe(200)
+    expect(r2.status).toBe(200)
+    expect(r3.status).toBe(200)
+    // 3 original + 1 refresh + 3 retries = 7 adapter calls, refresh exactly once
+    expect(adapterSpy).toHaveBeenCalledTimes(7)
+    expect(refreshCallCount(adapterSpy)).toBe(1)
+  })
+
+  // --- WO-AUTH-2: queued request whose retry ALSO 401s must logout, not loop ---
+
+  it('queued retry that still 401s logs out without a second refresh (no loop)', async () => {
+    const adapterSpy = vi.fn(async (cfg: InternalAxiosRequestConfig) => {
+      if (cfg.url === '/auth/refresh') return { data: { token: 'new-token' }, status: 200 }
+      // refresh "succeeded" but auth is still dead (e.g. version bumped elsewhere)
+      throw err401WithCfg(cfg)
+    })
+
+    ;(instance.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    const results = await Promise.allSettled([
+      instance.get('/process-instances'),
+      instance.get('/user-tasks'),
+    ])
+    expect(results[0].status).toBe('rejected')
+    expect(results[1].status).toBe('rejected')
+    // exactly ONE refresh attempt total — the queued request must not start a new cycle
+    expect(refreshCallCount(adapterSpy)).toBe(1)
+    // real logout path taken (not a silent hang/loop)
+    expect(callbacks.onUnauthorized).toHaveBeenCalled()
+  })
+
   // --- WO-SEC-19: 403 PASSWORD_CHANGE_REQUIRED ---
 
   it('does NOT attempt refresh for 403 PASSWORD_CHANGE_REQUIRED (propagates error)', async () => {

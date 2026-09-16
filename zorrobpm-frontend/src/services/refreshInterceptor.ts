@@ -64,7 +64,13 @@ export function createRefreshInterceptor(instance: AxiosInstance, callbacks: Aut
       }
 
       if (isRefreshing) {
-        // Another refresh is in progress — queue this request
+        // Another refresh is in progress — queue this request.
+        // WO-AUTH-2: mark it retried NOW, not on retry: without this, a queued
+        // request whose retry ALSO 401s (refresh "succeeded" but auth is still
+        // dead, e.g. token_version bumped elsewhere) would start a brand-new
+        // refresh cycle — an infinite 401→refresh→401 loop with no logout.
+        // With _retry set, the second 401 goes to onUnauthorized (real logout).
+        originalRequest._retry = true
         return new Promise<string>((resolve, reject) => {
           pendingQueue.push({ resolve, reject })
         }).then(() => instance(originalRequest))
