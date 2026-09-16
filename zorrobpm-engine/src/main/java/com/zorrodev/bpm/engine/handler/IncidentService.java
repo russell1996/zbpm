@@ -28,6 +28,11 @@ public class IncidentService {
      * Parks the token at the failing element as an incident instead of propagating the exception
      * (which would roll back the whole process transaction). Marks the element's activity ERROR
      * and records an incident the operator can later resolve via {@link #resolveIncident}.
+     * <p>
+     * WO-REL-40 (B-6): if no activity exists for the failed element (e.g. the element
+     * failed before its activity was created), the fallback creates one first — a
+     * silently dropped incident leaves the token parked with no trace for the
+     * operator (precedes MultiInstanceExecutor.raiseCardinalityIncident).
      */
     public void raiseIncident(UUID processInstanceId, UUID tokenId, BpmnElementModel element, Exception e) {
         String message = e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : "");
@@ -36,11 +41,16 @@ public class IncidentService {
         // the handler creates the element's activity before doing the risky work, so it is visible
         // to this same-transaction query; pick the most recent one for this token + element
         List<Activity> activities = dbService.getActivitiesByTokenAndBpmnElementId(tokenId, element.getId());
+        UUID activityId;
         if (activities.isEmpty()) {
-            log.error("{}/{}: No activity found for failed element {}, incident not recorded", processInstanceId, tokenId, element.getId());
-            return;
+            // WO-REL-40 (B-6) fallback: no activity to park the incident on — create one
+            // so the failure stays visible instead of a log-only trace.
+            log.warn("{}/{}: No activity found for failed element {}, creating fallback activity to record the incident",
+                processInstanceId, tokenId, element.getId());
+            activityId = dbService.createActivity(processInstanceId, tokenId, element);
+        } else {
+            activityId = activities.get(activities.size() - 1).getId();
         }
-        UUID activityId = activities.get(activities.size() - 1).getId();
         dbService.errorActivity(activityId);
         dbService.createIncident(activityId, message);
     }

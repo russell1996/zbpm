@@ -13,7 +13,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -63,15 +66,26 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
 
     /**
      * Runs the compensation handler of every candidate activity that has a compensation boundary, in
-     * reverse order (by activity creation time descending — the reverse of completion order for a
-     * sequential flow). Each handler runs synchronously on {@code runToken}. Shared by the compensation
-     * throw event and transaction cancellation.
+     * reverse order of COMPLETION (latest completed first — the reverse of the order the work
+     * finished in). Each handler runs synchronously on {@code runToken}. A failing
+     * compensation is recorded as an incident and does NOT stop the remaining
+     * ones (WO-REL-40 B-7): one broken handler must not strand the rest
+     * uncompensated. Shared by the compensation throw event and transaction
+     * cancellation.
      */
     public void runCompensation(UUID processInstanceId, UUID runToken, BpmnProcessDefinitionModel bpmn, List<Activity> candidates, TokenExecutor executor) {
         List<Activity> completed = new ArrayList<>(candidates);
-        completed.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
+        // WO-REL-40 (B-7): reverse COMPLETION order (completedAt descending,
+        // nulls last — an activity without a completion timestamp sorts after
+        // completed ones), not creation order: two tasks created in order A,B
+        // can finish B,A. Note: nullsLast(reverseOrder()), NOT
+        // nullsLast(naturalOrder()).reversed() — reversed() flips the null
+        // placement too and would sort timestamp-less activities FIRST.
+        completed.sort(Comparator.comparing(Activity::getCompletedAt,
+            Comparator.nullsLast(Comparator.reverseOrder())));
+        Map<String, BpmnElementModel> boundaryIndex = indexCompensationBoundaries(bpmn);
         for (Activity activity : completed) {
-            BpmnElementModel boundary = findCompensationBoundary(bpmn, activity.getBpmnElementId());
+            BpmnElementModel boundary = boundaryIndex.get(activity.getBpmnElementId());
             if (boundary == null) {
                 continue;
             }
@@ -84,12 +98,27 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
                 continue;
             }
             log.info("{}/{}: Compensating {} via handler {}", processInstanceId, runToken, activity.getBpmnElementId(), handlerId);
-            executor.execute(processInstanceId, runToken, bpmn, handler);
+            try {
+                executor.execute(processInstanceId, runToken, bpmn, handler);
+            } catch (RuntimeException e) {
+                // WO-REL-40 (B-7): isolate — park the failed compensation as an
+                // incident and continue with the rest, never abort the loop.
+                log.error("{}/{}: Compensation handler {} for {} failed, continuing with the rest",
+                    processInstanceId, runToken, handlerId, activity.getBpmnElementId(), e);
+                UUID activityId = dbService.createActivity(processInstanceId, runToken, handler);
+                dbService.errorActivity(activityId);
+                dbService.createIncident(activityId,
+                    e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : ""));
+            }
         }
     }
 
-    /** Finds the compensation boundary attached to {@code hostId}, or null if none. */
-    private BpmnElementModel findCompensationBoundary(BpmnProcessDefinitionModel bpmn, String hostId) {
+    /**
+     * WO-REL-40 (B-7): one pass over the model builds host-id → boundary; the
+     * loop above is then O(1) per activity instead of O(N) per lookup.
+     */
+    private Map<String, BpmnElementModel> indexCompensationBoundaries(BpmnProcessDefinitionModel bpmn) {
+        Map<String, BpmnElementModel> index = new HashMap<>();
         for (BpmnElementModel element : bpmn.getElements()) {
             if (element.getType() != BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
                 continue;
@@ -98,10 +127,15 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
                 .map(BpmnElementExtensionModel::getBoundaryEventExtension)
                 .map(BoundaryEventExtensionModel::getAttachedToRef)
                 .orElse(null);
-            if (hostId.equals(attached)) {
-                return element;
+            if (attached != null) {
+                index.putIfAbsent(attached, element);
             }
         }
-        return null;
+        return index;
+    }
+
+    /** Finds the compensation boundary attached to {@code hostId}, or null if none. */
+    private BpmnElementModel findCompensationBoundary(BpmnProcessDefinitionModel bpmn, String hostId) {
+        return indexCompensationBoundaries(bpmn).get(hostId);
     }
 }
