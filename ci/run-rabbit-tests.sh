@@ -77,6 +77,9 @@ echo "=== rabbitmq is ready ==="
 # WO-OPS-11 F27: --user на mvn-контейнере (без него bind-mount создавал root-owned
 # target/, тот же класс поломки что WO-REL-22/WO-AUDIT-6) + явный maven.repo.local
 # на обычном пути (не /root/.m2 — туда без root не зайти).
+# WO-REL-36: + starter-модуль (CompletionTransportRabbitIT): его failsafe-сьют
+# гоняется тем же прогоном; -am тянет зависимости обоих. Порядок модулей в -pl
+# фиксирован, чтобы лог читался детерминированно.
 set +e
 docker run --rm \
   --user "$(id -u):$(id -g)" \
@@ -90,7 +93,7 @@ docker run --rm \
   -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
   maven:3.9.9-eclipse-temurin-21 \
   mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
-    -pl zorrobpm-rest \
+    -pl zorrobpm-job-handler-spring-boot-starter,zorrobpm-rest \
     -am \
     -Dsurefire.skip=true \
     -Dgroups=rabbit \

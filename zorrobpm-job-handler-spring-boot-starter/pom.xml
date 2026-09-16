@@ -40,6 +40,9 @@
              (root Dockerfile uses maven:3.9.9-eclipse-temurin-21 + eclipse-temurin:21-jre,
              .gitlab-ci.yml runs maven:3.9.9-eclipse-temurin-21). 17 was a stale leftover. -->
         <java.version>21</java.version>
+        <!-- WO-REL-36: тот же механизм исключения broker-тестов, что в rest/engine:
+             @Tag("rabbit") гоняется только через -Dgroups=rabbit -Dzbpm.excludedGroups=. -->
+        <zbpm.excludedGroups>pg | rabbit</zbpm.excludedGroups>
     </properties>
 
     <dependencies>
@@ -107,6 +110,26 @@
                             <artifactId>lombok</artifactId>
                         </path>
                     </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <includes>
+                        <include>**/*IT.java</include>
+                    </includes>
+                    <!-- WO-REL-36: broker-тесты исключены из дефолтного build'а
+                         (тот же property-механизм, что в rest/engine). -->
+                    <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>
