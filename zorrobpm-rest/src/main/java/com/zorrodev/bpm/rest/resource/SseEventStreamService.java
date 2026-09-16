@@ -137,17 +137,17 @@ public class SseEventStreamService implements SmartLifecycle {
             clients.put(clientId, info);
 
             emitter.onCompletion(() -> {
-                clients.remove(clientId);
+                removeClientState(clientId);
                 log.info("SSE client {} disconnected (completion)", clientId);
                 stopRabbitMqListenerIfNoClients();
             });
             emitter.onTimeout(() -> {
-                clients.remove(clientId);
+                removeClientState(clientId);
                 log.info("SSE client {} disconnected (timeout)", clientId);
                 stopRabbitMqListenerIfNoClients();
             });
             emitter.onError(e -> {
-                clients.remove(clientId);
+                removeClientState(clientId);
                 log.info("SSE client {} disconnected (error: {})", clientId, e.getMessage());
                 stopRabbitMqListenerIfNoClients();
             });
@@ -169,10 +169,21 @@ public class SseEventStreamService implements SmartLifecycle {
      * Removes an SSE client.
      */
     public void removeClient(String clientId) {
-        clients.remove(clientId);
-        bufferedEvents.remove(clientId);
+        removeClientState(clientId);
         log.info("SSE client {} removed", clientId);
         stopRabbitMqListenerIfNoClients();
+    }
+
+    /**
+     * WO-REL-37: единая точка снятия клиентского состояния — карта, буфер
+     * пересечения и флаг буферизации. Без этого disconnect до drain оставлял
+     * запись в bufferedEvents навсегда (утечка, поймана тестом WO-PERF-7:
+     * вторая Map в классе).
+     */
+    private void removeClientState(String clientId) {
+        clients.remove(clientId);
+        bufferedEvents.remove(clientId);
+        bufferingClients.remove(clientId);
     }
 
     /**
