@@ -91,7 +91,8 @@ class ParallelGatewayDbOperationsImplTest {
     void decrementPendingBranches_decrements() {
         UUID tokenId = UUID.randomUUID();
         TokenEntity e = new TokenEntity(); e.setId(tokenId); e.setPendingBranches(3);
-        when(tokenRepository.findById(tokenId)).thenReturn(Optional.of(e));
+        // WO-REL-40 (B-5): row-locked read, not plain findById
+        when(tokenRepository.findByIdForUpdate(tokenId)).thenReturn(Optional.of(e));
         assertThat(db.decrementPendingBranches(tokenId)).isEqualTo(2);
         verify(tokenRepository).save(e);
     }
@@ -100,7 +101,8 @@ class ParallelGatewayDbOperationsImplTest {
     void decrementPendingBranches_returnsMinus1WhenNull() {
         UUID tokenId = UUID.randomUUID();
         TokenEntity e = new TokenEntity(); e.setId(tokenId); e.setPendingBranches(null);
-        when(tokenRepository.findById(tokenId)).thenReturn(Optional.of(e));
+        // WO-REL-40 (B-5): row-locked read, not plain findById
+        when(tokenRepository.findByIdForUpdate(tokenId)).thenReturn(Optional.of(e));
         assertThat(db.decrementPendingBranches(tokenId)).isEqualTo(-1);
         verify(tokenRepository, never()).save(any(TokenEntity.class));
     }
