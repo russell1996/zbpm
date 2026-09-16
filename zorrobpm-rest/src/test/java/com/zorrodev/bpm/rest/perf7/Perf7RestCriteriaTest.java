@@ -50,19 +50,23 @@ class Perf7RestCriteriaTest {
         // WO-PERF-6: maxClients guard + onCompletion/onTimeout/onError removal.
         // WO-PERF-7 п.4 требует координации, а не дубля — проверяем, что лимит
         // есть и клиентская карта ровно одна (clients), второго кэша нет.
+        // WO-REL-37: + bufferedEvents (буфер пересечения catchup→live, clientId →
+        // события до drain) — НЕ второй реестр клиентов: записи живут только до
+        // drain/remove/disconnect (removeClientState чистит все три структуры),
+        // eviction идёт через maxClients/clients как раньше.
         boolean hasMaxClients = false;
-        int mapFields = 0;
+        java.util.Set<String> mapFields = new java.util.TreeSet<>();
         for (Field f : clazz.getDeclaredFields()) {
             if (f.getName().equals("maxClients")) {
                 hasMaxClients = true;
             }
             if (java.util.Map.class.isAssignableFrom(f.getType())
                 || f.getType().getName().contains("Caffeine")) {
-                mapFields++;
+                mapFields.add(f.getName());
             }
         }
         assertThat(hasMaxClients).isTrue();
-        assertThat(mapFields).isEqualTo(1);
+        assertThat(mapFields).containsExactly("bufferedEvents", "clients");
     }
 
     @Test
