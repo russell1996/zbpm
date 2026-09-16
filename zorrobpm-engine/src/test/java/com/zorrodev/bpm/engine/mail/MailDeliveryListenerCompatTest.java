@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
@@ -20,20 +22,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * WO-REL-33 п.2 (POF, RED-вариант для pre-fix базы): после серии последовательных
- * сбоев SMTP транспорт НЕ должен вызываться на каждую следующую попытку —
- * circuit breaker обязан разомкнуть цепь и отвечать отказом без похода во внешнюю
- * систему (иначе недоступный SMTP забивает общий scheduler-пул синхронными
- * попытками с 10-секундными таймаутами).
+ * WO-REL-33: контракт 4-arg конструктора {@code MailDeliveryListener} (без breaker'а).
  *
- * <p>На pre-fix базе у listener'а нет breaker'а (4-arg ctor) — транспорт вызывается
- * всегда → RED. На ветке этот же сценарий живёт в
- * {@code MailDeliveryListenerCircuitTest} (5-arg ctor + breaker) → GREEN.
- * Утверждение одно и то же, отличается только конструкция listener'а, которую
- * навязывает сам фикс.
+ * <p>Старые тесты конструируют listener вручную — для них цепь эквивалентна вечно
+ * закрытой (порог {@code Integer.MAX_VALUE}): транспорт вызывается на каждую
+ * попытку, поведение побайтово как до WO. Этот тест фиксирует контракт: если
+ * кто-то «починит» compat-ctor настоящим порогом, тест покраснеет и заставит
+ * переписать старые тесты явно, а не молча изменить их поведение.
+ * Защита от недоступного SMTP доказана в {@code MailDeliveryListenerCircuitTest}.
  */
 @ExtendWith(MockitoExtension.class)
-class MailDeliveryListenerCircuitRedTest {
+@MockitoSettings(strictness = Strictness.LENIENT)
+class MailDeliveryListenerCompatTest {
 
     @Mock JavaMailSenderImpl javaMailSender;
     @Mock ApplicationEventPublisher publisher;
@@ -41,20 +41,18 @@ class MailDeliveryListenerCircuitRedTest {
     @Mock MailConfigResolver configResolver;
     @Mock MailTransportFactory transportFactory;
 
-    private MailStatus mailStatus;
     private MailDeliveryListener listener;
 
     @BeforeEach
     void setUp() {
-        mailStatus = new MailStatus();
-        listener = new MailDeliveryListener(configResolver, transportFactory, publisher, mailStatus);
+        listener = new MailDeliveryListener(configResolver, transportFactory, publisher, new MailStatus());
         ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.test.com", 587, "user", "pass", "from@test.com", "");
         lenient().when(configResolver.getEffectiveConfig()).thenReturn(cfg);
         lenient().when(transportFactory.build("smtp.test.com", 587, "user", "pass")).thenReturn(javaMailSender);
     }
 
     @Test
-    void afterConsecutiveFailures_transportIsNotHitOnNextAttempt() throws Exception {
+    void compatCtor_neverOpensCircuit_transportAlwaysHit() throws Exception {
         when(javaMailSender.createMimeMessage()).thenReturn(mimeMessage);
         doThrow(new MailSendException("Connection refused", new jakarta.mail.MessagingException("down")))
             .when(javaMailSender).send(any(MimeMessage.class));
@@ -64,8 +62,7 @@ class MailDeliveryListenerCircuitRedTest {
             listener.on(new MailSendRequested(request, "outbox-" + i));
         }
 
-        // 5 сбоев подряд обязаны разомкнуть цепь: 6-я попытка — без build/send.
-        // Pre-fix: breaker'а нет, build вызывается все 6 раз → RED.
-        verify(transportFactory, times(5)).build("smtp.test.com", 587, "user", "pass");
+        // Compat-контракт: цепь не размыкается никогда — все 6 попыток идут в транспорт.
+        verify(transportFactory, times(6)).build("smtp.test.com", 587, "user", "pass");
     }
 }

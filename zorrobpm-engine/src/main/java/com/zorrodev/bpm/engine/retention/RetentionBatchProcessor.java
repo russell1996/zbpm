@@ -26,7 +26,20 @@ public class RetentionBatchProcessor {
 
     private final NamedParameterJdbcTemplate jdbc;
 
-    @Transactional(readOnly = true)
+    /**
+     * WO-REL-33: multi-instance захват через {@code FOR UPDATE SKIP LOCKED} —
+     * две реплики никогда не видят одни и те же строки: заблокированная другой
+     * репликой строка пропускается, а не ждёт снятия lock'а и не обрабатывается
+     * дважды. Тот же паттерн, что уже несут timer/outbox/watchdog-пути
+     * (ShedLock не введён сознательно: row-level захват даёт ровно «без дублей»
+     * без новой зависимости, lock-таблицы и сериализации проходов; retention
+     * идемпотентен — пропущенная строка доберётся следующим проходом).
+     * H2 этот синтаксис тоже принимает (проверено тестом), PG — подавно.
+     * Транзакция НЕ read-only: PG запрещает SELECT FOR UPDATE в read-only
+     * (SQL state 25006, поймано живым PgIT-прогоном) — метод только читает,
+     * но row lock требует пишущей транзакции; коммит всё равно ничего не пишет.
+     */
+    @Transactional
     public List<UUID> findEligibleInstances(Instant cutoff, int batchSize) {
         String sql = "SELECT pi.id FROM process_instances pi " +
             "WHERE (pi.completed_at IS NOT NULL OR pi.cancelled = true) " +
@@ -34,7 +47,7 @@ public class RetentionBatchProcessor {
             "AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.process_instance_id = pi.id AND a.completed_at IS NULL) " +
             "AND NOT EXISTS (SELECT 1 FROM user_tasks ut WHERE ut.process_instance_id = pi.id AND ut.completed_at IS NULL) " +
             "AND NOT EXISTS (SELECT 1 FROM service_tasks st WHERE st.process_instance_id = pi.id AND st.completed_at IS NULL) " +
-            "ORDER BY pi.completed_at ASC LIMIT :limit";
+            "ORDER BY pi.completed_at ASC LIMIT :limit FOR UPDATE OF pi SKIP LOCKED";
         return jdbc.queryForList(sql,
             new MapSqlParameterSource("cutoff", Timestamp.from(cutoff)).addValue("limit", batchSize),
             UUID.class);

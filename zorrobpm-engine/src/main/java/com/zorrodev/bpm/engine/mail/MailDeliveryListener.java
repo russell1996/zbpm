@@ -3,8 +3,8 @@ package com.zorrodev.bpm.engine.mail;
 import com.zorrodev.bpm.exchange.MailSendRequested;
 import com.zorrodev.bpm.exchange.OutboxDeliveryResult;
 import jakarta.mail.internet.MimeMessage;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
@@ -30,13 +30,40 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Profile("!test")
 @Component
-@RequiredArgsConstructor
 public class MailDeliveryListener {
 
     private final MailConfigResolver configResolver;
     private final MailTransportFactory transportFactory;
     private final ApplicationEventPublisher publisher;
     private final MailStatus mailStatus;
+    private final SmtpCircuitBreaker circuitBreaker;
+
+    /**
+     * WO-REL-33: тестовый конструктор без breaker'а — эквивалент закрытой цепи
+     * (старые тесты конструируют listener вручную; прод идёт через Spring и
+     * получает breaker autowire'ом). Сохраняет совместимость без правки ожиданий.
+     */
+    public MailDeliveryListener(MailConfigResolver configResolver,
+            MailTransportFactory transportFactory,
+            ApplicationEventPublisher publisher,
+            MailStatus mailStatus) {
+        this(configResolver, transportFactory, publisher, mailStatus,
+            new SmtpCircuitBreaker(Integer.MAX_VALUE, 60, 1000, 30000));
+    }
+
+    /** Прод-конструктор: breaker инжектится Spring'ом. */
+    @Autowired
+    public MailDeliveryListener(MailConfigResolver configResolver,
+            MailTransportFactory transportFactory,
+            ApplicationEventPublisher publisher,
+            MailStatus mailStatus,
+            SmtpCircuitBreaker circuitBreaker) {
+        this.configResolver = configResolver;
+        this.transportFactory = transportFactory;
+        this.publisher = publisher;
+        this.mailStatus = mailStatus;
+        this.circuitBreaker = circuitBreaker;
+    }
 
     /**
      * WO-REL-22 (section A decision): NO dedup here — the same {@code MailSendRequested}
@@ -58,24 +85,44 @@ public class MailDeliveryListener {
         }
 
         try {
-            JavaMailSender javaMailSender = transportFactory.build(cfg.host(), cfg.port(), cfg.username(), cfg.password());
-            MimeMessage message = javaMailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true);
-            helper.setFrom(cfg.from());
-            helper.setTo(request.getTo());
-            helper.setSubject(request.getSubject());
-            if (request.isHtml()) {
-                helper.setText(request.getBody(), true);
-            } else {
-                helper.setText(request.getBody(), false);
-            }
-
-            javaMailSender.send(message);
+            // WO-REL-33 п.2: весь внешний вызов (build + send) под защитой цепи —
+            // недоступный SMTP размыкает её, и следующие попытки отклоняются сразу,
+            // не занимая scheduler-поток синхронным 10-секундным таймаутом.
+            circuitBreaker.execute(() -> {
+                try {
+                    JavaMailSender sender = transportFactory.build(
+                        cfg.host(), cfg.port(), cfg.username(), cfg.password());
+                    MimeMessage message = sender.createMimeMessage();
+                    MimeMessageHelper helper = new MimeMessageHelper(message, true);
+                    helper.setFrom(cfg.from());
+                    helper.setTo(request.getTo());
+                    helper.setSubject(request.getSubject());
+                    if (request.isHtml()) {
+                        helper.setText(request.getBody(), true);
+                    } else {
+                        helper.setText(request.getBody(), false);
+                    }
+                    sender.send(message);
+                    return null;
+                } catch (jakarta.mail.MessagingException e) {
+                    throw new RuntimeException(e);
+                }
+            });
             mailStatus.recordSuccess();
             log.info("Mail sent successfully: outboxId={} to='{}' subject='{}'",
                 outboxId, request.getTo(), request.getSubject());
 
             publisher.publishEvent(new OutboxDeliveryResult(outboxId, true, null));
+
+        } catch (SmtpCircuitOpenException e) {
+            // WO-REL-33 п.2: цепь разомкнута — вызов не выполнялся, поток не
+            // занимали. Nack как обычно: запись остаётся pending для retry,
+            // но сама попытка стоила микросекунды, а не SMTP-таймаут.
+            String cause = "SMTP circuit OPEN — server unavailable, attempt skipped";
+            mailStatus.recordError(cause);
+            log.warn("Mail delivery skipped (circuit open): outboxId={} to='{}' subject='{}'",
+                outboxId, request.getTo(), request.getSubject());
+            publisher.publishEvent(new OutboxDeliveryResult(outboxId, false, cause));
 
         } catch (Exception e) {
             String cause = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
