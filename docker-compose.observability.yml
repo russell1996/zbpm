@@ -48,7 +48,13 @@ services:
     # no ports published — access via Grafana (datasource proxy) only
 
   grafana:
-    image: grafana/grafana:11.4.0
+    # WO-OBS-7 (F28, CVE-2025-4123): 11.4.0 < fixed 11.4.4+security-01 (vendor
+    # advisory: XSS via client path traversal + open redirect; fixed versions
+    # =10.4.18/=11.2.9/=11.3.6/=11.4.4/=11.5.4/=11.6.1/=12.0.0 +security-01).
+    # Same branch (11.4), minimal delta; tag + digest pinned like the main
+    # compose (postgres/rabbitmq precedent). Digest verified 2026-09-16 via
+    # `docker pull` (multi-arch list digest).
+    image: grafana/grafana:11.4.4-security-01@sha256:be4cc4527cb68f959038f1fbe9e334aec866fc029724818d0941970175ef7788
     container_name: zorrobpm-grafana
     restart: unless-stopped
     # WO-OBS-6 follow-up (live-caught 2026-09-14): entrypoint-whitelist.sh resolves
