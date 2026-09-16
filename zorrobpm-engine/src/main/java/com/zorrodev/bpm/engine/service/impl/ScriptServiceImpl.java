@@ -30,7 +30,16 @@ public class ScriptServiceImpl implements ScriptService {
     private final ObjectMapper objectMapper;
     private final BpmMetrics bpmMetrics;
     private final long timeoutMs;
-    private volatile ThreadPoolExecutor executor;
+    /**
+     * WO-REL-33 F22: пул ОДИН на все времена (final — никогда не заменяется).
+     * Старой болезни «каждый timeout = новый executor + выжившие поколения»
+     * больше нет: поколений нет вообще, суммарные потоки ≤ poolSize константно.
+     * Non-cooperative задача пинит свой слот (неизбежно при любом bounded-дизайне),
+     * дальше работает штатный bulkhead WO-A-02: очередь → AbortPolicy → быстрый
+     * EngineException вместо утечки. Сосед не прерывается ничем (заменять нечего) —
+     * инвариант WO-REL-24 сохранён доказанно его же тестом.
+     */
+    private final ThreadPoolExecutor executor;
 
     public ScriptServiceImpl(@Qualifier("feelScriptEngine") ScriptEngine scriptEngine,
                              @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine,
@@ -89,11 +98,12 @@ public class ScriptServiceImpl implements ScriptService {
             log.debug("Eval result (len={}, hash={})", code.length(), code.hashCode());
             return result;
         } catch (java.util.concurrent.TimeoutException e) {
-            // WO-A-02: stuck-worker — cancel and replace the thread
+            // WO-A-02: stuck-worker — точечный cancel; пул НЕ заменяется (F22:
+            // single-pool — замена и была утечкой поколений). Non-cooperative
+            // задача пиннит слот, остальное — штатный bulkhead.
             future.cancel(true);
             bpmMetrics.scriptTimeout();
             bpmMetrics.updateScriptPoolMetrics(executor);
-            replaceWorker();
             // A-09: no code in exception, correlation via length/hash
             throw new EngineException("Script execution timed out after " + (timeoutMs / 1000) + "s (" + codeRef(code) + ")");
         } catch (java.util.concurrent.ExecutionException e) {
@@ -106,52 +116,6 @@ public class ScriptServiceImpl implements ScriptService {
             Thread.currentThread().interrupt();
             throw new EngineException("Script execution interrupted");
         }
-    }
-
-    /**
-     * WO-A-02: Replace the worker thread after a stuck expression.
-     * cancel(true) doesn't always work (thread may ignore interrupt).
-     * So we shut down the old executor and create a fresh one.
-     *
-     * WO-AUDIT-5: synchronized — two concurrent FEEL timeouts must not replace
-     * the pool twice (the loser's fresh pool would leak un-shut-down while the
-     * winner's replacement is discarded, and submits landing between shutdownNow
-     * and reassignment would hit a dead pool). Mutual exclusion makes replacement
-     * atomic: at most one live pool, always shut down before replacing.
-     *
-     * WO-REL-24: the old pool is shut down GRACEFULLY ({@code shutdown()}, not
-     * {@code shutdownNow()}). {@code shutdownNow()} interrupts EVERY worker of the
-     * shared pool — including a neighbour task that is honestly evaluating its own
-     * (not stuck) expression at that moment; it then dies with a confusing
-     * {@code EngineException("...failed...: null")} instead of its result or its own
-     * clean timeout. The stuck task itself was already interrupted precisely by
-     * {@code future.cancel(true)} before this method runs, so the pool-wide
-     * interrupt buys nothing for it. Graceful shutdown still stops new submits to
-     * the old pool (they go to the fresh one) while letting in-flight neighbours —
-     * and already-queued tasks — finish normally. Worst case is unchanged: a task
-     * that ignores interrupts forever pins one thread of a drained pool, exactly
-     * as it would pin a worker after {@code shutdownNow()}.
-     */
-    private synchronized void replaceWorker() {
-        log.warn("Replacing script worker pool after stuck expression (active={}, queued={})",
-            executor.getActiveCount(), executor.getQueue().size());
-        ThreadPoolExecutor old = executor;
-        executor = createExecutor();
-        old.shutdown();
-    }
-
-    private ThreadPoolExecutor createExecutor() {
-        ThreadPoolExecutor exec = new ThreadPoolExecutor(
-            2, 2, 0L, TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<>(10),
-            r -> {
-                Thread t = new Thread(r, "script-eval");
-                t.setDaemon(true);
-                return t;
-            },
-            new ThreadPoolExecutor.AbortPolicy()
-        );
-        return exec;
     }
 
     /**
