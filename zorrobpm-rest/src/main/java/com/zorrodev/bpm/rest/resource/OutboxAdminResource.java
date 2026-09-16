@@ -27,15 +27,16 @@ public class OutboxAdminResource implements OutboxAdminContract {
     @Override
     public List<OutboxEntryDTO> getOutbox(String status) {
         requireSuperAdmin();
-        List<OutboxEntry> rows;
+        var page = org.springframework.data.domain.PageRequest.of(0, 100, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+        List<com.zorrodev.bpm.engine.repository.OutboxEntryView> views;
         if (status == null || status.isBlank()) {
-            rows = outboxRepository.findAll();
+            views = outboxRepository.findProjectedAllOrderByCreatedAtDesc(page);
         } else if (!KNOWN_STATUSES.contains(status)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown status: " + status);
         } else {
-            rows = outboxRepository.findByStatusOrderByCreatedAtDesc(status);
+            views = outboxRepository.findProjectedByStatusOrderByCreatedAtDesc(status, page);
         }
-        return rows.stream().map(OutboxAdminResource::toDTO).toList();
+        return views.stream().map(OutboxAdminResource::toDTOView).toList();
     }
 
     @Override
@@ -67,6 +68,18 @@ public class OutboxAdminResource implements OutboxAdminContract {
         dto.setAttempts(e.getAttempts());
         dto.setLastError(e.getLastError());
         dto.setCreatedAt(e.getCreatedAt());
+        return dto;
+    }
+
+    private static OutboxEntryDTO toDTOView(com.zorrodev.bpm.engine.repository.OutboxEntryView v) {
+        OutboxEntryDTO dto = new OutboxEntryDTO();
+        dto.setId(v.getId());
+        dto.setKind(v.getKind() != null ? v.getKind().toString() : null);
+        dto.setStatus(v.getStatus());
+        dto.setPublished(v.isPublished());
+        dto.setAttempts(v.getAttempts());
+        dto.setLastError(v.getLastError());
+        dto.setCreatedAt(v.getCreatedAt());
         return dto;
     }
 

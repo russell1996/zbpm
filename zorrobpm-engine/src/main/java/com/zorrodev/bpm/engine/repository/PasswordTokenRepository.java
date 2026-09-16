@@ -8,6 +8,8 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,6 +43,9 @@ public interface PasswordTokenRepository extends JpaRepository<PasswordTokenEnti
     /** WO-ACL-18 criterion 5: true while an unexpired invitation token is outstanding. */
     boolean existsByUserIdAndTypeAndUsedFalseAndExpiresAtAfter(
             @Param("userId") UUID userId, @Param("type") String type, @Param("expiresAt") Instant now);
+
+    @Query("SELECT t.userId FROM PasswordTokenEntity t WHERE t.userId IN :userIds AND t.type = :type AND t.used = false AND t.expiresAt > :now")
+    List<UUID> findUserIdsWithPendingInvite(@Param("userIds") Collection<UUID> userIds, @Param("type") String type, @Param("now") Instant now);
 
     /**
      * WO-REG-7: delete all token rows of a user whose stale registration is

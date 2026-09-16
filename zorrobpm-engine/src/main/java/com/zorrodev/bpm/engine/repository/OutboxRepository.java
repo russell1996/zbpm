@@ -59,6 +59,12 @@ public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
     /** WO-REL-22 (B1): quarantine list for the admin endpoint. */
     List<OutboxEntry> findByStatusOrderByCreatedAtDesc(String status);
 
+    @Query("SELECT o.id as id, o.kind as kind, o.status as status, o.published as published, o.attempts as attempts, o.lastError as lastError, o.createdAt as createdAt FROM OutboxEntry o WHERE o.status = :status ORDER BY o.createdAt DESC")
+    List<OutboxEntryView> findProjectedByStatusOrderByCreatedAtDesc(@Param("status") String status, org.springframework.data.domain.Pageable pageable);
+
+    @Query("SELECT o.id as id, o.kind as kind, o.status as status, o.published as published, o.attempts as attempts, o.lastError as lastError, o.createdAt as createdAt FROM OutboxEntry o ORDER BY o.createdAt DESC")
+    List<OutboxEntryView> findProjectedAllOrderByCreatedAtDesc(org.springframework.data.domain.Pageable pageable);
+
     // WO-OBS-1: gauge sampling queries (read-only, additive — no behavior change).
     @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.published = false AND o.status != 'FAILED'")
     long countPending();

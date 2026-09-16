@@ -360,6 +360,10 @@ public class FlowNavigator {
      * @return the created flow activity ID, or null if the flow was not taken (condition false)
      */
     public UUID processFlow(@NonNull UUID processInstanceId, @NonNull UUID tokenId, String flowId, @NonNull Boolean processExpression, Boolean defaultFlow) {
+        return processFlow(processInstanceId, tokenId, flowId, processExpression, defaultFlow, null);
+    }
+
+    public UUID processFlow(@NonNull UUID processInstanceId, @NonNull UUID tokenId, String flowId, @NonNull Boolean processExpression, Boolean defaultFlow, List<ProcessVariable> cachedVariables) {
         ProcessInstance processInstance = dbService.getProcessInstance(processInstanceId);
         UUID processDefinitionId = processInstance.getProcessDefinitionId();
 
@@ -386,7 +390,7 @@ public class FlowNavigator {
                 .map(str -> str.substring(1))
                 .orElse(null);
             if (!(Objects.isNull(expression) && defaultFlow)) {
-                List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+                List<ProcessVariable> variables = cachedVariables != null ? cachedVariables : dbService.getVariables(processInstanceId);
                 Boolean test = (Boolean) scriptService.evaluateScript(expression, variables);
                 if (Boolean.TRUE.equals(test)) {
                     flowActivityId = dbService.createActivity(processInstanceId, tokenId, flow);
