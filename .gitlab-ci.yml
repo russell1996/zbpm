@@ -125,19 +125,20 @@ test:backend:
     # Mount target/ out to capture test reports after build
     # WO-OPS-11 F27: уникальное имя контейнера на pipeline (фиксированный test-extract
     # конфликтовал между параллельными job'ами) + trap-гарантия извлечения отчётов при
-    # ЛЮБОМ exit (artifacts:when:always не создаёт отсутствующие файлы — если docker build
-    # упал, отчётов нет вообще; trap снимает parent-dirs + cp даже при падении build'а).
+    # ЛЮБОМ exit. Ключевое: `cp` живут ВНУТРИ trap-функции, а не в линейном script'е —
+    # линейный `docker build` при красном тесте даёт exit≠0, job обрывается, и линейные
+    # `cp` после него не выполняются никогда. Честная граница (доказана живой пробой
+    # /tmp/f27-proof/run.sh + run2.sh): красный тест ВНУТРИ `RUN mvn verify` роняет сам
+    # build-слой — образа нет, извлекать нечего, и это структурно не чинится обёрткой
+    # (нужен BuildKit --output или разбиение test-стадии — отдельный WO, не этот срез);
+    # trap тогда пишет маркер NO-REPORTS.txt вместо тишины, чтобы artifacts:when:always
+    # не молчали. Покрытый сценарий: build собран (отчёты в слое), job падает ПОСЛЕ —
+    # trap извлекает всё (проба run2.sh: TEST-red.xml извлечён при exit=1).
     - export TEST_EXTRACT="test-extract-$CI_PIPELINE_ID-$CI_JOB_ID"
     - mkdir -p target-out/zorrobpm-engine target-out/zorrobpm-rest
-    - cleanup_extract() { docker rm -f "$TEST_EXTRACT" >/dev/null 2>&1 || true; docker image rm "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || true; }; trap cleanup_extract EXIT
+    - extract_reports() { docker create --name "$TEST_EXTRACT" "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || return 1; docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports >/dev/null 2>&1; docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports >/dev/null 2>&1; docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco >/dev/null 2>&1; docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports >/dev/null 2>&1; docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports >/dev/null 2>&1; }
+    - cleanup_extract() { extract_reports || echo "F27: no test image — build failed before tests ran, no reports to extract" > target-out/NO-REPORTS.txt; docker rm -f "$TEST_EXTRACT" >/dev/null 2>&1 || true; docker image rm "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || true; }; trap cleanup_extract EXIT
     - docker build --target test --build-arg MAVEN_PROFILES=-Pcoverage -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
-    - docker run --rm -v "$CI_PROJECT_DIR/target-out":/out busybox sh -c 'rm -rf /out && true' || true
-    - docker create --name "$TEST_EXTRACT" zorrobpm-app-test:$IMAGE_TAG
-    - docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports
-    - docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports
-    - docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco
-    - docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports
-    - docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports
   rules: *rules-code-changes
 
 # ---------------------------------------------------------------------------
