@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.repository.ParallelGatewayRepository;
 import com.zorrodev.bpm.engine.repository.TokenRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashSet;
@@ -75,9 +76,18 @@ public class ParallelGatewayDbOperationsImpl implements ParallelGatewayDbOperati
         tokenRepository.save(entity);
     }
 
+    /**
+     * WO-REL-40 (B-5): atomic decrement. Reads the row with
+     * {@code SELECT ... FOR UPDATE} ({@link com.zorrodev.bpm.engine.repository.TokenRepository#findByIdForUpdate})
+     * inside this method's own transaction, so two branches finishing in
+     * parallel serialise on the row lock instead of both reading the same
+     * counter and writing back the same (lost-update) value. The returned int
+     * keeps the FinishBranch contract (-1 = no counter, 0 = last branch).
+     */
     @Override
+    @Transactional
     public int decrementPendingBranches(UUID tokenId) {
-        TokenEntity entity = tokenRepository.findById(tokenId).orElseThrow();
+        TokenEntity entity = tokenRepository.findByIdForUpdate(tokenId).orElseThrow();
         Integer current = entity.getPendingBranches();
         if (current == null) {
             return -1; // linear process — caller decides
