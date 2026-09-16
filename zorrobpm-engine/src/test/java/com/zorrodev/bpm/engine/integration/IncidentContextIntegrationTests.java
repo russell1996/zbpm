@@ -14,6 +14,7 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -63,6 +64,8 @@ public class IncidentContextIntegrationTests {
     private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired
     private IncidentRepository incidentRepository;
+    @Autowired
+    private BpmnService bpmnService;
     @Autowired
     private EntityManagerFactory entityManagerFactory;
     @PersistenceContext
@@ -198,19 +201,37 @@ public class IncidentContextIntegrationTests {
      * statements, not one extra lookup per row. Twenty incidents spread across twenty distinct
      * definitions so no L1-cache row could mask a per-row lookup (same trick as
      * QueryServiceBulkLoadingIntegrationTests).
+     *
+     * <p>CI-flake fix (2026-09-16, детерминированный 9 вместо 8 на холодном GitLab-раннере):
+     * измерение считал и побочный кэш {@code BpmnService} (Caffeine, key=pdId): каждый промах —
+     * ровно +1 SELECT ({@code FileService.getFileBytes} → {@code findById}, доказано замером:
+     * снесённый кэш даёт 25 = 5 + 20). Прогрев побочным стартом инстансов случаен: кэш ровно на
+     * грани capacity (20 × 5МБ weigher = 100МБ cap), и сколько своих записей переживёт eviction
+     * зависит от асинхронного maintenance Caffeine — локально 0 промахов, на CI стабильно 4.
+     * Поэтому перед {@code statistics().clear()} кэш греется детерминированно — по одному
+     * холостому чтению модели на каждый из 20 id (их SELECT'ы в замер не входят). Замер после
+     * этого — всегда 5 (page + count + 3 batch), порог 8 с запасом. Настоящий N+1 дал бы ~60
+     * и порогом не прикрывается. MAX_QUERIES не поднимался — ports-порог тот же.
      */
     @Transactional
     @Test
     void pagingTwentyIncidents_issuesFixedQueryCount() throws Exception {
         String template = Files.readString(Paths.get("src/test/files/test-gateway-no-default.bpmn"));
+        List<UUID> definitionIds = new java.util.ArrayList<>(N);
         for (int i = 0; i < N; i++) {
             String bpmn = template.replace("test-gateway-no-default", "incident-bulk-" + i);
             ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+            definitionIds.add(model.getId());
             startWithIncident(model);
         }
 
         entityManager.flush();
         entityManager.clear();
+        // Детерминированный прогрев BpmnService-кэша (см. javadoc выше): все 20 моделей
+        // в кэше ДО сброса статистики, их загрузочные SELECT'ы в замер не входят.
+        for (UUID definitionId : definitionIds) {
+            bpmnService.getProcessDefinitionModelById(definitionId);
+        }
         statistics().clear();
         IncidentQuery query = new IncidentQuery();
         query.setPageSize(N);
