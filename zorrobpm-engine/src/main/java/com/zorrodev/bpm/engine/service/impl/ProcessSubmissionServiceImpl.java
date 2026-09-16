@@ -282,7 +282,13 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
     }
 
     private ProcessSubmissionEntity requirePending(UUID submissionId) {
-        ProcessSubmissionEntity submission = submissionRepository.findById(submissionId)
+        // WO-REL-39 (F18): CAS transition — the row lock serialises concurrent
+        // approve/approve and approve/reject pairs. The loser blocks here until
+        // the winner commits, then reads the decided status below and takes the
+        // 409 path (SUBMISSION_ALREADY_REVIEWED). All side effects (deploy,
+        // registry process, OWNER membership) happen after this lock, in the
+        // same transaction — the loser never reaches them.
+        ProcessSubmissionEntity submission = submissionRepository.findByIdForUpdate(submissionId)
             .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "SUBMISSION_NOT_FOUND",
                 "Submission not found", Map.of("submissionId", submissionId)));
         if (!ProcessSubmissionStatus.PENDING.name().equals(submission.getStatus())) {

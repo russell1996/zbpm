@@ -36,6 +36,18 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
     List<UiUserEntity> findByRegistrationStatusAndCreatedAtBefore(
         String registrationStatus, java.time.Instant cutoff);
 
+    /**
+     * WO-REL-39 (F18): row-locked read of the user for the CAS decision
+     * transition (approve/reject). The {@code SELECT ... FOR UPDATE} serialises
+     * concurrent decisions inside the caller's transaction (same shape as
+     * {@code TokenRepository.findByIdForUpdate}, WO-REL-40 B-5): the loser
+     * blocks until the winner commits, then re-reads the decided status and
+     * takes the 409 path instead of silently overwriting it.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM UiUserEntity u WHERE u.id = :id")
+    Optional<UiUserEntity> findByIdForUpdate(UUID id);
+
     long countByRoleAndActive(String role, boolean active);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

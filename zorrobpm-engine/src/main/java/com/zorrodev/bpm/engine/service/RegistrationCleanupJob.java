@@ -59,6 +59,19 @@ public class RegistrationCleanupJob {
         this.transactionTemplate = transactionTemplate;
     }
 
+    /**
+     * WO-REL-39 (F19): test-only seam, invoked on the calling thread after the
+     * stale-candidate list is read and before the first per-row transaction.
+     * Lets a race test park the job mid-pass and mutate a listed row. Public
+     * only because the race test lives in another package — null in production,
+     * no behaviour change.
+     */
+    volatile Runnable afterListReadHook;
+
+    public void setAfterListReadHook(Runnable hook) {
+        this.afterListReadHook = hook;
+    }
+
     @Scheduled(fixedDelayString = "${zorrobpm.registration.cleanup-interval-ms:3600000}")
     public void run() {
         int deleted = cleanExpired();
@@ -83,15 +96,35 @@ public class RegistrationCleanupJob {
         Instant cutoff = Instant.now().minus(Duration.ofHours(verifyTtlHours));
         List<UiUserEntity> stale = userRepository
             .findByRegistrationStatusAndCreatedAtBefore("PENDING_EMAIL_VERIFICATION", cutoff);
+        Runnable hook = afterListReadHook;
+        if (hook != null) {
+            hook.run();
+        }
         int deleted = 0;
         for (UiUserEntity user : stale) {
             try {
-                transactionTemplate.execute(status -> {
-                    tokenRepository.deleteByUserId(user.getId());
-                    userRepository.delete(user);
-                    return null;
+                Boolean removed = transactionTemplate.execute(status -> {
+                    // WO-REL-39 (F19): the candidate list above is a STALE
+                    // snapshot — between that read and this transaction the row
+                    // may have been decided (admin approved/rejected) or deleted
+                    // by a concurrent pass. Re-load under FOR UPDATE and
+                    // re-check the live predicate (status + age); anything else
+                    // is skipped, never deleted.
+                    UiUserEntity fresh = userRepository.findByIdForUpdate(user.getId())
+                        .orElse(null);
+                    if (fresh == null
+                        || !"PENDING_EMAIL_VERIFICATION".equals(fresh.getRegistrationStatus())
+                        || fresh.getCreatedAt() == null
+                        || !fresh.getCreatedAt().isBefore(cutoff)) {
+                        return false;
+                    }
+                    tokenRepository.deleteByUserId(fresh.getId());
+                    userRepository.delete(fresh);
+                    return true;
                 });
-                deleted++;
+                if (Boolean.TRUE.equals(removed)) {
+                    deleted++;
+                }
             } catch (RuntimeException e) {
                 log.warn("RegistrationCleanup: failed to delete stale registration {} — continuing with the rest",
                     user.getId(), e);
