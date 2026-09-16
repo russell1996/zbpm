@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -19,6 +20,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,6 +34,16 @@ class DomainEventEmitterTest {
     @InjectMocks
     private DomainEventEmitter emitter;
 
+    @BeforeEach
+    void defaultSaveAndFlushReturnsArgument() {
+        // WO-REL-37: прод зовёт saveAndFlush (sequence нужен сразу для envelope).
+        // По умолчанию мок возвращал null -> NPE в emit; эмулируем JPA: возвращается
+        // тот же entity (sequence подставляет БД — здесь null, тесты ниже sequence
+        // не проверяют, кроме F11-теста со своим стабом).
+        lenient().doAnswer(inv -> inv.getArgument(0)).when(domainEventRepository)
+            .saveAndFlush(any(DomainEventEntity.class));
+    }
+
     @Test
     void emitUserTaskCreated_includesAssigneeAndCandidateGroupsInData() throws Exception {
         UUID piId = UUID.randomUUID();
@@ -44,7 +56,7 @@ class DomainEventEmitterTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
-        verify(domainEventRepository).save(eventCaptor.capture());
+        verify(domainEventRepository).saveAndFlush(eventCaptor.capture());
         Map<String, Object> data = eventCaptor.getValue().getData();
         assertThat(data).containsEntry("activityId", activityId.toString());
         assertThat(data).containsEntry("assignee", "ivanov");
@@ -63,7 +75,7 @@ class DomainEventEmitterTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
-        verify(domainEventRepository).save(eventCaptor.capture());
+        verify(domainEventRepository).saveAndFlush(eventCaptor.capture());
         Map<String, Object> data = eventCaptor.getValue().getData();
         assertThat(data).containsEntry("activityId", activityId.toString());
         assertThat(data).containsEntry("candidateGroups", "managers");
@@ -82,7 +94,7 @@ class DomainEventEmitterTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
-        verify(domainEventRepository).save(eventCaptor.capture());
+        verify(domainEventRepository).saveAndFlush(eventCaptor.capture());
         Map<String, Object> data = eventCaptor.getValue().getData();
         assertThat(data).containsEntry("activityId", activityId.toString());
         assertThat(data).containsEntry("assignee", "petrov");
@@ -100,7 +112,7 @@ class DomainEventEmitterTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
-        verify(domainEventRepository).save(eventCaptor.capture());
+        verify(domainEventRepository).saveAndFlush(eventCaptor.capture());
         Map<String, Object> data = eventCaptor.getValue().getData();
         assertThat(data).containsEntry("activityId", activityId.toString());
         assertThat(data).doesNotContainKey("assignee");
@@ -124,7 +136,7 @@ class DomainEventEmitterTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
-        verify(domainEventRepository).save(eventCaptor.capture());
+        verify(domainEventRepository).saveAndFlush(eventCaptor.capture());
         Map<String, Object> data = eventCaptor.getValue().getData();
 
         // POF GREEN: data now contains assignee and candidateGroups
@@ -161,7 +173,7 @@ class DomainEventEmitterTest {
         // Verify event saved
         @SuppressWarnings("unchecked")
         ArgumentCaptor<DomainEventEntity> eventCaptor = ArgumentCaptor.forClass(DomainEventEntity.class);
-        verify(domainEventRepository).save(eventCaptor.capture());
+        verify(domainEventRepository).saveAndFlush(eventCaptor.capture());
 
         // Verify outbox entry was created (serialization did NOT fail) with explicit kind (WO-REL-12 R-01)
         ArgumentCaptor<OutboxEntry> outboxCaptor = ArgumentCaptor.forClass(OutboxEntry.class);
@@ -199,7 +211,39 @@ class DomainEventEmitterTest {
         assertThat(result.get("name")).isEqualTo("test");
     }
 
-    // ==================== WO-PERF-1 N3: pdKey cache ====================
+    // ==================== WO-REL-37 F11: sequence в envelope после save ====================
+
+    /**
+     * WO-REL-37 F11 POF: envelope обязан нести DB-generated sequence (IDENTITY при
+     * save) — live SSE читает envelope.sequence как курсор, без него id: 0 и
+     * reconnect всегда с Last-Event-ID: 0. RED (до фикса): envelope строился ДО
+     * save из сырого event (sequence ещё null) и без ключа вообще.
+     * GREEN (после): saveAndFlush → envelope из persisted (id+sequence+version).
+     */
+    @Test
+    void emit_envelopeCarriesDbSequenceAfterSave() throws Exception {
+        UUID piId = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        doReturn("{}").when(objectMapper).writeValueAsString(payloadCaptor.capture());
+
+        // saveAndFlush возвращает persisted с DB-generated sequence (как IDENTITY в проде)
+        DomainEventEntity persisted = new DomainEventEntity();
+        persisted.setSequence(987L);
+        persisted.setVersion(3);
+        doReturn(persisted).when(domainEventRepository).saveAndFlush(any(DomainEventEntity.class));
+
+        emitter.emit(DomainEventType.PROCESS_INSTANCE_STARTED, piId, pdId, null, Map.of());
+
+        verify(domainEventRepository).saveAndFlush(any(DomainEventEntity.class));
+        Map<String, Object> envelope = payloadCaptor.getValue();
+        assertThat(envelope.get("sequence")).isEqualTo(987L);
+        assertThat(envelope.get("version")).isEqualTo(3);
+        assertThat(envelope.get("id")).isNotNull();
+        assertThat(envelope).doesNotContainKey("eventId");
+    }
 
     /**
      * POF (G-N): two emits with same pdId → findById called ONLY ONCE (from cache).
