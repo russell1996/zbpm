@@ -304,12 +304,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         Map<UUID, Principal.Grant> grants =
             authorizationService.effectiveGrants(apiKey.getOwnerUserId(), loadGrants(apiKey.getId()));
 
-        // WO-SEC-34: debounce — only update lastUsedAt if stale (>DEBOUNCE_MS since last write)
+        // WO-SEC-34: debounce — only update lastUsedAt if stale (>DEBOUNCE_MS since last write).
+        // WO-SEC-66 (F07): conditional single-column UPDATE — never a full-entity
+        // save. A concurrent revoke between our read above and this write must
+        // NOT merge the stale detached snapshot (revokedAt=null) back over it.
         Instant now = Instant.now();
         Instant lastWrite = lastWriteTimestamps.getIfPresent(apiKey.getId());
         if (lastWrite == null || now.toEpochMilli() - lastWrite.toEpochMilli() > DEBOUNCE_MS) {
-            apiKey.setLastUsedAt(now);
-            apiKeyRepository.save(apiKey);
+            apiKeyRepository.touchLastUsedAtIfLive(apiKey.getId(), now);
             lastWriteTimestamps.put(apiKey.getId(), now);
         }
 
