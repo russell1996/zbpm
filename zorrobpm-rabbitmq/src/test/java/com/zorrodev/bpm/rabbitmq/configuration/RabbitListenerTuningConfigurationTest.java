@@ -1,4 +1,4 @@
-package com.zorrodev.bpm.handler.boot;
+package com.zorrodev.bpm.rabbitmq.configuration;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.AcknowledgeMode;
