@@ -5,6 +5,7 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ApiKeyEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
+import com.zorrodev.bpm.engine.repository.ApiKeyGrantRepository;
 import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
@@ -57,6 +58,7 @@ class SseEventStreamIntegrationTest {
     @Autowired private SseEventStreamService sseEventStreamService;
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private ApiKeyRepository apiKeyRepository;
+    @Autowired private ApiKeyGrantRepository apiKeyGrantRepository;
 
     private String adminToken;
 
@@ -172,6 +174,36 @@ class SseEventStreamIntegrationTest {
     }
 
     /**
+     * WO-SEC-67: live key WITH live grant rows AND live owner membership —
+     * the full prod backing (JwtAuthFilter's effectiveGrants = key grants ∩
+     * owner's CURRENT membership; a key without either delivers nothing in
+     * prod, so the test seeds both — stronger than the old frozen-only setup).
+     */
+    private UUID seedLiveKeyWithGrant(UUID ownerId, UUID processId, boolean full) {
+        UUID keyId = seedLiveKey(ownerId);
+        addMember(processId, ownerId);
+        com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity grant =
+            new com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity();
+        grant.setApiKeyId(keyId);
+        grant.setProcessId(processId);
+        grant.setPermissions("READ");
+        grant.setFull(full);
+        apiKeyGrantRepository.save(grant);
+        return keyId;
+    }
+
+    private void addMember(UUID processId, UUID userId) {
+        com.zorrodev.bpm.engine.entity.ProcessMemberEntity pm =
+            new com.zorrodev.bpm.engine.entity.ProcessMemberEntity();
+        pm.setProcessId(processId);
+        pm.setUserId(userId);
+        pm.setRole("VIEWER");
+        pm.setAddedBy(userId);
+        pm.setAddedAt(Instant.now());
+        processMemberRepository.save(pm);
+    }
+
+    /**
      * Collector-emitter: used for tests that go through the full SSE endpoint (with HTTP response).
      * For direct service tests, use the event listener mechanism instead.
      */
@@ -231,19 +263,22 @@ class SseEventStreamIntegrationTest {
 
         // Client A: principal with grant ONLY on processIdA (resolves to pdIdA)
         // NOT admin, NOT full — only grant on process A.
-        // WO-SEC-67: live key row behind the principal (liveness gate).
-        UUID keyIdA = seedLiveKey(seedLiveOwner("sseLiveA"));
+        // WO-SEC-67: full live backing (key + grant rows + owner membership —
+        // effectiveGrants needs all three, like the prod JwtAuthFilter path).
+        UUID ownerA = seedLiveOwner("sseLiveA");
+        UUID keyIdA = seedLiveKeyWithGrant(ownerA, processIdA, false);
         Principal principalA = new Principal.ServicePrincipal(
-            keyIdA, UUID.randomUUID(),
+            keyIdA, ownerA,
             Map.of(processIdA, new Principal.Grant(Set.of("READ"), false))
         );
 
         // Client B: principal with grant ONLY on processIdB (resolves to pdIdB)
         // NOT admin, NOT full — only grant on process B.
-        // WO-SEC-67: live key row behind the principal (liveness gate).
-        UUID keyIdB = seedLiveKey(seedLiveOwner("sseLiveB"));
+        // WO-SEC-67: full live backing, same as A.
+        UUID ownerB = seedLiveOwner("sseLiveB");
+        UUID keyIdB = seedLiveKeyWithGrant(ownerB, processIdB, false);
         Principal principalB = new Principal.ServicePrincipal(
-            keyIdB, UUID.randomUUID(),
+            keyIdB, ownerB,
             Map.of(processIdB, new Principal.Grant(Set.of("READ"), false))
         );
 
@@ -358,10 +393,12 @@ class SseEventStreamIntegrationTest {
         assertThat(stubResult).isNull(); // proves: old stub → null → sees everything
 
         // GREEN proof: the REAL resolver returns a filtered set
-        // WO-DEBT-7 S8: EventAuthzResolver is now a thin facade over ProcessAuthzService — wire both
+        // WO-DEBT-7 S8: EventAuthzResolver is now a thin facade over ProcessAuthzService — wire both.
+        // WO-SEC-67: +3 ctor args (ApiKeyGrantRepository, AuthorizationService, ApiKeyService) —
+        // unused on this path (frozen-grant resolution), null is fine.
         com.zorrodev.bpm.engine.service.ProcessAuthzService processAuthzService =
             new com.zorrodev.bpm.engine.service.ProcessAuthzService(processRepository, processDefinitionRepository,
-                processMemberRepository);
+                processMemberRepository, null, null, null);
         EventAuthzResolver resolver = new EventAuthzResolver(processAuthzService);
         Collection<UUID> resolved = resolver.readableRuntimePdIds(restrictedPrincipal, null);
 
