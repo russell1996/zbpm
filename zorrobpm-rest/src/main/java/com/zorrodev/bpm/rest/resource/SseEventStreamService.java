@@ -2,7 +2,7 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.UiUserLookupService;
-import com.zorrodev.bpm.engine.repository.ApiKeyRepository;
+import com.zorrodev.bpm.engine.service.ApiKeyService;
 import com.zorrodev.bpm.engine.service.EventQueryService;
 import com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -58,9 +58,11 @@ public class SseEventStreamService implements SmartLifecycle {
     private final RabbitAdmin rabbitAdmin;
     // WO-SEC-67 (F13): live credential checks for open streams (same lookups
     // as JwtAuthFilter, same fail-closed direction). Constructor-injected like
-    // the resolver — no static access, no new wiring shape.
+    // the resolver — no static access, no new wiring shape. The key check goes
+    // through ApiKeyService (engine side owns the key rows — WO-DEBT-7
+    // REST→JPA boundary: rest/resource must not import engine.repository).
     private final UiUserLookupService uiUserLookupService;
-    private final ApiKeyRepository apiKeyRepository;
+    private final ApiKeyService apiKeyService;
     // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
     private final tools.jackson.databind.ObjectMapper objectMapper;
 
@@ -70,13 +72,13 @@ public class SseEventStreamService implements SmartLifecycle {
                                     @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
                                     tools.jackson.databind.ObjectMapper objectMapper,
                                     UiUserLookupService uiUserLookupService,
-                                    ApiKeyRepository apiKeyRepository) {
+                                    ApiKeyService apiKeyService) {
         this.eventQueryService = eventQueryService;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
         this.objectMapper = objectMapper;
         this.uiUserLookupService = uiUserLookupService;
-        this.apiKeyRepository = apiKeyRepository;
+        this.apiKeyService = apiKeyService;
     }
 
     /** Connected SSE clients: emitterId → client info */
@@ -614,7 +616,7 @@ public class SseEventStreamService implements SmartLifecycle {
         // injects real beans; the full-context proof (SseRevocationIT) runs
         // with real rows. A null collaborator is a missing harness, never a
         // dead credential — failing closed here would only test the harness.
-        if (uiUserLookupService == null || apiKeyRepository == null) {
+        if (uiUserLookupService == null || apiKeyService == null) {
             return true;
         }
         try {
@@ -631,19 +633,9 @@ public class SseEventStreamService implements SmartLifecycle {
                 return true;
             }
             if (principal instanceof Principal.ServicePrincipal sp) {
-                var keyOpt = apiKeyRepository.findById(sp.apiKeyId());
-                if (keyOpt.isEmpty()) {
-                    return false;
-                }
-                var apiKey = keyOpt.get();
-                if (apiKey.getRevokedAt() != null) {
-                    return false;
-                }
-                if (apiKey.getExpiresAt() != null
-                    && apiKey.getExpiresAt().isBefore(java.time.Instant.now())) {
-                    return false;
-                }
-                return uiUserLookupService.isActive(apiKey.getOwnerUserId());
+                // Key liveness via the engine-side owner (WO-DEBT-7: no
+                // engine.repository import in rest/resource).
+                return apiKeyService.isKeyLive(sp.apiKeyId());
             }
             return false;
         } catch (RuntimeException e) {
