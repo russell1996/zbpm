@@ -16,6 +16,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -287,7 +288,10 @@ class JwtAuthFilterTest {
 
     @Test
     void api_key_debounce_doesNotSaveTwice() throws Exception {
-        // WO-SEC-34: two consecutive requests with same API key → save() called once
+        // WO-SEC-34: two consecutive requests with same API key → touch called once.
+        // WO-SEC-66 (F07): the debounce write is the conditional single-column
+        // touchLastUsedAtIfLive — NEVER a full-entity save (a save would merge a
+        // stale detached snapshot back over a concurrent revoke).
         UUID apiKeyId = UUID.randomUUID();
         com.zorrodev.bpm.engine.entity.ApiKeyEntity apiKey =
             new com.zorrodev.bpm.engine.entity.ApiKeyEntity();
@@ -326,8 +330,12 @@ class JwtAuthFilterTest {
         FilterChain chain2 = mock(FilterChain.class);
         f.doFilterInternal(req2, res2, chain2);
 
-        // save() called only once (first request), not twice
-        verify(apiKeyRepo, org.mockito.Mockito.times(1)).save(any(com.zorrodev.bpm.engine.entity.ApiKeyEntity.class));
+        // WO-SEC-66: conditional touch called only once (first request), and the
+        // full-entity save is NEVER used on the debounce path — not once.
+        verify(apiKeyRepo, org.mockito.Mockito.times(1))
+            .touchLastUsedAtIfLive(eq(apiKeyId), any(java.time.Instant.class));
+        verify(apiKeyRepo, org.mockito.Mockito.never())
+            .save(any(com.zorrodev.bpm.engine.entity.ApiKeyEntity.class));
     }
 
     // WO-SEC-43: unauthenticated top-level browser navigation (e.g. typing /swagger-ui/index.html
