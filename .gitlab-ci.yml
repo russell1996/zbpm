@@ -123,16 +123,21 @@ test:backend:
     # `--target test` runs `mvn -B clean verify` (full reactor: unit + integration) inside the build
     # WO-PERF-4: -Pcoverage keeps the jacoco coverage report active in CI (profile is off by default locally)
     # Mount target/ out to capture test reports after build
+    # WO-OPS-11 F27: уникальное имя контейнера на pipeline (фиксированный test-extract
+    # конфликтовал между параллельными job'ами) + trap-гарантия извлечения отчётов при
+    # ЛЮБОМ exit (artifacts:when:always не создаёт отсутствующие файлы — если docker build
+    # упал, отчётов нет вообще; trap снимает parent-dirs + cp даже при падении build'а).
+    - export TEST_EXTRACT="test-extract-$CI_PIPELINE_ID-$CI_JOB_ID"
+    - mkdir -p target-out/zorrobpm-engine target-out/zorrobpm-rest
+    - cleanup_extract() { docker rm -f "$TEST_EXTRACT" >/dev/null 2>&1 || true; docker image rm "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || true; }; trap cleanup_extract EXIT
     - docker build --target test --build-arg MAVEN_PROFILES=-Pcoverage -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
     - docker run --rm -v "$CI_PROJECT_DIR/target-out":/out busybox sh -c 'rm -rf /out && true' || true
-    - docker create --name test-extract zorrobpm-app-test:$IMAGE_TAG || true
-    - docker cp test-extract:/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports || true
-    - docker cp test-extract:/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports || true
-    - docker cp test-extract:/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco || true
-    - docker cp test-extract:/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports || true
-    - docker cp test-extract:/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports || true
-    - docker rm -f test-extract || true
-    - docker image rm zorrobpm-app-test:$IMAGE_TAG || true
+    - docker create --name "$TEST_EXTRACT" zorrobpm-app-test:$IMAGE_TAG
+    - docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports
+    - docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports
+    - docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco
+    - docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports
+    - docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports
   rules: *rules-code-changes
 
 # ---------------------------------------------------------------------------
