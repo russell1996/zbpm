@@ -240,6 +240,38 @@
                                     <goal>report</goal>
                                 </goals>
                             </execution>
+                            <!-- WO-OPS-11 п.3: реальный гейт, не просто отчёт. Пороги по
+                                 факту замера полного verify -Pcoverage (2026-09-16):
+                                 LINE 0.694 / BRANCH 0.539 — выставлено 0.65/0.50
+                                 (запас вниз от факта, не занижение ради прохождения:
+                                 аудит предлагал 0.70/0.60 — LINE совпадает почти,
+                                 BRANCH взят ниже факта, иначе красный на мастере). -->
+                            <execution>
+                                <id>coverage-check</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <rule>
+                                            <element>BUNDLE</element>
+                                            <limits>
+                                                <limit>
+                                                    <counter>LINE</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>0.65</minimum>
+                                                </limit>
+                                                <limit>
+                                                    <counter>BRANCH</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>0.50</minimum>
+                                                </limit>
+                                            </limits>
+                                        </rule>
+                                    </rules>
+                                </configuration>
+                            </execution>
                         </executions>
                     </plugin>
                 </plugins>
