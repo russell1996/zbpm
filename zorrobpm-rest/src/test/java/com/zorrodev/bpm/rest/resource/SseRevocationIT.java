@@ -394,6 +394,56 @@ class SseRevocationIT {
         }
     }
 
+    /**
+     * WO-SEC-67 verifier HOLD #1: SUPER_ADMIN-поток (see-all, null-снэпшот)
+     * переживает чужой sweep — раньше любой invalidateStreams ронял его через
+     * Caffeine-NPE на put(key, null) (liveView без isSuperAdmin-bypass).
+     */
+    @Test
+    void adminStream_survivesUnrelatedSweep() throws Exception {
+        // Arrange: admin с живой строкой + чужой revoke-триггер.
+        UUID adminId = createUser("sse-adminlive");
+        userRepository.findById(adminId).ifPresent(u -> {
+            u.setRole("SUPER_ADMIN");
+            userRepository.save(u);
+        });
+        Principal admin = new Principal.UserPrincipal(adminId, "sweep-admin", "SUPER_ADMIN");
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
+        String clientId = sseEventStreamService.registerClient(emitter, admin, null, null, null);
+        try {
+            Map<String, List<String>> byClient = new ConcurrentHashMap<>();
+            CountDownLatch firstDelivered = new CountDownLatch(1);
+            sseEventStreamService.addEventListener((cid, envelope) -> {
+                if (cid.equals(clientId)) {
+                    byClient.computeIfAbsent(cid, k -> new CopyOnWriteArrayList<>())
+                        .add((String) envelope.get("processDefinitionId"));
+                    firstDelivered.countDown();
+                }
+            });
+
+            String pdId = UUID.randomUUID().toString();
+            pushEvent(1, pdId);
+            assertThat(firstDelivered.await(3, TimeUnit.SECONDS)).isTrue();
+
+            // Act: чужой sweep (revoke где-то в системе — здесь просто sweep).
+            sseEventStreamService.invalidateStreams();
+
+            pushEvent(2, pdId);
+            long deadline = System.currentTimeMillis() + 3000;
+            while (System.currentTimeMillis() < deadline
+                && byClient.getOrDefault(clientId, List.of()).size() < 2) {
+                Thread.sleep(50);
+            }
+
+            // Assert: admin-поток жив и получает дальше.
+            assertThat(byClient.getOrDefault(clientId, List.of()))
+                .as("admin stream must survive an unrelated sweep")
+                .containsExactly(pdId, pdId);
+        } finally {
+            sseEventStreamService.removeClient(clientId);
+        }
+    }
+
     @Test
     void perSubjectCap_exceeded_returns429AndReleasesSlotOnRemove() {        // Arrange: cap of 1 for this subject (reflection — same pattern as PERF-6 maxClients).
         SseEventStreamService svc = sseEventStreamService;
