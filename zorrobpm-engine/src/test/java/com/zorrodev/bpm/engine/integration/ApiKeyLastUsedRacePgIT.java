@@ -42,10 +42,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Criterion 2 is covered in the same class against the same statement: an
  * uncontended touch updates {@code lastUsedAt} (debounce behaviour unchanged).
  *
- * <p>POF (G-N): reverting {@code touchLastUsedAtIfLive} to
- * {@code setLastUsedAt+save} in {@code JwtAuthFilter} makes
- * {@code revokeDuringDebounceWindow_revokedAtSurvives} RED — {@code revokedAt}
- * comes back null.
+ * <p>POF (G-N): removing the {@code AND a.revokedAt IS NULL} condition from
+ * {@code touchLastUsedAtIfLive} makes this RED — the unconditional UPDATE
+ * matches the dead key ({@code touched==1}) even though {@code revokedAt}
+ * stays set. (The consumer-guard half — {@code save} vs {@code touch} in
+ * {@code JwtAuthFilter} — is proven separately by
+ * {@code JwtAuthFilterTest.api_key_debounce_doesNotSaveTwice}; this PgIT never
+ * calls the filter, so a filter-only revert would leave it green.)
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
