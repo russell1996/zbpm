@@ -143,4 +143,59 @@ class HandlerAutoConfigurationTest {
         verify(rabbitTemplate, times(1)).setMessageConverter(any());
         verify(connectionFactory, times(0)).createListenerContainer();
     }
+
+    @Test
+    @DisplayName("WO-REL-36: listener is a JobCompletionListener (split error handling + idempotent resend)")
+    void listenerIsJobCompletionListener() {
+        when(applicationContext.getBeansOfType(JobHandler.class))
+                .thenReturn(Map.of("handlerA", handlerA));
+        when(handlerA.getJob()).thenReturn("taskA");
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
+        when(amqpAdmin.getQueueInfo(anyString())).thenReturn(null);
+
+        configuration.init();
+
+        ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
+                ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
+        verify(container).setMessageListener(listenerCaptor.capture());
+        assertThat(listenerCaptor.getValue()).isInstanceOf(JobCompletionListener.class);
+    }
+
+    @Test
+    @DisplayName("WO-REL-36: transport failure on completion send propagates (no silent success)")
+    void listenerTransportFailurePropagates() {
+        when(applicationContext.getBeansOfType(JobHandler.class))
+                .thenReturn(Map.of("handlerA", handlerA));
+        when(handlerA.getJob()).thenReturn("taskA");
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
+        when(amqpAdmin.getQueueInfo(anyString())).thenReturn(null);
+
+        configuration.init();
+
+        ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
+                ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
+        verify(container).setMessageListener(listenerCaptor.capture());
+        org.springframework.amqp.core.MessageListener listener = listenerCaptor.getValue();
+
+        java.util.UUID taskId = java.util.UUID.randomUUID();
+        String body = "{\"serviceTaskId\":\"" + taskId + "\",\"job\":\"taskA\",\"variables\":{}}";
+        org.springframework.amqp.core.MessageProperties props =
+                new org.springframework.amqp.core.MessageProperties();
+        props.setCorrelationId("rel36-wiring");
+        org.springframework.amqp.core.Message message =
+                new org.springframework.amqp.core.Message(
+                    body.getBytes(java.nio.charset.StandardCharsets.UTF_8), props);
+
+        com.zorrodev.bpm.exchange.ProcessVariable v = new com.zorrodev.bpm.exchange.ProcessVariable();
+        v.setName("x");
+        v.setValue("1");
+        v.setType("STRING");
+        when(handlerA.handleJob(any())).thenReturn(java.util.List.of(v));
+        org.mockito.Mockito.doThrow(new org.springframework.amqp.AmqpException("broker down"))
+            .when(rabbitTemplate).convertAndSend(anyString(), (Object) any());
+
+        // Проброс наружу (контейнер NACK'ает вход), а не тихий success.
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> listener.onMessage(message)))
+                .isInstanceOf(org.springframework.amqp.AmqpException.class);
+    }
 }
