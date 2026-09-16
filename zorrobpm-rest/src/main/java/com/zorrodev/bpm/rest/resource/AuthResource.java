@@ -39,6 +39,8 @@ public class AuthResource implements AuthContract {
     private final UiUserLookupService userLookupService;
     /** WO-SEC-63: token_version bump on logout (invalidates all outstanding access tokens). */
     private final UiUserRepository uiUserRepository;
+    /** WO-SEC-67 (F13): close live SSE streams on logout (credential behind them is dead). */
+    private final SseEventStreamService sseEventStreamService;
 
     @Value("${zorrobpm.security.cookie-secure:true}")
     private boolean cookieSecure;
@@ -228,6 +230,10 @@ public class AuthResource implements AuthContract {
             // it was already swiped from the browser. Same transaction as the refresh revoke.
             uiUserRepository.incrementTokenVersion(userId);
             refreshTokenRepository.revokeAllByUserId(userId);
+            // WO-SEC-67 (F13): the bumped version kills the credential behind every
+            // open SSE stream of this user — close them now, not on next event.
+            // Best-effort AFTER the commit-critical writes, never before them.
+            sseEventStreamService.invalidateStreams();
         }
 
         // S4: Clear access cookie (both __Host- and legacy names — a clear must
