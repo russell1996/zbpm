@@ -33,6 +33,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     private final ApiKeyService apiKeyService;
     private final HttpServletRequest request;
     private final HttpServletResponse httpResponse;
+    /** WO-SEC-67 (F13): close live SSE streams on key revoke (credential behind them is dead). */
+    private final SseEventStreamService sseEventStreamService;
 
     // ==================== Super-admin endpoints ====================
 
@@ -61,14 +63,24 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public List<ApiKeyGrantDTO> setGrants(@PathVariable UUID userId, @Valid @RequestBody SetGrantsDTO dto) {
         requireSuperAdmin();
-        return apiKeyService.setGrantsForUser(userId, dto, getPrincipal());
+        List<ApiKeyGrantDTO> result = apiKeyService.setGrantsForUser(userId, dto, getPrincipal());
+        // WO-SEC-67 verifier HOLD #2: сужение/расширение грантов обязано
+        // переоценить открытые key-потоки немедленно (live-view закроет
+        // суженные на sweep; без hook idle-потоки висели бы до события).
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 
     @Transactional
     @Override
     public ApiKeyWithSecretDTO rotateApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
-        return apiKeyService.rotateKeyForUser(userId, getPrincipal());
+        ApiKeyWithSecretDTO result = apiKeyService.rotateKeyForUser(userId, getPrincipal());
+        // WO-SEC-67 red-team #2: rotation replaces the key MATERIAL in place
+        // (same row — the generic sweep would see a live row and do nothing).
+        // Close streams on this key id explicitly and deterministically.
+        sseEventStreamService.invalidateStreamsForKey(result.getId());
+        return result;
     }
 
     @Transactional
@@ -76,6 +88,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     public void revokeApiKey(@PathVariable UUID userId) {
         requireSuperAdmin();
         apiKeyService.revokeKeyForUser(userId, getPrincipal());
+        // WO-SEC-67 (F13): the key behind open streams just died — close them now.
+        sseEventStreamService.invalidateStreams();
     }
 
     // ==================== User self-service endpoints ====================
@@ -119,7 +133,10 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     @Override
     public List<ApiKeyGrantDTO> setMyGrants(@Valid @RequestBody SetGrantsDTO dto) {
         Principal.UserPrincipal user = selfPrincipal();
-        return apiKeyService.setOwnGrants(user.userId(), dto, user);
+        List<ApiKeyGrantDTO> result = apiKeyService.setOwnGrants(user.userId(), dto, user);
+        // WO-SEC-67 verifier HOLD #2: см. setGrants выше — тот же hook.
+        sseEventStreamService.invalidateStreams();
+        return result;
     }
 
     @Transactional
@@ -130,7 +147,11 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
 
-        return apiKeyService.rotateOwnKey(u.userId());
+        ApiKeyWithSecretDTO result = apiKeyService.rotateOwnKey(u.userId());
+        // WO-SEC-67 red-team #2: rotation replaces the key MATERIAL in place
+        // (same row — the generic sweep would see a live row and do nothing).
+        sseEventStreamService.invalidateStreamsForKey(result.getId());
+        return result;
     }
 
     @Transactional
@@ -142,6 +163,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         }
 
         apiKeyService.revokeOwnKey(u.userId());
+        // WO-SEC-67 (F13): the key behind open streams just died — close them now.
+        sseEventStreamService.invalidateStreams();
     }
 
     // ==================== WO-INT-4: system accounts — multiple keys ====================
@@ -177,6 +200,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     public void revokeApiKeyById(@PathVariable UUID userId, @PathVariable UUID apiKeyId) {
         requireSuperAdmin();
         apiKeyService.revokeKeyById(userId, apiKeyId, getPrincipal());
+        // WO-SEC-67 (F13): the key behind open streams just died — close them now.
+        sseEventStreamService.invalidateStreams();
     }
 
     // ==================== Helpers (no JPA) ====================

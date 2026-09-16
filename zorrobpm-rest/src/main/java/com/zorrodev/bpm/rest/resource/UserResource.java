@@ -38,6 +38,8 @@ public class UserResource implements UserContract {
     private final AuditLogService auditLogService;
     private final HttpServletRequest request;
     private final HttpServletResponse httpResponse;
+    /** WO-SEC-67 red-team #4: close/narrow live SSE streams on role/deactivation change. */
+    private final SseEventStreamService sseEventStreamService;
 
     @Override
     public PagedDataDTO<UiUser> getUsers(@ParameterObject UiUserQuery query) {
@@ -82,7 +84,13 @@ public class UserResource implements UserContract {
     @Override
     public IdDTO updateUser(@PathVariable UUID id, @Valid @RequestBody UpdateUiUserDTO dto) {
         try {
-            return id(userService.update(id, dto));
+            IdDTO result = id(userService.update(id, dto));
+            // WO-SEC-67 red-team #4: role/demotion/deactivation take effect on
+            // the next event via liveness anyway — this hook closes idle
+            // streams NOW instead of leaving them open (delivering nothing)
+            // until the next event or the 30min timeout.
+            sseEventStreamService.invalidateStreams();
+            return result;
         } catch (NoSuchElementException e) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
         } catch (EngineException e) {

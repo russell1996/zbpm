@@ -54,19 +54,31 @@ class Perf7RestCriteriaTest {
         // события до drain) — НЕ второй реестр клиентов: записи живут только до
         // drain/remove/disconnect (removeClientState чистит все три структуры),
         // eviction идёт через maxClients/clients как раньше.
+        // WO-SEC-67: + clientsPerSubject (счётчики слотов per-subject cap —
+        // НЕ реестр: запись без живого клиента не существует, decrement+remove
+        // при 0 в том же removeClientState) и rightsCache (Caffeine, TTL
+        // переоценки прав — НЕ клиенты вовсе). Eviction по-прежнему идёт через
+        // clients/removeClientState — per-subject cap лишь отказывает в НОВОЙ
+        // регистрации (429), никого не выселяет.
         boolean hasMaxClients = false;
         java.util.Set<String> mapFields = new java.util.TreeSet<>();
+        java.util.Set<String> caffeineFields = new java.util.TreeSet<>();
         for (Field f : clazz.getDeclaredFields()) {
             if (f.getName().equals("maxClients")) {
                 hasMaxClients = true;
             }
-            if (java.util.Map.class.isAssignableFrom(f.getType())
-                || f.getType().getName().contains("Caffeine")) {
+            if (java.util.Map.class.isAssignableFrom(f.getType())) {
                 mapFields.add(f.getName());
+            }
+            // Caffeine Cache's runtime type name is lowercase ("caffeine") —
+            // match case-insensitively, not on the capital-C import idiom.
+            if (f.getType().getName().toLowerCase(java.util.Locale.ROOT).contains("caffeine")) {
+                caffeineFields.add(f.getName());
             }
         }
         assertThat(hasMaxClients).isTrue();
-        assertThat(mapFields).containsExactly("bufferedEvents", "clients");
+        assertThat(mapFields).containsExactly("bufferedEvents", "clients", "clientsPerSubject");
+        assertThat(caffeineFields).containsExactly("rightsCache");
     }
 
     @Test

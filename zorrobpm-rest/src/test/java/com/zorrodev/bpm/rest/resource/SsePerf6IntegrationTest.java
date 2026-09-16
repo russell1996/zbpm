@@ -33,7 +33,8 @@ class SsePerf6IntegrationTest {
 
     private SseEventStreamService service() {
         when(eventAuthzResolver.readableRuntimePdIds(any(), any())).thenReturn(null);
-        return new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class), eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper());
+        // WO-SEC-67: +2 ctor args (UiUserLookupService, ApiKeyRepository) — null = no live checks in unit scope.
+        return new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class), eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper(), null, null);
     }
 
     private static Principal admin() {

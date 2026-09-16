@@ -4,6 +4,7 @@ import com.zorrodev.bpm.engine.security.Principal;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -24,6 +25,18 @@ public class SseEventStreamController {
 
     private final SseEventStreamService sseEventStreamService;
 
+    /**
+     * WO-SEC-67 (F13): bounded stream lifetime. 30 minutes = the JWT access
+     * TTL ({@code zorrobpm.security.jwt-ttl-minutes:30}) — a stream never
+     * outlives the session that opened it. Expiry fires the emitter's
+     * onTimeout → the client entry is removed (existing callback, untouched)
+     * and the browser reconnects by SSE convention (all sends already carry
+     * {@code reconnectTime(3000)}), re-authenticating on the fresh request.
+     * Configurable (P-13 — no hardcoded env-sensitive lifetimes).
+     */
+    @Value("${zorrobpm.sse.emitter-timeout-ms:1800000}")
+    private long emitterTimeoutMs = 30 * 60 * 1000L;
+
     @GetMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(
             @RequestParam(required = false) String type,
@@ -39,7 +52,7 @@ public class SseEventStreamController {
             return emitter;
         }
 
-        SseEmitter emitter = new SseEmitter(0L); // no timeout
+        SseEmitter emitter = new SseEmitter(emitterTimeoutMs);
 
         try {
             // WO-REL-37 (F14): регистрация live-подписки ДО чтения catchup + буфер

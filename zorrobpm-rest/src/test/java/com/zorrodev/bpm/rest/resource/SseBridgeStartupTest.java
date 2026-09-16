@@ -45,7 +45,8 @@ class SseBridgeStartupTest {
 
     private SseEventStreamService service() {
         when(eventAuthzResolver.readableRuntimePdIds(any(), any())).thenReturn(null);
-        return new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class), eventAuthzResolver, rabbitAdmin, new ObjectMapper());
+        // WO-SEC-67: +2 ctor args (UiUserLookupService, ApiKeyRepository) — null = no live checks in unit scope.
+        return new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class), eventAuthzResolver, rabbitAdmin, new ObjectMapper(), null, null);
     }
 
     private static Principal admin() {
