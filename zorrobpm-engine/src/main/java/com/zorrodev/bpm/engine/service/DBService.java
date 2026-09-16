@@ -11,6 +11,7 @@ import com.zorrodev.bpm.engine.dto.Token;
 import org.jspecify.annotations.NonNull;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface DBService {
@@ -228,6 +229,18 @@ public interface DBService {
 
     /** Writes variables into a local scope ({@code scopeId == null} writes the process-instance root). */
     void setVariables(@NonNull UUID processInstanceId, UUID scopeId, List<ProcessVariable> variables);
+
+    /**
+     * WO-REL-41 (B-8, п.2): pinpoint read of ONE root variable's text value.
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#getVariableTextValue}.
+     */
+    Optional<String> getVariableTextValue(@NonNull UUID processInstanceId, String name);
+
+    /**
+     * WO-REL-41 (B-8, п.1): atomic JSON-list append of one element.
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#appendJsonElement}.
+     */
+    void appendJsonElement(@NonNull UUID processInstanceId, String name, String jsonElement);
 
     /** Drops all variables of a local scope (e.g. an activity's IO-mapping inputs after it completes). */
     void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId);

@@ -57,6 +57,13 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
 
     List<ProcessVariableEntity> findByProcessInstanceIdAndScopeIdIsNull(UUID processInstanceId);
 
+    /**
+     * WO-REL-41 (B-8, п.2): pinpoint read of ONE root variable — the batch-UUID
+     * lookup must not pull the full variable list.
+     */
+    Optional<ProcessVariableEntity> findByProcessInstanceIdAndNameAndScopeIdIsNull(
+        UUID processInstanceId, String name);
+
     List<ProcessVariableEntity> findByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 
     /**

@@ -97,4 +97,60 @@ class VariableUpsertIntegrationTests {
         assertThat(variableDb.getVariables(pi, scope)).hasSize(1);
         assertThat(variableDb.getVariables(pi, scope).get(0).getValue()).isEqualTo("two");
     }
+
+    private String textOf(String name) {
+        return jdbc.queryForObject(
+            "SELECT text_value FROM variables WHERE process_instance_id = ? AND name = ?",
+            String.class, pi, name);
+    }
+
+    // WO-REL-41 (B-8, п.1): H2-сторона атомарного append на живой H2 —
+    // доказывает, что APPEND_H2_UPDATE реально выполняется (TRIM/LIKE/
+    // SUBSTRING-синтаксис), а не только мокается.
+
+    @Test
+    void appendJsonElement_createsListThenExtendsIt() {
+        variableDb.appendJsonElement(pi, "agg", "\"a\"");
+        assertThat(countRows("agg")).isEqualTo(1);
+        assertThat(textOf("agg")).isEqualTo("[\"a\"]");
+
+        variableDb.appendJsonElement(pi, "agg", "1");
+        assertThat(countRows("agg")).isEqualTo(1);
+        assertThat(textOf("agg")).isEqualTo("[\"a\",1]");
+    }
+
+    @Test
+    void appendJsonElement_replacesScalarWithFreshList() {
+        variableDb.setVariables(pi, List.of(pv("k", "scalar")));
+        variableDb.appendJsonElement(pi, "k", "\"x\"");
+
+        assertThat(countRows("k")).isEqualTo(1);
+        assertThat(textOf("k")).isEqualTo("[\"x\"]");
+    }
+
+    @Test
+    void appendJsonElement_emptyArray_extendsWithoutCorruption() {
+        // Verifier WO-REL-41: вырожденный '[]' обязан дать '["a"]', не '[,"a"]'.
+        variableDb.setVariables(pi, List.of(pv("e", "[]")));
+        variableDb.appendJsonElement(pi, "e", "\"a\"");
+
+        assertThat(countRows("e")).isEqualTo(1);
+        assertThat(textOf("e")).isEqualTo("[\"a\"]");
+    }
+
+    @Test
+    void appendJsonElement_nestsArrayElementAsSingle() {
+        // WO-REL-41: list.add-семантика — массив-элемент вкладывается, не конкатенируется.
+        variableDb.appendJsonElement(pi, "n", "[1,2]");
+
+        assertThat(textOf("n")).isEqualTo("[[1,2]]");
+    }
+
+    @Test
+    void getVariableTextValue_readsOneRow() {
+        variableDb.setVariables(pi, List.of(pv("batch", "b-1")));
+
+        assertThat(variableDb.getVariableTextValue(pi, "batch")).hasValue("b-1");
+        assertThat(variableDb.getVariableTextValue(pi, "missing")).isEmpty();
+    }
 }
