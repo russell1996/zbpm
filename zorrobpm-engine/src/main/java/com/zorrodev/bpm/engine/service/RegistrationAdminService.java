@@ -41,7 +41,12 @@ public class RegistrationAdminService {
 
     @Transactional
     public void approveRegistration(UUID id, Principal principal) {
-        UiUserEntity user = userRepository.findById(id)
+        // WO-REL-39 (F18): CAS transition — the row lock serialises concurrent
+        // approve/approve and approve/reject pairs. The loser blocks here until
+        // the winner commits, then reads the decided status below and takes
+        // the 409 path (REGISTRATION_ALREADY_DECIDED) instead of silently
+        // overwriting the winner's decision.
+        UiUserEntity user = userRepository.findByIdForUpdate(id)
             .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found", Map.of()));
         String status = user.getRegistrationStatus();
         if ("PENDING_EMAIL_VERIFICATION".equals(status)) {
@@ -74,7 +79,9 @@ public class RegistrationAdminService {
 
     @Transactional
     public void rejectRegistration(UUID id, String reason, Principal principal) {
-        UiUserEntity user = userRepository.findById(id)
+        // WO-REL-39 (F18): same CAS transition as approveRegistration above —
+        // reject/reject and reject/approve pairs serialise on the row lock.
+        UiUserEntity user = userRepository.findByIdForUpdate(id)
             .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found", Map.of()));
         String status = user.getRegistrationStatus();
         boolean pendingVerification = "PENDING_EMAIL_VERIFICATION".equals(status);

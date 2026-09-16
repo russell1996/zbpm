@@ -1,7 +1,10 @@
 package com.zorrodev.bpm.engine.repository;
 
 import com.zorrodev.bpm.engine.entity.ProcessSubmissionEntity;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 import java.util.Optional;
@@ -25,4 +28,14 @@ public interface ProcessSubmissionRepository extends JpaRepository<ProcessSubmis
     /** Latest submission of the same process key by the same user — for the resubmission chain. */
     Optional<ProcessSubmissionEntity> findFirstBySubmittedByAndProcessKeyOrderBySubmittedAtDesc(
             UUID submittedBy, String processKey);
+
+    /**
+     * WO-REL-39 (F18): row-locked read of the submission for the CAS decision
+     * transition (approve/reject). Same shape as
+     * {@code UiUserRepository.findByIdForUpdate}: concurrent decisions serialise
+     * on the row; the loser re-reads the decided status and takes the 409 path.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM ProcessSubmissionEntity s WHERE s.id = :id")
+    Optional<ProcessSubmissionEntity> findByIdForUpdate(UUID id);
 }
