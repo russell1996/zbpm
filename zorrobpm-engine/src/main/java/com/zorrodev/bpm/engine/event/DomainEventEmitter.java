@@ -12,11 +12,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Emits domain events to the events table + outbox in the same transaction (ADR-7, WO-EVT-1).
@@ -33,8 +35,11 @@ public class DomainEventEmitter {
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final tools.jackson.databind.ObjectMapper objectMapper;
 
-    // WO-PERF-1 N3: immutable process definitions → cache pdId→pdKey to avoid DB hit per event
-    private final ConcurrentHashMap<UUID, String> pdKeyCache = new ConcurrentHashMap<>();
+    // WO-PERF-1 N3: immutable process definitions → cache pdId→pdKey to avoid DB hit per event (bounded)
+    private final Cache<UUID, String> pdKeyCache = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterAccess(Duration.ofMinutes(10))
+        .build();
 
     /**
      * Emits a domain event: writes to events table + outbox entry in the same transaction.
@@ -66,11 +71,11 @@ public class DomainEventEmitter {
         event.setData(safeData);
         domainEventRepository.save(event);
 
-        // WO-PERF-1 N3: resolve pdKey from cache (immutable process definitions)
+        // WO-PERF-1 N3: resolve pdKey from cache (immutable process definitions, bounded)
         String processDefinitionKey = null;
         if (processDefinitionId != null) {
-            processDefinitionKey = pdKeyCache.computeIfAbsent(processDefinitionId,
-                id -> processDefinitionRepository.findById(id)
+            processDefinitionKey = pdKeyCache.get(processDefinitionId, id ->
+                processDefinitionRepository.findById(id)
                     .map(ProcessDefinitionEntity::getKey)
                     .orElse(null));
         }

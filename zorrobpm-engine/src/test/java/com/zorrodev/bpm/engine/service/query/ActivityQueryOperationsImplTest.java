@@ -9,12 +9,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,14 +48,14 @@ class ActivityQueryOperationsImplTest {
         dto2.setId(e2.getId());
         dto2.setProcessInstanceId(pi);
 
-        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(pi)).thenReturn(List.of(e1, e2));
+        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(eq(pi), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(e1, e2)));
         when(activityInstanceMapper.toDTO(e1)).thenReturn(dto1);
         when(activityInstanceMapper.toDTO(e2)).thenReturn(dto2);
 
         List<ActivityInstance> result = impl.getActivities(pi);
 
         assertThat(result).containsExactly(dto1, dto2);
-        verify(activityRepository).findByProcessInstanceIdOrderByCreatedAtAsc(pi);
+        verify(activityRepository).findByProcessInstanceIdOrderByCreatedAtAsc(eq(pi), any(Pageable.class));
         verify(activityInstanceMapper).toDTO(e1);
         verify(activityInstanceMapper).toDTO(e2);
     }
@@ -59,12 +63,12 @@ class ActivityQueryOperationsImplTest {
     @Test
     void getActivities_emptyReturnsEmpty() {
         UUID pi = UUID.randomUUID();
-        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(pi)).thenReturn(List.of());
+        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(eq(pi), any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
 
         List<ActivityInstance> result = impl.getActivities(pi);
 
         assertThat(result).isEmpty();
-        verify(activityRepository).findByProcessInstanceIdOrderByCreatedAtAsc(pi);
+        verify(activityRepository).findByProcessInstanceIdOrderByCreatedAtAsc(eq(pi), any(Pageable.class));
     }
 
     @Test
@@ -78,13 +82,13 @@ class ActivityQueryOperationsImplTest {
         dto.setId(e.getId());
         dto.setProcessInstanceId(pi);
 
-        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(pi)).thenReturn(List.of(e));
+        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(eq(pi), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(e)));
         when(activityInstanceMapper.toDTO(e)).thenReturn(dto);
 
         List<ActivityInstance> result = impl.getActivities(pi);
 
         assertThat(result).containsExactly(dto);
-        verify(activityRepository).findByProcessInstanceIdOrderByCreatedAtAsc(pi);
+        verify(activityRepository).findByProcessInstanceIdOrderByCreatedAtAsc(eq(pi), any(Pageable.class));
         verify(activityInstanceMapper).toDTO(e);
     }
 }

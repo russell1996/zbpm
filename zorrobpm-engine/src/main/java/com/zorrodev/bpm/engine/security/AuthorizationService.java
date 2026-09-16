@@ -112,20 +112,26 @@ public class AuthorizationService {
     public Map<UUID, Principal.Grant> effectiveGrants(UUID ownerUserId, Map<UUID, Principal.Grant> keyGrants) {
         if (keyGrants == null || keyGrants.isEmpty()) return Map.of();
 
+        Set<UUID> ids = keyGrants.keySet();
+        Map<UUID, ProcessEntity> processMap = processRepository.findByIdIn(ids).stream()
+            .collect(Collectors.toMap(ProcessEntity::getId, p -> p));
+        Map<UUID, ProcessMemberEntity> memberMap = processMemberRepository
+            .findByProcessIdInAndUserId(ids, ownerUserId).stream()
+            .collect(Collectors.toMap(ProcessMemberEntity::getProcessId, m -> m));
+
         Map<UUID, Principal.Grant> effective = new HashMap<>();
         for (Map.Entry<UUID, Principal.Grant> entry : keyGrants.entrySet()) {
             UUID processId = entry.getKey();
             Principal.Grant grant = entry.getValue();
 
-            ProcessEntity process = processRepository.findById(processId).orElse(null);
-            if (process == null) continue; // process gone → deny
+            ProcessEntity process = processMap.get(processId);
+            if (process == null) continue;
 
-            ProcessMemberEntity membership = processMemberRepository.findById(
-                new ProcessMemberId(processId, ownerUserId)).orElse(null);
-            if (membership == null) continue; // owner lost membership → grant dropped
+            ProcessMemberEntity membership = memberMap.get(processId);
+            if (membership == null) continue;
 
             ProcessRole role = ProcessRole.fromName(membership.getRole());
-            if (role == null) continue; // unknown role in DB → deny, never a silent fallback (G-L)
+            if (role == null) continue;
 
             Set<String> rolePermissions = ROLE_RIGHTS.get(role).stream()
                 .map(Enum::name)
@@ -139,9 +145,6 @@ public class AuthorizationService {
                 narrowed = granted.stream().filter(rolePermissions::contains).collect(Collectors.toSet());
             }
 
-            // Grant survives with (possibly empty) permissions: the process stays visible
-            // to a member-owner, but only with the role's runtime rights (empty → DENY for
-            // every Action; read visibility is keySet-driven and stays).
             effective.put(processId, new Principal.Grant(narrowed, false));
         }
         return effective;

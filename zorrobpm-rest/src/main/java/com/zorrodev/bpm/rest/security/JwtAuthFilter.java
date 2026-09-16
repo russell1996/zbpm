@@ -21,7 +21,10 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -47,8 +50,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final UiUserLookupService userLookupService;
     private final AuthorizationService authorizationService;
     private final Environment environment;
-    /** WO-SEC-34: in-memory debounce tracker — apiKeyId → last write timestamp */
-    private final ConcurrentHashMap<UUID, Instant> lastWriteTimestamps = new ConcurrentHashMap<>();
+    /** WO-SEC-34: in-memory debounce tracker — apiKeyId → last write timestamp (bounded) */
+    private final Cache<UUID, Instant> lastWriteTimestamps = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterAccess(Duration.ofMinutes(10))
+        .build();
 
     @Value("${zorrobpm.security.require-api-auth:true}")
     private boolean requireApiAuth;
@@ -300,7 +306,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         // WO-SEC-34: debounce — only update lastUsedAt if stale (>DEBOUNCE_MS since last write)
         Instant now = Instant.now();
-        Instant lastWrite = lastWriteTimestamps.get(apiKey.getId());
+        Instant lastWrite = lastWriteTimestamps.getIfPresent(apiKey.getId());
         if (lastWrite == null || now.toEpochMilli() - lastWrite.toEpochMilli() > DEBOUNCE_MS) {
             apiKey.setLastUsedAt(now);
             apiKeyRepository.save(apiKey);
