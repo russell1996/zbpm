@@ -118,6 +118,16 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- WO-OPS-11 п.2: Awaitility для polling-ожиданий вместо Thread.sleep
+             (прецедента в проекте не было — стандартный безопасный выбор из Maven Central,
+             тест-скоп, прод-код не затрагивает). -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <version>4.3.0</version>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>com.tngtech.archunit</groupId>
             <artifactId>archunit</artifactId>

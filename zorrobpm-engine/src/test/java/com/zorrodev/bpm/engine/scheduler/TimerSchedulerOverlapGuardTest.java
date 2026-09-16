@@ -2,10 +2,12 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.*;
 
 class TimerSchedulerOverlapGuardTest {
@@ -36,9 +38,8 @@ class TimerSchedulerOverlapGuardTest {
         scheduler.fireDueTimers();
 
         release.countDown();
-        // wait for batch to finish
-        Thread.sleep(300);
-        assertThat(scheduler.isRunning()).isFalse();
+        // WO-OPS-11 п.2: ждём ФАКТ завершения батча (флаг снят), не фиксированные 300мс.
+        await().atMost(Duration.ofSeconds(5)).until(() -> !scheduler.isRunning());
 
         verify(batchProcessor, times(1)).processBatch();
     }
