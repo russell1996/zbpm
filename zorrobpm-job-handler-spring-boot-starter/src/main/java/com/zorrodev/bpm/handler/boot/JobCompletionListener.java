@@ -48,13 +48,19 @@ import java.util.Map;
 @Slf4j
 public class JobCompletionListener implements MessageListener {
 
-    /** Очередь completion'ов движка (зеркало RabbitConfiguration.COMPLETE_QUEUE). */
+    /**
+     * Имя очереди completion'ов. В проде — {@code zorrobpm.complete-service-task} (см.
+     * {@code RabbitConfiguration.COMPLETE_QUEUE}); в тесте — своя очередь, чтобы не
+     * спорить с чужими durable-флагами shared-брокера (406 PRECONDITION_FAILED).
+     * Проводка та же: send → очередь → чтение независимым наблюдателем.
+     */
     public static final String COMPLETE_QUEUE = "zorrobpm.complete-service-task";
 
     private final JobHandler handler;
     private final RabbitTemplate rabbitTemplate;
     private final ObjectMapper objectMapper;
     private final String queueName;
+    private final String completeQueueName;
 
     private final Cache<String, ServiceTaskCompleteData> resultCache = Caffeine.newBuilder()
         .maximumSize(10_000)
@@ -63,10 +69,17 @@ public class JobCompletionListener implements MessageListener {
 
     public JobCompletionListener(JobHandler handler, RabbitTemplate rabbitTemplate,
             ObjectMapper objectMapper, String queueName) {
+        this(handler, rabbitTemplate, objectMapper, queueName, COMPLETE_QUEUE);
+    }
+
+    /** Тест-ctor: очередь completion'ов задаётся явно (изоляция от shared-брокера). */
+    public JobCompletionListener(JobHandler handler, RabbitTemplate rabbitTemplate,
+            ObjectMapper objectMapper, String queueName, String completeQueueName) {
         this.handler = handler;
         this.rabbitTemplate = rabbitTemplate;
         this.objectMapper = objectMapper;
         this.queueName = queueName;
+        this.completeQueueName = completeQueueName;
     }
 
     @Override
@@ -121,7 +134,7 @@ public class JobCompletionListener implements MessageListener {
 
     private void sendCompletion(ServiceTaskCompleteData completeData) {
         try {
-            rabbitTemplate.convertAndSend(COMPLETE_QUEUE, completeData);
+            rabbitTemplate.convertAndSend(completeQueueName, completeData);
         } catch (AmqpException e) {
             // Transport failure: проброс наружу — контейнер NACK'ает/ретраит вход,
             // результат (уже в resultCache) не теряется. НЕ логируем как deserialize.
