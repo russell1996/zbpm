@@ -325,7 +325,7 @@ cve:npm:
       --user "$(id -u):$(id -g)"
       -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
       node:22-alpine
-      sh -c "npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev --json > npm-audit.json; echo \"npm audit exit: $?\""
+      sh -c "export HOME=/tmp NPM_CONFIG_CACHE=/tmp/npm-cache && mkdir -p /tmp/npm-cache && npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev --json > npm-audit.json; echo \"npm audit exit: $?\""
     - cat npm-audit.json | head -c 2000; echo
   rules: *rules-code-changes
   artifacts:
