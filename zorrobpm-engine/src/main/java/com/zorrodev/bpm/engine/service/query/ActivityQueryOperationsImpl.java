@@ -4,6 +4,8 @@ import com.zorrodev.bpm.contract.model.ActivityInstance;
 import com.zorrodev.bpm.engine.mapper.ActivityInstanceMapper;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -16,9 +18,19 @@ public class ActivityQueryOperationsImpl implements ActivityQueryOperations {
     private final ActivityRepository activityRepository;
     private final ActivityInstanceMapper activityInstanceMapper;
 
+    /**
+     * WO-PERF-7: defensive cap on the legacy unbounded path. The return type stays
+     * {@code List} (contract unchanged), but the query itself is bounded: 2000 =
+     * 10× {@code QueryPaginationSupport.MAX_PAGE_SIZE} — legit history views fit,
+     * an OOM-sized result doesn't. Clients that need more use {@code getActivitiesPaged}.
+     */
+    public static final int LEGACY_ACTIVITIES_MAX = 2000;
+
     @Override
     public List<ActivityInstance> getActivities(UUID processInstanceId) {
-        return activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(processInstanceId).stream()
+        var page = PageRequest.of(0, LEGACY_ACTIVITIES_MAX, Sort.by("createdAt").ascending());
+        return activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(processInstanceId, page)
+            .getContent().stream()
             .map(activityInstanceMapper::toDTO)
             .toList();
     }
