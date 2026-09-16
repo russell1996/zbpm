@@ -43,7 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * WO-ACL-12 criterion 2 on REAL PostgreSQL (H2 has no partial unique index — see
  * [[pg-vs-h2-divergence]]). Several (6, as on the stand) parallel /process-submissions calls
- * with the SAME process key must produce exactly one 200 and 409s for the rest
+ * with the SAME process key must produce exactly one 201 and 409s for the rest
  * (PENDING_SUBMISSION_EXISTS, never a 500), and exactly one PENDING row in the DB. On the
  * pre-fix code multiple threads pass the existence check and all insert (six rows on the
  * stand) — the partial unique index uk_process_submission__pending_key is what makes the
@@ -125,7 +125,7 @@ public class Acl12SubmissionRacePgIT {
 
             assertThat(results).hasSize(RACE_THREADS);
             long ok = results.stream()
-                .filter(r -> r.getResponse().getStatus() == 200).count();
+                .filter(r -> r.getResponse().getStatus() == 201).count();
             long conflict = results.stream()
                 .filter(r -> r.getResponse().getStatus() == 409).count();
             long serverError = results.stream()
@@ -160,7 +160,7 @@ public class Acl12SubmissionRacePgIT {
 
             // hygiene: register the winner for tearDown so repeated local runs do not leak
             results.stream()
-                .filter(r -> r.getResponse().getStatus() == 200)
+                .filter(r -> r.getResponse().getStatus() == 201)
                 .map(r -> {
                     try {
                         return mapper.readTree(r.getResponse().getContentAsString()).get("id").asText();
@@ -268,7 +268,8 @@ public class Acl12SubmissionRacePgIT {
 
     private ProcessSubmissionDTO submit(String token, String bpmnXml) throws Exception {
         MvcResult result = submitRaw(token, bpmnXml);
-        assertThat(result.getResponse().getStatus()).isEqualTo(200);
+        // WO-API-1: create → 201 + Location (было 200 до 15.09 — см. коммит 7a254a27).
+        assertThat(result.getResponse().getStatus()).isEqualTo(201);
         ProcessSubmissionDTO dto = mapper.readValue(result.getResponse().getContentAsString(),
             ProcessSubmissionDTO.class);
         createdSubmissionIds.add(dto.getId());
