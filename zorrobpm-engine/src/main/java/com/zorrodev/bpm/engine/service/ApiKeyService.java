@@ -74,6 +74,30 @@ public class ApiKeyService {
         return toDTO(apiKey);
     }
 
+    /**
+     * WO-SEC-67 (F13): is this API key still live? Same checks as
+     * {@code JwtAuthFilter.resolveApiKey} (revoked → dead, expired → dead,
+     * owner deactivated/deleted → dead — WO-ACL-5 criterion #4), extracted for
+     * the SSE stream liveness gate so the REST layer never touches the key
+     * repository directly (WO-DEBT-7 REST→JPA boundary).
+     */
+    public boolean isKeyLive(UUID apiKeyId) {
+        var keyOpt = apiKeyRepository.findById(apiKeyId);
+        if (keyOpt.isEmpty()) {
+            return false;
+        }
+        ApiKeyEntity apiKey = keyOpt.get();
+        if (apiKey.getRevokedAt() != null) {
+            return false;
+        }
+        if (apiKey.getExpiresAt() != null && apiKey.getExpiresAt().isBefore(Instant.now())) {
+            return false;
+        }
+        return uiUserRepository.findById(apiKey.getOwnerUserId())
+            .map(UiUserEntity::isActive)
+            .orElse(false);
+    }
+
     public List<ApiKeyDTO> listKeysForUser(UUID userId) {
         return apiKeyRepository.findAllByOwnerUserId(userId).stream()
             .map(this::toDTO)
