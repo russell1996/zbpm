@@ -18,6 +18,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -61,6 +62,11 @@ class DomainEventSequenceGapTest {
         UUID pdId = UUID.randomUUID();
 
         doReturn("{}").when(objectMapper).writeValueAsString(any());
+        // WO-REL-37: прод зовёт saveAndFlush; эмулируем JPA (тот же entity назад),
+        // иначе persisted=null и emit падает до outbox-save (ассерт ниже — про
+        // видимость обоих коммитов, возврат мока на него не влияет).
+        lenient().doAnswer(inv -> inv.getArgument(0)).when(domainEventRepository)
+            .saveAndFlush(any(DomainEventEntity.class));
 
         // Simulate T1 emit (gets seq=N)
         emitter.emit(DomainEventType.PROCESS_INSTANCE_STARTED, piId1, pdId, null, Map.of());
@@ -68,8 +74,10 @@ class DomainEventSequenceGapTest {
         // Simulate T2 emit (gets seq=N+1) — would commit first in race
         emitter.emit(DomainEventType.PROCESS_INSTANCE_STARTED, piId2, pdId, null, Map.of());
 
-        // Verify both events were saved to events table
-        verify(domainEventRepository, org.mockito.Mockito.times(2)).save(any(DomainEventEntity.class));
+        // Verify both events were saved to events table (WO-REL-37: saveAndFlush —
+        // sequence нужен сразу для envelope; поведение save то же, flush лишь раньше
+        // отправляет INSERT — на видимость после обоих коммитов не влияет).
+        verify(domainEventRepository, org.mockito.Mockito.times(2)).saveAndFlush(any(DomainEventEntity.class));
 
         // Verify both outbox entries were created (no serialization failure)
         verify(outboxRepository, org.mockito.Mockito.times(2)).save(any(OutboxEntry.class));
