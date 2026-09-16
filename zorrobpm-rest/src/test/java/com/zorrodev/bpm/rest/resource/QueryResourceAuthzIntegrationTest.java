@@ -220,6 +220,30 @@ class QueryResourceAuthzIntegrationTest {
             .andExpect(jsonPath("$[0].processInstanceId").value(instanceA.toString()));
     }
 
+    // WO-PERF-7: аддитивный paged-эндпоинт достижим по HTTP с тем же authz-гардом.
+    // Наследник QueryResourceAuthzPgIT гоняет их и на реальном PG.
+
+    @Test
+    void getProcessInstanceActivitiesPaged_foreign_returns404() throws Exception {
+        mockMvc.perform(get("/process-instances/" + instanceA + "/activities/paged")
+                .header("Authorization", "Bearer " + userBKey))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getProcessInstanceActivitiesPaged_ownGrant_returns200_withPagedBody() throws Exception {
+        // Рантайм пишет свои activity-строки помимо сида — точное total не фиксируем,
+        // проверяем структуру страницы и принадлежность инстансу.
+        mockMvc.perform(get("/process-instances/" + instanceA + "/activities/paged")
+                .param("pageIndex", "0")
+                .param("pageSize", "10")
+                .header("Authorization", "Bearer " + userAKey))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalElements").exists())
+            .andExpect(jsonPath("$.pageSize").value(10))
+            .andExpect(jsonPath("$.data[0].processInstanceId").value(instanceA.toString()));
+    }
+
     // ==================== Criterion #4: SUPER_ADMIN keeps full access (regression) ====================
 
     @Test

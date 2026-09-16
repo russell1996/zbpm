@@ -17,6 +17,7 @@ import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.service.annotation.GetExchange;
 
 import java.util.List;
@@ -48,6 +49,12 @@ public interface QueryContract {
     /** Activity history of an instance (used for execution history and BPMN element highlighting). */
     @GetExchange("/process-instances/{id}/activities")
     List<ActivityInstance> getProcessInstanceActivities(@PathVariable UUID id);
+
+    /** WO-PERF-7: paged activity history (bounded; the legacy List endpoint above stays for compat). */
+    @GetExchange("/process-instances/{id}/activities/paged")
+    PagedDataDTO<ActivityInstance> getProcessInstanceActivitiesPaged(@PathVariable UUID id,
+        @RequestParam(required = false) Integer pageIndex,
+        @RequestParam(required = false) Integer pageSize);
 
     @GetExchange("/incidents")
     PagedDataDTO<Incident> getIncidents(IncidentQuery query);

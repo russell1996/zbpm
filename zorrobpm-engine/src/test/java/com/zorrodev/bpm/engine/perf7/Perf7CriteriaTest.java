@@ -6,12 +6,17 @@ import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.ProcessEntity;
+import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.handler.ExecutionCtx;
 import com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler;
 import com.zorrodev.bpm.engine.handler.FlowNavigator;
 import com.zorrodev.bpm.engine.handler.TokenExecutor;
+import com.zorrodev.bpm.engine.mapper.ActivityInstanceMapper;
 import com.zorrodev.bpm.engine.mapper.UiUserMapper;
+import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.PasswordTokenRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
@@ -26,7 +31,9 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.impl.UiUserServiceImpl;
+import com.zorrodev.bpm.engine.service.query.ActivityQueryOperationsImpl;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -42,7 +49,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -295,5 +304,139 @@ class Perf7CriteriaTest {
             String.class, org.springframework.data.domain.Pageable.class);
         repo.getMethod("findProjectedAllOrderByCreatedAtDesc",
             org.springframework.data.domain.Pageable.class);
+    }
+
+    // ---------- 7. legacy activities path: жёсткий cap 2000 (G-C решение CTO) ----------
+
+    @Test
+    void legacyGetActivities_isCappedAt2000_notUnbounded() {
+        ActivityRepository repository = mock(ActivityRepository.class);
+        UUID piId = UUID.randomUUID();
+        List<ActivityEntity> three = threeActivities(piId);
+        when(repository.findByProcessInstanceIdOrderByCreatedAtAsc(eq(piId), any(Pageable.class)))
+            .thenAnswer(inv -> {
+                Pageable p = inv.getArgument(1);
+                return new PageImpl<>(three, p, three.size());
+            });
+
+        var ops = new ActivityQueryOperationsImpl(repository, new ActivityInstanceMapper());
+        List<com.zorrodev.bpm.contract.model.ActivityInstance> dtos = ops.getActivities(piId);
+
+        // Тип возврата — по-прежнему List (контракт не менялся), но запрос bounded:
+        // Pageable-вариант вызван ровно 1 раз с лимитом 2000, unbounded (1-arg) — 0.
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(repository, times(1))
+            .findByProcessInstanceIdOrderByCreatedAtAsc(eq(piId), captor.capture());
+        assertThat(captor.getValue().getPageSize())
+            .isEqualTo(ActivityQueryOperationsImpl.LEGACY_ACTIVITIES_MAX);
+        assertThat(ActivityQueryOperationsImpl.LEGACY_ACTIVITIES_MAX).isEqualTo(2000);
+        verify(repository, times(0))
+            .findByProcessInstanceIdOrderByCreatedAtAsc(piId);
+        assertThat(dtos).hasSize(3);
+    }
+
+    // ---------- 8. поведенческая пагинация: 5 активностей, pageSize=2 → 3 страницы ----------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void activitiesPaged_fiveActivities_pageSizeTwo_threePagesDisjoint() throws Exception {
+        // getActivitiesPaged нет на pre-fix базе — вызываем рефлексией, чтобы класс
+        // компилировался в обоих деревьях; ассерты при этом поведенческие
+        // (содержимое страниц, totalElements), а не на существование метода.
+        ActivityRepository repository = mock(ActivityRepository.class);
+        UUID piId = UUID.randomUUID();
+        List<ActivityEntity> five = fiveActivities(piId);
+        when(repository.findByProcessInstanceIdOrderByCreatedAtAsc(eq(piId), any(Pageable.class)))
+            .thenAnswer(inv -> {
+                Pageable p = inv.getArgument(1);
+                int from = (int) Math.min(p.getOffset(), five.size());
+                int to = (int) Math.min(from + p.getPageSize(), five.size());
+                return new PageImpl<>(five.subList(from, to), p, five.size());
+            });
+
+        var ops = new ActivityQueryOperationsImpl(repository, new ActivityInstanceMapper());
+        var method = ops.getClass().getMethod("getActivitiesPaged",
+            UUID.class, Integer.class, Integer.class);
+
+        PagedDataDTO<com.zorrodev.bpm.contract.model.ActivityInstance> p0 =
+            (PagedDataDTO<com.zorrodev.bpm.contract.model.ActivityInstance>)
+                method.invoke(ops, piId, 0, 2);
+        PagedDataDTO<com.zorrodev.bpm.contract.model.ActivityInstance> p1 =
+            (PagedDataDTO<com.zorrodev.bpm.contract.model.ActivityInstance>)
+                method.invoke(ops, piId, 1, 2);
+        PagedDataDTO<com.zorrodev.bpm.contract.model.ActivityInstance> p2 =
+            (PagedDataDTO<com.zorrodev.bpm.contract.model.ActivityInstance>)
+                method.invoke(ops, piId, 2, 2);
+
+        assertThat(p0.getTotalElements()).isEqualTo(5);
+        assertThat(p0.getPageIndex()).isZero();
+        assertThat(p0.getPageSize()).isEqualTo(2);
+        assertThat(p0.getData()).hasSize(2);
+        assertThat(p1.getData()).hasSize(2);
+        assertThat(p2.getData()).hasSize(1);
+        // Вторая страница не пересекается с первой, третья — с обеими.
+        assertThat(p1.getData().stream().map(d -> d.getId()).toList())
+            .doesNotContainAnyElementsOf(p0.getData().stream().map(d -> d.getId()).toList());
+        assertThat(p2.getData().stream().map(d -> d.getId()).toList())
+            .doesNotContainAnyElementsOf(p0.getData().stream().map(d -> d.getId()).toList())
+            .doesNotContainAnyElementsOf(p1.getData().stream().map(d -> d.getId()).toList());
+    }
+
+    // ---------- 9. позитивный effectiveGrants: гранты дают реальные процессы ----------
+
+    @Test
+    void effectiveGrants_memberOwner_getsNarrowedGrants_foreignerDropped() {
+        ProcessRepository processRepository = mock(ProcessRepository.class);
+        ProcessMemberRepository memberRepository = mock(ProcessMemberRepository.class);
+        AuthorizationService auth = new AuthorizationService(processRepository, memberRepository,
+            mock(ProcessInstanceRepository.class), mock(ProcessDefinitionRepository.class),
+            mock(UserGroupRepository.class));
+
+        UUID owner = UUID.randomUUID();
+        UUID ownProc = UUID.randomUUID();
+        UUID foreignProc = UUID.randomUUID();
+        ProcessEntity own = new ProcessEntity();
+        own.setId(ownProc);
+        own.setDefinitionKey("own-proc");
+        ProcessEntity foreign = new ProcessEntity();
+        foreign.setId(foreignProc);
+        foreign.setDefinitionKey("foreign-proc");
+        when(processRepository.findByIdIn(anyCollection()))
+            .thenReturn(List.of(own, foreign));
+        ProcessMemberEntity membership = new ProcessMemberEntity();
+        membership.setProcessId(ownProc);
+        membership.setUserId(owner);
+        membership.setRole("OWNER");
+        when(memberRepository.findByProcessIdInAndUserId(anyCollection(), eq(owner)))
+            .thenReturn(List.of(membership));
+
+        Map<UUID, Principal.Grant> keyGrants = Map.of(
+            ownProc, new Principal.Grant(Set.of(), true),
+            foreignProc, new Principal.Grant(Set.of(), true));
+        Map<UUID, Principal.Grant> effective = auth.effectiveGrants(owner, keyGrants);
+
+        // Batch вызван ровно по 1 разу (не 2×G), результат правильный:
+        // свой процесс виден с реальными OWNER-правами, чужой отпал.
+        verify(processRepository, times(1)).findByIdIn(anyCollection());
+        verify(memberRepository, times(1)).findByProcessIdInAndUserId(anyCollection(), eq(owner));
+        assertThat(effective.keySet()).containsExactly(ownProc);
+        assertThat(effective.get(ownProc).permissions()).contains("START");
+    }
+
+    private List<ActivityEntity> threeActivities(UUID piId) {
+        return fiveActivities(piId).subList(0, 3);
+    }
+
+    private List<ActivityEntity> fiveActivities(UUID piId) {
+        List<ActivityEntity> list = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            ActivityEntity e = new ActivityEntity();
+            e.setId(UUID.randomUUID());
+            e.setProcessInstanceId(piId);
+            e.setBpmnElementId("node" + i);
+            e.setCreatedAt(java.time.Instant.now().plusSeconds(i));
+            list.add(e);
+        }
+        return list;
     }
 }
