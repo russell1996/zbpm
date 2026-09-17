@@ -36,10 +36,10 @@ class RetentionJobTest {
     void enabled_delegatesToBatchProcessor() {
         config.setTtlDays(90);
         config.setBatchSize(10);
-        when(batchProcessor.findEligibleInstances(any(), eq(10))).thenReturn(java.util.List.of());
+        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(10))).thenReturn(java.util.List.of());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(0);
         job.run();
-        verify(batchProcessor).findEligibleInstances(any(), eq(10));
+        verify(batchProcessor).findEligibleInstances(any(), anyInt(), eq(10));
         verify(batchProcessor).deleteOrphanedBoundaryTimers(any(), eq(10));
         verify(batchProcessor, never()).deleteInstances(any());
     }
@@ -48,7 +48,7 @@ class RetentionJobTest {
     void enabled_cleansOrphanedBoundaryTimersInBatches() {
         config.setTtlDays(90);
         config.setBatchSize(10);
-        when(batchProcessor.findEligibleInstances(any(), eq(10))).thenReturn(java.util.List.of());
+        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(10))).thenReturn(java.util.List.of());
         // two full batches then a short one → loop must stop after the short batch
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(10, 10, 4);
         job.run();
@@ -59,7 +59,7 @@ class RetentionJobTest {
     void enabled_batchSizeZero_doesNotLoopForever() {
         config.setTtlDays(90);
         config.setBatchSize(0);
-        when(batchProcessor.findEligibleInstances(any(), eq(0))).thenReturn(java.util.List.of());
+        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(0))).thenReturn(java.util.List.of());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(0))).thenReturn(0);
         // Preemptive timeout: with the pre-fix guard "deleted < batchSize" the loop never exits
         // (0 < 0 is false) and run() spins forever issuing DELETE LIMIT 0 — the timeout kills it.
@@ -80,7 +80,7 @@ class RetentionJobTest {
         UUID id2 = UUID.randomUUID();
         UUID id3 = UUID.randomUUID();
 
-        when(batchProcessor.findEligibleInstances(any(), eq(2))).thenReturn(java.util.List.of());
+        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(2))).thenReturn(java.util.List.of());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(2))).thenReturn(0);
         // one full batch (2) + one partial (1), then an empty poll ends the loop
         when(batchProcessor.findEligibleSubmissions(any(), eq(2), any()))

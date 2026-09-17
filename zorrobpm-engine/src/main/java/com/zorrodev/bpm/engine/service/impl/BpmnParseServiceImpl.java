@@ -101,6 +101,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 .map(ExtensionElements::getVersionTag)
                 .map(VersionTagModel::getValue)
                 .orElse(null));
+            // WO-ENG-17: process-level camunda:historyTimeToLive (nullable — raw passthrough,
+            // parsing/validation happens at deploy time in ProcessDefinitionServiceImpl).
+            pd.setHistoryTimeToLive(process.getHistoryTimeToLive());
             // WO-C8-13 (A-1): process-level zeebe:jobPriorityDefinition — default job priority
             // for all service tasks of the process unless overridden on the task itself.
             pd.setDefaultJobPriority(Optional.ofNullable(process.getExtensionElements())

@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
@@ -44,7 +45,7 @@ class RetentionJobStuckPageTest {
     }
 
     private void stubIdleProcessors(int batchSize) {
-        when(batchProcessor.findEligibleInstances(any(), eq(batchSize))).thenReturn(List.of());
+        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(batchSize))).thenReturn(List.of());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(batchSize))).thenReturn(0);
     }
 

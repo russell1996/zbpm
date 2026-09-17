@@ -19,6 +19,14 @@ public class BpmnProcessDefinitionModel {
     private String name;
     @XmlAttribute
     private Boolean isExecutable;
+    /**
+     * WO-ENG-17: {@code camunda:historyTimeToLive} на {@code <bpmn:process>} (сырая строка,
+     * nullable — атрибут отсутствует у большинства процессов). Парсинг/валидация — на деплое
+     * ({@code ProcessDefinitionServiceImpl}), здесь только passthrough как у versionTag:
+     * парсер не владеет HTTP-контрактом 400 (там {@code BpmnParseException}, не {@code ApiException}).
+     */
+    @XmlAttribute(name = "historyTimeToLive", namespace = "http://camunda.org/schema/1.0/bpmn")
+    private String historyTimeToLive;
     /** Process-level BPMN &lt;documentation&gt; (e.g. a link to requirements). */
     @XmlElement(name = "documentation", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private String documentation;

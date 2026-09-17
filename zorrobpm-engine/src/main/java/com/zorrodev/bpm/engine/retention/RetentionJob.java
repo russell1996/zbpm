@@ -38,7 +38,11 @@ public class RetentionJob {
 
         int totalDeleted = 0;
         while (true) {
-            List<UUID> eligible = batchProcessor.findEligibleInstances(cutoff, config.getBatchSize());
+            // WO-ENG-17: cutoff по каждому определению (собственный TTL или
+            // глобальный как фолбэк); orphan/submission-пассы ниже — без изменений
+            // (у orphan нет определения, у submission — свой TTL-скоуп).
+            List<UUID> eligible = batchProcessor.findEligibleInstances(
+                Instant.now(), config.getTtlDays(), config.getBatchSize());
             if (eligible.isEmpty()) break;
 
             int deleted = batchProcessor.deleteInstances(eligible);

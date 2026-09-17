@@ -35,6 +35,12 @@ public class ProcessDefinitionEntity {
     private String startFormKey;
     /** WO-C8-3: zeebe:versionTag процесса (nullable) — для bindingType="versionTag" на call activity. */
     private String versionTag;
+    /**
+     * WO-ENG-17: Camunda-style historyTimeToLive в днях (nullable) — срок чистки
+     * завершённых инстансов ЭТОГО определения. NULL = наследовать глобальный
+     * {@code zorrobpm.engine.retention.ttl-days} (обратная совместимость §4 WO).
+     */
+    private Integer historyTimeToLiveDays;
     /** WO-C8-18: деплоймент пачки (POST /deployments); null — одиночный деплой (обратная совместимость). */
     private UUID deploymentId;
     @Column(name = "deployment_state", nullable = false)

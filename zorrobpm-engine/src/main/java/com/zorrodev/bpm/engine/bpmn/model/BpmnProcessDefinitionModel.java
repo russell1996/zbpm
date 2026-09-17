@@ -46,6 +46,14 @@ public class BpmnProcessDefinitionModel {
     @Getter
     @Setter
     private String versionTag;
+    /**
+     * WO-ENG-17: сырое значение {@code camunda:historyTimeToLive} (nullable).
+     * Строка, не Integer: парсинг/валидация — на деплое рядом с остальными
+     * 400-контрактами, модель только несёт значение (паттерн versionTag).
+     */
+    @Getter
+    @Setter
+    private String historyTimeToLive;
     @Getter
     @Setter
     private List<com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskFormModel> userTaskForms;
