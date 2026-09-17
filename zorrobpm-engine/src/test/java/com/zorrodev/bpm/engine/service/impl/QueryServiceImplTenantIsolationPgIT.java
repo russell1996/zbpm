@@ -39,9 +39,11 @@ class QueryServiceImplTenantIsolationPgIT {
     @Autowired private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired private IncidentRepository incidentRepository;
     @Autowired private ActivityRepository activityRepository;
+    @Autowired private TokenRepository tokenRepository;
 
     private UUID cleanupPi1, cleanupPi2, cleanupTimer1, cleanupTimer2, cleanupMsg1, cleanupMsg2, cleanupVar1, cleanupVar2;
     private UUID cleanupIncident1, cleanupIncident2, cleanupActivity1, cleanupActivity2;
+    private UUID cleanupToken1, cleanupToken2;
 
     @AfterEach
     void cleanup() {
@@ -49,6 +51,8 @@ class QueryServiceImplTenantIsolationPgIT {
         if (cleanupIncident2 != null) incidentRepository.deleteById(cleanupIncident2);
         if (cleanupActivity1 != null) activityRepository.deleteById(cleanupActivity1);
         if (cleanupActivity2 != null) activityRepository.deleteById(cleanupActivity2);
+        if (cleanupToken1 != null) tokenRepository.deleteById(cleanupToken1);
+        if (cleanupToken2 != null) tokenRepository.deleteById(cleanupToken2);
         if (cleanupTimer1 != null) timerJobRepository.deleteById(cleanupTimer1);
         if (cleanupTimer2 != null) timerJobRepository.deleteById(cleanupTimer2);
         if (cleanupMsg1 != null) messageSubscriptionRepository.deleteById(cleanupMsg1);
@@ -59,6 +63,7 @@ class QueryServiceImplTenantIsolationPgIT {
         if (cleanupPi2 != null) processInstanceRepository.deleteById(cleanupPi2);
         cleanupPi1 = cleanupPi2 = cleanupTimer1 = cleanupTimer2 = cleanupMsg1 = cleanupMsg2 = cleanupVar1 = cleanupVar2 = null;
         cleanupIncident1 = cleanupIncident2 = cleanupActivity1 = cleanupActivity2 = null;
+        cleanupToken1 = cleanupToken2 = null;
     }
 
     @Test
@@ -193,10 +198,16 @@ class QueryServiceImplTenantIsolationPgIT {
 
     private UUID createActivity(UUID piId) {
         UUID id = UUID.randomUUID();
+        // WO-OPS-12: fk_activities__token — activity ссылается только на существующий token.
+        UUID tokenId = UUID.randomUUID();
+        TokenEntity token = new TokenEntity();
+        token.setId(tokenId);
+        tokenRepository.saveAndFlush(token);
+        if (cleanupToken1 == null) cleanupToken1 = tokenId; else cleanupToken2 = tokenId;
         ActivityEntity e = new ActivityEntity();
         e.setId(id);
         e.setProcessInstanceId(piId);
-        e.setToken(UUID.randomUUID());
+        e.setToken(tokenId);
         e.setBpmnElementId("task-" + id.toString().substring(0, 8));
         e.setCreatedAt(Instant.now());
         e.setType(BpmnElementType.SERVICE_TASK);

@@ -6,11 +6,13 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
+import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -39,19 +41,33 @@ class IncidentResolveTransactionIT {
     @Autowired private ActivityRepository activityRepository;
     @Autowired private ProcessInstanceRepository processInstanceRepository;
     @Autowired private ProcessDefinitionRepository processDefinitionRepository;
+    @Autowired private TokenRepository tokenRepository;
 
     @MockitoBean private AuditLogService auditLogService;
     @MockitoBean private RuntimeOperationSupport runtimeOperationSupport;
 
     private UUID cleanupIncident, cleanupActivity, cleanupPi, cleanupPd;
+    private UUID cleanupToken1, cleanupToken2;
 
     @AfterEach
     void cleanup() {
         if (cleanupIncident != null) incidentRepository.deleteById(cleanupIncident);
         if (cleanupActivity != null) activityRepository.deleteById(cleanupActivity);
+        if (cleanupToken1 != null) { try { tokenRepository.deleteById(cleanupToken1); } catch (Exception ignored) {} }
+        if (cleanupToken2 != null) { try { tokenRepository.deleteById(cleanupToken2); } catch (Exception ignored) {} }
         if (cleanupPi != null) processInstanceRepository.deleteById(cleanupPi);
         if (cleanupPd != null) processDefinitionRepository.deleteById(cleanupPd);
         cleanupIncident = cleanupActivity = cleanupPi = cleanupPd = null;
+        cleanupToken1 = cleanupToken2 = null;
+    }
+
+    // WO-OPS-12: fk_activities__token — activity ссылается только на существующий token.
+    private UUID newToken() {
+        UUID tokenId = UUID.randomUUID();
+        TokenEntity token = new TokenEntity();
+        token.setId(tokenId);
+        tokenRepository.saveAndFlush(token);
+        return tokenId;
     }
 
     @Test
@@ -82,7 +98,8 @@ class IncidentResolveTransactionIT {
         ActivityEntity activity = new ActivityEntity();
         activity.setId(activityId);
         activity.setProcessInstanceId(piId);
-        activity.setToken(UUID.randomUUID());
+        cleanupToken1 = newToken();
+        activity.setToken(cleanupToken1);
         activity.setBpmnElementId("task-" + activityId.toString().substring(0, 8));
         activity.setCreatedAt(Instant.now());
         activity.setType(BpmnElementType.SERVICE_TASK);
@@ -154,7 +171,8 @@ class IncidentResolveTransactionIT {
         ActivityEntity activity = new ActivityEntity();
         activity.setId(activityId);
         activity.setProcessInstanceId(piId);
-        activity.setToken(UUID.randomUUID());
+        cleanupToken2 = newToken();
+        activity.setToken(cleanupToken2);
         activity.setBpmnElementId("task-" + activityId.toString().substring(0, 8));
         activity.setCreatedAt(Instant.now());
         activity.setType(BpmnElementType.SERVICE_TASK);

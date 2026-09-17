@@ -9,10 +9,12 @@ import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
+import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
+import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import org.junit.jupiter.api.BeforeAll;
@@ -62,6 +64,7 @@ class QueryResourceAuthzIntegrationTest {
     @Autowired private ServiceTaskRepository serviceTaskRepository;
     @Autowired private ActivityRepository activityRepository;
     @Autowired private IncidentRepository incidentRepository;
+    @Autowired private TokenRepository tokenRepository;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
@@ -124,7 +127,11 @@ class QueryResourceAuthzIntegrationTest {
         ActivityEntity activity = new ActivityEntity();
         activity.setId(UUID.randomUUID());
         activity.setProcessInstanceId(instanceA);
-        activity.setToken(UUID.randomUUID());
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        TokenEntity seedToken = new TokenEntity();
+        seedToken.setId(UUID.randomUUID());
+        tokenRepository.save(seedToken);
+        activity.setToken(seedToken.getId());
         activity.setBpmnElementId("sec43-seeded-activity");
         activity.setCreatedAt(Instant.now());
         activityRepository.save(activity);
