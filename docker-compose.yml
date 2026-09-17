@@ -137,6 +137,11 @@ services:
       SERVICETASK_DISPATCH_TIMEOUT: ${SERVICETASK_DISPATCH_TIMEOUT:-}
       SERVICETASK_WATCHDOG_INTERVAL_MS: ${SERVICETASK_WATCHDOG_INTERVAL_MS:-}
       SERVICETASK_WATCHDOG_BATCH_SIZE: ${SERVICETASK_WATCHDOG_BATCH_SIZE:-}
+      # WO-PERF-8: retention chunk + outbox chunk/gauge-sampling cadence (see
+      # application.properties; empty = property default applies).
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-}
+      OUTBOX_METRICS_SAMPLE_EVERY: ${OUTBOX_METRICS_SAMPLE_EVERY:-}
       TZ: Asia/Almaty
     volumes:
       - app-files:/app/files

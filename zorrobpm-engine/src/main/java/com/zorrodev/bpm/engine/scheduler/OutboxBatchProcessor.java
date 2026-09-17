@@ -45,18 +45,39 @@ public class OutboxBatchProcessor {
     private final BpmMetrics bpmMetrics;
     private final DomainEventEmitter domainEventEmitter;
 
-    @Value("${zorrobpm.outbox.batch-size:100}")
-    private int batchSize;
+    /**
+     * WO-PERF-8: half the worst-case transaction (was 100). Drain rate at the default
+     * 2s poll is still ~25 rows/s; at-least-once is unchanged — whatever does not fit
+     * is picked up by the following ticks.
+     */
+    @Value("${zorrobpm.outbox.batch-size:50}")
+    private int batchSize = 50;
 
     @Value("${zorrobpm.outbox.max-retries:5}")
     private int maxRetries;
 
+    /**
+     * WO-PERF-8: gauge sampling cadence in ticks. Two COUNT(*) per 2s tick is wasted
+     * when the backlog barely moves between polls — sample every 30th tick (~60s at
+     * the default poll interval) instead. First tick always samples (cold start must
+     * not report stale zeroes). Fail-open: {@code <= 0} samples every tick (tests
+     * that explicitly set 0; unconfigured instances use the initializer, 30).
+     */
+    @Value("${zorrobpm.outbox.metrics-sample-every:30}")
+    private int metricsSampleEvery = 30;
+
+    private final java.util.concurrent.atomic.AtomicLong tickCounter = new java.util.concurrent.atomic.AtomicLong(0);
+
     @Transactional
     public void processBatch() {
         var pending = outboxRepository.findPendingBatch(batchSize);
-        // WO-OBS-1: gauges sampled per batch (read-only, no behavior change).
-        bpmMetrics.setOutboxBacklog(outboxRepository.countPending());
-        bpmMetrics.setOutboxQuarantine(outboxRepository.countQuarantined());
+        // WO-PERF-8: periodic gauge sampling (read-only, no behavior change).
+        // (tick - 1) % N == 0 covers tick 1 by construction — no special-case branch.
+        long tick = tickCounter.incrementAndGet();
+        if (metricsSampleEvery <= 0 || (tick - 1) % metricsSampleEvery == 0) {
+            bpmMetrics.setOutboxBacklog(outboxRepository.countPending());
+            bpmMetrics.setOutboxQuarantine(outboxRepository.countQuarantined());
+        }
         for (OutboxEntry entry : pending) {
             try {
                 OutboxKind kind = entry.getKind() != null ? entry.getKind() : OutboxKind.SERVICE_TASK;
