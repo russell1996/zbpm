@@ -45,7 +45,14 @@ public class RetentionJob {
                 Instant.now(), config.getTtlDays(), config.getBatchSize());
             if (eligible.isEmpty()) break;
 
-            int deleted = batchProcessor.deleteInstances(eligible);
+            // WO-PERF-8: one instance per transaction — deleteInstances is @Transactional
+            // (up to 12 DELETEs), so deleting the whole batch in one call held locks for
+            // up to batchSize instances at once. Per-id calls keep each transaction to a
+            // single instance's rows; loop/exit semantics and fail-fast are unchanged.
+            int deleted = 0;
+            for (UUID id : eligible) {
+                deleted += batchProcessor.deleteInstances(java.util.List.of(id));
+            }
             totalDeleted += deleted;
             log.info("Retention: deleted batch of {} instances ({} rows total so far)", eligible.size(), totalDeleted);
 

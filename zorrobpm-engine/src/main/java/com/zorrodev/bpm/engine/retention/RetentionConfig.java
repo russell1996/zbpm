@@ -20,6 +20,12 @@ public class RetentionConfig {
     /** Poll interval in milliseconds. */
     private long pollIntervalMs = 3600_000; // 1 hour
 
-    /** Batch size for deletion (max instances per poll). */
-    private int batchSize = 100;
+    /**
+     * WO-PERF-8: batch size for deletion (max instances per poll). 25, not 100:
+     * {@code RetentionBatchProcessor.deleteInstances} runs up to 12 DELETEs in one
+     * transaction per batch, so 100 instances held row locks far longer than needed.
+     * Smaller chunks = shorter transactions at the same throughput (the job loops
+     * until no eligible rows remain).
+     */
+    private int batchSize = 25;
 }

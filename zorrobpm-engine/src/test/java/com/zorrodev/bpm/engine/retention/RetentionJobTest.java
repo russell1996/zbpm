@@ -9,6 +9,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Duration;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.Mockito.*;
 
@@ -65,6 +66,43 @@ class RetentionJobTest {
         // (0 < 0 is false) and run() spins forever issuing DELETE LIMIT 0 — the timeout kills it.
         assertTimeoutPreemptively(Duration.ofSeconds(2), () -> job.run());
         verify(batchProcessor, times(1)).deleteOrphanedBoundaryTimers(any(), eq(0));
+    }
+
+    /**
+     * WO-PERF-8 (R1): smaller default chunk shortens the retention transaction
+     * (up to 12 DELETEs per batch — 100 instances held locks far longer than needed).
+     */
+    @Test
+    void defaultBatchSize_is25() {
+        assertThat(new RetentionConfig().getBatchSize()).isEqualTo(25);
+    }
+
+    /**
+     * WO-PERF-8 (R2): one instance per transaction — the job must call
+     * {@code deleteInstances} once per id, never with the whole batch (that single
+     * call was one transaction for up to batchSize instances).
+     */
+    @Test
+    void enabled_deletesInstancesOnePerTransaction() {
+        config.setTtlDays(90);
+        config.setBatchSize(10);
+        UUID id1 = UUID.randomUUID();
+        UUID id2 = UUID.randomUUID();
+        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(10)))
+            .thenReturn(java.util.List.of(id1, id2), java.util.List.of());
+        when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(0);
+        when(batchProcessor.deleteInstances(java.util.List.of(id1))).thenReturn(5);
+        when(batchProcessor.deleteInstances(java.util.List.of(id2))).thenReturn(7);
+        // Mutant shape (pre-fix single call with the whole batch): stubbed leniently
+        // so a regressed job fails the explicit never()-verify below instead of
+        // erroring on a strict-stubbing mismatch.
+        lenient().when(batchProcessor.deleteInstances(java.util.List.of(id1, id2))).thenReturn(12);
+
+        job.run();
+
+        verify(batchProcessor).deleteInstances(java.util.List.of(id1));
+        verify(batchProcessor).deleteInstances(java.util.List.of(id2));
+        verify(batchProcessor, never()).deleteInstances(java.util.List.of(id1, id2));
     }
 
     /**
