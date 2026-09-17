@@ -16,12 +16,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * WO-SEC-17 L3: LIKE wildcards must be escaped in search queries.
- * Real IT test on PostgreSQL — creates users with literal %, _, \ and searches.
+ * Real IT test on PostgreSQL - creates users with literal %, _, \ and searches.
  * Extends PostgresIT for correct @DynamicPropertySource (port 55432 on PG).
+ *
+ * WO-TEST-11: renamed from LikeEscapeIT to LikeEscapePgIT (failsafe only includes
+ * the PgIT-suffixed pattern, so the old name never ran in any pipeline) and repaired for the
+ * WO-ACL-19 contract (HUMAN users require an email). Usernames and all LIKE-escaping
+ * assertions are byte-identical to the original - only the required email and a
+ * complexity-compliant password (WO-SEC-46, min 12 chars) were added.
  */
-class LikeEscapeIT extends PostgresIT {
+class LikeEscapePgIT extends PostgresIT {
 
     @Autowired UiUserService userService;
+
+    // WO-SEC-46: "pass1234" (8 chars) is weak - min length is 12.
+    private static final String PASSWORD = "Str0ng!Test-Passw0rd";
+
+    private static CreateUiUserDTO newUser(String username, String email, String fullName) {
+        CreateUiUserDTO dto = new CreateUiUserDTO();
+        dto.setUsername(username);
+        dto.setPassword(PASSWORD);
+        dto.setEmail(email);
+        dto.setFullName(fullName);
+        dto.setRole("USER");
+        return dto;
+    }
 
     // --- Criterion #3: literal % in username — only exact match returned ---
 
@@ -31,18 +50,12 @@ class LikeEscapeIT extends PostgresIT {
         String literalPercentUser = "admin%" + uniqueSuffix;
         String normalUser = "adminA" + uniqueSuffix;
 
-        CreateUiUserDTO dto1 = new CreateUiUserDTO();
-        dto1.setUsername(literalPercentUser);
-        dto1.setPassword("pass1234");
-        dto1.setFullName("Percent User");
-        dto1.setRole("USER");
+        CreateUiUserDTO dto1 = newUser(literalPercentUser,
+            "like-pct-" + uniqueSuffix + "@example.com", "Percent User");
         userService.create(dto1);
 
-        CreateUiUserDTO dto2 = new CreateUiUserDTO();
-        dto2.setUsername(normalUser);
-        dto2.setPassword("pass1234");
-        dto2.setFullName("Normal User");
-        dto2.setRole("USER");
+        CreateUiUserDTO dto2 = newUser(normalUser,
+            "like-norm-a-" + uniqueSuffix + "@example.com", "Normal User");
         userService.create(dto2);
 
         UiUserQuery query = new UiUserQuery();
@@ -66,18 +79,12 @@ class LikeEscapeIT extends PostgresIT {
         String literalUnderscoreUser = "admin_" + uniqueSuffix;
         String normalUser = "adminB" + uniqueSuffix;
 
-        CreateUiUserDTO dto1 = new CreateUiUserDTO();
-        dto1.setUsername(literalUnderscoreUser);
-        dto1.setPassword("pass1234");
-        dto1.setFullName("Underscore User");
-        dto1.setRole("USER");
+        CreateUiUserDTO dto1 = newUser(literalUnderscoreUser,
+            "like-us-" + uniqueSuffix + "@example.com", "Underscore User");
         userService.create(dto1);
 
-        CreateUiUserDTO dto2 = new CreateUiUserDTO();
-        dto2.setUsername(normalUser);
-        dto2.setPassword("pass1234");
-        dto2.setFullName("Normal User");
-        dto2.setRole("USER");
+        CreateUiUserDTO dto2 = newUser(normalUser,
+            "like-norm-b-" + uniqueSuffix + "@example.com", "Normal User");
         userService.create(dto2);
 
         UiUserQuery query = new UiUserQuery();
@@ -100,11 +107,8 @@ class LikeEscapeIT extends PostgresIT {
         String uniqueSuffix = UUID.randomUUID().toString().substring(8);
         String backslashUser = "admin\\" + uniqueSuffix;
 
-        CreateUiUserDTO dto = new CreateUiUserDTO();
-        dto.setUsername(backslashUser);
-        dto.setPassword("pass1234");
-        dto.setFullName("Backslash User");
-        dto.setRole("USER");
+        CreateUiUserDTO dto = newUser(backslashUser,
+            "like-bs-" + uniqueSuffix + "@example.com", "Backslash User");
         userService.create(dto);
 
         UiUserQuery query = new UiUserQuery();
