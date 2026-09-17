@@ -30,6 +30,7 @@ class DomainEventEmitterTest {
     @Mock private OutboxRepository outboxRepository;
     @Mock private ProcessDefinitionRepository processDefinitionRepository;
     @Mock private tools.jackson.databind.ObjectMapper objectMapper;
+    @Mock private com.zorrodev.bpm.engine.tracing.TracingSupport tracing;
 
     @InjectMocks
     private DomainEventEmitter emitter;
