@@ -95,7 +95,17 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
         dto.setPassword("MyStr0ng!P@ssw0rd");
         dto.setFullName("REL-43 Race");
         dto.setEmail(email);
-        registrationService.register(dto, "10.0.0.1");
+        // WO-REL-43 раунд 2: уникальный IP на регистрацию (подсеть 10.11.x — больше
+        // ни один тестовый класс её не использует). Фиксированный 10.0.0.1 упирался
+        // в ipCapacity=20 общей PG-сюиты (бакет делится между классами в одном
+        // прогоне: EmailVerification/RegistrationAdmin тоже льют в 10.0.0.1) —
+        // мозаика падала 429 НЕ по своей причине. Детерминировано от tag+email
+        // (без Math.random — воспроизводимо, коллизия практически исключена:
+        // tag уникален на вызов внутри класса).
+        int h = Math.abs((tag + "|" + email).hashCode());
+        int ipOctet3 = h % 200 + 1;
+        int ipOctet4 = (h / 200) % 200 + 1;
+        registrationService.register(dto, "10.11." + ipOctet3 + "." + ipOctet4);
         UiUserEntity created = userRepository.findAll().stream()
             .filter(u -> email.equalsIgnoreCase(u.getEmail()))
             .findFirst().orElseThrow();
