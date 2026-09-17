@@ -45,6 +45,12 @@ public class FileServiceImpl implements FileService {
             Path dir = Paths.get(filesDir, part1, part2, part3, part4);
             Path file = dir.resolve(idStr);
 
+            // WO-QW-1 S-13: refuse symlinks (defense in depth — traversal is already
+            // closed by UUID-derived names, but a planted link inside filesDir would
+            // otherwise redirect the read outside it).
+            if (Files.isSymbolicLink(file)) {
+                throw new IOException("Refusing to read symlinked BPMN file for " + id);
+            }
             if (Files.exists(file)) {
                 String bpmn = Files.readString(file);
                 saveFile(id, bpmn);
