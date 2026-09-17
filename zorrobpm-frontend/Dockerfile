@@ -19,11 +19,12 @@ RUN npx playwright install --with-deps chromium
 
 COPY . .
 
-# WO-SEC-53 (A1): real .env.production was removed from git — its only load-bearing value
-# (VITE_API_URL=/) now lives here as build-time env (Vite exposes VITE_* from process.env).
-# The external prod proxy has no "/api" location, so the SPA must target the domain root;
-# the committed .env.production.example documents this for local/custom builds.
-ENV VITE_API_URL=/
+# WO-QW-1 F34: standalone topology support. Default build targets the external
+# prod proxy (VITE_API_URL=/ — domain root goes straight to the backend, no
+# "/api" location there). For a standalone `docker compose up` (frontend nginx
+# proxies /api/ → app:8080), build with --build-arg VITE_API_URL=/api.
+ARG VITE_API_URL=/
+ENV VITE_API_URL=${VITE_API_URL}
 
 # Vite picks up .env.production automatically in production mode (relative /api, origin-based redirect)
 RUN npm run build
