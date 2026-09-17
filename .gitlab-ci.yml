@@ -15,6 +15,7 @@ stages:
   - build
   - deploy
   - rollback
+  - mirror
 
 variables:
   COMPOSE_PROJECT_NAME: zorrobpm
@@ -582,3 +583,43 @@ rollback:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: manual
       allow_failure: true
+
+# ---------------------------------------------------------------------------
+# GitHub fork mirror — auto, on every push to master. Publishes a code-only
+# copy to the public fork (github.com/russell1996/zbpm) as ONE fresh squashed
+# commit each time — deliberately unrelated history, so GitHub's "Sync fork"
+# auto-merge stays permanently inert and can never pull upstream changes into
+# our fork (see governance memory public-github-fork-zbpm for the reasoning).
+# Excludes governance/, docs/audit/, AI-tooling config and internal-only CI
+# scripts, and redacts the internal prod host IP from docker-compose.yml.
+# Requires the masked/protected CI/CD variable GITHUB_SYNC_TOKEN (a
+# fine-grained GitHub PAT scoped to Contents: write on russell1996/zbpm only).
+# ---------------------------------------------------------------------------
+
+mirror:github:
+  stage: mirror
+  tags: [zbpm]
+  needs: []
+  variables:
+    GIT_STRATEGY: clone
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+  script:
+    - |
+      set -euo pipefail
+      WORKDIR=$(mktemp -d)
+      git archive HEAD | tar -x -C "$WORKDIR"
+      cd "$WORKDIR"
+      rm -rf governance docs/audit AGENTS.md .opencode .claude opencode.json
+      rm -f ci/cto-commit-guard.sh ci/cto-push-after-merge.sh ci/claude-hook-dispatch-check.sh \
+            ci/test-gate.sh ci/test-gate-selftest.sh ci/wo-report-gate.sh ci/sync-dispatch.sh \
+            ci/deploy-wait.sh
+      sed -i 's/10\.189\.131\.111/<internal-host>/g' docker-compose.yml
+      git init -q
+      git checkout -q -b main
+      git add -A
+      git -c user.name="zbpm-mirror" -c user.email="rasul.amirhan@gmail.com" \
+        commit -q -m "sync: code-only mirror from internal repo ($CI_COMMIT_SHORT_SHA)"
+      git remote add origin "https://x-access-token:${GITHUB_SYNC_TOKEN}@github.com/russell1996/zbpm.git"
+      git push --force origin main
+    - echo "Mirrored $CI_COMMIT_SHORT_SHA to github.com/russell1996/zbpm"
