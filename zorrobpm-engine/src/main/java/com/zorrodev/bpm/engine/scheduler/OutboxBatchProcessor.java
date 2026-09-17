@@ -71,12 +71,31 @@ public class OutboxBatchProcessor {
     @Transactional
     public void processBatch() {
         var pending = outboxRepository.findPendingBatch(batchSize);
-        // WO-PERF-8: periodic gauge sampling (read-only, no behavior change).
-        // (tick - 1) % N == 0 covers tick 1 by construction — no special-case branch.
+        // WO-QW-1 A-C-5b: gauge reads must not ride inside the writer transaction —
+        // defer to afterCommit (same precedent as DeploymentPostCommitActions).
+        // One registration per processBatch call at most: the sampling decision is
+        // made NOW (tick cadence), the reads run later. Combined with the cadence
+        // gate below, 30 ticks register exactly one afterCommit.
+        // Without an active synchronization (plain unit tests calling this directly)
+        // sample immediately — keeps those tests meaningful.
         long tick = tickCounter.incrementAndGet();
-        if (metricsSampleEvery <= 0 || (tick - 1) % metricsSampleEvery == 0) {
+        boolean sampledTick = metricsSampleEvery <= 0 || (tick - 1) % metricsSampleEvery == 0;
+        Runnable sampleGauges = () -> {
             bpmMetrics.setOutboxBacklog(outboxRepository.countPending());
             bpmMetrics.setOutboxQuarantine(outboxRepository.countQuarantined());
+        };
+        if (!sampledTick) {
+            // skipped tick: no reads now, no deferral either.
+        } else if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        sampleGauges.run();
+                    }
+                });
+        } else {
+            sampleGauges.run();
         }
         for (OutboxEntry entry : pending) {
             try {

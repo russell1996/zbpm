@@ -62,7 +62,17 @@ class OutboxMetricsSamplingTest {
     void firstTick_alwaysSamples() {
         ReflectionTestUtils.setField(processor, "metricsSampleEvery", 30);
 
-        processor.processBatch();
+        // Sampled ticks defer into afterCommit — fire the single registration.
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+            processor.processBatch();
+            verify(outboxRepository, never()).countPending();
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
 
         verify(outboxRepository, times(1)).countPending();
         verify(outboxRepository, times(1)).countQuarantined();
@@ -72,23 +82,35 @@ class OutboxMetricsSamplingTest {
     void gauges_sampledEvery30thTick_notEveryTick() {
         ReflectionTestUtils.setField(processor, "metricsSampleEvery", 30);
 
-        for (int i = 0; i < 30; i++) {
-            processor.processBatch();
+        // Same tx-synchronized harness as firstTick: sampling must be deferred
+        // into ONE registered afterCommit per sampled tick, never inline.
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+            for (int i = 0; i < 30; i++) {
+                processor.processBatch();
+            }
+            // Nothing sampled inline across 30 ticks…
+            verify(outboxRepository, never()).countPending();
+            verify(outboxRepository, never()).countQuarantined();
+            // …but exactly 1 deferral registered (tick 1 sampled, rest skipped).
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager
+                .getSynchronizations()).hasSize(1);
+            // Firing it performs the single sample.
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+            verify(outboxRepository, times(1)).countPending();
+            verify(outboxRepository, times(1)).countQuarantined();
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
         }
-        // Ticks 1..30: only tick 1 samples.
-        verify(outboxRepository, times(1)).countPending();
-        verify(outboxRepository, times(1)).countQuarantined();
-
-        processor.processBatch();
-        // Tick 31: second sample.
-        verify(outboxRepository, times(2)).countPending();
-        verify(outboxRepository, times(2)).countQuarantined();
     }
 
     @Test
     void sampleEveryZeroOrNegative_failOpen_samplesEveryTick() {
         ReflectionTestUtils.setField(processor, "metricsSampleEvery", 0);
 
+        // Immediate path (no synchronization): every tick samples.
         for (int i = 0; i < 3; i++) {
             processor.processBatch();
         }
