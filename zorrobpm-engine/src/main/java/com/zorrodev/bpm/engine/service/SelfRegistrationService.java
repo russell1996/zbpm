@@ -104,21 +104,23 @@ public class SelfRegistrationService {
 
     @Transactional
     public void verifyEmail(String rawToken) {
-        // 1. Same atomic single-use consume as INVITE/RESET (consumeByTokenHash + race).
-        // Invalid/expired/already-used → one phrasing, no enumeration.
-        UUID userId = invitationService.consumeEmailVerifyToken(rawToken);
-        // WO-REL-43: row-locked read (same precedent as WO-REL-39 F18 / WO-REL-40 B-5).
-        // Plain findById left a race: cleanup's per-row findByIdForUpdate + delete could
-        // land BETWEEN this read and the save below — then save() on the deleted row
-        // either no-ops silently or (worse) re-inserts it as a detached INSERT with
-        // stale data, resurrecting what cleanup just removed. FOR UPDATE serialises
-        // the two paths on the same row: whoever locks second sees the winner's state.
+        // WO-REL-43, раунд 2: порядок блокировок ЮЗЕР → ТОКЕН с обеих сторон.
+        // Раунд 1 брал lock на токене (consume-UPDATE) ДО лока на юзере, а cleanup
+        // идёт наоборот (findByIdForUpdate юзера, затем DELETE токенов) — инверсия
+        // порядка = deadlock при столкновении на одной строке (CTO: 4/4 на чистой
+        // БД, дебаг дословно в HOLD). Поэтому: read токена БЕЗ лока и без consume
+        // (peek), затем FOR UPDATE на юзере, и только потом атомарный consume
+        // (UPDATE токена). Single-use не ослаблен: решает consume-UPDATE —
+        // конкурент между peek и consume проигрывает (consumed==0 → reject).
+        UUID userId = invitationService.peekEmailVerifyTokenOwner(rawToken);
         UiUserEntity user = userRepository.findByIdForUpdate(userId)
-            // Cleanup already deleted the row AFTER the token was consumed above:
-            // the link is stale, not broken — an honest 4xx, never a raw 500 and
-            // never a silent success into nowhere (criterion 2).
+            // Cleanup уже удалил строку: ссылка устарела, не сломана — честная
+            // 4xx, никогда raw 500 и никогда тихий успех в никуда (критерий 2).
             .orElseThrow(() -> new EngineException(
                 "Registration expired — the verification link is no longer valid, please register again"));
+        // Атомарный single-use consume ПОСЛЕ лока: проигравший гонку падает той же
+        // фразой, что протухший токен (одна фраза, no enumeration).
+        invitationService.consumeEmailVerifyToken(rawToken);
 
         // 2. Idempotent status transition: only PENDING_EMAIL_VERIFICATION moves forward.
         // If already PENDING_APPROVAL/ACTIVE/REJECTED (repeat click, or admin raced ahead),

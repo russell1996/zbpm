@@ -77,6 +77,17 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
     private record StaleRegistration(UUID userId, String rawToken) {
     }
 
+    /** Deadlock-детектор (HOLD п.3): ищет «deadlock» по всей cause-цепочке. */
+    private static boolean containsDeadlock(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            String msg = cur.getMessage();
+            if (msg != null && msg.toLowerCase(java.util.Locale.ROOT).contains("deadlock")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private StaleRegistration registerStale(String tag) {
         String email = "rel43-" + tag + "-" + UUID.randomUUID().toString().substring(0, 8) + "@x.com";
         RegisterDTO dto = new RegisterDTO();
@@ -165,29 +176,19 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
 
     @Test
     void verifySurvivesDeleteRace_noResurrection() throws Exception {
-        // Без hook-парковки: мозаичный обстрел — десятки итераций, в каждой cleanup
-        // идёт СРАЗУ своим потоком, verify — прод-путем в главном. Без фикса
-        // (plain findById) delete неизбежно попадает в окно между read и save хотя
-        // бы в части итераций — строка либо пропадала после «успеха», либо
-        // воскресала detached-INSERT'ом. С фиксом (FOR UPDATE сериализует) все
-        // итерации детерминированно GREEN: ровно один исход на итерацию.
-        // NB: прямой deadlock (оба держат lock друг друга) здесь невозможен по
-        // построению — verify держит РОВНО ОДНУ строку (свою), cleanup берёт строки
-        // по одной в порядке индекса; lock-wait возможен (норма сериализации),
-        // deadlock — нет. Пойманный CannotAcquireLock в общей PG-сюите — соседний
-        // класс, державший ту же строку (порядок-зависимая изоляция, не дефект).
-        // P-59: в общей сюите тест обязан быть толерантен к lock-конфликту с
-        // соседом — 3 ретрая той же итерации, затем честный fail (не assumeFalse:
-        // тихий skip спрятал бы регрессию). Ретрай покрывает и lock-wait, и
-        // consumed-токен чужой итерации: consume откатился вместе с транзакцией —
-        // повторный verifyEmail валиден; чужой consumed-токен означает, что cleanup
-        // уже унёс строку — verify падает честной ошибкой, итерация ретраится
-        // новой регистрацией.
-        // P-10: агрессивная мозаика (15 итераций × до 3 регистраций) упирается в
-        // registration rate-limit общей БД (per-IP квота делится с соседними
-        // классами) — register падает 429, тест ложится НЕ по своей причине.
-        // 5 внешних итераций достаточно: окно гонки ловится мозаикой внутри
-        // итерации (cleanup стартует раньше verify), а не их числом.
+        // Без hook-парковки: мозаичный обстрел — в каждой итерации cleanup идёт
+        // СРАЗУ своим потоком, verify — прод-путем в главном. Без фикса раунда 1
+        // (plain findById) delete попадал в окно между read и save — POF мозаики
+        // REDил rollback'ом на итерации 2.
+        // Раунд 2 (HOLD CTO — реальный deadlock 4/4, не «невозможен по построению»:
+        // комментарий ниже в раунде 1 был фактической ошибкой — verify держал ДВЕ
+        // строки в порядке токен→юзер против юзер→токен у cleanup). Фикс — порядок
+        // ЮЗЕР→ТОКЕН с обеих сторон (peek → FOR UPDATE → consume). Deadlock ловится
+        // здесь КАК ОТДЕЛЬНЫЙ СЦЕНАРИЙ (п.3 HOLD): сообщение с «deadlock» внутри
+        // любого исключения → именованный fail «DEADLOCK», а не молча в ретрай.
+        // P-59: lock-wait с соседом общей сюиты — 3 ретрая новой регистрацией,
+        // затем честный fail (не assumeFalse). P-10: 5 внешних итераций (15 упирались
+        // в registration rate-limit общей БД — 429 не по своей причине).
         for (int iter = 0; iter < 5; iter++) {
             boolean done = false;
             for (int attempt = 0; attempt < 3 && !done; attempt++) {
@@ -204,15 +205,25 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
                 try {
                     registrationService.verifyEmail(stale.rawToken());
                     done = true;
-                } catch (org.springframework.dao.CannotAcquireLockException
-                    | com.zorrodev.bpm.contract.exception.EngineException e) {
-                    // Lock-конфликт с соседним классом общей сюиты ИЛИ честная
-                    // ошибка consume (чужой cleanup унёс строку быстрее) — ретрай
-                    // новой регистрацией (токен single-use, но consume откатился
-                    // вместе с транзакцией — повтор валиден; чужой consumed-токен
-                    // означает, что итерация уже не наша — начинаем новую).
+                } catch (Throwable e) {
+                    // Deadlock — отдельный именованный исход (HOLD п.3), НЕ ретрай:
+                    // выровненный порядок блокировок обязан исключить его структурно.
+                    if (containsDeadlock(e) || containsDeadlock(cleanupError.get())) {
+                        cleaner.join(30000);
+                        org.junit.jupiter.api.Assertions.fail(
+                            "DEADLOCK on iter " + iter + " attempt " + attempt
+                            + ": lock order user→token broken", e);
+                    }
+                    if (e instanceof org.springframework.dao.CannotAcquireLockException
+                        || e instanceof com.zorrodev.bpm.contract.exception.EngineException) {
+                        // Lock-wait с соседом общей сюиты ИЛИ честная ошибка consume
+                        // (чужой cleanup унёс строку быстрее) — ретрай новой
+                        // регистрацией.
+                        cleaner.join(30000);
+                        continue;
+                    }
                     cleaner.join(30000);
-                    continue;
+                    throw e;
                 }
                 cleaner.join(30000);
 

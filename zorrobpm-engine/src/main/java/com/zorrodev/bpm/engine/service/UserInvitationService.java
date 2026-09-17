@@ -183,6 +183,31 @@ public class UserInvitationService {
      */
     @Transactional
     public UUID consumeEmailVerifyToken(String rawToken) {
+        PasswordTokenEntity token = findValidEmailVerifyToken(rawToken);
+        UUID userId = token.getUserId();
+        int consumed = tokenRepository.consumeByTokenHash(tokenService.hashToken(rawToken), Instant.now());
+        if (consumed == 0) {
+            throw new EngineException("Invalid or expired token");
+        }
+        return userId;
+    }
+
+    /**
+     * WO-REL-43, раунд 2: read-only фаза {@link #consumeEmailVerifyToken} — SELECT +
+     * проверки БЕЗ consume-UPDATE (а значит, без row lock на токене). Нужна
+     * {@code SelfRegistrationService.verifyEmail}, чтобы взять row lock на
+     * пользователе ДО consume: иначе порядок блокировок verify (токен → юзер)
+     * инвертирован относительно cleanup (юзер → токен) = deadlock при столкновении
+     * на одной строке (поймано CTO живым прогоном 4/4, не теорией). Разбиение
+     * безопасно: single-use решает атомарный UPDATE в consume-фазе — второй
+     * конкурент между read и consume проигрывает (consumed==0 → reject), а не
+     * дублирует эффект. Package-visible (тот же пакет, least privilege).
+     */
+    UUID peekEmailVerifyTokenOwner(String rawToken) {
+        return findValidEmailVerifyToken(rawToken).getUserId();
+    }
+
+    private PasswordTokenEntity findValidEmailVerifyToken(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) throw new EngineException("Token is required");
         String hash = tokenService.hashToken(rawToken);
         PasswordTokenEntity token = tokenRepository.findByTokenHashAndUsedFalse(hash)
@@ -191,12 +216,7 @@ public class UserInvitationService {
         if (token.getExpiresAt().isBefore(Instant.now())) {
             throw new EngineException("Invalid or expired token");
         }
-        UUID userId = token.getUserId();
-        int consumed = tokenRepository.consumeByTokenHash(hash, Instant.now());
-        if (consumed == 0) {
-            throw new EngineException("Invalid or expired token");
-        }
-        return userId;
+        return token;
     }
 
     // WO-REG-2: package-visible for the future SelfRegistrationService (WO-REG-3) —
