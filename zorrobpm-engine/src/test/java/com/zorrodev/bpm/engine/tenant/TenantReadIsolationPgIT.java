@@ -121,12 +121,13 @@ public class TenantReadIsolationPgIT extends PostgresIT {
         // Activities (for incidents)
         actA = UUID.randomUUID(); actB = UUID.randomUUID();
         UUID tokA = UUID.randomUUID(), tokB = UUID.randomUUID();
+        // WO-OPS-12: fk_activities__token — токены раньше ссылающихся activities.
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", tokA);
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", tokB);
         jdbc.update("INSERT INTO activities (id,process_instance_id,bpmn_element_id,created_at,type,status,token) VALUES (?,?,?,?,?,?,?)",
             actA, piIdA, "startA", Timestamp.from(Instant.now()), "START_EVENT", "COMPLETED", tokA);
         jdbc.update("INSERT INTO activities (id,process_instance_id,bpmn_element_id,created_at,type,status,token) VALUES (?,?,?,?,?,?,?)",
             actB, piIdB, "startB", Timestamp.from(Instant.now()), "START_EVENT", "COMPLETED", tokB);
-        jdbc.update("INSERT INTO tokens (id) VALUES (?)", tokA);
-        jdbc.update("INSERT INTO tokens (id) VALUES (?)", tokB);
 
         // Incidents (linked via activityId)
         jdbc.update("INSERT INTO incidents (id, activity_id, message, created_at) VALUES (?,?,?,?)",

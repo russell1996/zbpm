@@ -61,10 +61,13 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "VALUES (?, ?, ?, ?, false)",
             piId, sharedPdId, ago(100), ago(50));
 
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID token1 = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", token1);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'startEvent', ?, ?, 'START_EVENT', 'COMPLETED', ?)",
-            actId, piId, ago(90), ago(80), UUID.randomUUID());
+            actId, piId, ago(90), ago(80), token1);
 
         UUID varId = UUID.randomUUID();
         jdbc.update(
@@ -105,10 +108,13 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "VALUES (?, ?, ?, NULL, false)",
             piId, sharedPdId, ago(100));
 
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID token2 = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", token2);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'svc1', ?, NULL, 'SERVICE_TASK', 'CREATED', ?)",
-            UUID.randomUUID(), piId, ago(90), UUID.randomUUID());
+            UUID.randomUUID(), piId, ago(90), token2);
 
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now().minusSeconds(86400), 100);
         assertThat(eligible).doesNotContain(piId);
@@ -127,10 +133,13 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
             piId, sharedPdId, ago(100), ago(50));
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID token3 = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", token3);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'usr1', ?, ?, 'USER_TASK', 'COMPLETED', ?)",
-            actId, piId, ago(90), ago(80), UUID.randomUUID());
+            actId, piId, ago(90), ago(80), token3);
         jdbc.update(
             "INSERT INTO user_tasks (id, process_instance_id, process_definition_id, bpmn_element_id, created_at, completed_at) " +
             "VALUES (?, ?, ?, 'userTask', ?, NULL)",
@@ -148,10 +157,13 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
             piId, sharedPdId, ago(100), ago(50));
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID token4 = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", token4);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'svc1', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
-            actId, piId, ago(90), ago(80), UUID.randomUUID());
+            actId, piId, ago(90), ago(80), token4);
         jdbc.update(
             "INSERT INTO service_tasks (id, process_instance_id, process_definition_id, bpmn_element_id, created_at, completed_at, retries_remaining) " +
             "VALUES (?, ?, ?, 'svcTask', ?, NULL, 3)",
@@ -210,14 +222,15 @@ public class RetentionBatchProcessorPgIT extends PostgresIT {
             "VALUES (?, ?, ?, ?, false)",
             piId, sharedPdId, ago(100), ago(50));
 
+        // WO-OPS-12: fk_activities__token — токен раньше ссылающейся activity.
+        jdbc.update(
+            "INSERT INTO tokens (id) VALUES (?)",
+            tokenId);
+
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'startEvent', ?, ?, 'START_EVENT', 'COMPLETED', ?)",
             actId, piId, ago(90), ago(80), tokenId);
-
-        jdbc.update(
-            "INSERT INTO tokens (id) VALUES (?)",
-            tokenId);
 
         List<UUID> eligible = batchProcessor.findEligibleInstances(Instant.now(), 100);
         assertThat(eligible).contains(piId);
