@@ -245,6 +245,17 @@ public interface DBService {
     /** Drops all variables of a local scope (e.g. an activity's IO-mapping inputs after it completes). */
     void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId);
 
+    /**
+     * WO-ENG-16 (WB-003): хронология изменений переменных инстанса (старые
+     * первые). Минимальный read-путь истории (WO допускает service-уровень).
+     */
+    List<com.zorrodev.bpm.engine.service.db.VariableHistoryEntry> getVariableHistory(
+        @NonNull UUID processInstanceId);
+
+    /** То же для одной переменной. */
+    List<com.zorrodev.bpm.engine.service.db.VariableHistoryEntry> getVariableHistory(
+        @NonNull UUID processInstanceId, String name);
+
     List<Activity> getActivitiesByTokenAndBpmnElementId(UUID tokenId, String incoming);
 
     ProcessDefinition getProcessDefinition(String key, Integer version);

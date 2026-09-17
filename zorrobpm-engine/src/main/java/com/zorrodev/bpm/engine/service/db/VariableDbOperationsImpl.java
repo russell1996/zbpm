@@ -95,10 +95,13 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
         "WHERE process_instance_id = ? AND name = ? AND scope_id IS NULL";
 
     private final VariableRepository variableRepository;
+    private final com.zorrodev.bpm.engine.repository.VariableHistoryRepository historyRepository;
     private final ExecutionContext executionContext;
     private final JdbcTemplate jdbcTemplate;
     private final DataSource dataSource;
     private final EntityManager entityManager;
+    /** WO-ENG-16: audit-след изменений (узкий бин, не метод этого класса — другой домен). */
+    private final VariableHistoryWriter historyWriter;
 
     private volatile String databaseProduct;
 
@@ -141,6 +144,10 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
             String kind = postgres
                 ? upsertPostgres(processInstanceId, scopeId, variable)
                 : upsertGuarded(processInstanceId, scopeId, variable);
+            // WO-ENG-16: история пишется при КАЖДОМ изменении (create и update) —
+            // единая точка, а не размазанный INSERT по вызывающим.
+            historyWriter.record(processInstanceId, scopeId, variable,
+                "create".equals(kind) ? VariableHistoryWriter.SOURCE_CREATE : VariableHistoryWriter.SOURCE_UPDATE);
             if ("update".equals(kind)) {
                 // WO-REL-31 CR-1 regression fix (AdHocJobWorkerIntegrationTests.
                 // staleJobCompletion_failsExplicitly): the upsert writes via JDBC,
@@ -262,6 +269,14 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
             // bypasses the persistence context via JDBC.
             evictVariable(processInstanceId, null, name);
         }
+        // WO-ENG-16: история фиксирует РЕЗУЛЬТИРУЮЩЕЕ значение (не дельту) —
+        // строго ПОСЛЕ evict выше, иначе pinpoint-read вернул бы stale
+        // managed-копию вместо слитого стейтментом массива.
+        ProcessVariable snapshot = new ProcessVariable();
+        snapshot.setName(name);
+        snapshot.setType(com.zorrodev.bpm.contract.model.ProcessVariableType.JSON);
+        snapshot.setValue(getVariableTextValue(processInstanceId, name).orElse("[" + jsonElement + "]"));
+        historyWriter.record(processInstanceId, null, snapshot, VariableHistoryWriter.SOURCE_APPEND);
         // WO-C8-29: same conditional tracking as a variable write.
         executionContext.recordVariableChange(name, kind);
     }
@@ -302,5 +317,24 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
     @Override
     public void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId) {
         variableRepository.deleteByProcessInstanceIdAndScopeId(processInstanceId, scopeId);
+        // WO-ENG-16: снос скоупа историю НЕ пишет — это lifecycle-мусор
+        // (временные ioMapping-входы), не бизнес-изменение значения.
+    }
+
+    @Override
+    public List<VariableHistoryEntry> getVariableHistory(@NonNull UUID processInstanceId) {
+        return historyRepository.findByProcessInstanceIdOrderByChangedAtAscIdAsc(processInstanceId)
+            .stream().map(VariableDbOperationsImpl::toEntry).toList();
+    }
+
+    @Override
+    public List<VariableHistoryEntry> getVariableHistory(@NonNull UUID processInstanceId, String name) {
+        return historyRepository.findByProcessInstanceIdAndNameOrderByChangedAtAscIdAsc(processInstanceId, name)
+            .stream().map(VariableDbOperationsImpl::toEntry).toList();
+    }
+
+    private static VariableHistoryEntry toEntry(com.zorrodev.bpm.engine.entity.VariableHistoryEntity e) {
+        return new VariableHistoryEntry(e.getId(), e.getProcessInstanceId(), e.getName(),
+            e.getTextValue(), e.getType(), e.getScopeId(), e.getSource(), e.getChangedAt());
     }
 }

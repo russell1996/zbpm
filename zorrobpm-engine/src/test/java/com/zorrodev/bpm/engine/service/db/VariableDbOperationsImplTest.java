@@ -40,6 +40,9 @@ class VariableDbOperationsImplTest {
     // WO-REL-31 CR-1 regression fix: JDBC-upsert evicts the managed copy after
     // "update" so same-tx JPA re-reads see the new value (mock — detach is no-op).
     @Mock private jakarta.persistence.EntityManager entityManager;
+    // WO-ENG-16: audit-след изменений (мок — поведение writer'а покрыто IT).
+    @Mock private VariableHistoryWriter historyWriter;
+    @Mock private com.zorrodev.bpm.engine.repository.VariableHistoryRepository historyRepository;
     @InjectMocks private VariableDbOperationsImpl db;
 
     private void givenProduct(String product) throws Exception {
@@ -86,6 +89,8 @@ class VariableDbOperationsImplTest {
         db.setVariables(pi, scope, List.of(pv("k", "v")));
         verify(jdbcTemplate).queryForObject(contains("ON CONFLICT"), eq(Boolean.class), any(), any(), any(), any(), any(), any());
         verify(executionContext).recordVariableChange("k", "create");
+        // WO-ENG-16: единая точка пишет историю тем же вызовом (источник CREATE).
+        verify(historyWriter).record(eq(pi), eq(scope), any(ProcessVariable.class), eq("CREATE"));
         verify(variableRepository, never()).saveAll(any());
     }
 
@@ -96,6 +101,8 @@ class VariableDbOperationsImplTest {
         when(jdbcTemplate.queryForObject(contains("ON CONFLICT"), eq(Boolean.class), any(), any(), any(), any(), any(), any())).thenReturn(Boolean.FALSE);
         db.setVariables(pi, List.of(pv("k", "v")));
         verify(executionContext).recordVariableChange("k", "update");
+        // WO-ENG-16: перезапись — источник UPDATE.
+        verify(historyWriter).record(eq(pi), eq(null), any(ProcessVariable.class), eq("UPDATE"));
         verify(variableRepository, never()).saveAll(any());
     }
 
