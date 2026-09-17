@@ -7,11 +7,10 @@ import java.util.Locale;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-QW-1 S-11: {@link UiUserServiceImpl#normalizeEmail} must be locale-stable.
- * The method deliberately uses plain {@code toLowerCase()} (symmetric with the
- * readers), so under tr_TR it must still produce the same bytes as ROOT for
- * protocol tokens. This pins the S-11 decision: if a future locale ever breaks
- * it, this test — not a prod incident — says so first.
+ * WO-QW-1 S-11: {@link UiUserServiceImpl#normalizeEmail} must use
+ * {@code Locale.ROOT} — plain {@code toLowerCase()} under tr_TR turns "MIKE"
+ * into "mıke" while PostgreSQL {@code lower()} (changeset 101) gives "mike",
+ * breaking the write/read contract. The dotted-I case below pins the fix.
  */
 class UiUserServiceImplLocaleTest {
 
