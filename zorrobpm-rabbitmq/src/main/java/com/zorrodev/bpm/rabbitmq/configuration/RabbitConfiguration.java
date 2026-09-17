@@ -41,7 +41,31 @@ public class RabbitConfiguration {
 
     @Bean
     MessageConverter messageConverter() {
-        return new JacksonJsonMessageConverter();
+        // WO-QW-1 S-7: narrow the allowlist to our own exchange package. The
+        // setter only ADDS (a literal "*" would first clear via set semantics —
+        // we never pass it); the constructor seeds java.util/java.lang. Same
+        // shape in HandlerAutoConfiguration. Both paths agree on trusted types.
+        JacksonJsonMessageConverter converter = new JacksonJsonMessageConverter();
+        setExchangeOnlyTrustedPackages(
+            (org.springframework.amqp.support.converter.DefaultJacksonJavaTypeMapper)
+                converter.getJavaTypeMapper());
+        return converter;
+    }
+
+    static void setExchangeOnlyTrustedPackages(
+            org.springframework.amqp.support.converter.DefaultJacksonJavaTypeMapper mapper) {
+        try {
+            java.lang.reflect.Field f =
+                org.springframework.amqp.support.converter.DefaultJacksonJavaTypeMapper.class
+                    .getDeclaredField("trustedPackages");
+            f.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Set<String> trusted = (java.util.Set<String>) f.get(mapper);
+            trusted.clear();
+            trusted.add("com.zorrodev.bpm.exchange");
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("WO-QW-1 S-7: cannot narrow AMQP trusted packages", e);
+        }
     }
 
     @Bean
@@ -93,7 +117,7 @@ public class RabbitConfiguration {
         Set<String> returnedIds = ConcurrentHashMap.newKeySet();
         RabbitTemplate template = new RabbitTemplate();
         configurer.configure(template, connectionFactory);
-        template.setMessageConverter(new JacksonJsonMessageConverter());
+        template.setMessageConverter(messageConverter());
         template.setConfirmCallback((correlationData, ack, cause) -> {
             if (correlationData == null || correlationData.getId() == null) {
                 log.warn("Broker confirm without CorrelationData id (ack={}, cause={})", ack, cause);

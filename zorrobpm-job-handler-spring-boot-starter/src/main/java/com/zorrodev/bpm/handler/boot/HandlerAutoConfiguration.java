@@ -28,14 +28,38 @@ public class HandlerAutoConfiguration {
 
     private ObjectMapper objectMapper;  // shared instance (CRIT-5)
 
+    /** WO-QW-1 S-7: package-visible for the unit test (same mechanism as RabbitConfiguration). */
+    static void setExchangeOnlyTrustedPackages(
+            org.springframework.amqp.support.converter.DefaultJackson2JavaTypeMapper mapper) {
+        try {
+            java.lang.reflect.Field f =
+                org.springframework.amqp.support.converter.DefaultJackson2JavaTypeMapper.class
+                    .getDeclaredField("trustedPackages");
+            f.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Set<String> trusted = (java.util.Set<String>) f.get(mapper);
+            trusted.clear();
+            trusted.add("com.zorrodev.bpm.exchange");
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("WO-QW-1 S-7: cannot narrow AMQP trusted packages", e);
+        }
+    }
+
     @PostConstruct
     public void init() {
         this.objectMapper = new ObjectMapper();
         Map<String, JobHandler> handlersMap = applicationContext.getBeansOfType(JobHandler.class);
         log.info("Found {} handlers", handlersMap.size());
 
-        // One-time converter config (CRIT-3: not in loop, CRIT-4: Jackson2 variant)
+        // One-time converter config (CRIT-3: not in loop, CRIT-4: Jackson2 variant).
+        // WO-QW-1 S-7: narrow the deserialization allowlist to our own exchange
+        // package (clear-then-add: the setter only adds, the constructor seeds
+        // java.util/java.lang — we never pass a literal "*"). Sibling path:
+        // RabbitConfiguration.messageConverter().
         Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter(objectMapper);
+        setExchangeOnlyTrustedPackages(
+            (org.springframework.amqp.support.converter.DefaultJackson2JavaTypeMapper)
+                converter.getJavaTypeMapper());
         connectionFactory.setMessageConverter(converter);
         rabbitTemplate.setMessageConverter(converter);
 

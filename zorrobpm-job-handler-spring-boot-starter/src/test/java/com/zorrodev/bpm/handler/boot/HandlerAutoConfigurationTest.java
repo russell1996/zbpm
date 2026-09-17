@@ -145,6 +145,44 @@ class HandlerAutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("WO-QW-1 S-7: converter allowlist is exactly com.zorrodev.bpm.exchange")
+    void converterTrustsOnlyExchangePackage() {
+        when(applicationContext.getBeansOfType(JobHandler.class))
+                .thenReturn(Map.of("handlerA", handlerA));
+        when(handlerA.getJob()).thenReturn("taskA");
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
+        when(amqpAdmin.getQueueInfo(anyString())).thenReturn(null);
+
+        configuration.init();
+
+        verify(connectionFactory, times(1)).setMessageConverter(converterCaptor.capture());
+        assertThat(converterCaptor.getValue()).isInstanceOf(Jackson2JsonMessageConverter.class);
+        Object mapper = ((Jackson2JsonMessageConverter) converterCaptor.getValue()).getJavaTypeMapper();
+        assertThat(mapper.getClass().getSimpleName()).isEqualTo("DefaultJackson2JavaTypeMapper");
+        @SuppressWarnings("unchecked")
+        java.util.Set<String> trusted = readTrustedPackages(mapper);
+        assertThat(trusted).containsExactly("com.zorrodev.bpm.exchange");
+    }
+
+    private static java.util.Set<String> readTrustedPackages(Object mapper) {
+        Class<?> c = mapper.getClass();
+        while (c != null) {
+            try {
+                java.lang.reflect.Field f = c.getDeclaredField("trustedPackages");
+                f.setAccessible(true);
+                @SuppressWarnings("unchecked")
+                java.util.Set<String> trusted = (java.util.Set<String>) f.get(mapper);
+                return trusted;
+            } catch (NoSuchFieldException e) {
+                c = c.getSuperclass();
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError("cannot read trustedPackages", e);
+            }
+        }
+        throw new AssertionError("trustedPackages field not found on " + mapper.getClass());
+    }
+
+    @Test
     @DisplayName("WO-REL-36: listener is a JobCompletionListener (split error handling + idempotent resend)")
     void listenerIsJobCompletionListener() {
         when(applicationContext.getBeansOfType(JobHandler.class))
