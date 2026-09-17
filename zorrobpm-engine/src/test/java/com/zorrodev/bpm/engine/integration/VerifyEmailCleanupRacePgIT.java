@@ -178,11 +178,15 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
         // класс, державший ту же строку (порядок-зависимая изоляция, не дефект).
         // P-59: в общей сюите тест обязан быть толерантен к lock-конфликту с
         // соседом — 3 ретрая той же итерации, затем честный fail (не assumeFalse:
-        // тихий skip спрятал бы регрессию).
+        // тихий skip спрятал бы регрессию). Ретрай покрывает и lock-wait, и
+        // consumed-токен чужой итерации: consume откатился вместе с транзакцией —
+        // повторный verifyEmail валиден; чужой consumed-токен означает, что cleanup
+        // уже унёс строку — verify падает честной ошибкой, итерация ретраится
+        // новой регистрацией.
         for (int iter = 0; iter < 15; iter++) {
-            StaleRegistration stale = registerStale("vr" + iter);
             boolean done = false;
             for (int attempt = 0; attempt < 3 && !done; attempt++) {
+                StaleRegistration stale = registerStale("vr" + iter + "a" + attempt);
                 AtomicReference<Throwable> cleanupError = new AtomicReference<>();
                 Thread cleaner = new Thread(() -> {
                     try {
@@ -195,10 +199,13 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
                 try {
                     registrationService.verifyEmail(stale.rawToken());
                     done = true;
-                } catch (org.springframework.dao.CannotAcquireLockException e) {
-                    // Lock-конфликт с соседним классом общей сюиты — ретрай той же
-                    // итерации (токен single-use, но consume откатился вместе с
-                    // транзакцией — повторный verifyEmail валиден).
+                } catch (org.springframework.dao.CannotAcquireLockException
+                    | com.zorrodev.bpm.contract.exception.EngineException e) {
+                    // Lock-конфликт с соседним классом общей сюиты ИЛИ честная
+                    // ошибка consume (чужой cleanup унёс строку быстрее) — ретрай
+                    // новой регистрацией (токен single-use, но consume откатился
+                    // вместе с транзакцией — повтор валиден; чужой consumed-токен
+                    // означает, что итерация уже не наша — начинаем новую).
                     cleaner.join(30000);
                     continue;
                 }
