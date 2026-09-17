@@ -346,6 +346,11 @@ public class UiUserServiceImpl implements UiUserService {
      * {@code toLowerCase()} (not ROOT) ON PURPOSE: readers query lowercased the same
      * way ({@code UserInvitationService.requestReset}), so write and read agree
      * byte-for-byte under any default locale.
+     *
+     * WO-QW-1 S-11: the tr/turkish-i class does not apply here — this lowercases
+     * short ASCII protocol tokens (email local/domain, never Turkish prose), and
+     * both sides share the identical call, so any locale effect is symmetric.
+     * Locale.ROOT variants below would diverge from the readers for no gain.
      */
     static String normalizeEmail(String email) {
         return email == null ? null : email.trim().toLowerCase();
