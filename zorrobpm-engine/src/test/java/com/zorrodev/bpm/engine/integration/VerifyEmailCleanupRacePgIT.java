@@ -187,62 +187,65 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
     @Test
     void verifySurvivesDeleteRace_noResurrection() throws Exception {
         // Без hook-парковки: мозаичный обстрел — в каждой итерации cleanup идёт
-        // СРАЗУ своим потоком, verify — прод-путем в главном. Без фикса раунда 1
-        // (plain findById) delete попадал в окно между read и save — POF мозаики
-        // REDил rollback'ом на итерации 2.
-        // Раунд 2 (HOLD CTO — реальный deadlock 4/4, не «невозможен по построению»:
-        // комментарий ниже в раунде 1 был фактической ошибкой — verify держал ДВЕ
-        // строки в порядке токен→юзер против юзер→токен у cleanup). Фикс — порядок
-        // ЮЗЕР→ТОКЕН с обеих сторон (peek → FOR UPDATE → consume). Deadlock ловится
-        // здесь КАК ОТДЕЛЬНЫЙ СЦЕНАРИЙ (п.3 HOLD): сообщение с «deadlock» внутри
-        // любого исключения → именованный fail «DEADLOCK», а не молча в ретрай.
-        // P-59: lock-wait с соседом общей сюиты — 3 ретрая новой регистрацией,
-        // затем честный fail (не assumeFalse). P-10: 5 внешних итераций (15 упирались
-        // в registration rate-limit общей БД — 429 не по своей причине).
+        // СРАЗУ своим потоком, verify — прод-путем в главном. Кто выиграет гонку —
+        // решает шедулинг, и ОБА исхода честные, поэтому тест принимает каждый
+        // детерминированно (никаких ретраев-лотерей):
+        //  - verify выиграл → строка PENDING_APPROVAL + emailVerifiedAt, cleanup
+        //    её не удалил (его re-check пропустил решённую строку);
+        //  - cleanup выиграл → verify падает понятной ошибкой ссылки, а строка
+        //    ОБЯЗАНА отсутствовать (удалена, не воскрешена позже).
+        // Без фикса раунда 1 (plain findById) delete попадал в окно между read и
+        // save — строка либо пропадала после «успеха», либо воскресала
+        // detached-INSERT'ом, и обе ветки ассертов REDили.
+        // Раунд 2 (HOLD CTO — реальный deadlock 4/4: verify держал ДВЕ строки в
+        // порядке токен→юзер против юзер→токен у cleanup). Фикс — порядок ЮЗЕР→ТОКЕН
+        // с обеих сторон (peek → FOR UPDATE → consume). Deadlock ловится здесь КАК
+        // ОТДЕЛЬНЫЙ СЦЕНАРИЙ (п.3 HOLD): сообщение с «deadlock» внутри любого
+        // исключения → именованный fail «DEADLOCK», а не молча в ретрай.
+        // P-10: 5 внешних итераций (15 упирались в registration rate-limit общей
+        // БД — 429 не по своей причине; плюс детерминированный IP в registerStale).
         for (int iter = 0; iter < 5; iter++) {
-            boolean done = false;
-            for (int attempt = 0; attempt < 3 && !done; attempt++) {
-                StaleRegistration stale = registerStale("vr" + iter + "a" + attempt);
-                AtomicReference<Throwable> cleanupError = new AtomicReference<>();
-                Thread cleaner = new Thread(() -> {
-                    try {
-                        cleanupJob.cleanExpired();
-                    } catch (Throwable t) {
-                        cleanupError.set(t);
-                    }
-                });
-                cleaner.start();
+            StaleRegistration stale = registerStale("vr" + iter);
+            AtomicReference<Throwable> cleanupError = new AtomicReference<>();
+            Thread cleaner = new Thread(() -> {
                 try {
-                    registrationService.verifyEmail(stale.rawToken());
-                    done = true;
-                } catch (Throwable e) {
-                    // Deadlock — отдельный именованный исход (HOLD п.3), НЕ ретрай:
-                    // выровненный порядок блокировок обязан исключить его структурно.
-                    if (containsDeadlock(e) || containsDeadlock(cleanupError.get())) {
-                        cleaner.join(30000);
-                        org.junit.jupiter.api.Assertions.fail(
-                            "DEADLOCK on iter " + iter + " attempt " + attempt
-                            + ": lock order user→token broken", e);
-                    }
-                    if (e instanceof org.springframework.dao.CannotAcquireLockException
-                        || e instanceof com.zorrodev.bpm.contract.exception.EngineException) {
-                        // Lock-wait с соседом общей сюиты ИЛИ честная ошибка consume
-                        // (чужой cleanup унёс строку быстрее) — ретрай новой
-                        // регистрацией.
-                        cleaner.join(30000);
-                        continue;
-                    }
+                    cleanupJob.cleanExpired();
+                } catch (Throwable t) {
+                    cleanupError.set(t);
+                }
+            });
+            cleaner.start();
+            try {
+                registrationService.verifyEmail(stale.rawToken());
+            } catch (com.zorrodev.bpm.contract.exception.EngineException e) {
+                // Cleanup выиграл честно: ошибка обязана быть про ссылку («expired» —
+                // обе фразы: «Invalid or expired token», «Registration expired — ...»),
+                // а строка — отсутствовать. Присутствующая строка + ошибка ссылки =
+                // баг (verify упал, не доведя дело до конца, а cleanup не удалил).
+                cleaner.join(30000);
+                assertThat(cleanupError.get()).isNull();
+                assertThat(e.getMessage()).as("честная ошибка ссылки").containsIgnoringCase("expired");
+                assertThat(userRepository.findById(stale.userId()))
+                    .as("cleanup выиграл — строки нет, воскрешения нет").isEmpty();
+                continue;
+            } catch (Throwable e) {
+                // Deadlock — отдельный именованный исход (HOLD п.3), НЕ ретрай:
+                // выровненный порядок блокировок обязан исключить его структурно.
+                if (containsDeadlock(e) || containsDeadlock(cleanupError.get())) {
                     cleaner.join(30000);
-                    throw e;
+                    org.junit.jupiter.api.Assertions.fail(
+                        "DEADLOCK on iter " + iter + ": lock order user→token broken", e);
                 }
                 cleaner.join(30000);
-
-                assertThat(cleanupError.get()).isNull();
-                UiUserEntity survivor = userRepository.findById(stale.userId()).orElseThrow();
-                assertThat(survivor.getRegistrationStatus()).isEqualTo("PENDING_APPROVAL");
-                assertThat(survivor.getEmailVerifiedAt()).isNotNull();
+                throw e;
             }
-            assertThat(done).as("итерация " + iter + " сошлась за 3 ретрая").isTrue();
+            cleaner.join(30000);
+
+            // Verify выиграл: строка PENDING_APPROVAL, cleanup её не удалил.
+            assertThat(cleanupError.get()).isNull();
+            UiUserEntity survivor = userRepository.findById(stale.userId()).orElseThrow();
+            assertThat(survivor.getRegistrationStatus()).isEqualTo("PENDING_APPROVAL");
+            assertThat(survivor.getEmailVerifiedAt()).isNotNull();
         }
     }
 
