@@ -180,14 +180,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     /**
      * WO-C8-16: true for plain end events and job-capable throw events carrying
-     * {@code zeebe:taskDefinition} (Camunda 8 "outbound message via worker" pattern:
-     * message throws/ends behave like service tasks and create jobs).
-     * HOLD (находка CTO): signal/link/escalation/compensation throws намеренно ВНЕ списка —
-     * их хендлеры несут внутреннюю семантику без воркерного эквивалента (broadcast сигнала,
-     * прыжок на link-catch, throwEscalation, запуск компенсаций), а завершение job'а уходит в
-     * общий proceedToOutgoing, минуя хендлер, — парковка молча роняла бы бросок (тихая регрессия
-     * класса A-2). Typed end events — вне списка по той же причине (немедленная семантика).
-     * Explicit type list: a future new event type defaults to sync (safe direction).
+     * {@code zeebe:taskDefinition} (Camunda 8 "outbound message via worker" pattern).
+     * Rationale for the explicit list (incl. HOLD-found exclusions): WO-C8-16.md.
      */
     private boolean isJobBasedEvent(BpmnElementModel element) {
         BpmnElementType type = element.getType();

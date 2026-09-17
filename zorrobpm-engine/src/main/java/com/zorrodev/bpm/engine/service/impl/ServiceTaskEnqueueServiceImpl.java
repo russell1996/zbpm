@@ -104,13 +104,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             return;
         }
 
-        // WO-C8-28: while an assigning listener is in flight, the dispatched job is the
-        // listener's. Same discipline as the creating/completing branches above
-        // (read-only for declaring elements; no real job to fail open into — corrupt
-        // index parks with an incident). Precedence is explicit first-valid-wins in
-        // lifecycle order; phases never overlap by construction (each opens only when
-        // no other phase is open — see the open sites), so order is a tiebreaker for
-        // corrupt states, not a silent assumption.
+        // WO-C8-28: in-flight assigning listener's job wins (first-valid-wins in
+        // lifecycle order; phases never overlap — see open sites). Details: WO-C8-28.md.
         List<ListenerModel> assigningListeners = elementSupport.userTaskAssigningListeners(element);
         Integer pendingAssigning = assigningListeners.isEmpty() ? null : dbService.getPendingAssigningListenerIndex(serviceTaskId);
         if (pendingAssigning != null && pendingAssigning >= 0 && pendingAssigning < assigningListeners.size()) {
