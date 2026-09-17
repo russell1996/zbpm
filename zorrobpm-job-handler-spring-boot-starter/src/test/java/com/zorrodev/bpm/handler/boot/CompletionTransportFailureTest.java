@@ -103,7 +103,7 @@ class CompletionTransportFailureTest {
         UUID taskId = UUID.randomUUID();
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         doThrow(new AmqpException("broker down")).when(rabbitTemplate)
-            .convertAndSend(anyString(), (Object) any());
+            .convertAndSend(anyString(), (Object) any(), any(org.springframework.amqp.core.MessagePostProcessor.class));
 
         // Фикс: исключение отправки обязано выйти наружу (NACK/retry входа).
         // Pre-fix: глотается внешним catch, тихое возвращение (AUTO-ack теряет результат).
@@ -118,7 +118,8 @@ class CompletionTransportFailureTest {
         listener.onMessage(message("not-json{{{", "corr-2", false));
 
         verify(handler, times(0)).handleJob(any());
-        verify(rabbitTemplate, times(0)).convertAndSend(anyString(), (Object) any());
+        verify(rabbitTemplate, times(0)).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class));
     }
 
     @Test
@@ -134,6 +135,75 @@ class CompletionTransportFailureTest {
         // Pre-fix: handler вызван дважды (эффект повторён). Post-fix: ровно один раз,
         // а completion отправлен дважды (второй — переотправка результата, не работы).
         verify(handler, times(1)).handleJob(any());
-        verify(rabbitTemplate, times(2)).convertAndSend(anyString(), (Object) any());
+        verify(rabbitTemplate, times(2)).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class));
+    }
+
+    /**
+     * WO-OBS-8: worker-hop trace linkage. Входящие AMQP-заголовки (traceparent +
+     * processInstanceId) должны выйти в completion С ТЕМ ЖЕ trace id — assert на
+     * КОНКРЕТНОЕ значение из входа (P-67: "что-то отправилось" — не доказательство).
+     * Мутация "не копировать заголовки" обязана валить оба assert'а ниже; мутация
+     * "не ставить MDC" — MDC-assert'ы (читаются LIVE внутри send — единственная точка,
+     * где MDC воркера жив).
+     */
+    @Test
+    void obs8_incomingTraceHeaders_forwardedIntoCompletionWithSameTraceId() {
+        UUID taskId = UUID.randomUUID();
+        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        String traceId = "0af7651916cd43dd8448eb211c80319c";
+        String traceParent = "00-" + traceId + "-b7ad6b7169203331-01";
+
+        MessageProperties props = new MessageProperties();
+        props.setCorrelationId("corr-obs8");
+        props.setHeader("traceparent", traceParent);
+        props.setHeader("processInstanceId", "pi-obs8");
+        Message incoming = new Message(jobJson(taskId).getBytes(StandardCharsets.UTF_8), props);
+
+        var seenTraceId = new String[1];
+        var seenPi = new String[1];
+        org.mockito.stubbing.Answer<Object> captureMdc = invocation -> {
+            seenTraceId[0] = org.slf4j.MDC.get("traceId");
+            seenPi[0] = org.slf4j.MDC.get("processInstanceId");
+            return null;
+        };
+        // doAnswer на 3-arg перегрузку (именно её зовёт прод-код после OBS-8).
+        org.mockito.Mockito.doAnswer(captureMdc).when(rabbitTemplate)
+            .convertAndSend(anyString(), (Object) any(),
+                any(org.springframework.amqp.core.MessagePostProcessor.class));
+
+        listener.onMessage(incoming);
+
+        // MDC воркера — тот же trace id, что вошёл (не свежий UUID), плюс PI.
+        assertThat(seenTraceId[0]).isEqualTo(traceId);
+        assertThat(seenPi[0]).isEqualTo("pi-obs8");
+
+        // Тело completion несёт verbatim-forward для engine-стороны.
+        ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
+        ArgumentCaptor<org.springframework.amqp.core.MessagePostProcessor> mppCaptor =
+            ArgumentCaptor.forClass(org.springframework.amqp.core.MessagePostProcessor.class);
+        verify(rabbitTemplate).convertAndSend(anyString(), bodyCaptor.capture(), mppCaptor.capture());
+        assertThat(bodyCaptor.getValue()).isInstanceOf(com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
+        com.zorrodev.bpm.exchange.ServiceTaskCompleteData sent =
+            (com.zorrodev.bpm.exchange.ServiceTaskCompleteData) bodyCaptor.getValue();
+        assertThat(sent.getTraceParent()).isEqualTo(traceParent);
+        assertThat(sent.getProcessInstanceId()).isEqualTo("pi-obs8");
+
+        // И AMQP-заголовки completion — тот же traceparent (engine-сторона читает их первой).
+        org.springframework.amqp.core.Message outMessage =
+            new org.springframework.amqp.core.Message("x".getBytes(),
+                new MessageProperties());
+        try {
+            org.springframework.amqp.core.Message processed =
+                mppCaptor.getValue().postProcessMessage(outMessage);
+            assertThat(processed.getMessageProperties().getHeaders())
+                .containsEntry("traceparent", traceParent)
+                .containsEntry("processInstanceId", "pi-obs8");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        // Гигиена потока контейнера: чужой MDC не утёк наружу.
+        assertThat(org.slf4j.MDC.get("traceId")).isNull();
+        assertThat(org.slf4j.MDC.get("processInstanceId")).isNull();
     }
 }
