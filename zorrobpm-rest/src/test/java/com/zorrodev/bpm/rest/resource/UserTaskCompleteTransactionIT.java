@@ -6,10 +6,12 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
+import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
@@ -40,12 +42,14 @@ class UserTaskCompleteTransactionIT {
     @Autowired private ProcessInstanceRepository processInstanceRepository;
     @Autowired private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired private ActivityRepository activityRepository;
+    @Autowired private TokenRepository tokenRepository;
     @MockitoBean private AuditLogService auditLogService;
     @MockitoBean private RuntimeOperationSupport runtimeOperationSupport;
     @MockitoBean private AuthorizationService authorizationService;
     @MockitoBean private BpmnService bpmnService;
 
     private UUID cleanupTask, cleanupPi, cleanupPd;
+    private UUID cleanupToken1, cleanupToken2;
 
     @AfterEach
     void cleanup() {
@@ -53,9 +57,21 @@ class UserTaskCompleteTransactionIT {
             try { userTaskRepository.deleteById(cleanupTask); } catch (Exception ignored) {}
             try { activityRepository.deleteById(cleanupTask); } catch (Exception ignored) {}
         }
+        if (cleanupToken1 != null) { try { tokenRepository.deleteById(cleanupToken1); } catch (Exception ignored) {} }
+        if (cleanupToken2 != null) { try { tokenRepository.deleteById(cleanupToken2); } catch (Exception ignored) {} }
         if (cleanupPi != null) processInstanceRepository.deleteById(cleanupPi);
         if (cleanupPd != null) processDefinitionRepository.deleteById(cleanupPd);
         cleanupTask = cleanupPi = cleanupPd = null;
+        cleanupToken1 = cleanupToken2 = null;
+    }
+
+    // WO-OPS-12: fk_activities__token — activity ссылается только на существующий token.
+    private UUID newToken() {
+        UUID tokenId = UUID.randomUUID();
+        TokenEntity token = new TokenEntity();
+        token.setId(tokenId);
+        tokenRepository.saveAndFlush(token);
+        return tokenId;
     }
 
     @Test
@@ -85,7 +101,8 @@ class UserTaskCompleteTransactionIT {
         ActivityEntity activity = new ActivityEntity();
         activity.setId(taskId);
         activity.setProcessInstanceId(piId);
-        activity.setToken(UUID.randomUUID());
+        cleanupToken1 = newToken();
+        activity.setToken(cleanupToken1);
         activity.setBpmnElementId("task-" + taskId.toString().substring(0, 8));
         activity.setCreatedAt(Instant.now());
         activity.setType(com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK);
@@ -162,7 +179,8 @@ class UserTaskCompleteTransactionIT {
         ActivityEntity activity2 = new ActivityEntity();
         activity2.setId(taskId);
         activity2.setProcessInstanceId(piId);
-        activity2.setToken(UUID.randomUUID());
+        cleanupToken2 = newToken();
+        activity2.setToken(cleanupToken2);
         activity2.setBpmnElementId("task-" + taskId.toString().substring(0, 8));
         activity2.setCreatedAt(Instant.now());
         activity2.setType(com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.USER_TASK);

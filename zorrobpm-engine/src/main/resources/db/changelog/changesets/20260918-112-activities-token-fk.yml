@@ -1,0 +1,55 @@
+databaseChangeLog:
+  - logicalFilePath: 20260918-112
+  - changeSet:
+      id: 20260918-112
+      author: zorrodev
+      comment: >-
+        WO-OPS-12 (D-1): FK activities.token → tokens.id. До этого activities.token
+        (NOT NULL с 20260316-013) никак не был связан с tokens.id — обход retention
+        оставлял сирот молча. Политика удаления — осознанно «только через retention»,
+        БЕЗ DB-CASCADE: направление FK — activities→tokens (activity — ребёнок), CASCADE
+        на нём означал бы «удалил токен → молча снёс активности», что противоречит смыслу
+        retention (RetentionBatchProcessor.deleteInstances удаляет токены ПОСЛЕДНИМИ и только
+        собранные из activities того же батча). RESTRICT (дефолт, как все существующие FK
+        проекта) совместим с порядком retention — activities удаляются раньше токенов — и
+        превращает будущий обход retention в громкую FK-ошибку вместо тихих сирот.
+        DB-CASCADE на activities.process_instance_id сознательно НЕ вводится: у tokens нет
+        process_instance_id для прямого каскада, а каскад от инстанса позволил бы прямому
+        DELETE FROM process_instances снести детей живого инстанса в обход safety-предикатов
+        retention (только COMPLETED/CANCELLED, без незавершённых tasks). user_tasks.id →
+        activities.id в этот срез НЕ входит (решение CTO по G-C эскалации).
+      preConditions:
+        - onFail: HALT
+        - onError: HALT
+        - onFailMessage: >-
+            WO-OPS-12: в activities есть строки с token, которого нет в tokens.id —
+            FK fk_activities__token не применён. Сироты разбираются отдельным решением,
+            молча не удаляются (expand/contract-дисциплина).
+        - tableExists:
+            tableName: activities
+        - tableExists:
+            tableName: tokens
+        - sqlCheck:
+            expectedResult: 0
+            sql: >-
+              SELECT COUNT(*) FROM activities a LEFT JOIN tokens t ON t.id = a.token
+              WHERE a.token IS NOT NULL AND t.id IS NULL
+      changes:
+        - addForeignKeyConstraint:
+            baseTableName: activities
+            baseColumnNames: token
+            referencedTableName: tokens
+            referencedColumnNames: id
+            constraintName: fk_activities__token
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON CONSTRAINT fk_activities__token ON activities IS 'WO-OPS-12: RESTRICT (дефолт, не CASCADE) — activity ребёнок токена; CASCADE снёс бы активности при удалении токена, а retention удаляет токены последними. Обход retention теперь падает громко, а не оставляет сирот';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON CONSTRAINT fk_activities__token IS 'WO-OPS-12: RESTRICT (дефолт, не CASCADE) — activity ребёнок токена; CASCADE снёс бы активности при удалении токена, а retention удаляет токены последними. Обход retention теперь падает громко, а не оставляет сирот';
+      rollback:
+        - dropForeignKeyConstraint:
+            baseTableName: activities
+            constraintName: fk_activities__token
