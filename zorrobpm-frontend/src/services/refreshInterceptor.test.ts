@@ -251,10 +251,11 @@ describe('WO-QW-1 item 12: onUnauthorized fires at most once per refresh cycle',
   })
 
   it('N parallel retries with repeated 401s call onUnauthorized exactly once', async () => {
-    const adapterSpy = vi.fn(async (cfg: { url?: string; _retry?: boolean }) => {
+    type Cfg = { url?: string } & Record<string, unknown>
+    const adapterSpy = vi.fn(async (cfg: Cfg) => {
       if (cfg.url === '/auth/refresh') return { data: { token: 'new-token' }, status: 200 }
       // every retry 401s again (dead auth)
-      throw make401Error({ url: cfg.url, _retry: true })
+      throw make401Error({ url: cfg.url, _retry: true } as Partial<InternalAxiosRequestConfig>)
     })
     ;(cycleInstance.defaults as Record<string, unknown>).adapter = adapterSpy
 
