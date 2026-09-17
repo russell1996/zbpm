@@ -13,7 +13,6 @@ import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ScriptService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
 import org.camunda.feel.api.FeelEngineApi;
@@ -36,7 +35,6 @@ import java.util.UUID;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ElementSupport {
 
     private final DBService dbService;
@@ -48,9 +46,22 @@ public class ElementSupport {
      * Business timezone for interpreting zone-naive FEEL date/time values.
      * Configured via {@code zorrobpm.business-timezone} (default {@code Asia/Almaty}).
      * WO-ENG-4: zone-naive LocalDateTime/LocalDate is interpreted in this zone rather than UTC.
+     *
+     * WO-QW-1 A-C-5e: final + explicit constructor (was non-final with
+     * {@code @RequiredArgsConstructor}, so the field silently stayed null outside
+     * Spring). The @Value default below is the single source of the default.
      */
-    @Value("${zorrobpm.business-timezone:Asia/Almaty}")
-    private ZoneId businessZone;
+    private final ZoneId businessZone;
+
+    public ElementSupport(DBService dbService, ScriptService scriptService,
+            FeelEngineApi feelEngineApi, tools.jackson.databind.ObjectMapper objectMapper,
+            @Value("${zorrobpm.business-timezone:Asia/Almaty}") ZoneId businessZone) {
+        this.dbService = dbService;
+        this.scriptService = scriptService;
+        this.feelEngineApi = feelEngineApi;
+        this.objectMapper = objectMapper;
+        this.businessZone = businessZone;
+    }
 
     /**
      * Locks the activity's process instance and returns the activity in ONE
