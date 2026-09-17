@@ -69,10 +69,13 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             piId, sharedPdId, ago(100), ago(50));
 
         // Completed activity
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID hostToken1 = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", hostToken1);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'hostActivity', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
-            actId, piId, ago(90), ago(80), UUID.randomUUID());
+            actId, piId, ago(90), ago(80), hostToken1);
 
         // Fired boundary timer job (boundaryElementId != NULL, fired = true)
         UUID timerId = UUID.randomUUID();
@@ -108,10 +111,13 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
             piId, sharedPdId, ago(100), ago(50));
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID hostToken2 = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", hostToken2);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'hostActivity', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
-            actId, piId, ago(90), ago(80), UUID.randomUUID());
+            actId, piId, ago(90), ago(80), hostToken2);
 
         // REAL production path: 6-arg overload persists processInstanceId (the WO-PERF-3 fix)
         UUID timerId = dbService.createTimerJob(
@@ -151,10 +157,13 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             piId, sharedPdId, ago(100));
 
         // Running activity
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID runToken = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", runToken);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'svc1', ?, NULL, 'SERVICE_TASK', 'CREATED', ?)",
-            actId, piId, ago(90), UUID.randomUUID());
+            actId, piId, ago(90), runToken);
 
         // Active (unfired) timer job
         UUID timerId = UUID.randomUUID();
@@ -236,10 +245,13 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
             piIdA, sharedPdId, ago(100), ago(50));
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID hostTokenA = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", hostTokenA);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'hostActivity', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
-            actIdA, piIdA, ago(90), ago(80), UUID.randomUUID());
+            actIdA, piIdA, ago(90), ago(80), hostTokenA);
         UUID timerIdA = UUID.randomUUID();
         jdbc.update(
             "INSERT INTO timer_jobs (id, activity_id, process_instance_id, boundary_element_id, due_at, fired, created_at) " +
@@ -252,10 +264,13 @@ public class TimerJobsRetentionPgIT extends PostgresIT {
             "INSERT INTO process_instances (id, process_definition_id, started_at, completed_at, cancelled) " +
             "VALUES (?, ?, ?, ?, false)",
             piIdB, sharedPdId, ago(100), ago(50));
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID hostTokenB = UUID.randomUUID();
+        jdbc.update("INSERT INTO tokens (id) VALUES (?)", hostTokenB);
         jdbc.update(
             "INSERT INTO activities (id, process_instance_id, bpmn_element_id, created_at, completed_at, type, status, token) " +
             "VALUES (?, ?, 'hostActivity', ?, ?, 'SERVICE_TASK', 'COMPLETED', ?)",
-            actIdB, piIdB, ago(90), ago(80), UUID.randomUUID());
+            actIdB, piIdB, ago(90), ago(80), hostTokenB);
         UUID timerIdB = UUID.randomUUID();
         jdbc.update(
             "INSERT INTO timer_jobs (id, activity_id, process_instance_id, boundary_element_id, due_at, fired, created_at) " +

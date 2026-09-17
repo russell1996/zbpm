@@ -12,8 +12,10 @@ import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
+import com.zorrodev.bpm.engine.entity.TokenEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
@@ -55,6 +57,7 @@ class RuntimeSupportKeyResolutionIntegrationTests {
     @Autowired private ProcessMemberRepository processMemberRepository;
     @Autowired private VariableRepository variableRepository;
     @Autowired private UiUserRepository uiUserRepository;
+    @Autowired private TokenRepository tokenRepository;
     @Autowired private DBService dbService;
     @Autowired private RuntimeSupportService support;
 
@@ -81,7 +84,12 @@ class RuntimeSupportKeyResolutionIntegrationTests {
         ActivityEntity a = new ActivityEntity();
         a.setId(UUID.randomUUID());
         a.setProcessInstanceId(processInstanceId);
-        a.setToken(UUID.randomUUID());
+        // WO-OPS-12: fk_activities__token — ссылаемся только на существующий token.
+        UUID tokenId = UUID.randomUUID();
+        TokenEntity token = new TokenEntity();
+        token.setId(tokenId);
+        tokenRepository.save(token);
+        a.setToken(tokenId);
         a.setBpmnElementId("svc");
         a.setStatus(ActivityStatus.CREATED);
         a.setType(BpmnElementType.SERVICE_TASK);
