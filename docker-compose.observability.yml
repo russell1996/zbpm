@@ -16,6 +16,11 @@ services:
       - ./ci/observability/scrape-token:/etc/prometheus/scrape-token
     environment:
       SCRAPE_TOKEN_FILE: /etc/prometheus/scrape-token
+      # WO-OBS-8: OTel SDK is no-op WITHOUT this endpoint (prod/CI default: unset
+      # → spans are minted and dropped, zero export traffic). The dev contour sets it
+      # to the overlay Jaeger below (OTLP/HTTP :4318); sampling likewise env-only
+      # (OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG) — no repo defaults changed.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -153,9 +158,35 @@ services:
     deploy:
       resources:
         limits:
-          memory: 64M
+          memory: 256M
         reservations:
-          memory: 16M
+          memory: 32M
+    # no ports published — access via Grafana (datasource proxy) only
+
+  # WO-OBS-8: Jaeger v2 all-in-one — trace backend for the DEV contour only
+  # (criterion 1: one trace ID across ≥2 service tasks). Prod trace storage is
+  # out of scope (separate product-owner decision). OTLP/HTTP :4318 (app →
+  # collector, also set as OTEL_EXPORTER_OTLP_ENDPOINT on `app` below when this
+  # overlay is active); UI :16686 reached via the Grafana datasource proxy or
+  # direct port (dev box only).
+  # Image + digest pinned like the main compose (postgres/rabbitmq precedent);
+  # digest verified 2026-09-18 via `docker pull` (single-arch digest).
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0@sha256:b585df1b6299bbbd16bf7c679da30389349736e4b6bc8f4f500142a75bf26ca8
+    container_name: zorrobpm-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:16686:16686"
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
 
 volumes:
   prometheus-data:
