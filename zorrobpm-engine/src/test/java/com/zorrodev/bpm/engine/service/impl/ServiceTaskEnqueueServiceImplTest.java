@@ -56,7 +56,7 @@ class ServiceTaskEnqueueServiceImplTest {
     private ElementSupport realElementSupport() {
         return new ElementSupport(
             dbService, mock(ScriptService.class), mock(org.camunda.feel.api.FeelEngineApi.class),
-            new tools.jackson.databind.ObjectMapper());
+            new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"));
     }
 
     @Test

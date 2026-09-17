@@ -65,7 +65,7 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
         }
 
         // WO-SEC-31c: blocklist check
-        if (WEAK_PASSWORD_BLOCKLIST.contains(password.toLowerCase())) {
+        if (WEAK_PASSWORD_BLOCKLIST.contains(password.toLowerCase(java.util.Locale.ROOT))) {
             throw new IllegalStateException(
                 "FATAL: zorrobpm.security.default-admin-password is a known weak password. "
                 + "Choose a strong, unique password for production.");
@@ -81,6 +81,6 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
     public static boolean isWeak(String password) {
         if (password == null) return true;
         if (password.length() < MIN_PASSWORD_LENGTH) return true;
-        return WEAK_PASSWORD_BLOCKLIST.contains(password.toLowerCase());
+        return WEAK_PASSWORD_BLOCKLIST.contains(password.toLowerCase(java.util.Locale.ROOT));
     }
 }

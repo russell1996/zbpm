@@ -164,7 +164,7 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
     public List<ProcessSubmissionDTO> listPending(String status) {
         String effective = (status == null || status.isBlank())
             ? ProcessSubmissionStatus.PENDING.name()
-            : status.trim().toUpperCase();
+            : status.trim().toUpperCase(java.util.Locale.ROOT);
         if ("ALL".equals(effective)) {
             return submissionRepository.findAllByOrderBySubmittedAtAsc().stream()
                 .map(this::toDTO)

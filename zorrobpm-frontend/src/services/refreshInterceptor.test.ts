@@ -224,3 +224,58 @@ describe('createRefreshInterceptor', () => {
     expect(adapterSpy).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('WO-QW-1 item 12: onUnauthorized fires at most once per refresh cycle', () => {
+  let cycleInstance: ReturnType<typeof axios.create>
+  let cycleCallbacks: AuthCallbacks
+
+  beforeEach(() => {
+    cycleInstance = axios.create({ baseURL: 'http://localhost' })
+    cycleCallbacks = {
+      onPasswordChangeRequired: vi.fn(),
+      onUnauthorized: vi.fn(),
+    }
+    createRefreshInterceptor(cycleInstance, cycleCallbacks)
+  })
+
+  it('refresh-401 path calls onUnauthorized exactly once despite nested + catch paths', async () => {
+    // /auth/refresh itself 401s: the nested-interceptor path (:61) AND the
+    // initiator catch path (:91) both fire — the dedup flag must collapse them.
+    const adapterSpy = vi.fn(async (cfg: { url?: string }) => {
+      throw make401Error({ url: cfg.url || '/auth/refresh' })
+    })
+    ;(cycleInstance.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    await expect(cycleInstance.get('/process-instances')).rejects.toThrow()
+    expect(cycleCallbacks.onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('N parallel retries with repeated 401s call onUnauthorized exactly once', async () => {
+    type Cfg = { url?: string } & Record<string, unknown>
+    const adapterSpy = vi.fn(async (cfg: Cfg) => {
+      if (cfg.url === '/auth/refresh') return { data: { token: 'new-token' }, status: 200 }
+      // every retry 401s again (dead auth)
+      throw make401Error({ url: cfg.url, _retry: true } as Partial<InternalAxiosRequestConfig>)
+    })
+    ;(cycleInstance.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    const results = await Promise.allSettled([
+      cycleInstance.get('/a'),
+      cycleInstance.get('/b'),
+      cycleInstance.get('/c'),
+    ])
+    expect(results.every((r) => r.status === 'rejected')).toBe(true)
+    expect(cycleCallbacks.onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('separate dead cycles still notify each time (flag resets per round)', async () => {
+    const adapterSpy = vi.fn(async (cfg: { url?: string }) => {
+      throw make401Error({ url: cfg.url || '/x' })
+    })
+    ;(cycleInstance.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    await expect(cycleInstance.get('/first')).rejects.toThrow()
+    await expect(cycleInstance.get('/second')).rejects.toThrow()
+    expect(cycleCallbacks.onUnauthorized).toHaveBeenCalledTimes(2)
+  })
+})

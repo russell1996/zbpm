@@ -152,7 +152,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             // STEP 4: per-account bucket (disabled when accountCapacity == 0).
             String username = extractUsername(wrappedRequest);
             if (accountCapacity > 0 && username != null && !username.isBlank()) {
-                String acctKey = "login:account:" + username.toLowerCase();
+                String acctKey = "login:account:" + username.toLowerCase(java.util.Locale.ROOT);
                 long acctRetryAfter = pgRateLimiter.tryConsume(acctKey, accountCapacity, windowSeconds);
                 if (acctRetryAfter > 0) {
                     // Rollback IP bucket token — request rejected by account limit, not IP limit

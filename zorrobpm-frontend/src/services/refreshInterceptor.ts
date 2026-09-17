@@ -21,6 +21,17 @@ export interface AuthCallbacks {
  */
 export function createRefreshInterceptor(instance: AxiosInstance, callbacks: AuthCallbacks): void {
   let isRefreshing = false
+  // WO-QW-1 (item 12): onUnauthorized must fire at most once per refresh cycle —
+  // today the outer guard (interceptors.ts: `if (auth.isAuthenticated)`) makes the
+  // double-call a no-op, but that must not be the only thing standing between us
+  // and a double logout/side-effect if the guard is ever weakened. The flag resets
+  // when a refresh round starts, so consecutive dead cycles still logout each time.
+  let unauthorizedNotified = false
+  function notifyUnauthorizedOnce(): void {
+    if (unauthorizedNotified) return
+    unauthorizedNotified = true
+    callbacks.onUnauthorized()
+  }
   let pendingQueue: Array<{
     resolve: (token: string) => void
     reject: (err: unknown) => void
@@ -58,7 +69,7 @@ export function createRefreshInterceptor(instance: AxiosInstance, callbacks: Aut
       if (error.response?.status !== 401 || isAuthEndpoint || originalRequest?._retry) {
         // After refresh failed or 401 on auth endpoint, sign out (but not for login itself)
         if (error.response?.status === 401 && !url.includes('/auth/login')) {
-          callbacks.onUnauthorized()
+          notifyUnauthorizedOnce()
         }
         return Promise.reject(error)
       }
@@ -78,6 +89,7 @@ export function createRefreshInterceptor(instance: AxiosInstance, callbacks: Aut
 
       isRefreshing = true
       originalRequest._retry = true
+      unauthorizedNotified = false
 
       try {
         // Attempt refresh (cookie is sent automatically with withCredentials: true)
@@ -88,7 +100,7 @@ export function createRefreshInterceptor(instance: AxiosInstance, callbacks: Aut
         processPendingQueue(refreshError, null)
         // Refresh failed — sign out (but not for login itself)
         if (!url.includes('/auth/login')) {
-          callbacks.onUnauthorized()
+          notifyUnauthorizedOnce()
         }
         return Promise.reject(error)
       } finally {

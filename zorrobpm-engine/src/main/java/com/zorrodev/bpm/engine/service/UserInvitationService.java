@@ -89,7 +89,7 @@ public class UserInvitationService {
         // WO-ACL-19 (P1): throttle admin-initiated resets on the recipient email, reusing the
         // same bucket as the public "forgot password" flow so an admin cannot spam reset
         // emails (and invalidate prior tokens) by clicking repeatedly.
-        if (!rateLimiter.tryAcquireForEmail(user.getEmail().toLowerCase())) {
+        if (!rateLimiter.tryAcquireForEmail(user.getEmail().toLowerCase(java.util.Locale.ROOT))) {
             throw new EngineException("Too many reset requests for this email, please try again later");
         }
         invalidatePriorTokens(userId, TYPE_RESET);
@@ -109,9 +109,9 @@ public class UserInvitationService {
     @Transactional
     public void requestReset(String email, String clientIp) {
         if (email == null || email.isBlank()) return;
-        if (!rateLimiter.tryAcquireForEmail(email.toLowerCase())) return;
+        if (!rateLimiter.tryAcquireForEmail(email.toLowerCase(java.util.Locale.ROOT))) return;
         if (!rateLimiter.tryAcquireForIp(clientIp)) return;
-        Optional<UiUserEntity> user = userRepository.findByEmail(email.toLowerCase());
+        Optional<UiUserEntity> user = userRepository.findByEmail(email.toLowerCase(java.util.Locale.ROOT));
         if (user.isEmpty() || "SYSTEM".equals(user.get().getUserType())
                 || user.get().getEmail() == null || user.get().getEmail().isBlank()) {
             return;
