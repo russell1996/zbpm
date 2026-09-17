@@ -60,8 +60,8 @@ public class OutboxBatchProcessor {
      * WO-PERF-8: gauge sampling cadence in ticks. Two COUNT(*) per 2s tick is wasted
      * when the backlog barely moves between polls — sample every 30th tick (~60s at
      * the default poll interval) instead. First tick always samples (cold start must
-     * not report stale zeroes). Fail-open: {@code <= 0} samples every tick, so
-     * `new`-constructed instances (tests, no Spring injection) behave as before.
+     * not report stale zeroes). Fail-open: {@code <= 0} samples every tick (tests
+     * that explicitly set 0; unconfigured instances use the initializer, 30).
      */
     @Value("${zorrobpm.outbox.metrics-sample-every:30}")
     private int metricsSampleEvery = 30;
