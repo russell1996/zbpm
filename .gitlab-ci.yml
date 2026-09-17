@@ -190,6 +190,33 @@ test:rabbit:
     - bash ci/run-rabbit-tests.sh
   rules: *rules-code-changes
 
+# ---------------------------------------------------------------------------
+# Chaos-IT — WO-TEST-10 (WB-002): fault-injection tests with a REAL injector.
+# Topology: postgres:16 + rabbitmq:3.13 + toxiproxy 2.5.0 as sibling containers
+# (ci/run-chaos-tests.sh), tests tagged @Tag("chaos"): worker kill -9 mid-job,
+# PG network partition, RabbitMQ network partition — each asserting end state
+# (exactly-once effect / app recovery / autorecovery), not just "no crash".
+# Manual + scheduled: chaos tests are slow (network partitions with real
+# timeouts, ~2-4 min) and need the docker socket (worker kill), so they do NOT
+# run on every pipeline — visible here explicitly, played manually or nightly.
+# ---------------------------------------------------------------------------
+
+test:chaos:
+  stage: test
+  tags: [zbpm]
+  artifacts:
+    paths:
+      - "**/failsafe-reports/"
+    expire_in: 7 days
+    when: always
+  script:
+    - bash ci/run-chaos-tests.sh
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: true
+
 test:frontend:
   stage: test
   tags: [zbpm]

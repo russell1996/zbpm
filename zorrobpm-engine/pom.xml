@@ -41,8 +41,11 @@
         <java.version>21</java.version>
         <!-- Tag groups excluded from failsafe. Default excludes the PG-only tests so the
              standard build stays on H2. The test:pg CI job clears this (-Dzbpm.excludedGroups=)
-             and adds -Dgroups=pg to run the @Tag("pg") PG-IT against a real postgres. -->
-        <zbpm.excludedGroups>pg</zbpm.excludedGroups>
+             and adds -Dgroups=pg to run the @Tag("pg") PG-IT against a real postgres.
+             WO-TEST-10: chaos-teсты (@Tag("chaos")) тоже исключены по умолчанию — им нужна
+             живая chaos-топология (toxiproxy + kill-доступ к docker), гоняются только через
+             ci/run-chaos-tests.sh (-Dgroups=chaos -Dzbpm.excludedGroups=). -->
+        <zbpm.excludedGroups>pg | chaos</zbpm.excludedGroups>
     </properties>
 
     <dependencies>
@@ -196,6 +199,7 @@
                     <includes>
                         <include>**/*IntegrationTests.java</include>
                         <include>**/*PgIT.java</include>
+                        <include>**/*ChaosIT.java</include>
                     </includes>
                     <!-- Exclude PG-only tests by default (H2 build); test:pg clears this via
                          -Dzbpm.excludedGroups= and selects them with -Dgroups=pg. A literal here
