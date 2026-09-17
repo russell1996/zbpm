@@ -30,6 +30,8 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
     private final ProcessInstanceMapper processInstanceMapper;
     private final BpmMetrics bpmMetrics;
     private final VariableRepository variableRepository;
+    /** WO-ENG-16: стартовые переменные тоже входят в историю (источник INIT). */
+    private final VariableHistoryWriter historyWriter;
     private final DomainEventEmitter domainEventEmitter;
 
     @Override
@@ -60,6 +62,12 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
             vs.add(v);
         }
         variableRepository.saveAll(vs);
+        // WO-ENG-16: начальные значения — первая строка истории каждой
+        // переменной (без этого история начиналась бы с первого изменения,
+        // а исходное значение терялось бы — ровно тот пробел из WB-003).
+        for (ProcessVariable variable : Optional.ofNullable(variables).orElse(List.of())) {
+            historyWriter.record(id, null, variable, VariableHistoryWriter.SOURCE_INIT);
+        }
         domainEventEmitter.emitProcessInstanceStarted(id, processDefinitionId);
         return id;
     }

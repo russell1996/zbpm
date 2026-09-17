@@ -75,6 +75,9 @@ public class RetentionBatchProcessor {
         // WO-C8-25: done element-listener phases (open ones die with the instance anyway).
         total += jdbc.update("DELETE FROM element_listener_phase WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM variables WHERE process_instance_id IN (:ids)", params);
+        // WO-ENG-16: история переменных того же инстанса — иначе retention
+        // оставлял бы сирот навсегда (у variable_history нет FK сознательно).
+        total += jdbc.update("DELETE FROM variable_history WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM activities WHERE process_instance_id IN (:ids)", params);
         if (!tokenIds.isEmpty()) {
             MapSqlParameterSource tokenParams = new MapSqlParameterSource("ids", tokenIds);

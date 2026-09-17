@@ -44,4 +44,15 @@ public interface VariableDbOperations {
      * @param jsonElement the element already serialised to JSON (no further quoting).
      */
     void appendJsonElement(@NonNull UUID processInstanceId, String name, String jsonElement);
+
+    /**
+     * WO-ENG-16 (WB-003): минимальный способ прочитать историю — хронология
+     * всех изменений переменных инстанса (старые первые). REST-эндпоинт
+     * сознательно НЕ добавлен (стоп-список G-C, WO допускает service/SQL
+     * уровень); прямой SQL для диагностики — в отчёте WO-ENG-16.
+     */
+    List<VariableHistoryEntry> getVariableHistory(@NonNull UUID processInstanceId);
+
+    /** То же для одной переменной (спор о значении в момент решения gateway'ем). */
+    List<VariableHistoryEntry> getVariableHistory(@NonNull UUID processInstanceId, String name);
 }

@@ -31,6 +31,8 @@ class ProcessInstanceDbOperationsImplTest {
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private VariableRepository variableRepository;
+    // WO-ENG-16: стартовые переменные входят в историю (мок — поведение покрыто IT).
+    @Mock private VariableHistoryWriter historyWriter;
     @Mock private DomainEventEmitter domainEventEmitter;
     @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
     @InjectMocks private ProcessInstanceDbOperationsImpl db;
@@ -46,6 +48,8 @@ class ProcessInstanceDbOperationsImplTest {
         assertThat(captor.getValue().getParentActivityId()).isEqualTo(parent);
         assertThat(captor.getValue().getProcessDefinitionId()).isEqualTo(pdId);
         verify(variableRepository).saveAll(any(List.class));
+        // WO-ENG-16: стартовые переменные — первая строка истории (источник INIT).
+        verify(historyWriter).record(eq(id), eq(null), any(ProcessVariable.class), eq("INIT"));
         verify(domainEventEmitter).emitProcessInstanceStarted(eq(id), eq(pdId));
     }
 

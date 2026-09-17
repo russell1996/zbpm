@@ -398,6 +398,18 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public List<com.zorrodev.bpm.engine.service.db.VariableHistoryEntry> getVariableHistory(
+            @NonNull UUID processInstanceId) {
+        return variableDbOperations.getVariableHistory(processInstanceId);
+    }
+
+    @Override
+    public List<com.zorrodev.bpm.engine.service.db.VariableHistoryEntry> getVariableHistory(
+            @NonNull UUID processInstanceId, String name) {
+        return variableDbOperations.getVariableHistory(processInstanceId, name);
+    }
+
+    @Override
     public List<Activity> getActivitiesByTokenAndBpmnElementId(UUID token, String bpmnElementId) {
         return activityDbOperations.getActivitiesByTokenAndBpmnElementId(token, bpmnElementId);
     }
