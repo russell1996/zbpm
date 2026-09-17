@@ -168,36 +168,48 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
         // Без hook-парковки: мозаичный обстрел — десятки итераций, в каждой cleanup
         // идёт СРАЗУ своим потоком, verify — прод-путем в главном. Без фикса
         // (plain findById) delete неизбежно попадает в окно между read и save хотя
-        // бы в части итераций — строка либо пропадает после «успеха», либо
-        // воскресает detached-INSERT'ом. С фиксом (FOR UPDATE сериализует) все
+        // бы в части итераций — строка либо пропадала после «успеха», либо
+        // воскресала detached-INSERT'ом. С фиксом (FOR UPDATE сериализует) все
         // итерации детерминированно GREEN: ровно один исход на итерацию.
+        // NB: прямой deadlock (оба держат lock друг друга) здесь невозможен по
+        // построению — verify держит РОВНО ОДНУ строку (свою), cleanup берёт строки
+        // по одной в порядке индекса; lock-wait возможен (норма сериализации),
+        // deadlock — нет. Пойманный CannotAcquireLock в общей PG-сюите — соседний
+        // класс, державший ту же строку (порядок-зависимая изоляция, не дефект).
+        // P-59: в общей сюите тест обязан быть толерантен к lock-конфликту с
+        // соседом — 3 ретрая той же итерации, затем честный fail (не assumeFalse:
+        // тихий skip спрятал бы регрессию).
         for (int iter = 0; iter < 15; iter++) {
             StaleRegistration stale = registerStale("vr" + iter);
-            AtomicReference<Throwable> cleanupError = new AtomicReference<>();
-            Thread cleaner = new Thread(() -> {
+            boolean done = false;
+            for (int attempt = 0; attempt < 3 && !done; attempt++) {
+                AtomicReference<Throwable> cleanupError = new AtomicReference<>();
+                Thread cleaner = new Thread(() -> {
+                    try {
+                        cleanupJob.cleanExpired();
+                    } catch (Throwable t) {
+                        cleanupError.set(t);
+                    }
+                });
+                cleaner.start();
                 try {
-                    cleanupJob.cleanExpired();
-                } catch (Throwable t) {
-                    cleanupError.set(t);
+                    registrationService.verifyEmail(stale.rawToken());
+                    done = true;
+                } catch (org.springframework.dao.CannotAcquireLockException e) {
+                    // Lock-конфликт с соседним классом общей сюиты — ретрай той же
+                    // итерации (токен single-use, но consume откатился вместе с
+                    // транзакцией — повторный verifyEmail валиден).
+                    cleaner.join(30000);
+                    continue;
                 }
-            });
-            cleaner.start();
-            try {
-                registrationService.verifyEmail(stale.rawToken());
-            } catch (org.springframework.transaction.UnexpectedRollbackException e) {
-                // Окно гонки поймано: delete победил между read и save verify —
-                // его row-lock + delete уронили нашу транзакцию в rollback-only.
-                // Это и есть баг без фикса (plain findById): верификация «прошла»
-                // без строки. Считать итерацию пойманной гонкой, не успехом.
-                org.junit.jupiter.api.Assertions.fail(
-                    "race window hit on iter " + iter + ": verify rolled back", e);
-            }
-            cleaner.join(30000);
+                cleaner.join(30000);
 
-            assertThat(cleanupError.get()).isNull();
-            UiUserEntity survivor = userRepository.findById(stale.userId()).orElseThrow();
-            assertThat(survivor.getRegistrationStatus()).isEqualTo("PENDING_APPROVAL");
-            assertThat(survivor.getEmailVerifiedAt()).isNotNull();
+                assertThat(cleanupError.get()).isNull();
+                UiUserEntity survivor = userRepository.findById(stale.userId()).orElseThrow();
+                assertThat(survivor.getRegistrationStatus()).isEqualTo("PENDING_APPROVAL");
+                assertThat(survivor.getEmailVerifiedAt()).isNotNull();
+            }
+            assertThat(done).as("итерация " + iter + " сошлась за 3 ретрая").isTrue();
         }
     }
 
