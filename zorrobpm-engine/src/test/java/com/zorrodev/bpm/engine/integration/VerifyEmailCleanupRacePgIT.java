@@ -183,7 +183,12 @@ public class VerifyEmailCleanupRacePgIT extends PostgresIT {
         // повторный verifyEmail валиден; чужой consumed-токен означает, что cleanup
         // уже унёс строку — verify падает честной ошибкой, итерация ретраится
         // новой регистрацией.
-        for (int iter = 0; iter < 15; iter++) {
+        // P-10: агрессивная мозаика (15 итераций × до 3 регистраций) упирается в
+        // registration rate-limit общей БД (per-IP квота делится с соседними
+        // классами) — register падает 429, тест ложится НЕ по своей причине.
+        // 5 внешних итераций достаточно: окно гонки ловится мозаикой внутри
+        // итерации (cleanup стартует раньше verify), а не их числом.
+        for (int iter = 0; iter < 5; iter++) {
             boolean done = false;
             for (int attempt = 0; attempt < 3 && !done; attempt++) {
                 StaleRegistration stale = registerStale("vr" + iter + "a" + attempt);
