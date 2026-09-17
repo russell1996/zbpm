@@ -311,6 +311,92 @@ class ProcessDefinitionServiceImplTest {
         verify(processDefinitionRepository, never()).findAllLatest(any());
     }
 
+    /**
+     * WO-ENG-17: Camunda-style historyTimeToLive через BPMN-атрибут — деплой
+     * парсит значение с процесса в entity (реальный BpmnParseServiceImpl, мок
+     * только на versioning-границе; значение 30 доходит из XML в entity).
+     */
+    @Test
+    void addProcessDefinition_camundaHistoryTimeToLive_setsTtlDays() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"))
+            .replace("xmlns:modeler=\"http://camunda.org/schema/modeler/1.0\"",
+                "xmlns:modeler=\"http://camunda.org/schema/modeler/1.0\" xmlns:camunda=\"http://camunda.org/schema/1.0/bpmn\"")
+            .replace("<bpmn:process id=\"test1\"",
+                "<bpmn:process id=\"test1\" camunda:historyTimeToLive=\"30\"");
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
+        stubVersioning("test1", 3);
+        List<ProcessDefinitionEntity> saved = new ArrayList<>();
+        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class))).thenAnswer(inv -> {
+            ProcessDefinitionEntity e = inv.getArgument(0);
+            saved.add(e);
+            return e;
+        });
+
+        service.addProcessDefinition(bpmn);
+
+        assertThat(saved).hasSize(2);
+        assertThat(saved.get(0).getHistoryTimeToLiveDays()).isEqualTo(30);
+    }
+
+    @Test
+    void addProcessDefinition_withoutTtlAttribute_leavesNull() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"));
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
+        stubVersioning("test1", 3);
+        List<ProcessDefinitionEntity> saved = new ArrayList<>();
+        when(processDefinitionRepository.save(any(ProcessDefinitionEntity.class))).thenAnswer(inv -> {
+            ProcessDefinitionEntity e = inv.getArgument(0);
+            saved.add(e);
+            return e;
+        });
+
+        service.addProcessDefinition(bpmn);
+
+        // Обратная совместимость §4 WO: без атрибута — NULL (глобальный TTL как раньше).
+        assertThat(saved.get(0).getHistoryTimeToLiveDays()).isNull();
+    }
+
+    @Test
+    void addProcessDefinition_garbageTtl_rejects400() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"))
+            .replace("xmlns:modeler=\"http://camunda.org/schema/modeler/1.0\"",
+                "xmlns:modeler=\"http://camunda.org/schema/modeler/1.0\" xmlns:camunda=\"http://camunda.org/schema/1.0/bpmn\"")
+            .replace("<bpmn:process id=\"test1\"",
+                "<bpmn:process id=\"test1\" camunda:historyTimeToLive=\"soon\"");
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
+        stubVersioning("test1", 3);
+
+        com.zorrodev.bpm.contract.exception.ApiException thrown =
+            org.junit.jupiter.api.Assertions.assertThrows(
+                com.zorrodev.bpm.contract.exception.ApiException.class,
+                () -> service.addProcessDefinition(bpmn));
+        assertThat(thrown.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+        assertThat(thrown.getCode()).isEqualTo("INVALID_HISTORY_TTL");
+    }
+
+    @Test
+    void addProcessDefinition_zeroTtl_rejects400() throws IOException {
+        String bpmn = Files.readString(Path.of("src/test/files/test1.bpmn"))
+            .replace("xmlns:modeler=\"http://camunda.org/schema/modeler/1.0\"",
+                "xmlns:modeler=\"http://camunda.org/schema/modeler/1.0\" xmlns:camunda=\"http://camunda.org/schema/1.0/bpmn\"")
+            .replace("<bpmn:process id=\"test1\"",
+                "<bpmn:process id=\"test1\" camunda:historyTimeToLive=\"0\"");
+
+        when(processDefinitionRepository.findBySha256(anyString())).thenReturn(Optional.empty());
+        stubVersioning("test1", 3);
+
+        try {
+            service.addProcessDefinition(bpmn);
+            org.junit.jupiter.api.Assertions.fail("expected INVALID_HISTORY_TTL");
+        } catch (com.zorrodev.bpm.contract.exception.ApiException e) {
+            assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+            assertThat(e.getCode()).isEqualTo("INVALID_HISTORY_TTL");
+        }
+    }
+
     private static ProcessDefinitionEntity entity(UUID id, String key, int version) {
         ProcessDefinitionEntity e = new ProcessDefinitionEntity();
         e.setId(id);

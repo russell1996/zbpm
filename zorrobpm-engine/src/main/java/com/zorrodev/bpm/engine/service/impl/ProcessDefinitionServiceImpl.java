@@ -134,6 +134,10 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
                 processDefinitionEntity = versioning.createNewVersionEntity(key, name, sha256, id, model.getStartFormKey(), model.getVersionTag());
                 processDefinitionEntity.setDeploymentState(ProcessDefinitionEntity.STATE_PENDING);
                 processDefinitionEntity.setDeploymentId(deploymentId);
+                // WO-ENG-17: Camunda-style historyTimeToLive с процесса (fail-fast 400 на мусор —
+                // тот же контракт, что SERVICE_TASK_MISSING_JOB выше; отсутствует → NULL =
+                // наследовать глобальный TTL; явный 0/отрицательный — reject, двусмысленности нет).
+                processDefinitionEntity.setHistoryTimeToLiveDays(parseHistoryTimeToLive(model.getHistoryTimeToLive()));
                 processDefinitionRepository.save(processDefinitionEntity);
 
                 fileService.saveFile(id, bpmn);
@@ -178,8 +182,41 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
      * jobs that already exist is a plain upsert or delete+insert. Element bindings are
      * re-carried from the previous version (leftovers of a failed attempt are dropped first).
      */
+    /**
+     * WO-ENG-17: парсинг {@code camunda:historyTimeToLive} в дни (fail-fast 400).
+     * Отсутствует/пусто → NULL (наследовать глобальный TTL). Мусор или
+     * не-положительное число → {@code INVALID_HISTORY_TTL} 400: молча глотать
+     * означало бы «деплой принял TTL, но не применил» — худший исход для retention.
+     */
+    private Integer parseHistoryTimeToLive(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        int days;
+        try {
+            days = Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                "INVALID_HISTORY_TTL",
+                "camunda:historyTimeToLive must be a positive integer number of days, got '" + raw + "'",
+                java.util.Map.of("value", raw));
+        }
+        if (days <= 0) {
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                "INVALID_HISTORY_TTL",
+                "camunda:historyTimeToLive must be a positive integer number of days, got '" + raw + "'",
+                java.util.Map.of("value", raw));
+        }
+        return days;
+    }
+
     private void repairDeployment(ProcessDefinitionEntity entity, BpmnProcessDefinitionModel model, String bpmn) {
         UUID id = entity.getId();
+        // WO-ENG-17: repair тоже несёт TTL с модели (иначе чиненый PENDING-деплой
+        // остался бы с NULL против значения в BPMN — то же поле, тот же парсинг).
+        entity.setHistoryTimeToLiveDays(parseHistoryTimeToLive(model.getHistoryTimeToLive()));
         fileService.saveFile(id, bpmn);
         artifactRegistrar.registerMessageStartSubscriptions(entity.getKey(), id, model);
         artifactRegistrar.registerTimerStartJobs(entity.getKey(), id, model);

@@ -53,6 +53,74 @@ public class RetentionBatchProcessor {
             UUID.class);
     }
 
+    /**
+     * WO-ENG-17: per-definition cutoff. Старый {@link #findEligibleInstances(Instant, int)}
+     * оставлен байт-идентичным (его PgIT'ы — доказательство обратной совместимости);
+     * этот метод — новый путь job'а: JOIN к определению инстанса, по одной клаузе
+     * равенства на каждый distinct TTL с cutoff, вычисленным в Java (plain
+     * Timestamp-сравнения — ноль диалектного риска вместо interval-арифметики
+     * в SQL; прецедент динамических клауз — skipClause ниже).
+     *
+     * <p>Семантика (форсирована §4 WO): у определения задан положительный TTL —
+     * чистится по нему; NULL — наследует {@code fallbackDays}; оба пусто/0 —
+     * инстанс не чистится никогда (дефолт «ничего не теряем»).
+     *
+     * <p>Гонка pre-query/main-query (деплой с новым TTL между ними) безопасна:
+     * пропущенные строки доберутся следующим проходом (та же идемпотентность,
+     * что у SKIP LOCKED-пропусков).
+     *
+     * @param now          точка отсчёта возраста (тесты фиксируют детерминированно)
+     * @param fallbackDays глобальный TTL; {@code <= 0} — фолбэка нет (NULL-определения не чистятся)
+     */
+    @Transactional
+    public List<UUID> findEligibleInstances(Instant now, int fallbackDays, int batchSize) {
+        // Belt-and-braces: мусор/0 rejected на деплое, но строка БД правится и руками —
+        // неположительный TTL здесь никогда не чистится, а не «чистится сразу».
+        List<Integer> distinctTtls = jdbc.queryForList(
+            "SELECT DISTINCT history_time_to_live_days FROM process_definitions " +
+            "WHERE history_time_to_live_days IS NOT NULL AND history_time_to_live_days > 0",
+            new MapSqlParameterSource(), Integer.class);
+        StringBuilder sql = new StringBuilder(
+            "SELECT pi.id FROM process_instances pi " +
+            "JOIN process_definitions pd ON pd.id = pi.process_definition_id " +
+            "WHERE (pi.completed_at IS NOT NULL OR pi.cancelled = true) AND (");
+        MapSqlParameterSource params = new MapSqlParameterSource("limit", batchSize);
+        boolean hasBranch = false;
+        int i = 0;
+        for (int ttl : distinctTtls) {
+            if (hasBranch) {
+                sql.append(" OR ");
+            }
+            sql.append("(pd.history_time_to_live_days = :ttl").append(i)
+                .append(" AND pi.completed_at < :cutoff").append(i).append(")");
+            params.addValue("ttl" + i, ttl);
+            params.addValue("cutoff" + i, Timestamp.from(now.minus(java.time.Duration.ofDays(ttl))));
+            i++;
+            hasBranch = true;
+        }
+        if (fallbackDays > 0) {
+            if (hasBranch) {
+                sql.append(" OR ");
+            }
+            sql.append("(pd.history_time_to_live_days IS NULL AND pi.completed_at < :fallbackCutoff)");
+            params.addValue("fallbackCutoff",
+                Timestamp.from(now.minus(java.time.Duration.ofDays(fallbackDays))));
+            hasBranch = true;
+        }
+        if (!hasBranch) {
+            // Ни одного TTL нигде: запрос обязан вернуть пусто, а не всё.
+            // Невозможное условие вместо раннего return — один exit-путь,
+            // FOR UPDATE SKIP LOCKED и сортировка те же, что у старого метода.
+            sql.append("1 = 0");
+        }
+        sql.append(") " +
+            "AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.process_instance_id = pi.id AND a.completed_at IS NULL) " +
+            "AND NOT EXISTS (SELECT 1 FROM user_tasks ut WHERE ut.process_instance_id = pi.id AND ut.completed_at IS NULL) " +
+            "AND NOT EXISTS (SELECT 1 FROM service_tasks st WHERE st.process_instance_id = pi.id AND st.completed_at IS NULL) " +
+            "ORDER BY pi.completed_at ASC LIMIT :limit FOR UPDATE OF pi SKIP LOCKED");
+        return jdbc.queryForList(sql.toString(), params, UUID.class);
+    }
+
     @Transactional
     public int deleteInstances(List<UUID> instanceIds) {
         if (instanceIds.isEmpty()) return 0;
