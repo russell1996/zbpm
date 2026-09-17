@@ -107,8 +107,18 @@ public class SelfRegistrationService {
         // 1. Same atomic single-use consume as INVITE/RESET (consumeByTokenHash + race).
         // Invalid/expired/already-used → one phrasing, no enumeration.
         UUID userId = invitationService.consumeEmailVerifyToken(rawToken);
-        UiUserEntity user = userRepository.findById(userId)
-            .orElseThrow(() -> new NoSuchElementException("User not found"));
+        // WO-REL-43: row-locked read (same precedent as WO-REL-39 F18 / WO-REL-40 B-5).
+        // Plain findById left a race: cleanup's per-row findByIdForUpdate + delete could
+        // land BETWEEN this read and the save below — then save() on the deleted row
+        // either no-ops silently or (worse) re-inserts it as a detached INSERT with
+        // stale data, resurrecting what cleanup just removed. FOR UPDATE serialises
+        // the two paths on the same row: whoever locks second sees the winner's state.
+        UiUserEntity user = userRepository.findByIdForUpdate(userId)
+            // Cleanup already deleted the row AFTER the token was consumed above:
+            // the link is stale, not broken — an honest 4xx, never a raw 500 and
+            // never a silent success into nowhere (criterion 2).
+            .orElseThrow(() -> new EngineException(
+                "Registration expired — the verification link is no longer valid, please register again"));
 
         // 2. Idempotent status transition: only PENDING_EMAIL_VERIFICATION moves forward.
         // If already PENDING_APPROVAL/ACTIVE/REJECTED (repeat click, or admin raced ahead),
