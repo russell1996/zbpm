@@ -20,10 +20,12 @@ class UiUserServiceImplLocaleTest {
         Locale def = Locale.getDefault();
         try {
             Locale.setDefault(Locale.forLanguageTag("tr-TR"));
-            // Dotted capital I is the classic trap: ROOT → "i", tr → "ı".
-            // Emails never contain it, but the test must prove stability anyway.
+            // WO-QW-1 verifier: include a dotted capital I — the actual trap
+            // (tr → "ı", ROOT → "i"). Without it the test would pass under any
+            // locale and pin nothing. Emails never contain it, but the pin must
+            // prove write/read symmetry, not vacuous greenness.
             assertThat(UiUserServiceImpl.normalizeEmail("Foo@Bar.COM")).isEqualTo("foo@bar.com");
-            assertThat(UiUserServiceImpl.normalizeEmail("USER@EXAMPLE.COM")).isEqualTo("user@example.com");
+            assertThat(UiUserServiceImpl.normalizeEmail("MIKE@EXAMPLE.COM")).isEqualTo("mike@example.com");
             assertThat(UiUserServiceImpl.normalizeEmail(null)).isNull();
         } finally {
             Locale.setDefault(def);

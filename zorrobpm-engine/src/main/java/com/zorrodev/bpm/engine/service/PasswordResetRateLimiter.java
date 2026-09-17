@@ -53,7 +53,7 @@ public class PasswordResetRateLimiter {
 
     public boolean tryAcquireForEmail(String email) {
         if (email == null) return true;
-        return pgRateLimiter.tryConsume(keyPrefix + "email:" + email.toLowerCase(), emailCapacity, emailWindowSeconds) == 0;
+        return pgRateLimiter.tryConsume(keyPrefix + "email:" + email.toLowerCase(java.util.Locale.ROOT), emailCapacity, emailWindowSeconds) == 0;
     }
 
     public boolean tryAcquireForIp(String ip) {

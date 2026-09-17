@@ -69,7 +69,7 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
 
     static Specification<UiUserEntity> byUsernameContains(String username) {
         // WO-SEC-17 L3: escape LIKE wildcards + backslash to prevent injection
-        String escaped = username.toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        String escaped = username.toLowerCase(java.util.Locale.ROOT).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
         return (root, query, cb) -> cb.like(cb.lower(root.get("username")), "%" + escaped + "%", '\\');
     }
 
@@ -81,7 +81,7 @@ public interface UiUserRepository extends JpaRepository<UiUserEntity, UUID>, Jpa
      * widening to three fields must not turn them into live wildcards.
      */
     static Specification<UiUserEntity> byCandidateSearchContains(String q) {
-        String escaped = q.toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        String escaped = q.toLowerCase(java.util.Locale.ROOT).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
         String pattern = "%" + escaped + "%";
         return (root, query, cb) -> cb.or(
             cb.like(cb.lower(root.get("username")), pattern, '\\'),

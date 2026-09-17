@@ -121,7 +121,7 @@ public class CsrfFilter extends OncePerRequestFilter {
         int port = request.getServerPort();
         boolean defaultPort = ("http".equalsIgnoreCase(scheme) && port == 80)
                 || ("https".equalsIgnoreCase(scheme) && port == 443);
-        return scheme.toLowerCase() + "://" + host.toLowerCase() + (defaultPort ? "" : ":" + port);
+        return scheme.toLowerCase(java.util.Locale.ROOT) + "://" + host.toLowerCase(java.util.Locale.ROOT) + (defaultPort ? "" : ":" + port);
     }
 
     /** Origin header value → normalized scheme://host[:port]; Referer → its origin part. Null when unparsable. */
@@ -133,7 +133,7 @@ public class CsrfFilter extends OncePerRequestFilter {
             int port = uri.getPort();
             boolean defaultPort = ("http".equalsIgnoreCase(uri.getScheme()) && (port == 80 || port == -1))
                     || ("https".equalsIgnoreCase(uri.getScheme()) && (port == 443 || port == -1));
-            return uri.getScheme().toLowerCase() + "://" + uri.getHost().toLowerCase()
+            return uri.getScheme().toLowerCase(java.util.Locale.ROOT) + "://" + uri.getHost().toLowerCase(java.util.Locale.ROOT)
                     + (defaultPort ? "" : ":" + port);
         } catch (Exception e) {
             return null;
