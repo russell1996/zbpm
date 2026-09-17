@@ -246,10 +246,33 @@ public class MetricsWiringIntegrationTests {
             mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class));
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "batchSize", 100);
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "maxRetries", 5);
-        processor.processBatch();
+        // Fresh counter: this processor's first tick samples by construction.
+        org.springframework.test.util.ReflectionTestUtils.setField(processor, "tickCounter",
+            new java.util.concurrent.atomic.AtomicLong(0));
 
-        assertThat(gauge("zbpm.outbox.backlog")).isEqualTo(2.0);
-        assertThat(gauge("zbpm.outbox.quarantine")).isEqualTo(1.0);
+        // WO-QW-1 A-C-5b: gauges are deferred to afterCommit, so inside this
+        // @Transactional test they land only when the synchronizations fire —
+        // fire the ones processBatch registered (commit itself rolls back at
+        // test end). Deltas, not absolutes: the registry is context-shared.
+        // This IS the deferral proof: with inline sampling the values would
+        // already have moved and no synchronization would be registered.
+        double backlogBefore = gauge("zbpm.outbox.backlog");
+        double quarantineBefore = gauge("zbpm.outbox.quarantine");
+        var syncsBefore = new java.util.ArrayList<>(
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations());
+        processor.processBatch();
+        var added = new java.util.ArrayList<>(
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations());
+        added.removeAll(syncsBefore);
+        assertThat(added)
+            .as("processBatch must defer gauge sampling to afterCommit, not sample inline")
+            .hasSize(1);
+        assertThat(gauge("zbpm.outbox.backlog")).isEqualTo(backlogBefore);
+        assertThat(gauge("zbpm.outbox.quarantine")).isEqualTo(quarantineBefore);
+        added.forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+
+        assertThat(gauge("zbpm.outbox.backlog")).isEqualTo(backlogBefore + 2.0);
+        assertThat(gauge("zbpm.outbox.quarantine")).isEqualTo(quarantineBefore + 1.0);
     }
 
     @Test
