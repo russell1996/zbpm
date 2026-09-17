@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Registry mapping {@link BpmnElementType} → {@link ElementHandler}.
@@ -27,7 +28,7 @@ public class HandlerRegistry {
 
     public HandlerRegistry(ObjectProvider<TypedElementHandler> typedHandlers) {
         this.typedHandlers = typedHandlers;
-        this.handlers = new EnumMap<>(BpmnElementType.class);
+        this.handlers = new ConcurrentHashMap<>();
     }
 
     /**
@@ -41,13 +42,15 @@ public class HandlerRegistry {
         if (beanHandlersResolved) {
             return;
         }
+        // Local build stays EnumMap (single-threaded fill); the published field is
+        // always a ConcurrentHashMap copy — publication and register() share one type.
         Map<BpmnElementType, ElementHandler> resolved = new EnumMap<>(BpmnElementType.class);
         for (TypedElementHandler handler : typedHandlers.orderedStream().toList()) {
             resolved.put(handler.elementType(), handler.handler());
             log.info("Registered handler for {}: {}", handler.elementType(), handler.handler().getClass().getSimpleName());
         }
         registerAliases(resolved);
-        handlers = resolved;
+        handlers = new ConcurrentHashMap<>(resolved);
         beanHandlersResolved = true;
     }
 
@@ -72,6 +75,11 @@ public class HandlerRegistry {
 
     /**
      * Register a handler for a given element type.
+     *
+     * WO-QW-1 C-2: ConcurrentHashMap — correct by construction under concurrent
+     * register/get (the old EnumMap.put raced a concurrent get during lazy
+     * resolution; only startup/tests hit it today, but the class must not rely
+     * on that staying true).
      */
     public void register(BpmnElementType type, ElementHandler handler) {
         handlers.put(type, handler);

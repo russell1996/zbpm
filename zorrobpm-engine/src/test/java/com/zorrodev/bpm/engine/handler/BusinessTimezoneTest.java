@@ -72,9 +72,8 @@ class BusinessTimezoneTest {
     @BeforeEach
     void setUp() {
         // Create a real ElementSupport with mocked dependencies
-        elementSupport = new ElementSupport(dbService, scriptService, feelEngineApi, null);
-        // WO-ENG-4: default businessZone = Asia/Almaty
-        ReflectionTestUtils.setField(elementSupport, "businessZone", ALMATY);
+        // WO-QW-1 A-C-5e: explicit constructor, zone passed directly (no reflection needed).
+        elementSupport = new ElementSupport(dbService, scriptService, feelEngineApi, null, ALMATY);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -220,16 +219,13 @@ class BusinessTimezoneTest {
 
     @Test
     void defaultBusinessZoneIsAsiaAlmaty() {
-        // Create a new ElementSupport without setting businessZone field
-        ElementSupport fresh = new ElementSupport(dbService, scriptService, feelEngineApi, null);
-        // The default from @Value("${zorrobpm.business-timezone:Asia/Almaty}") should be Asia/Almaty
-        // Since Spring @Value is not active in unit test, verify the field-level default through ReflectionTestUtils
-        // In production, @Value would inject the configured value; here we verify the code path works.
-        // This test verifies that explicit ZoneOffset.UTC is no longer hardcoded.
+        // WO-QW-1 A-C-5e: final field, set through the constructor — Spring injects
+        // the @Value default (Asia/Almaty); explicitly passed zones win.
+        ElementSupport fresh = new ElementSupport(dbService, scriptService, feelEngineApi, null, ALMATY);
         ZoneId zone = (ZoneId) ReflectionTestUtils.getField(fresh, "businessZone");
         assertThat(zone)
-            .as("businessZone field should exist; actual default injected by @Value in Spring context")
-            .isNull(); // null because @Value is not processed in unit test
+            .as("businessZone passed via constructor must stick")
+            .isEqualTo(ALMATY);
     }
 
     // ─────────────────────────────────────────────────────────────────

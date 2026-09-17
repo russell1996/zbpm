@@ -58,6 +58,15 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- WO-QW-1 S-7: tools.jackson (Jackson 3) for the JacksonJsonMessageConverter
+             used in main code — must be a COMPILE dep, not test-only. Without it the
+             main RabbitConfiguration fails at runtime with NoClassDefFoundError
+             (tools/jackson/core/JacksonException) outside full-reactor builds. -->
+        <dependency>
+            <groupId>tools.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>com.zorrodev.bpm</groupId>
             <artifactId>zorrobpm-exchange</artifactId>
