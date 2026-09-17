@@ -40,9 +40,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code findByIdForUpdate} (тот же прецедент, что WO-REL-39 F18 / WO-REL-40 B-5):
  * оба пути блокируют ТУ ЖЕ строку, проигравший видит состояние победителя.
  *
- * <p>POF (G-N): откат {@code findByIdForUpdate → findById} в {@code verifyEmail} делает
- * {@code verifyWins_cleanupSkips} RED — cleanup удаляет строку из-под чтения, верификация
- * тихо уходит в никуда (строки нет, ошибки нет).
+  * <p>POF (G-N): откат {@code findByIdForUpdate → findById} в {@code verifyEmail} делает
+  * {@code verifyWins_cleanupSkips} RED — cleanup удаляет строку из-под чтения, верификация
+  * тихо уходит в никуда (строки нет, ошибки нет).
+  *
+  * <p>POF раунда 2 (HOLD deadlock): инверсия порядка обратно T→U ({@code consumeEmailVerifyToken}
+  * ДО {@code findByIdForUpdate}, второй consume убран) делает
+  * {@code verifySurvivesDeleteRace_noResurrection} RED именованным
+  * {@code DEADLOCK ... lock order user→token broken} — настоящий
+  * {@code ERROR: deadlock detected} от Postgres.
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
