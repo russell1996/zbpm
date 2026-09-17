@@ -41,8 +41,10 @@
              .gitlab-ci.yml runs maven:3.9.9-eclipse-temurin-21). 17 was a stale leftover. -->
         <java.version>21</java.version>
         <!-- WO-REL-36: тот же механизм исключения broker-тестов, что в rest/engine:
-             @Tag("rabbit") гоняется только через -Dgroups=rabbit -Dzbpm.excludedGroups=. -->
-        <zbpm.excludedGroups>pg | rabbit</zbpm.excludedGroups>
+             @Tag("rabbit") гоняется только через -Dgroups=rabbit -Dzbpm.excludedGroups=.
+             WO-TEST-10: @Tag("chaos") — только через ci/run-chaos-tests.sh
+             (-Dgroups=chaos -Dzbpm.excludedGroups=). -->
+        <zbpm.excludedGroups>pg | rabbit | chaos</zbpm.excludedGroups>
     </properties>
 
     <dependencies>
@@ -127,6 +129,13 @@
                     <includes>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!-- WO-TEST-10: WorkerKillChaosIT.startVictim передаёт ПОЛНЫЙ тестовый
+                         classpath новому JVM-процессу через java.class.path. По умолчанию
+                         failsafe/surefire форкают тесты через manifest-only jar (один
+                         surefirebooter*.jar в java.class.path) — victim тогда стартует с
+                         обрезанным classpath и падает NoClassDefFoundError, а тест висит
+                         120с в ожидании latch-файла. false возвращает полный classpath. -->
+                    <useManifestOnlyJar>false</useManifestOnlyJar>
                     <!-- WO-REL-36: broker-тесты исключены из дефолтного build'а
                          (тот же property-механизм, что в rest/engine). -->
                     <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
