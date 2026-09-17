@@ -219,8 +219,8 @@ public class DmnServiceImpl implements DmnService {
             inputValues.add(expr == null || expr.isBlank() ? null : evalExpression(expr, vars));
         }
 
-        String hitPolicy = table.getHitPolicy() == null ? "UNIQUE" : table.getHitPolicy().toUpperCase();
-        String aggregation = table.getAggregation() == null ? null : table.getAggregation().toUpperCase();
+        String hitPolicy = table.getHitPolicy() == null ? "UNIQUE" : table.getHitPolicy().toUpperCase(java.util.Locale.ROOT);
+        String aggregation = table.getAggregation() == null ? null : table.getAggregation().toUpperCase(java.util.Locale.ROOT);
 
         // Collect all matching rules
         List<DmnRuleModel> matchedRules = new ArrayList<>();
@@ -444,7 +444,7 @@ public class DmnServiceImpl implements DmnService {
         List<DmnRule> rules = new ArrayList<>();
         DmnDecisionTableModel table = decision.getDecisionTable();
         if (table != null) {
-            dto.setHitPolicy(table.getHitPolicy() == null ? "UNIQUE" : table.getHitPolicy().toUpperCase());
+            dto.setHitPolicy(table.getHitPolicy() == null ? "UNIQUE" : table.getHitPolicy().toUpperCase(java.util.Locale.ROOT));
             if (table.getInputs() != null) {
                 for (DmnInputModel in : table.getInputs()) {
                     DmnInput i = new DmnInput();
