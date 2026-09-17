@@ -45,18 +45,14 @@ public class FlowNavigator {
      * Follows every outgoing sequence flow of {@code element} unconditionally and executes the
      * target of each. Shared "continue from here" step used by start events, completed tasks,
      * signalled wait states and parent continuation after a subprocess/call activity ends.
+     *
+     * WO-QW-1 Q-7: history kept to 2 lines + WO ref — the full ad-hoc HOLD story lives in
+     * governance/reports/WO-C8-32.md.
      */
     public void proceedToOutgoing(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel element, TokenExecutor executor) {
-        // WO-C8-32: ad-hoc join arrival pre-check (NOT only the dead-end branch below).
-        // Chained middles (a→b: a HAS outgoing) never reach the dead-end return, yet an
-        // activated middle's completion must still count — sequence flows inside ad-hoc are
-        // docs-allowed, and a dead-end-only hook would hang such scopes forever (arrival 1
-        // of 2). HOLD-fix: the middle only RECORDS its arrival — the count is evaluated
-        // solely at chain ends (dead ends) plus token quiescence, so a single root with an
-        // outgoing no longer finishes the scope before its chain runs. Dead ends flow
-        // through here too, so this one call site covers both.
-        // Returns true only when a scope finished and consumed the branch.
-        if (handleAdHocArrival(processInstanceId, tokenId, bpmn, element, executor)) {
+        // WO-C8-32 (+HOLD): middles only RECORD arrival, count evaluated at chain ends + quiescence (WO-C8-32.md).
+        // Returns SCOPE_FINISHED only when a scope finished and consumed the branch.
+        if (handleAdHocArrival(processInstanceId, tokenId, bpmn, element, executor) == ArrivalOutcome.SCOPE_FINISHED) {
             return;
         }
         if (element.getOutgoing() == null) {
@@ -127,10 +123,12 @@ public class FlowNavigator {
      * token-mates (unless {@code cancelRemainingInstances} is false) and continues past
      * the ad-hoc element.
      *
-     * @return true when a scope finished here and consumed this branch (caller must return
-     *         WITHOUT flowing the completing element's own outgoing — the scope took over).
+     * @return {@link ArrivalOutcome#SCOPE_FINISHED} when a scope finished here and
+     *         consumed this branch (caller must return WITHOUT flowing the completing
+     *         element's own outgoing — the scope took over), {@link ArrivalOutcome#CONTINUE}
+     *         otherwise. Full HOLD story: governance/reports/WO-C8-32.md.
      */
-    public boolean handleAdHocArrival(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+    public ArrivalOutcome handleAdHocArrival(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel element, TokenExecutor executor) {
         // One indexed read of the instance's active activities per proceedToOutgoing call
         // (created/in-progress only — usually a handful of rows). No new DB surface: the
@@ -145,10 +143,10 @@ public class FlowNavigator {
             .filter(a -> tokenId.equals(a.getToken()) && a.getType() == BpmnElementType.AD_HOC_SUB_PROCESS)
             .toList();
         if (scopes.isEmpty()) {
-            return false;
+            return ArrivalOutcome.CONTINUE;
         }
         boolean isChainMiddle = element.getOutgoing() != null && !element.getOutgoing().isEmpty();
-        boolean consumed = false;
+        ArrivalOutcome outcome = ArrivalOutcome.CONTINUE;
         for (Activity scope : scopes) {
             AdHocJoin.ScopeState state = AdHocJoin.resolve(dbService, objectMapper, processInstanceId, scope.getId());
             if (isJobModeScope(bpmn, scope)) {
@@ -178,7 +176,7 @@ public class FlowNavigator {
                         finishAdHocScope0(processInstanceId, tokenId, bpmn, scope,
                             state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor, null,
                             active, cancelled);
-                        consumed = true;
+                        outcome = ArrivalOutcome.SCOPE_FINISHED;
                     }
                 }
                 continue;
@@ -192,7 +190,7 @@ public class FlowNavigator {
                 // not-yet-created downstream: the scope takes over, the chain never runs).
                 if (adHocConditionMet(processInstanceId, bpmn, scope)) {
                     finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor, null, active, cancelled);
-                    consumed = true;
+                    outcome = ArrivalOutcome.SCOPE_FINISHED;
                 } else {
                     log.info("{}/{}: Ad-hoc subprocess {} root {} done, chain continues",
                         processInstanceId, tokenId, scope.getBpmnElementId(), element.getId());
@@ -201,7 +199,7 @@ public class FlowNavigator {
             }
             if (evaluateScopeDone(processInstanceId, bpmn, scope, state, active, cancelled)) {
                 finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor, null, active, cancelled);
-                consumed = true;
+                outcome = ArrivalOutcome.SCOPE_FINISHED;
             } else {
                 Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
                 int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, key).size();
@@ -209,7 +207,7 @@ public class FlowNavigator {
                     processInstanceId, tokenId, scope.getBpmnElementId(), arrived, expected);
             }
         }
-        return consumed;
+        return outcome;
     }
 
     /**
