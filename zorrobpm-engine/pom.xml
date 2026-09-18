@@ -160,6 +160,26 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- WO-OBS-8: native Boot OTel starter (not the javaagent, not the community
+             starter — see escalation). Single dep: OTel API + micrometer-tracing-bridge-otel
+             + OTLP HTTP/protobuf exporter + OTLP metrics registry, versions from Boot BOM.
+             No OTLP endpoint in repo → SDK no-op by default (prod/CI silent); endpoint +
+             sampling only via dev-overlay env. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
+        </dependency>
+
+        <!-- WO-OBS-8, test-only: in-memory span exporter for trace-continuity asserts
+             (criterion 1) — version pinned to the OTel release Boot 4.0.6 manages
+             (1.55.0, verified resolvable from Maven Central 2026-09-17). -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <version>1.55.0</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
