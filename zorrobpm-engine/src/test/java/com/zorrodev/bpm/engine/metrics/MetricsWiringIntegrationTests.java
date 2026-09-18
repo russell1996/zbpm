@@ -243,8 +243,7 @@ public class MetricsWiringIntegrationTests {
         // (published events would otherwise fan out into handlers mid-test).
         OutboxBatchProcessor processor = new OutboxBatchProcessor(outboxRepository,
             mock(ApplicationEventPublisher.class), new tools.jackson.databind.ObjectMapper(), contextMetrics,
-            mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class),
-            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+            mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class));
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "batchSize", 100);
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "maxRetries", 5);
         // Fresh counter: this processor's first tick samples by construction.
