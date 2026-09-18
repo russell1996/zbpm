@@ -24,6 +24,8 @@ services:
   postgres:
     image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     container_name: soak-postgres
+    # WO-REL-38: тот же track_commit_timestamp, что в прод-compose (порядок ленты).
+    command: ["postgres", "-c", "track_commit_timestamp=on"]
     environment:
       POSTGRES_DB: ${DB_NAME:-zorrobpm-db}
       POSTGRES_USER: ${DB_USERNAME:-zorrodev}

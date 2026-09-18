@@ -72,6 +72,8 @@ class SseRevocationIT {
     @Autowired ProcessMemberRepository processMemberRepository;
     @Autowired ApiKeyRepository apiKeyRepository;
     @Autowired ApiKeyGrantRepository apiKeyGrantRepository;
+    @Autowired com.zorrodev.bpm.engine.repository.DomainEventRepository domainEventRepository;
+    @Autowired com.zorrodev.bpm.engine.scheduler.FeedPositionAssigner feedPositionAssigner;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
@@ -139,8 +141,22 @@ class SseRevocationIT {
     }
 
     private void pushEvent(long sequence, String pdId) {
+        // WO-REL-38: sequence обязан существовать в БД (мост резолвит позицию
+        // по нему). Тестовые sequence 1/2 заменены настоящими рядами — сеем ряд
+        // и шлём ЕГО sequence (параметр оставлен для совместимости сигнатуры).
+        com.zorrodev.bpm.engine.entity.DomainEventEntity e =
+            new com.zorrodev.bpm.engine.entity.DomainEventEntity();
+        e.setId(UUID.randomUUID());
+        e.setType("process-instance.started");
+        e.setVersion(1);
+        e.setOccurredAt(Instant.now());
+        e.setData(Map.of());
+        com.zorrodev.bpm.engine.entity.DomainEventEntity saved = domainEventRepository.save(e);
+        feedPositionAssigner.assignPendingPositions();
+        long realSequence = domainEventRepository.findById(saved.getSequence())
+            .orElseThrow().getSequence();
         sseEventStreamService.onDomainEvent(
-            "{\"sequence\":" + sequence + ",\"id\":\"" + UUID.randomUUID() + "\","
+            "{\"sequence\":" + realSequence + ",\"id\":\"" + UUID.randomUUID() + "\","
             + "\"type\":\"process-instance.started\","
             + "\"version\":1,\"occurredAt\":\"2026-09-16T10:00:00Z\","
             + "\"processDefinitionId\":\"" + pdId + "\","

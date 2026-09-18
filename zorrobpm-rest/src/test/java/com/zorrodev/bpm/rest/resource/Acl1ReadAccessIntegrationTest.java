@@ -64,6 +64,7 @@ class Acl1ReadAccessIntegrationTest {
     @Autowired private UiUserRepository userRepository;
     @Autowired private PasswordHasher passwordHasher;
     @Autowired private DomainEventRepository domainEventRepository;
+    @Autowired private com.zorrodev.bpm.engine.scheduler.FeedPositionAssigner feedPositionAssigner;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
@@ -118,6 +119,8 @@ class Acl1ReadAccessIntegrationTest {
         emitEvent(pdIdA, "process-instance.started");
         emitEvent(pdIdA, "user-task.created");
         emitEvent(pdIdB, "process-instance.started");
+        // WO-REL-38: курсор ленты — feed_position (ставит джоб).
+        feedPositionAssigner.assignPendingPositions();
     }
 
     // ==================== Criterion #1: non-admin sees ALL definitions ====================

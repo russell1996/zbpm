@@ -8,6 +8,10 @@ name: zbpm-pgci
 services:
   postgres:
     image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    # WO-REL-38: commit-timestamps для порядка ленты (FeedPositionAssigner
+    # читает pg_xact_commit_timestamp(xmin); контекст postmaster — только
+    # через командную строку, SET после старта не работает).
+    command: ["postgres", "-c", "track_commit_timestamp=on"]
     environment:
       POSTGRES_DB: ${PG_DB:-zorrobpm-db}
       POSTGRES_USER: ${PG_USER:-zorrodev}

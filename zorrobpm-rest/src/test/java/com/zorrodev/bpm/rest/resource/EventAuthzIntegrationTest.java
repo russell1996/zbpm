@@ -52,6 +52,7 @@ class EventAuthzIntegrationTest {
     @Autowired private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired private ProcessRepository processRepository;
     @Autowired private DomainEventRepository domainEventRepository;
+    @Autowired private com.zorrodev.bpm.engine.scheduler.FeedPositionAssigner feedPositionAssigner;
 
     private String adminToken;
     private String userTokenA; // has grant on processA only
@@ -160,6 +161,10 @@ class EventAuthzIntegrationTest {
         // test forever so the mines cannot come back. Total stays below the page size.
         emitEvent(pdIdA, UUID.randomUUID(), "process-instance.started");
         emitEvent(pdIdB, UUID.randomUUID(), "process-instance.started");
+
+        // WO-REL-38: курсор ленты — feed_position (ставит джоб), без неё строки
+        // невидимы курсору.
+        feedPositionAssigner.assignPendingPositions();
     }
 
     private void emitEvent(UUID processDefinitionId, UUID processInstanceId, String type) {
@@ -457,6 +462,8 @@ class EventAuthzIntegrationTest {
         emitEvent(pdIdA, piId1, "user-task.created");
         emitEvent(pdIdA, piId2, "user-task.created");
         emitEvent(pdIdA, piId1, "user-task.completed");
+        // WO-REL-38: курсор — feed_position (emits выше без позиций).
+        feedPositionAssigner.assignPendingPositions();
 
         // Filter by piId1 — should get only 2 events
         mockMvc.perform(get("/events")

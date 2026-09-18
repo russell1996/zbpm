@@ -59,6 +59,7 @@ class SseEventStreamIntegrationTest {
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private ApiKeyRepository apiKeyRepository;
     @Autowired private ApiKeyGrantRepository apiKeyGrantRepository;
+    @Autowired private com.zorrodev.bpm.engine.scheduler.FeedPositionAssigner feedPositionAssigner;
 
     private String adminToken;
 
@@ -142,6 +143,23 @@ class SseEventStreamIntegrationTest {
      */
     private UUID seedLiveOwner(String prefix) {
         return seedLiveOwner(prefix, "USER");
+    }
+
+    /**
+     * WO-REL-38: настоящий ряд events + назначенная позиция — live-мост
+     * резолвит позицию по sequence из БД и рассылает только тогда.
+     */
+    private long seedPositionedEvent() {
+        com.zorrodev.bpm.engine.entity.DomainEventEntity e =
+            new com.zorrodev.bpm.engine.entity.DomainEventEntity();
+        e.setId(UUID.randomUUID());
+        e.setType("rel38.setup." + UUID.randomUUID());
+        e.setVersion(1);
+        e.setOccurredAt(Instant.now());
+        e.setData(Map.of());
+        com.zorrodev.bpm.engine.entity.DomainEventEntity saved = domainEventRepository.save(e);
+        feedPositionAssigner.assignPendingPositions();
+        return domainEventRepository.findById(saved.getSequence()).orElseThrow().getSequence();
     }
 
     private UUID seedLiveOwner(String prefix, String role) {
@@ -298,16 +316,20 @@ class SseEventStreamIntegrationTest {
             latch.countDown();
         });
 
-        // Push events (now 4 dispatches: 2 clients × 2 events, but only 2 pass AuthZ)
+        // Push events (now 4 dispatches: 2 clients × 2 events, but only 2 pass AuthZ).
+        // WO-REL-38: live-мост резолвит позицию по sequence из БД — сеем
+        // настоящие строки (позицию ставит джоб) и шлём их sequence.
+        long seqA = seedPositionedEvent();
+        long seqB = seedPositionedEvent();
         sseEventStreamService.onDomainEvent(
-            "{\"sequence\":1,\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
+            "{\"sequence\":" + seqA + ",\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
             + "\"version\":1,\"occurredAt\":\"2026-07-20T10:00:00Z\","
             + "\"processDefinitionId\":\"" + pdIdA + "\","
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
             + "\"data\":{}}");
 
         sseEventStreamService.onDomainEvent(
-            "{\"sequence\":2,\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
+            "{\"sequence\":" + seqB + ",\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
             + "\"version\":1,\"occurredAt\":\"2026-07-20T10:00:01Z\","
             + "\"processDefinitionId\":\"" + pdIdB + "\","
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
@@ -457,8 +479,9 @@ class SseEventStreamIntegrationTest {
         });
 
         String pdId = UUID.randomUUID().toString();
+        long positioned = seedPositionedEvent();
         sseEventStreamService.onDomainEvent(
-            "{\"sequence\":1,\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
+            "{\"sequence\":" + positioned + ",\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"process-instance.started\","
             + "\"version\":1,\"occurredAt\":\"2026-07-20T10:00:00Z\","
             + "\"processDefinitionId\":\"" + pdId + "\","
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
