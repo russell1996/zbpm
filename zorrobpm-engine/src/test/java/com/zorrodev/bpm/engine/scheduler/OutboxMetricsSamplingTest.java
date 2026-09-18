@@ -36,7 +36,7 @@ class OutboxMetricsSamplingTest {
     @BeforeEach
     void setUp() {
         processor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper,
-            bpmMetrics, domainEventEmitter, com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+            bpmMetrics, domainEventEmitter);
         lenient().when(outboxRepository.findPendingBatch(anyInt())).thenReturn(List.of());
     }
 

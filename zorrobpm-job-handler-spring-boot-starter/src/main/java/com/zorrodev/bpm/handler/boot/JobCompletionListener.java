@@ -6,10 +6,8 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import com.zorrodev.bpm.exchange.ProcessVariable;
 import com.zorrodev.bpm.exchange.ServiceTaskCompleteData;
-import com.zorrodev.bpm.exchange.TraceHeaders;
 import com.zorrodev.bpm.handler.JobHandler;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageListener;
@@ -95,40 +93,6 @@ public class JobCompletionListener implements MessageListener {
             return;
         }
 
-        // WO-OBS-8: the worker hop. This starter ships to EXTERNAL worker JVMs that do
-        // not (and must not be required to) carry the OTel SDK — so no span is opened
-        // here even when one could be: the incoming W3C traceparent is forwarded VERBATIM
-        // into the completion message and the engine-side completion listener (which HAS
-        // the SDK) continues the trace from it. Trace-ID continuity — the actual WO
-        // criterion — holds with or without a worker-local SDK; a worker-local span
-        // would silently break the chain on every external worker without OTel
-        // configured (GlobalOpenTelemetry noop → invalid span → null traceparent).
-        // MDC (traceId + processInstanceId) IS set here — worker logs are criterion 2.
-        Map<String, Object> incomingHeaders = message.getMessageProperties() != null
-            ? message.getMessageProperties().getHeaders() : Map.of();
-        String incomingTraceParent = headerAsString(incomingHeaders, TraceHeaders.TRACE_PARENT_HEADER);
-        String headerPi = headerAsString(incomingHeaders, TraceHeaders.PROCESS_INSTANCE_ID_HEADER);
-        String processInstanceId = headerPi != null ? headerPi
-            : (model.getProcessInstanceId() != null ? model.getProcessInstanceId().toString() : null);
-        String priorTraceId = MDC.get(TraceHeaders.MDC_TRACE_ID);
-        String priorPi = MDC.get(TraceHeaders.MDC_PROCESS_INSTANCE_ID);
-        String mdcTraceId = TraceHeaders.extractTraceId(incomingTraceParent);
-        if (mdcTraceId != null) {
-            MDC.put(TraceHeaders.MDC_TRACE_ID, mdcTraceId);
-        }
-        if (processInstanceId != null) {
-            MDC.put(TraceHeaders.MDC_PROCESS_INSTANCE_ID, processInstanceId);
-        }
-        try {
-            onMessageTraced(message, model, incomingTraceParent, processInstanceId);
-        } finally {
-            restoreMdc(TraceHeaders.MDC_TRACE_ID, priorTraceId);
-            restoreMdc(TraceHeaders.MDC_PROCESS_INSTANCE_ID, priorPi);
-        }
-    }
-
-    private void onMessageTraced(Message message, JobDetailModel model,
-            String incomingTraceParent, String processInstanceId) {
         String correlationId = message.getMessageProperties() != null
             ? message.getMessageProperties().getCorrelationId()
             : null;
@@ -144,10 +108,6 @@ public class JobCompletionListener implements MessageListener {
 
         ServiceTaskCompleteData completeData = new ServiceTaskCompleteData();
         completeData.setServiceTaskId(model.getServiceTaskId());
-        // WO-OBS-8: verbatim-forward (see onMessage) — set BEFORE the resultCache.put
-        // below so redeliveries replay the same trace linkage, not a blank one.
-        completeData.setTraceParent(incomingTraceParent);
-        completeData.setProcessInstanceId(processInstanceId);
         try {
             List<ProcessVariable> result = handler.handleJob(model).stream().map(x -> {
                 ProcessVariable v = new ProcessVariable();
@@ -174,22 +134,7 @@ public class JobCompletionListener implements MessageListener {
 
     private void sendCompletion(ServiceTaskCompleteData completeData) {
         try {
-            // WO-OBS-8: the completion hop carries the forwarded trace context as AMQP
-            // headers (the engine-side @RabbitListener reads them via @Headers) AND
-            // inside the converted body (belt and braces: the body fields feed the
-            // engine-internal Spring event when headers are stripped by an
-            // intermediate). Tolerant: absent when the job arrived untraced.
-            rabbitTemplate.convertAndSend(completeQueueName, completeData, m -> {
-                if (completeData.getTraceParent() != null) {
-                    m.getMessageProperties().setHeader(TraceHeaders.TRACE_PARENT_HEADER,
-                        completeData.getTraceParent());
-                }
-                if (completeData.getProcessInstanceId() != null) {
-                    m.getMessageProperties().setHeader(TraceHeaders.PROCESS_INSTANCE_ID_HEADER,
-                        completeData.getProcessInstanceId());
-                }
-                return m;
-            });
+            rabbitTemplate.convertAndSend(completeQueueName, completeData);
         } catch (AmqpException e) {
             // Transport failure: проброс наружу — контейнер NACK'ает/ретраит вход,
             // результат (уже в resultCache) не теряется. НЕ логируем как deserialize.
@@ -205,21 +150,5 @@ public class JobCompletionListener implements MessageListener {
     /** Тест-хук: сколько результатов сейчас закэшировано (не размер кэша Caffeine). */
     Map<String, ServiceTaskCompleteData> cachedResultsForTest() {
         return resultCache.asMap();
-    }
-
-    private static String headerAsString(Map<String, Object> headers, String key) {
-        if (headers == null) {
-            return null;
-        }
-        Object v = headers.get(key);
-        return v != null ? v.toString() : null;
-    }
-
-    private static void restoreMdc(String key, String prior) {
-        if (prior == null) {
-            MDC.remove(key);
-        } else {
-            MDC.put(key, prior);
-        }
     }
 }

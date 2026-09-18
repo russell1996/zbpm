@@ -230,8 +230,7 @@ class HandlerAutoConfigurationTest {
         v.setType("STRING");
         when(handlerA.handleJob(any())).thenReturn(java.util.List.of(v));
         org.mockito.Mockito.doThrow(new org.springframework.amqp.AmqpException("broker down"))
-            .when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
-                any(org.springframework.amqp.core.MessagePostProcessor.class));
+            .when(rabbitTemplate).convertAndSend(anyString(), (Object) any());
 
         // Проброс наружу (контейнер NACK'ает вход), а не тихий success.
         assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> listener.onMessage(message)))
