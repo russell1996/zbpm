@@ -132,9 +132,31 @@ public class TracingSupport {
      *
      * <p>Use try-with-resources; one scope per processed unit (outbox entry, job,
      * completion, SSE dispatch).
+     *
+     * <p>WO-OBS-8r2: the prior-MDC snapshot is taken BEFORE any OTel
+     * {@code Context} call ({@code startSpan} is pure construction, but
+     * {@code makeCurrent} is not). Boot's OTel autoconfiguration installs a
+     * JVM-global {@code ContextStorage} wrapper
+     * ({@code OpenTelemetryEventPublisherBeansApplicationListener$Wrapper},
+     * permanent for the process once any Spring context initializes it) whose
+     * {@code Slf4JEventListener} writes {@code MDC.put("traceId", hex)} on EVERY
+     * scope attach — same key we use. Reading priors after {@code makeCurrent}
+     * captured the bridge-written span hex instead of the caller's value, so
+     * {@code close()} "restored" the hex, not the caller's MDC (CI flake:
+     * {@code expected: "outer-trace" but was: "<hex>"}, order-dependent on which
+     * tests shared the surefire fork). Snapshot-first + restore-last brackets the
+     * bridge on both sides: attach-time puts happen before our snapshot, and our
+     * restore runs after the bridge's close-time remove+put inside
+     * {@code scope.close()}. Disabling the bridge instead (option a) was rejected:
+     * it would kill Boot's auto-correlation for every instrumented span, and the
+     * manual path must compose with it, not replace it.
      */
     public TraceScope openChildSpan(String traceParent, String spanName, String processInstanceId,
                                     Map<String, String> attributes) {
+        // WO-OBS-8r2: snapshot BEFORE touching OTel Context (see javadoc) —
+        // after makeCurrent the bridge may already have overwritten these keys.
+        String priorTraceId = MDC.get(MDC_TRACE_ID);
+        String priorPi = MDC.get(MDC_PROCESS_INSTANCE_ID);
         Context parent = Context.root();
         if (traceParent != null && !traceParent.isBlank()) {
             Map<String, String> carrier = Map.of(TRACE_PARENT_HEADER, traceParent.trim());
@@ -161,8 +183,6 @@ public class TracingSupport {
         }
         Span span = builder.startSpan();
         Scope scope = span.makeCurrent();
-        String priorTraceId = MDC.get(MDC_TRACE_ID);
-        String priorPi = MDC.get(MDC_PROCESS_INSTANCE_ID);
         MDC.put(MDC_TRACE_ID, span.getSpanContext().getTraceId());
         if (processInstanceId != null && !processInstanceId.isBlank()) {
             MDC.put(MDC_PROCESS_INSTANCE_ID, processInstanceId);
@@ -223,6 +243,9 @@ public class TracingSupport {
                 try {
                     scope.close();
                 } finally {
+                    // WO-OBS-8r2: restore AFTER scope.close() — the bridge's own
+                    // close-time remove+put runs inside scope.close(), so ours
+                    // (snapshot taken before makeCurrent) wins by being last.
                     restore(MDC_TRACE_ID, priorTraceId);
                     restore(MDC_PROCESS_INSTANCE_ID, priorProcessInstanceId);
                 }
