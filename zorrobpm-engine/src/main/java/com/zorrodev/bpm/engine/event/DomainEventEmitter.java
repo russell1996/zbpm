@@ -92,6 +92,10 @@ public class DomainEventEmitter {
             Map<String, Object> envelope = new HashMap<>();
             envelope.put("id", eventId.toString());
             envelope.put("sequence", persisted.getSequence());
+            // WO-REL-38: позиция курсора (null на момент emit — строка только
+            // что вставлена, джоб назначит позже; live-мост ждёт тик, catchup
+            // читает только назначенные).
+            envelope.put("feedPosition", persisted.getFeedPosition());
             envelope.put("type", eventType.getValue());
             envelope.put("version", persisted.getVersion());
             envelope.put("occurredAt", occurredAt.toString());

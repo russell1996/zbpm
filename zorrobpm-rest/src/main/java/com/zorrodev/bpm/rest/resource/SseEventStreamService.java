@@ -312,8 +312,8 @@ public class SseEventStreamService implements SmartLifecycle {
     }
 
     /**
-     * WO-REL-37 (F14): слить буфер пересечения: отбросить дубль (sequence <=
-     * границы catchup), доставить новое (sequence > границы), перевести клиента
+     * WO-REL-37 (F14): слить буфер пересечения: отбросить дубль (позиция <=
+     * границы catchup), доставить новое (позиция > границы), перевести клиента
      * в обычный live-режим.
      */
     public void drainBufferedClient(String clientId, long catchupBoundary) {
@@ -329,13 +329,14 @@ public class SseEventStreamService implements SmartLifecycle {
             return;
         }
         for (Map<String, Object> envelope : buffered) {
-            Object seqObj = envelope.get("sequence");
-            long seq = seqObj instanceof Number n ? n.longValue() : 0;
-            if (seq <= catchupBoundary) {
+            // WO-REL-38: дедуп по позиции курсора (feedPosition; fallback —
+            // sequence для envelope без позиции, см. cursorOf).
+            long cursor = cursorOf(envelope, catchupBoundary);
+            if (cursor <= catchupBoundary) {
                 continue;
             }
             SseEmitter.SseEventBuilder event = SseEmitter.event()
-                .id(String.valueOf(seq))
+                .id(String.valueOf(cursor))
                 .name((String) envelope.get("type"))
                 .data(envelope)
                 .reconnectTime(3000);
@@ -422,12 +423,20 @@ public class SseEventStreamService implements SmartLifecycle {
         if (processInstanceId != null) {
             org.slf4j.MDC.put(TraceHeaders.MDC_PROCESS_INSTANCE_ID, processInstanceId);
         }
+        // WO-REL-38: live идёт в рассылку только с назначенной позицией —
+        // иначе клиентский курсор (SSE id) указывал бы на sequence, который
+        // может навсегда пропустить событие задержанной транзакции (F15).
+        Long cursor = resolveLiveCursor(sequence);
+        if (cursor == null) {
+            return;
+        }
         try {
-            dispatchToClientsTraced(envelope, eventType, processInstanceId, pdUuid, sequence);
+            envelope.put("feedPosition", cursor);
+            dispatchToClientsTraced(envelope, eventType, processInstanceId, pdUuid, cursor);
             // WO-OBS-8: the per-dispatch line inside the MDC window — this is the
             // greppable proof (criterion 2 extends to SSE): trace + PI on one line.
-            log.info("SSE dispatch: type={}, processInstanceId={}, sequence={}",
-                eventType, processInstanceId, sequence);
+            log.info("SSE dispatch: type={}, processInstanceId={}, sequence={}, feedPosition={}",
+                eventType, processInstanceId, sequence, cursor);
         } finally {
             restoreSseMdc(TraceHeaders.MDC_TRACE_ID, priorTraceId);
             restoreSseMdc(TraceHeaders.MDC_PROCESS_INSTANCE_ID, priorPi);
@@ -442,8 +451,68 @@ public class SseEventStreamService implements SmartLifecycle {
         }
     }
 
+    /**
+     * WO-REL-38: live-курсор — commit-ordered {@code feed_position}, НЕ raw
+     * {@code sequence} из тела. Строка гарантированно закоммичена (мост читает
+     * её из закоммиченного брокерного сообщения), но позиция может быть ещё не
+     * назначена: тогда ждём тик джоба ограниченное время (см. константы —
+     * запас поверх дефолтного poll-интервала 2s). Неизвестный sequence (чужой
+     * id, не наша строка) — отброс сразу, без ожидания: ждать нечего.
+     * Пропуск здесь — не потеря навсегда: catchup читает то же fp-окно от
+     * курсора клиента, и событие доберётся при следующем reconnect.
+     *
+     * @return позиция курсора или null (пропустить событие, warn уже записан)
+     */
+    private static final int LIVE_CURSOR_WAIT_ATTEMPTS = 30;
+    private static final long LIVE_CURSOR_WAIT_MS = 100;
+
+    private Long resolveLiveCursor(long sequence) {
+        java.util.Optional<Long> position =
+            eventQueryService.resolveFeedPositionBySequence(sequence);
+        if (position.isPresent()) {
+            return position.get();
+        }
+        if (!eventQueryService.eventSequenceExists(sequence)) {
+            log.warn("SSE live event with unknown sequence {} skipped (no such row)", sequence);
+            return null;
+        }
+        for (int i = 0; i < LIVE_CURSOR_WAIT_ATTEMPTS; i++) {
+            try {
+                Thread.sleep(LIVE_CURSOR_WAIT_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+            position = eventQueryService.resolveFeedPositionBySequence(sequence);
+            if (position.isPresent()) {
+                return position.get();
+            }
+        }
+        log.warn("SSE live event with sequence {} still has no feed position after ~{}ms, skipped (catchup will heal on reconnect)",
+            sequence, (long) LIVE_CURSOR_WAIT_ATTEMPTS * LIVE_CURSOR_WAIT_MS);
+        return null;
+    }
+
+    /**
+     * WO-REL-38: позиция курсора из envelope. Новые envelope несут
+     * {@code feedPosition}; старые/синтетические (тесты, прямые вызовы) —
+     * только {@code sequence}, тогда курсором служит он (совместимость чтения,
+     * не записи: прод всегда пишет обе).
+     */
+    private static long cursorOf(Map<String, Object> envelope, long fallback) {
+        Object fp = envelope.get("feedPosition");
+        if (fp instanceof Number n) {
+            return n.longValue();
+        }
+        Object seq = envelope.get("sequence");
+        if (seq instanceof Number n) {
+            return n.longValue();
+        }
+        return fallback;
+    }
+
     private void dispatchToClientsTraced(Map<String, Object> envelope, String eventType,
-            String processInstanceId, UUID pdUuid, long sequence) {
+            String processInstanceId, UUID pdUuid, long cursor) {
 
         for (SseClientInfo client : clients.values()) {
             // Check type filter
@@ -504,8 +573,9 @@ public class SseEventStreamService implements SmartLifecycle {
             }
 
             // Per-client async send — not on the RabbitMQ thread (WO-PERF-6 head-of-line)
+            // WO-REL-38: SSE id — позиция курсора (параметр метода уже курсор).
             SseEmitter.SseEventBuilder event = SseEmitter.event()
-                .id(String.valueOf(sequence))
+                .id(String.valueOf(cursor))
                 .name(eventType)
                 .data(envelope)
                 .reconnectTime(3000);
@@ -577,10 +647,14 @@ public class SseEventStreamService implements SmartLifecycle {
      * гранты, та же пагинация maxResults+1/hasMore, фильтрация в SQL до окна).
      * Envelope строит сервис (null-safe LinkedHashMap, не Map.of) — штатный
      * null elementId больше не роняет весь backlog (F12). Возвращает границу
-     * (max sequence выданного, или since — если ничего не выдано) для дедупа
-     * пересечения catchup→live.
+     * (max выданной позиции курсора, или since — если ничего не выдано) для
+     * дедупа пересечения catchup→live.
      *
-     * @return max выданного sequence (exclusive-граница live-буфера)
+     * <p>WO-REL-38: граница и SSE id — feed-позиция (см. cursorOf), входной
+     * since трактуется в том же домене (клиент хранит последний полученный
+     * id, который теперь позиция).
+     *
+     * @return max выданной позиции (exclusive-граница live-буфера)
      */
     public long sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
                                     String processDefinitionKeyFilter) {
@@ -621,16 +695,18 @@ public class SseEventStreamService implements SmartLifecycle {
             List<Map<String, Object>> page = hasMore ? envelopes.subList(0, 100) : envelopes;
             for (Map<String, Object> envelope : page) {
                 try {
-                    Object seqObj = envelope.get("sequence");
-                    long seq = seqObj instanceof Number n ? n.longValue() : boundary;
+                    // WO-REL-38: SSE id и граница — позиция курсора (feedPosition;
+                    // fallback — sequence, см. cursorOf). Браузер шлёт её назад
+                    // как Last-Event-ID — тот же домен, что since у REST.
+                    long cursor = cursorOf(envelope, boundary);
                     SseEmitter.SseEventBuilder sseEvent = SseEmitter.event()
-                        .id(String.valueOf(seq))
+                        .id(String.valueOf(cursor))
                         .name((String) envelope.get("type"))
                         .data(envelope)
                         .reconnectTime(3000);
                     emitter.send(sseEvent);
-                    if (seq > boundary) {
-                        boundary = seq;
+                    if (cursor > boundary) {
+                        boundary = cursor;
                     }
                 } catch (Exception e) {
                     // F12: одна битая запись не обрывает остаток backlog (было break).

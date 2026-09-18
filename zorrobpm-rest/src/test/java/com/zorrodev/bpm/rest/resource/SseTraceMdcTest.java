@@ -35,6 +35,7 @@ class SseTraceMdcTest {
     private SseEventStreamService service;
     private ListAppender<ILoggingEvent> logAppender;
     private Logger logger;
+    private com.zorrodev.bpm.engine.service.EventQueryService eventQueryService;
 
     @BeforeEach
     void setUp() {
@@ -44,7 +45,13 @@ class SseTraceMdcTest {
         org.mockito.Mockito.when(resolver.readableRuntimePdIds(
             org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
             .thenReturn(null);
-        service = new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class),
+        eventQueryService = mock(com.zorrodev.bpm.engine.service.EventQueryService.class);
+        // WO-REL-38: live-мост резолвит позицию по sequence — здесь строка
+        // "существует и назначена" (позиция = sequence, как после тика джоба).
+        org.mockito.Mockito.when(eventQueryService.resolveFeedPositionBySequence(
+            org.mockito.ArgumentMatchers.anyLong()))
+            .thenAnswer(inv -> java.util.Optional.of(inv.getArgument(0)));
+        service = new SseEventStreamService(eventQueryService,
             resolver, null, new tools.jackson.databind.ObjectMapper(), null, null);
         logAppender = new ListAppender<>();
         logAppender.start();
