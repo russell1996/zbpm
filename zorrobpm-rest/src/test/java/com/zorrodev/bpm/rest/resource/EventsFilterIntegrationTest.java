@@ -57,6 +57,7 @@ class EventsFilterIntegrationTest {
     @Autowired private UiUserRepository userRepository;
     @Autowired private PasswordHasher passwordHasher;
     @Autowired private DomainEventRepository domainEventRepository;
+    @Autowired private com.zorrodev.bpm.engine.scheduler.FeedPositionAssigner feedPositionAssigner;
     @Autowired private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired private ProcessRepository processRepository;
 
@@ -92,6 +93,9 @@ class EventsFilterIntegrationTest {
         emitEvent(targetDefId, "int7.target.started");
         emitEvent(targetDefId, "int7.target.progress");
         emitEvent(targetDefId, "int7.target.completed");
+        // WO-REL-38: курсор ленты — feed_position, которую ставит джоб, а не
+        // sequence из save. Без этого все 553 строки невидимы курсору.
+        feedPositionAssigner.assignPendingPositions();
     }
 
     @org.junit.jupiter.api.AfterAll

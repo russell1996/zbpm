@@ -33,8 +33,15 @@ class SsePerf6IntegrationTest {
 
     private SseEventStreamService service() {
         when(eventAuthzResolver.readableRuntimePdIds(any(), any())).thenReturn(null);
+        // WO-REL-38: live-мост резолвит позицию по sequence — строка "назначена".
+        // lenient: maxClients-тест onDomainEvent не зовёт (стаб ему не нужен).
+        com.zorrodev.bpm.engine.service.EventQueryService queries =
+            mock(com.zorrodev.bpm.engine.service.EventQueryService.class);
+        org.mockito.Mockito.lenient()
+            .when(queries.resolveFeedPositionBySequence(org.mockito.ArgumentMatchers.anyLong()))
+            .thenAnswer(inv -> java.util.Optional.of(inv.getArgument(0)));
         // WO-SEC-67: +2 ctor args (UiUserLookupService, ApiKeyRepository) — null = no live checks in unit scope.
-        return new SseEventStreamService(mock(com.zorrodev.bpm.engine.service.EventQueryService.class), eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper(), null, null);
+        return new SseEventStreamService(queries, eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper(), null, null);
     }
 
     private static Principal admin() {

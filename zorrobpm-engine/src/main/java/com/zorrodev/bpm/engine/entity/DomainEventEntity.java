@@ -25,6 +25,18 @@ public class DomainEventEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long sequence;
 
+    /**
+     * WO-REL-38 (F15): commit-ordered позиция в ленте. IDENTITY-sequence
+     * назначается при INSERT, а не в порядке коммитов — курсор по нему мог
+     * навсегда пропустить событие задержанной транзакции. Эту позицию ставит
+     * {@code FeedPositionAssigner} только строкам завершённых транзакций;
+     * consumer-курсор ({@code since}/Last-Event-ID) читает её, а не sequence.
+     * NULL = позиция ещё не назначена (строка невидима курсору). Единственное
+     * мутабельное поле сущности — таблица в остальном append-only.
+     */
+    @Column(name = "feed_position")
+    private Long feedPosition;
+
     @Column(nullable = false, updatable = false)
     private UUID id;
 
@@ -55,6 +67,9 @@ public class DomainEventEntity {
 
     public Long getSequence() { return sequence; }
     public void setSequence(Long sequence) { this.sequence = sequence; }
+
+    public Long getFeedPosition() { return feedPosition; }
+    public void setFeedPosition(Long feedPosition) { this.feedPosition = feedPosition; }
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }

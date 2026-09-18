@@ -39,6 +39,7 @@ class SseRel37IT {
     @Autowired private DomainEventRepository domainEventRepository;
     @Autowired private SseEventStreamService sseEventStreamService;
     @Autowired private UiUserRepository uiUserRepository;
+    @Autowired private com.zorrodev.bpm.engine.scheduler.FeedPositionAssigner feedPositionAssigner;
 
     private final List<Long> createdSequences = new ArrayList<>();
 
@@ -109,12 +110,15 @@ class SseRel37IT {
         e.setData(Map.of());
         DomainEventEntity saved = domainEventRepository.save(e);
         createdSequences.add(saved.getSequence());
-        return saved;
+        // WO-REL-38: курсор — feed_position, её ставит джоб (без неё строка
+        // невидима ни catchup, ни live).
+        feedPositionAssigner.assignPendingPositions();
+        return domainEventRepository.findById(saved.getSequence()).orElseThrow();
     }
 
-    private static List<Long> sequencesOf(List<Map<String, Object>> envelopes) {
+    private static List<Long> positionsOf(List<Map<String, Object>> envelopes) {
         return envelopes.stream()
-            .map(m -> ((Number) m.get("sequence")).longValue())
+            .map(m -> ((Number) m.get("feedPosition")).longValue())
             .toList();
     }
 
@@ -123,7 +127,8 @@ class SseRel37IT {
         String type = "rel37.c1." + UUID.randomUUID();
         List<Long> mine = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
-            mine.add(seed(type, "el" + i).getSequence());
+            // WO-REL-38: граница и порядок — позиции курсора, не sequence.
+            mine.add(seed(type, "el" + i).getFeedPosition());
         }
         long maxMine = mine.stream().mapToLong(Long::longValue).max().orElseThrow();
 
@@ -131,11 +136,11 @@ class SseRel37IT {
         long boundary = sseEventStreamService.sendCatchupEvents(first, 0L, ADMIN, null);
 
         assertThat(boundary).isGreaterThanOrEqualTo(maxMine);
-        assertThat(sequencesOf(first.envelopes)).containsAll(mine);
-        // id события положительный и совпадает с sequence в БД
+        assertThat(positionsOf(first.envelopes)).containsAll(mine);
+        // id события положительный и совпадает с позицией курсора в БД
         for (Map<String, Object> env : first.envelopes) {
-            long seq = ((Number) env.get("sequence")).longValue();
-            assertThat(seq).isPositive();
+            long fp = ((Number) env.get("feedPosition")).longValue();
+            assertThat(fp).isPositive();
             assertThat(env.get("id")).isNotNull();
         }
 
@@ -143,7 +148,7 @@ class SseRel37IT {
         CapturingEmitter second = new CapturingEmitter();
         long boundary2 = sseEventStreamService.sendCatchupEvents(second, boundary, ADMIN, null);
         assertThat(boundary2).isEqualTo(boundary);
-        assertThat(sequencesOf(second.envelopes)).doesNotContainAnyElementsOf(mine);
+        assertThat(positionsOf(second.envelopes)).doesNotContainAnyElementsOf(mine);
     }
 
     @Test
@@ -155,11 +160,11 @@ class SseRel37IT {
 
         CapturingEmitter emitter = new CapturingEmitter();
         long boundary = sseEventStreamService.sendCatchupEvents(
-            emitter, started.getSequence() - 1, ADMIN, null);
+            emitter, started.getFeedPosition() - 1, ADMIN, null);
 
-        List<Long> seqs = sequencesOf(emitter.envelopes);
-        assertThat(seqs).containsSubsequence(started.getSequence(), next.getSequence());
-        assertThat(boundary).isGreaterThanOrEqualTo(next.getSequence());
+        List<Long> fps = positionsOf(emitter.envelopes);
+        assertThat(fps).containsSubsequence(started.getFeedPosition(), next.getFeedPosition());
+        assertThat(boundary).isGreaterThanOrEqualTo(next.getFeedPosition());
     }
 
     @Test
@@ -167,7 +172,7 @@ class SseRel37IT {
         String wanted = "rel37.c3.wanted." + UUID.randomUUID();
         String foreign = "rel37.c3.foreign." + UUID.randomUUID();
         List<Long> mine = new ArrayList<>();
-        for (int i = 0; i < 3; i++) mine.add(seed(wanted, "el").getSequence());
+        for (int i = 0; i < 3; i++) mine.add(seed(wanted, "el").getFeedPosition());
         seed(foreign, "el");
         seed(foreign, "el");
 
@@ -175,7 +180,7 @@ class SseRel37IT {
         CapturingEmitter catchup = new CapturingEmitter();
         long boundary = sseEventStreamService.sendCatchupEvents(
             catchup, 0L, ADMIN, null, wanted, null);
-        assertThat(sequencesOf(catchup.envelopes)).containsAll(mine);
+        assertThat(positionsOf(catchup.envelopes)).containsAll(mine);
         assertThat(catchup.envelopes).allMatch(e -> wanted.equals(e.get("type")));
 
         // Live-подписка ДО drain: событие в окне catchup→live буферизуется
@@ -189,8 +194,9 @@ class SseRel37IT {
                 + ",\"id\":\"" + fresh.getId() + "\",\"type\":\"" + wanted + "\","
                 + "\"version\":1,\"occurredAt\":\"2026-09-16T00:00:00Z\",\"data\":{}}";
             sseEventStreamService.onDomainEvent(liveJson);
-            // Чужое событие в live — отфильтровывается тем же фильтром
-            String foreignJson = "{\"sequence\":" + (fresh.getSequence() + 1000)
+            // Чужой sequence (не наша строка) в live — мост отбрасывает сразу,
+            // тем же фильтром его бы отбросил и dispatch.
+            String foreignJson = "{\"sequence\":" + (fresh.getSequence() + 1_000_000)
                 + ",\"id\":\"" + UUID.randomUUID() + "\",\"type\":\"" + foreign + "\","
                 + "\"version\":1,\"occurredAt\":\"2026-09-16T00:00:00Z\",\"data\":{}}";
             sseEventStreamService.onDomainEvent(foreignJson);
@@ -199,13 +205,13 @@ class SseRel37IT {
 
             // Drain шлёт через sseExecutor асинхронно — ждём доставку (не фиксированный sleep).
             long deadline = System.currentTimeMillis() + 10_000;
-            List<Long> liveSeqs = sequencesOf(live.envelopes);
-            while (!liveSeqs.contains(fresh.getSequence()) && System.currentTimeMillis() < deadline) {
+            List<Long> liveSeqs = positionsOf(live.envelopes);
+            while (!liveSeqs.contains(fresh.getFeedPosition()) && System.currentTimeMillis() < deadline) {
                 Thread.sleep(100);
-                liveSeqs = sequencesOf(live.envelopes);
+                liveSeqs = positionsOf(live.envelopes);
             }
             // Не потеряно (fresh доставлен), не задублировано (catchup-диапазон отброшен)
-            assertThat(liveSeqs).contains(fresh.getSequence());
+            assertThat(liveSeqs).contains(fresh.getFeedPosition());
             assertThat(liveSeqs).doesNotContainAnyElementsOf(mine);
             assertThat(live.envelopes).allMatch(e -> wanted.equals(e.get("type")));
         } finally {
@@ -217,13 +223,13 @@ class SseRel37IT {
     void criterion3_backlog250_pagesThrough() {
         String type = "rel37.c3.bulk." + UUID.randomUUID();
         List<Long> mine = new ArrayList<>();
-        for (int i = 0; i < 250; i++) mine.add(seed(type, "el").getSequence());
+        for (int i = 0; i < 250; i++) mine.add(seed(type, "el").getFeedPosition());
         long maxMine = mine.stream().mapToLong(Long::longValue).max().orElseThrow();
 
         CapturingEmitter emitter = new CapturingEmitter();
         long boundary = sseEventStreamService.sendCatchupEvents(emitter, 0L, ADMIN, null, type, null);
 
-        List<Long> delivered = sequencesOf(emitter.envelopes).stream()
+        List<Long> delivered = positionsOf(emitter.envelopes).stream()
             .filter(mine::contains).toList();
         assertThat(delivered).hasSize(250);
         assertThat(boundary).isGreaterThanOrEqualTo(maxMine);
