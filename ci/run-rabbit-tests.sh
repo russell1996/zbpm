@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# WO-AUDIT-1: Run RabbitMQ-broker integration tests (@Tag("rabbit")) against a real rabbitmq:3.13.
+# WO-AUDIT-1: Run RabbitMQ-broker integration tests (@Tag("rabbit")) against a real broker.
+# WO-OBS-9: broker is rabbitmq:4.1 (see ci/docker-compose.rabbit.yml) — the script
+# itself is version-agnostic (image comes from the compose file), only the
+# banner below names the version so logs stay honest.
 #
 # Usage: ci/run-rabbit-tests.sh
 #   Starts rabbitmq via ci/docker-compose.rabbit.yml, waits for health, runs the rabbit-IT
@@ -48,7 +51,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== WO-AUDIT-1: Starting rabbitmq:3.13 on host port $RABBIT_PORT ==="
+echo "=== WO-AUDIT-1/WO-OBS-9: Starting rabbitmq (see ci/docker-compose.rabbit.yml) on host port $RABBIT_PORT ==="
 docker compose -f "$COMPOSE" -p "$PROJECT" up -d
 
 echo "=== Waiting for rabbitmq to be healthy ==="
