@@ -18,7 +18,15 @@ import java.util.UUID;
 public interface DomainEventRepository
         extends JpaRepository<DomainEventEntity, Long>, JpaSpecificationExecutor<DomainEventEntity> {
 
-    @Query(value = "SELECT * FROM events WHERE sequence > :since ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
+    /**
+     * WO-REL-38: курсор — commit-ordered {@code feed_position}, НЕ raw
+     * {@code sequence} (тот назначался при INSERT и мог навсегда пропустить
+     * событие задержанной транзакции). Строки без позиции (ещё не обработанные
+     * джобом) сюда не попадают. Параметр {@code since} — exclusive позиция.
+     * Сейчас прямых прод-вызывающих нет (живой путь — {@code EventQueryService}
+     * через Specification); метод оставлен согласованным с курсором ленты.
+     */
+    @Query(value = "SELECT * FROM events WHERE feed_position > :since ORDER BY feed_position ASC LIMIT :limit", nativeQuery = true)
     List<DomainEventEntity> findSince(@Param("since") long since, @Param("limit") int limit);
 
     /**
@@ -36,11 +44,12 @@ public interface DomainEventRepository
     /**
      * Cursor-based query with AuthZ filtering: only events whose process_definition_id
      * is in the allowed set. Used by the SSE catch-up stream.
+     * WO-REL-38: курсор и сортировка — по {@code feed_position} (см. {@link #findSince}).
      */
     @Query(value = "SELECT * FROM events " +
-        "WHERE sequence > :since " +
+        "WHERE feed_position > :since " +
         "AND process_definition_id IN :pdIds " +
-        "ORDER BY sequence ASC LIMIT :limit", nativeQuery = true)
+        "ORDER BY feed_position ASC LIMIT :limit", nativeQuery = true)
     List<DomainEventEntity> findSinceForPrincipal(
         @Param("since") long since,
         @Param("pdIds") Collection<UUID> processDefinitionIds,

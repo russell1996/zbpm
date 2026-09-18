@@ -244,6 +244,11 @@ class DomainEventEmitterTest {
         assertThat(envelope.get("version")).isEqualTo(3);
         assertThat(envelope.get("id")).isNotNull();
         assertThat(envelope).doesNotContainKey("eventId");
+        // WO-REL-38: курсор читает feedPosition, а не sequence (identity —
+        // отладка/совместимость, не граница). persisted без позиции — envelope
+        // честно несёт её отсутствие (джоб назначит позже).
+        assertThat(envelope).containsKey("feedPosition");
+        assertThat(envelope.get("feedPosition")).isNull();
     }
 
     /**
