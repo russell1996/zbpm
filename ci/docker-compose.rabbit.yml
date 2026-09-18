@@ -1,8 +1,10 @@
 services:
   rabbitmq:
-    # WO-AUDIT-1: pinned broker for the test:rabbit CI job (same image as the
+    # WO-OBS-9: pinned broker for the test:rabbit CI job (same image as the
     # project's docker-compose.yml — identical broker semantics in CI and prod).
-    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
+    # 3.13.7 → 4.1.8: миграционно проверен (CQv1→v2 на налитых очередях, 0 потерь;
+    # digest — list-digest 4.1.8, сверен с прод-пином побайтово, критерий 3).
+    image: rabbitmq:4.1-management-alpine@sha256:a3ae2541e604917be93f562ed6b2a8a0c9e52e4945978f6d152e49bd9235a809
     environment:
       # NB: RABBIT_PASSWORD (not RABBITMQ_PASSWORD) — matches ci/run-rabbit-tests.sh
       # exports, so a non-default password override reaches BOTH the broker and the test.
