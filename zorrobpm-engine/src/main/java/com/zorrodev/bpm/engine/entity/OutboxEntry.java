@@ -30,4 +30,12 @@ public class OutboxEntry {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private OutboxKind kind = OutboxKind.SERVICE_TASK;
+    /**
+     * WO-OBS-8 (persistence-половина WO-REL-26): W3C traceparent на момент постановки
+     * записи ({@code 00-traceid-spanid-flags}); NULL — запись без родителя (не из
+     * трейснутого контекста или OTel выключен), корреляции нет — обычное поведение.
+     * Читает {@code OutboxBatchProcessor} для продолжения трейса через @Scheduled-разрыв.
+     */
+    @Column(name = "trace_parent")
+    private String traceParent;
 }
