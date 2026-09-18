@@ -172,9 +172,8 @@ public class Camunda8ParityCharacterizationTests {
         @Primary
         ServiceTaskEnqueueService realServiceTaskEnqueueService(DBService dbService, BpmnService bpmnService,
                 OutboxRepository outboxRepository, tools.jackson.databind.ObjectMapper objectMapper,
-                ElementSupport elementSupport, ElementListenerPhaseRepository phaseRepository,
-                com.zorrodev.bpm.engine.tracing.TracingSupport tracing) {
-            return new ServiceTaskEnqueueServiceImpl(dbService, bpmnService, outboxRepository, objectMapper, elementSupport, phaseRepository, tracing);
+                ElementSupport elementSupport, ElementListenerPhaseRepository phaseRepository) {
+            return new ServiceTaskEnqueueServiceImpl(dbService, bpmnService, outboxRepository, objectMapper, elementSupport, phaseRepository);
         }
     }
 

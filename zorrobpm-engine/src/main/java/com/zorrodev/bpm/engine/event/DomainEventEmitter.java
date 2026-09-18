@@ -7,7 +7,6 @@ import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
-import com.zorrodev.bpm.engine.tracing.TracingSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,7 +34,6 @@ public class DomainEventEmitter {
     private final OutboxRepository outboxRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final tools.jackson.databind.ObjectMapper objectMapper;
-    private final TracingSupport tracing;
 
     // WO-PERF-1 N3: immutable process definitions → cache pdId→pdKey to avoid DB hit per event (bounded)
     private final Cache<UUID, String> pdKeyCache = Caffeine.newBuilder()
@@ -108,8 +106,6 @@ public class DomainEventEmitter {
             outboxEntry.setPayload(objectMapper.writeValueAsString(envelope));
             outboxEntry.setCreatedAt(occurredAt);
             outboxEntry.setPublished(false);
-            // WO-OBS-8: same trace_parent discipline as the service-task path.
-            outboxEntry.setTraceParent(tracing.captureTraceParent());
             outboxRepository.save(outboxEntry);
         } catch (Exception e) {
             log.error("Failed to serialize event for outbox: {}", eventId, e);
