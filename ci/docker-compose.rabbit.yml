@@ -1,0 +1,17 @@
+services:
+  rabbitmq:
+    # WO-OBS-9: pinned broker for the test:rabbit CI job (same image as the
+    # project's docker-compose.yml — identical broker semantics in CI and prod).
+    # 3.13.7 → 4.1.8: миграционно проверен (CQv1→v2 на налитых очередях, 0 потерь;
+    # digest — list-digest 4.1.8, сверен с прод-пином побайтово, критерий 3).
+    image: rabbitmq:4.1-management-alpine@sha256:a3ae2541e604917be93f562ed6b2a8a0c9e52e4945978f6d152e49bd9235a809
+    environment:
+      # NB: RABBIT_PASSWORD (not RABBITMQ_PASSWORD) — matches ci/run-rabbit-tests.sh
+      # exports, so a non-default password override reaches BOTH the broker and the test.
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER:-zorrodev}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-zorrodev}
+    ports:
+      - "${RABBIT_PORT:-5673}:5672"
+    # NO docker healthcheck on purpose: it would exec rabbitmq-diagnostics as root from
+    # second ~3, racing the broker for .erlang.cookie ownership (see run-rabbit-tests.sh
+    # note) — readiness is owned by the script's -u rabbitmq wait loop instead.

@@ -1,0 +1,322 @@
+apiVersion: 1
+
+# WO-OBS-5: Grafana provisioned alerting — 9 rules, contact point, notification policy.
+# Principle 5: alerts OFF by default — GRAFANA_ALERT_WEBHOOK_URL empty → Firing without notification.
+# All from files, not UI.
+
+contactPoints:
+  - orgId: 1
+    name: zbpm-webhook
+    receivers:
+      - uid: zbpm-webhook
+        type: webhook
+        settings:
+          url: $GRAFANA_ALERT_WEBHOOK_URL
+          httpMethod: POST
+          maxAlerts: 10
+        secureSettings: {}
+
+policies:
+  - orgId: 1
+    receiver: zbpm-webhook
+    group_by: ["alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: zbpm-webhook
+        object_matchers:
+          - ["severity", "=", "critical"]
+        group_wait: 0s
+        repeat_interval: 1m
+      - receiver: zbpm-webhook
+        object_matchers:
+          - ["severity", "=", "warning"]
+        group_by: ["alertname"]
+        group_wait: 5m
+        group_interval: 5m
+        repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: zbpm-alerts
+    folder: ZorroBPM
+    interval: 30s
+    rules:
+      - uid: zbpm-outbox-quarantine
+        title: Outbox quarantine
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: zbpm_outbox_quarantine > 0
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox quarantine > 0 — lost work"
+          description: "zbpm_outbox_quarantine > 0 for 5m"
+
+      - uid: zbpm-dlq-growing
+        title: DLQ growing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: increase(rabbitmq_queue_messages{queue=~".*dlq"}[15m]) > 0
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 0s
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ growing — increase(rabbitmq_queue_messages{queue=~\".*dlq\"}[15m]) > 0"
+
+      - uid: zbpm-stuck-servicetask
+        title: Stuck service tasks
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: zbpm_servicetask_stuck > 0
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 10m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: critical
+        annotations:
+          summary: "Stuck service tasks > 0 for 10m"
+
+      - uid: zbpm-disk-full
+        title: Disk full
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: min(node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.15
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0.15], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 2m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk <15% free — no backups!"
+
+      - uid: zbpm-app-down
+        title: App down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 120, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: up{job="zorrobpm-app"} == 0
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [1], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 2m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: critical
+        annotations:
+          summary: "App down — up{job=\"zorrobpm-app\"} == 0 for 2m"
+
+      - uid: zbpm-health-not-up
+        title: Health not UP
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 120, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: up{job="zorrobpm-app"} == 0 or absent(up{job="zorrobpm-app"})
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 2m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health not UP — no fresh metrics"
+
+      - uid: zbpm-hikari-exhausted
+        title: Hikari exhausted
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: hikaricp_connections_pending > 0 or rate(hikaricp_connections_timeout_total[5m]) > 0
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hikari exhausted — pending >0 or timeout rate >0 for 5m"
+
+      - uid: zbpm-rabbit-unroutable
+        title: RabbitMQ unroutable
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: rate(rabbitmq_channel_messages_unroutable_returned_total[5m]) > 0
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 10m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: "RabbitMQ unroutable — rate >0 for 10m (WO-REL-20)"
+
+      - uid: zbpm-incident-spike
+        title: Incident spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: rate(zbpm_tokens_stuck[15m]) > 0.1
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0.1], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 2m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: "Incident spike — rate(zbpm_tokens_stuck[15m]) > 0.1"
+
+templates:
+  - orgId: 1
+    name: zbpm-default
+    template: |
+      {{ define "zbpm.subject" }}[{{ .Status }}] {{ .GroupLabels.alertname }} ({{ .CommonLabels.severity }}){{ end }}
+      {{ define "zbpm.message" }}{{ range .Alerts }}{{ .Annotations.summary }} — {{ .Annotations.description }}{{ end }}{{ end }}

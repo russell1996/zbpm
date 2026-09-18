@@ -1,0 +1,36 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/zorrobpm-db}
+    username: ${DB_USERNAME:zorrodev}
+    password: ${DB_PASSWORD:zorrodev}
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    username: ${RABBITMQ_USERNAME:zorrodev}
+    password: ${RABBITMQ_PASSWORD:zorrodev}
+    port: ${RABBITMQ_PORT:5672}
+
+zorrobpm:
+  security:
+    jwt-secret: ${ZORROBPM_JWT_SECRET:change-me-dev-secret-please-override-in-production}
+    # WO-SEC-57: CSV of previously active JWT secrets, accepted for VERIFICATION ONLY (key rotation).
+    # Empty by default = single-key mode, exactly as before. Format: comma-separated secrets.
+    jwt-legacy-secrets: ${ZORROBPM_JWT_LEGACY_SECRETS:}
+    default-admin-password: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:admin}
+    force-password-enforce: true
+    rate-limit:
+      enabled: ${ZORROBPM_RATE_LIMIT_ENABLED:true}
+      capacity: ${ZORROBPM_RATE_LIMIT_CAPACITY:5}
+      window-seconds: ${ZORROBPM_RATE_LIMIT_WINDOW:60}
+  cors:
+    allowed-origins: ${ZORROBPM_CORS_ORIGINS:http://localhost:5173}
+
+app:
+  filesDir: ${APP_FILES_DIR:/var/lib/zorrobpm/files}
+
+# WO-OBS-1 (G-C approved): mirror of application.properties — authenticated scrape only.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus

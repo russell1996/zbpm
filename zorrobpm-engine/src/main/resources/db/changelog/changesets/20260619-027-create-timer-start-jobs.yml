@@ -1,0 +1,54 @@
+databaseChangeLog:
+  - logicalFilePath: 20260619-027
+  - changeSet:
+      id: 20260619-027
+      author: zorrodev
+      changes:
+        - createTable:
+            tableName: timer_start_jobs
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    primaryKeyName: pk_timer_start_jobs
+              - column:
+                  name: process_key
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_definition_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: element_id
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: due_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: fired
+                  type: boolean
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+        - createIndex:
+            tableName: timer_start_jobs
+            indexName: idx_timer_start_jobs__fired_due_at
+            columns:
+              - column:
+                  name: fired
+              - column:
+                  name: due_at

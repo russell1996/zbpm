@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_nested_token"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-nested-token" name="test-nested-token" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flowStartToFork</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStartToFork" sourceRef="startEvent" targetRef="forkTask" />
+    <bpmn:serviceTask id="forkTask" name="Fork Task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="forkTask" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowStartToFork</bpmn:incoming>
+      <bpmn:outgoing>flowForkToGateway</bpmn:outgoing>
+      <bpmn:outgoing>flowForkToB</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <!-- Branch 1: goes through a degenerate parallelGateway (1-in, 1-out) -->
+    <bpmn:sequenceFlow id="flowForkToGateway" sourceRef="forkTask" targetRef="degenerateGateway" />
+    <bpmn:parallelGateway id="degenerateGateway" name="degenerateGateway">
+      <bpmn:incoming>flowForkToGateway</bpmn:incoming>
+      <bpmn:outgoing>flowGatewayToA</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowGatewayToA" sourceRef="degenerateGateway" targetRef="serviceA" />
+    <bpmn:serviceTask id="serviceA" name="serviceA">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="serviceA" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowGatewayToA</bpmn:incoming>
+      <bpmn:outgoing>flowAToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flowAToEnd" sourceRef="serviceA" targetRef="endA" />
+    <bpmn:endEvent id="endA" name="endA">
+      <bpmn:incoming>flowAToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <!-- Branch 2: direct to user task (long branch) -->
+    <bpmn:sequenceFlow id="flowForkToB" sourceRef="forkTask" targetRef="userB" />
+    <bpmn:userTask id="userB" name="userB">
+      <bpmn:incoming>flowForkToB</bpmn:incoming>
+      <bpmn:outgoing>flowBToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowBToEnd" sourceRef="userB" targetRef="endB" />
+    <bpmn:endEvent id="endB" name="endB">
+      <bpmn:incoming>flowBToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

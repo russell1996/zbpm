@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - logicalFilePath: 20260714-058
+  - changeSet:
+      id: 20260714-058
+      author: mimo
+      changes:
+        - addColumn:
+            tableName: refresh_tokens
+            columns:
+              - column:
+                  name: revoked_at
+                  type: timestamp

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_nested_3level"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-nested-3level" name="test-nested-3level" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flowStartToFork</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStartToFork" sourceRef="startEvent" targetRef="forkTask" />
+    <bpmn:serviceTask id="forkTask" name="Fork Task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="forkTask" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowStartToFork</bpmn:incoming>
+      <bpmn:outgoing>flowForkToGwA</bpmn:outgoing>
+      <bpmn:outgoing>flowForkToGwB</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <!-- Branch A: one degenerate parallelGateway (1-in, 1-out) -->
+    <bpmn:sequenceFlow id="flowForkToGwA" sourceRef="forkTask" targetRef="gwA" />
+    <bpmn:parallelGateway id="gwA" name="gwA">
+      <bpmn:incoming>flowForkToGwA</bpmn:incoming>
+      <bpmn:outgoing>flowGwAToEndA</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowGwAToEndA" sourceRef="gwA" targetRef="endA" />
+    <bpmn:endEvent id="endA" name="endA">
+      <bpmn:incoming>flowGwAToEndA</bpmn:incoming>
+    </bpmn:endEvent>
+    <!-- Branch B: TWO degenerate parallelGateways in a row (gwB -> gwB2) -->
+    <bpmn:sequenceFlow id="flowForkToGwB" sourceRef="forkTask" targetRef="gwB" />
+    <bpmn:parallelGateway id="gwB" name="gwB">
+      <bpmn:incoming>flowForkToGwB</bpmn:incoming>
+      <bpmn:outgoing>flowGwBToGwB2</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowGwBToGwB2" sourceRef="gwB" targetRef="gwB2" />
+    <bpmn:parallelGateway id="gwB2" name="gwB2">
+      <bpmn:incoming>flowGwBToGwB2</bpmn:incoming>
+      <bpmn:outgoing>flowGwB2ToEndB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowGwB2ToEndB" sourceRef="gwB2" targetRef="endB" />
+    <bpmn:endEvent id="endB" name="endB">
+      <bpmn:incoming>flowGwB2ToEndB</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

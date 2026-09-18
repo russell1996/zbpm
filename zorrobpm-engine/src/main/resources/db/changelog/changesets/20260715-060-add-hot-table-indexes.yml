@@ -1,0 +1,89 @@
+databaseChangeLog:
+  - changeSet:
+      id: "20260715-060::20260715-060::mimo"
+      author: mimo
+      changes:
+        # === activities ===
+        # findByProcessInstanceIdAndStatusIn + findByProcessInstanceIdOrderByCreatedAtAsc
+        - createIndex:
+            tableName: activities
+            indexName: idx_activities_process_instance_status
+            columns:
+              - column:
+                  name: process_instance_id
+              - column:
+                  name: status
+
+        # findByTokenAndBpmnElementId
+        - createIndex:
+            tableName: activities
+            indexName: idx_activities_token_bpmn_element
+            columns:
+              - column:
+                  name: token
+              - column:
+                  name: bpmn_element_id
+
+        # findByTokenAndStatusIn
+        - createIndex:
+            tableName: activities
+            indexName: idx_activities_token_status
+            columns:
+              - column:
+                  name: token
+              - column:
+                  name: status
+
+        # === outbox ===
+        # Poller: WHERE published=false ORDER BY created_at ASC
+        - createIndex:
+            tableName: outbox
+            indexName: idx_outbox_published_created_at
+            columns:
+              - column:
+                  name: published
+              - column:
+                  name: created_at
+
+        # === user_tasks ===
+        # byProcessInstanceId specification + findByProcessInstanceId
+        - createIndex:
+            tableName: user_tasks
+            indexName: idx_user_tasks_process_instance_id
+            columns:
+              - column:
+                  name: process_instance_id
+
+        # byProcessDefinitionId specification + findByProcessDefinitionId
+        - createIndex:
+            tableName: user_tasks
+            indexName: idx_user_tasks_process_definition_id
+            columns:
+              - column:
+                  name: process_definition_id
+
+        # === service_tasks ===
+        # byProcessInstanceId specification + findByProcessInstanceId
+        - createIndex:
+            tableName: service_tasks
+            indexName: idx_service_tasks_process_instance_id
+            columns:
+              - column:
+                  name: process_instance_id
+
+        # byProcessDefinitionId specification + findByProcessDefinitionId
+        - createIndex:
+            tableName: service_tasks
+            indexName: idx_service_tasks_process_definition_id
+            columns:
+              - column:
+                  name: process_definition_id
+
+        # === incidents ===
+        # byProcessInstanceId / byBpmnElementId: activityId IN (subquery via activities)
+        - createIndex:
+            tableName: incidents
+            indexName: idx_incidents_activity_id
+            columns:
+              - column:
+                  name: activity_id

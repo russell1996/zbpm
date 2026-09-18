@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_c8drg" name="c8drg" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="c8base" name="Base">
+    <decisionTable id="DecisionTable_base" hitPolicy="FIRST">
+      <input id="Input_base" label="Tier">
+        <inputExpression id="InputExpression_base" typeRef="string" expressionLanguage="feel">
+          <text>tier</text>
+        </inputExpression>
+      </input>
+      <output id="Output_base" label="Base" name="b" typeRef="number" />
+      <rule id="Rule_base_gold">
+        <inputEntry id="In_base_gold"><text>"gold"</text></inputEntry>
+        <outputEntry id="Out_base_gold"><text>10</text></outputEntry>
+      </rule>
+      <rule id="Rule_base_default">
+        <inputEntry id="In_base_default"><text></text></inputEntry>
+        <outputEntry id="Out_base_default"><text>0</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <decision id="c8top" name="Top">
+    <informationRequirement id="InfoReq_1">
+      <requiredDecision href="#c8base" />
+    </informationRequirement>
+    <decisionTable id="DecisionTable_top" hitPolicy="FIRST">
+      <input id="Input_top" label="B">
+        <inputExpression id="InputExpression_top" typeRef="number" expressionLanguage="feel">
+          <text>c8base</text>
+        </inputExpression>
+      </input>
+      <output id="Output_top" label="Top" name="top" typeRef="string" />
+      <rule id="Rule_top_ok">
+        <inputEntry id="In_top_ok"><text>10</text></inputEntry>
+        <outputEntry id="Out_top_ok"><text>"TOP-OK"</text></outputEntry>
+      </rule>
+      <rule id="Rule_top_default">
+        <inputEntry id="In_top_default"><text></text></inputEntry>
+        <outputEntry id="Out_top_default"><text>"TOP-MISS"</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

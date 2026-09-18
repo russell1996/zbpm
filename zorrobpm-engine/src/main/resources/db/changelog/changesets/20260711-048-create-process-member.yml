@@ -1,0 +1,47 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260711-048-create-process-member
+      author: mimo
+      changes:
+        - createTable:
+            tableName: process_member
+            columns:
+              - column:
+                  name: process_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: user_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: role
+                  type: varchar(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: added_by
+                  type: uuid
+              - column:
+                  name: added_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+        - addPrimaryKey:
+            tableName: process_member
+            columnNames: process_id, user_id
+            constraintName: pk_process_member
+        - addForeignKeyConstraint:
+            baseTableName: process_member
+            baseColumnNames: process_id
+            referencedTableName: process
+            referencedColumnNames: id
+            constraintName: fk_process_member_process
+        - addForeignKeyConstraint:
+            baseTableName: process_member
+            baseColumnNames: user_id
+            referencedTableName: ui_users
+            referencedColumnNames: id
+            constraintName: fk_process_member_user

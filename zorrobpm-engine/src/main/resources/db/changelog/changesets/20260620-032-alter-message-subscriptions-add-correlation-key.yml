@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - logicalFilePath: 20260620-032
+  - changeSet:
+      id: 20260620-032
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: message_subscriptions
+            columns:
+              - column:
+                  name: correlation_key
+                  type: varchar(255)

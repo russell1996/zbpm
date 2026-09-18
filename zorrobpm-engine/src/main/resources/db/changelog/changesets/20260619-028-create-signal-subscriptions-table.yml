@@ -1,0 +1,49 @@
+databaseChangeLog:
+  - logicalFilePath: 20260619-028
+  - changeSet:
+      id: 20260619-028
+      author: zorrodev
+      changes:
+        - createTable:
+            tableName: signal_subscriptions
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    primaryKeyName: pk_signal_subscriptions
+              - column:
+                  name: process_instance_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: activity_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: signal_name
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: consumed
+                  type: boolean
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+        - createIndex:
+            tableName: signal_subscriptions
+            indexName: idx_signal_subscriptions__lookup
+            columns:
+              - column:
+                  name: consumed
+              - column:
+                  name: signal_name

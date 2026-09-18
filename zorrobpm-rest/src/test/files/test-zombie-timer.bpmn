@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_zombie_timer" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="zombie-timer-process" name="Zombie Timer Process" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="Start Event">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="userTask1" name="User Task">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="timerBoundary" name="Timer Boundary" attachedToRef="userTask1">
+      <bpmn:incoming>flow2</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerDef_1">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT5M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:endEvent id="endEvent" name="End Event">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="timerEnd" name="Timer End">
+      <bpmn:incoming>flow3</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow1" sourceRef="startEvent" targetRef="userTask1" />
+    <bpmn:sequenceFlow id="flow2" sourceRef="userTask1" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="flow3" sourceRef="timerBoundary" targetRef="timerEnd" />
+  </bpmn:process>
+</bpmn:definitions>

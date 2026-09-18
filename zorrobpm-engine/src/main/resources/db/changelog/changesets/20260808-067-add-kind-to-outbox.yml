@@ -1,0 +1,28 @@
+databaseChangeLog:
+  - logicalFilePath: 20260808-067
+  - changeSet:
+      id: 20260808-067
+      author: zorrodev
+      comment: WO-REL-12 R-01 — explicit outbox kind column (SERVICE_TASK/DOMAIN_EVENT) instead of payload substring guessing
+      changes:
+        - addColumn:
+            tableName: outbox
+            columns:
+              - column:
+                  name: kind
+                  type: varchar(20)
+                  defaultValue: SERVICE_TASK
+                  constraints:
+                    nullable: false
+        # One-time backfill of pre-existing pending rows using the same substring heuristic the
+        # old code used (WO-REL-12 R-01). After this migration every row has an explicit kind,
+        # written by the producer; the heuristic is never consulted again.
+        - sql:
+            sql: >-
+              UPDATE outbox
+              SET kind = 'DOMAIN_EVENT'
+              WHERE payload LIKE '%"type"%' AND payload LIKE '%"eventId"%'
+      rollback:
+        - dropColumn:
+            tableName: outbox
+            columnName: kind

@@ -1,0 +1,70 @@
+databaseChangeLog:
+  - logicalFilePath: 20260819-074
+  - changeSet:
+      id: 20260819-074
+      author: zorrodev
+      comment: WO-ACL-12 — one PENDING per process_key. First collapse accumulated duplicate
+        PENDING submissions (the newest per key stays PENDING, the rest become SUPERSEDED —
+        nothing is deleted, the history stays), then the partial unique index below makes the
+        invariant hold under concurrency. Runs on H2 too (window function is standard SQL);
+        the index itself is split by dbms because H2 cannot express a WHERE on CREATE INDEX.
+      changes:
+        - sql:
+            sql: >-
+              UPDATE process_submission SET status = 'SUPERSEDED'
+              WHERE id IN (
+                SELECT id FROM (
+                  SELECT id,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY process_key
+                           ORDER BY submitted_at DESC, id DESC
+                         ) AS rn
+                  FROM process_submission
+                  WHERE status = 'PENDING'
+                ) ranked
+                WHERE rn > 1
+              )
+      rollback:
+        - sql:
+            sql: >-
+              UPDATE process_submission SET status = 'PENDING'
+              WHERE status = 'SUPERSEDED'
+
+  - changeSet:
+      id: 20260819-074-pending-key-index-pg
+      author: zorrodev
+      dbms: postgresql
+      comment: WO-ACL-12 — the actual GUARANTEE (at most one PENDING row per process_key,
+        enforced by the database so parallel submits cannot both pass an application-level
+        check). PostgreSQL-only because H2 does not support the WHERE clause on CREATE INDEX
+        (same split as 20260809-071).
+      changes:
+        - sql:
+            sql: >-
+              CREATE UNIQUE INDEX uk_process_submission__pending_key
+              ON process_submission (process_key)
+              WHERE status = 'PENDING'
+      rollback:
+        - sql:
+            sql: DROP INDEX IF EXISTS uk_process_submission__pending_key
+
+  - changeSet:
+      id: 20260819-074-pending-key-index-h2
+      author: zorrodev
+      dbms: h2
+      comment: WO-ACL-12 — test profile only. H2 cannot express the partial predicate, so a
+        plain (non-unique!) index stands in for the DDL; the actual uniqueness guarantee is
+        exercised on PostgreSQL (Acl12SubmissionRacePgIT, job test:pg). A full unique index
+        would be WRONG here — it would forbid several non-PENDING rows of the same key
+        (APPROVED/REJECTED/SUPERSEDED history).
+      changes:
+        - createIndex:
+            tableName: process_submission
+            indexName: uk_process_submission__pending_key
+            columns:
+              - column:
+                  name: process_key
+      rollback:
+        - dropIndex:
+            tableName: process_submission
+            indexName: uk_process_submission__pending_key

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8subebg" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="approveMsg" name="approve" />
+  <bpmn:process id="c8-sub-ebg" name="c8-sub-ebg" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow0</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow0" name="subFlow0" sourceRef="subStart" targetRef="eventGw" />
+      <bpmn:eventBasedGateway id="eventGw" name="eventGw">
+        <bpmn:incoming>subFlow0</bpmn:incoming>
+        <bpmn:outgoing>flowM</bpmn:outgoing>
+        <bpmn:outgoing>flowT</bpmn:outgoing>
+      </bpmn:eventBasedGateway>
+      <bpmn:sequenceFlow id="flowM" name="flowM" sourceRef="eventGw" targetRef="msgCatch" />
+      <bpmn:intermediateCatchEvent id="msgCatch" name="msgCatch">
+        <bpmn:incoming>flowM</bpmn:incoming>
+        <bpmn:outgoing>flowM2</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="med1" messageRef="approveMsg" />
+      </bpmn:intermediateCatchEvent>
+      <bpmn:sequenceFlow id="flowM2" name="flowM2" sourceRef="msgCatch" targetRef="endApprove" />
+      <bpmn:endEvent id="endApprove" name="endApprove">
+        <bpmn:incoming>flowM2</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="flowT" name="flowT" sourceRef="eventGw" targetRef="timerCatch" />
+      <bpmn:intermediateCatchEvent id="timerCatch" name="timerCatch">
+        <bpmn:incoming>flowT</bpmn:incoming>
+        <bpmn:outgoing>flowT2</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="ted1">
+          <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:intermediateCatchEvent>
+      <bpmn:sequenceFlow id="flowT2" name="flowT2" sourceRef="timerCatch" targetRef="endTimeout" />
+      <bpmn:endEvent id="endTimeout" name="endTimeout">
+        <bpmn:incoming>flowT2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

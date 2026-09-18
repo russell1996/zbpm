@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260621-036
+  - changeSet:
+      id: 20260621-036
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: signal_subscriptions
+            columns:
+              - column:
+                  name: event_subprocess_id
+                  type: varchar(255)
+        # event-subprocess signal subscriptions have no host activity
+        - dropNotNullConstraint:
+            tableName: signal_subscriptions
+            columnName: activity_id
+            columnDataType: uuid

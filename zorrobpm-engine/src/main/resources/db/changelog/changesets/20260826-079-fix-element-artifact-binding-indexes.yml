@@ -1,0 +1,20 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260826-079-fix-element-artifact-binding-indexes
+      author: cto
+      comment: "WO-SEC-59 #4: create the two element_artifact_binding indexes that changeset 20260715-062 failed to create because of a typo'd 'index_name:' key (Liquibase expects 'indexName:'). Without them, lookups by process_definition_id/element_id and by artifact_key do full table scans on a hot path."
+      changes:
+        - createIndex:
+            tableName: element_artifact_binding
+            indexName: idx_binding_pd_element
+            columns:
+              - column:
+                  name: process_definition_id
+              - column:
+                  name: element_id
+        - createIndex:
+            tableName: element_artifact_binding
+            indexName: idx_binding_artifact
+            columns:
+              - column:
+                  name: artifact_key

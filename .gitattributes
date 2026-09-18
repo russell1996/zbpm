@@ -1,0 +1,9 @@
+# Исполнитель→CTO, append-only канал: union-merge оставляет обе стороны, чтобы CTO не разбирал
+# конфликт в нём при каждом мерже feature-ветки.
+# Файл назывался mimo-to-cto.md до 2026-08: правило висело на несуществующем имени, а реальный
+# канал был не защищён — то есть не работало вообще.
+governance/agent-to-cto.md merge=union
+
+# WO-SEC-50: shell scripts run inside Linux containers via a shebang — CRLF (from a Windows
+# checkout with core.autocrlf=true) breaks `#!/bin/sh` ("bad interpreter" at container start).
+*.sh text eol=lf

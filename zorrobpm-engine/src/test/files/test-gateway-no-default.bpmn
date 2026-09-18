@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_gwnd" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-gateway-no-default" name="test-gateway-no-default" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="xor" />
+    <bpmn:exclusiveGateway id="xor" name="xor">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flowA</bpmn:outgoing>
+      <bpmn:outgoing>flowB</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="flowA" name="flowA" sourceRef="xor" targetRef="endA">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "A"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="xor" targetRef="endB">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "B"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="endA" name="endA">
+      <bpmn:incoming>flowA</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endB" name="endB">
+      <bpmn:incoming>flowB</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.6</version>
+        <relativePath />
+    </parent>
+
+    <properties>
+        <!-- WO-SEC-36: override Spring Framework 7.0.6→7.0.8 to fix CVE-2026-41855 (CVSS 9.8).
+             Spring Boot 4.0.5 BOM pins 7.0.6 by default; 7.0.8 is the patched GA per advisory.
+             WO-SEC-62: 7.0.8→7.0.9 to fix CVE-2026-59313 (CVSS 9.8, SSE stream corruption in
+             Spring MVC functional web framework) + CVE-2026-59314 (HTTP response splitting via
+             ContentDisposition, CRLF injection). Both affect 7.0.0-7.0.8 inclusive; 7.0.9 is the
+             patched OSS GA per spring.io/security advisories. -->
+        <spring-framework.version>7.0.9</spring-framework.version>
+        <!-- WO-SEC-37: override jackson-2 BOM 2.21.2→2.22.1 to fix CVE-2026-54512/54513 (CVSS 8.1).
+             Spring Boot 4.0.6 BOM pins jackson-2-bom 2.21.2; 2.22.1 is the patched release.
+             (2.21.3 still carried CVE-2026-54512/54513 per dependency-check scan.) -->
+        <jackson-2-bom.version>2.22.1</jackson-2-bom.version>
+        <!-- WO-SEC-37: override jackson 3.x BOM 3.1.0→3.2.1 to fix CVE-2026-54512/54513 (CVSS 8.1).
+             Spring Boot 4.0.6 BOM pins jackson-bom 3.1.2; 3.2.1 is the patched release.
+             (3.1.2 still carried CVE-2026-54512/54513 per dependency-check scan.) -->
+        <jackson-bom.version>3.2.1</jackson-bom.version>
+        <!-- WO-SEC-37: override postgresql 42.7.10→42.7.13 to fix CVE-2026-42198 (7.5) / CVE-2026-54291 (8.2).
+             Spring Boot 4.0.6 BOM pins postgresql 42.7.10; 42.7.13 is the patched release.
+             (42.7.11 fixed CVE-2026-42198 but not CVE-2026-54291 per dependency-check scan.) -->
+        <postgresql.version>42.7.13</postgresql.version>
+        <!-- WO-SEC-38: override netty 4.2.12.Final→4.2.16.Final to fix 38 CVE (CVSS 10.0).
+             WO-SEC-61: 4.2.16.Final→4.2.17.Final to fix CVE-2026-62380 (SOCKS4/5 client encoder
+             null-byte/CRLF/credential injection). Spring Boot 4.0.6 BOM pins netty 4.2.12.Final;
+             4.2.17.Final is the current patched release. -->
+        <netty.version>4.2.17.Final</netty.version>
+        <!-- WO-SEC-38: override tomcat 11.0.21→11.0.24 to fix 15 CVE (CVSS 9.8).
+             WO-SEC-61: 11.0.24→11.0.25 to fix 9 more CVE disclosed 2026-08-25 (CVSS up to 9.8):
+             CVE-2026-65183/65927/66422/68763/68525/65182/68569/65905/65637.
+             Spring Boot 4.0.6 BOM pins tomcat-embed-core 11.0.21; 11.0.25 is the current patched release. -->
+        <tomcat.version>11.0.25</tomcat.version>
+        <!-- WO-SEC-38: override spring-amqp 4.0.3→4.0.4 to fix CVE-2026-41714 (TLS bypass, CVSS 4.0).
+             Spring Boot 4.0.6 BOM pins spring-amqp 4.0.3; 4.0.4 is the patched release. -->
+        <spring-amqp.version>4.0.4</spring-amqp.version>
+        <!-- WO-OBS-8r3: override kotlin-stdlib 2.2.21→2.4.20 to fix CVE-2026-53914 (CVSS 9.8).
+             Chain: spring-boot-starter-opentelemetry → opentelemetry-exporter-otlp →
+             exporter-sender-okhttp → okhttp-jvm:5.2.1 → kotlin-stdlib:2.2.21.
+             NVD: JetBrains Kotlin <2.4.20 affected (semver range, verified live
+             2026-09-18); 2.4.20 is the patched GA. okhttp 5.2.1 runs on any newer
+             2.x stdlib (Kotlin forward-compat within the 2.x line — stdlib only
+             ADDS symbols, okhttp links against 2.2-era symbols still present in
+             2.4.20); verified by full test-suite + live-broker rabbit suite below,
+             which exercise the okhttp path (OTLP sender classes load at context
+             startup). Property name follows the spring-framework.version precedent
+             in this file (Boot BOM honors kotlin.version for its managed stdlib). -->
+        <kotlin.version>2.4.20</kotlin.version>
+    </properties>
+
+    <groupId>com.zorrodev.bpm</groupId>
+    <artifactId>zorrobpm</artifactId>
+    <version>0.8.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>ZorroBPM</name>
+    <description>ZBPM: a lightweight Spring Boot based BPM engine.</description>
+    <url>https://zorrobpm.dev</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>maratkalibek</id>
+            <name>Marat Kalibekov</name>
+            <email>marat@zorrobpm.dev</email>
+            <organization>ZorroBPM</organization>
+            <organizationUrl>https://zorrobpm.dev</organizationUrl>
+        </developer>
+    </developers>
+
+    <modules>
+        <module>zorrobpm-contract</module>
+        <module>zorrobpm-client</module>
+        <module>zorrobpm-engine</module>
+        <module>zorrobpm-rest</module>
+        <module>zorrobpm-job-handler-spring-boot-starter</module>
+        <module>zorrobpm-test</module>
+        <module>zorrobpm-exchange</module>
+        <module>zorrobpm-rabbitmq</module>
+        <module>zorrobpm-app</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- WO-SEC-36: Force spring-framework 7.0.8 to override BOM default 7.0.6.
+                 WO-SEC-62: 7.0.8→7.0.9 to fix CVE-2026-59313/59314 (CVSS 9.8) — this explicit
+                 spring-framework-bom import, NOT the spring-framework.version property below, is
+                 what actually controls the resolved version (confirmed via dependency:tree — the
+                 property alone evaluated to 7.0.9 but spring-core/spring-web still resolved to
+                 7.0.8 until this literal version was updated too). Keep both in sync. -->
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-framework-bom</artifactId>
+                <version>7.0.9</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-release-plugin</artifactId>
+                <configuration>
+                    <tagNameFormat>v@{project.version}</tagNameFormat>
+                </configuration>
+            </plugin>
+            <!-- WO-SEC-32: OWASP dependency-check — invoked via CLI in CI security job -->
+            <plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>12.1.1</version>
+                <configuration>
+                    <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <suppressionFiles>
+                        <suppressionFile>owasp-suppressions.xml</suppressionFile>
+                    </suppressionFiles>
+                    <nodeAuditSkipDevDependencies>true</nodeAuditSkipDevDependencies>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <scm>
+        <connection>scm:git:https://github.com/zorrobpm/zorrobpm-ce.git</connection>
+        <developerConnection>scm:git:https://github.com/zorrobpm/zorrobpm-ce.git</developerConnection>
+        <url>https://github.com/zorrobpm/zorrobpm-ce.git</url>
+        <tag>v0.7.14</tag>
+    </scm>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.11.2</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                                <configuration>
+                                    <doclint>none</doclint>
+                                    <failOnError>false</failOnError>
+                                    <quiet>true</quiet>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>deploy</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.10.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>validated</waitUntil>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+</project>

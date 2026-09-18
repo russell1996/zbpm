@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - logicalFilePath: 20260619-025
+  - changeSet:
+      id: 20260619-025
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: message_subscriptions
+            columns:
+              - column:
+                  name: boundary_element_id
+                  type: varchar(255)

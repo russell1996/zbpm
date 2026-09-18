@@ -1,0 +1,166 @@
+# WO-SCALE-3 — multi-instance soak rig, CTO-local only.
+#
+# NOT a deployment artifact: never referenced from ci/, never shipped to prod.
+# Purpose: prove the cluster claims in README (exactly-once timers, exactly-once
+# job dispatch, cross-replica SSE fan-out via RabbitMQ per ADR-7, cluster-wide
+# rate limits) under N>1 app replicas sharing one Postgres + one RabbitMQ,
+# fronted by a round-robin nginx with explicitly NO sticky session/affinity —
+# any request must be able to land on any replica.
+#
+# Usage:
+#   docker compose -f docker-compose.multi.yml up -d --scale app=3
+#   (app1/app2/app3 container names come from --scale; nginx upstream below
+#   lists all three fixed hostnames so it works whether you scale 2 or 3)
+#
+# Requires zorrobpm-app:latest and zorrobpm-frontend:latest already built
+# from the commit under test (docker compose build app frontend against the
+# root docker-compose.yml), and a .env with the same required vars as prod
+# (ZORROBPM_JWT_SECRET, ZORROBPM_DEFAULT_ADMIN_PASSWORD) — reuses the root
+# .env via env_file below, no secrets duplicated in this file.
+
+name: zorrobpm-soak
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    container_name: soak-postgres
+    # WO-REL-38: тот же track_commit_timestamp, что в прод-compose (порядок ленты).
+    command: ["postgres", "-c", "track_commit_timestamp=on"]
+    environment:
+      POSTGRES_DB: ${DB_NAME:-zorrobpm-db}
+      POSTGRES_USER: ${DB_USERNAME:-zorrodev}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
+    volumes:
+      - soak-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-zorrodev} -d ${DB_NAME:-zorrobpm-db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - soak
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
+    container_name: soak-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-zorrodev}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
+    ports:
+      # Host-side only so the load script's own SSE/API clients and a human
+      # can peek at the mgmt UI during the soak; not required by the cluster.
+      #
+      # Deliberately a DIFFERENT var name than the root compose's
+      # RABBITMQ_MGMT_PORT: docker compose auto-loads .env for substitution
+      # regardless of which compose file you point at, and .env already
+      # sets RABBITMQ_MGMT_PORT=9300 for the real single-instance stack
+      # that may be running alongside this rig — reusing that name silently
+      # steals its value instead of falling back to our own default here.
+      - "127.0.0.1:${SOAK_RABBITMQ_MGMT_PORT:-19300}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - soak
+
+  # Three FIXED-name replicas instead of `--scale` — deliberate. The load
+  # script needs to address each one individually (direct port, bypassing
+  # nginx) to prove things like "timer created via replica A fires and is
+  # dispatched by whichever replica's scheduler wins the SKIP LOCKED race,
+  # not necessarily A" and "an SSE client connected straight to replica B
+  # sees an event created via replica C" — that's ADR-7's AMQP fan-out, not
+  # nginx doing anything. --scale would give randomized container names and
+  # no stable per-replica host port.
+  app1: &app
+    image: zorrobpm-app:${APP_TAG:-latest}
+    container_name: soak-app1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment: &app-env
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-zorrobpm-db}
+      DB_USERNAME: ${DB_USERNAME:-zorrodev}
+      DB_PASSWORD: ${DB_PASSWORD:-zorrodev}
+      ZORROBPM_SECURITY_ENFORCE_DB_CREDS: "false"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-zorrodev}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-zorrodev}
+      APP_FILES_DIR: /app/files
+      ZORROBPM_JWT_SECRET: ${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}
+      ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}
+      ZORROBPM_CORS_ORIGINS: http://localhost:18800
+      TZ: Asia/Almaty
+    volumes:
+      # Shared app-files volume across all three — same as prod's single
+      # instance, but now genuinely concurrently written by 3 JVMs. Any
+      # form/deployment-artifact race that only shows up under real
+      # concurrent multi-writer access belongs here, not in a single-node IT.
+      - soak-app-files:/app/files
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    ports:
+      - "127.0.0.1:18091:8080"
+    networks:
+      - soak
+
+  app2:
+    <<: *app
+    container_name: soak-app2
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:18092:8080"
+
+  app3:
+    <<: *app
+    container_name: soak-app3
+    environment:
+      <<: *app-env
+    ports:
+      - "127.0.0.1:18093:8080"
+
+  # Round-robin only. No ip_hash, no cookie affinity, no least_conn — a
+  # sticky-session default would silently hide exactly the cross-replica
+  # bugs this rig exists to catch (see nginx-soak.conf).
+  nginx:
+    # No digest pin here (unlike postgres/rabbitmq above): this file is a
+    # CTO-local soak rig, never built into a shipped image or run in prod
+    # CI — supply-chain pinning isn't the concern it is for docker-compose.yml.
+    image: nginx:1.27-alpine
+    container_name: soak-nginx
+    depends_on:
+      - app1
+      - app2
+      - app3
+    volumes:
+      - ./ci/soak/nginx-soak.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      # 18080 collides with a leftover local zorrobpm-app container using
+      # APP_PORT=18080 from a prior manual run — this rig gets its own
+      # dedicated range instead of trusting a "probably free" default.
+      - "127.0.0.1:18800:80"
+    networks:
+      - soak
+
+volumes:
+  soak-postgres-data:
+  soak-app-files:
+
+networks:
+  soak:
+    driver: bridge

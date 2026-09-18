@@ -1,0 +1,197 @@
+# WO-OBS-2: observability overlay — Prometheus + Grafana + exporters.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# (principle 3: separate file, not lines in the main compose). All services join
+# the same zorrobpm network so app/postgres/rabbitmq are reachable by service name.
+# Memory limits are explicit — b2b-test-vm has 7.8 GiB (5.9 available), 4 CPU.
+name: zorrobpm
+
+services:
+  # WO-OBS-6: the app writes the Prometheus scrape token (see ScrapeTokenBootstrap).
+  # The token file is bind-mounted read-write here (prometheus keeps its :ro mount
+  # below); entrypoint.sh arranges 10001:65534/640 on it so the JVM (uid 10001,
+  # supplementary groups reset by setpriv --init-groups) writes as OWNER while
+  # Prometheus (uid/gid 65534) reads as GROUP member. Never world-readable.
+  app:
+    volumes:
+      - ./ci/observability/scrape-token:/etc/prometheus/scrape-token
+    environment:
+      SCRAPE_TOKEN_FILE: /etc/prometheus/scrape-token
+      # WO-OBS-8: OTel SDK is no-op WITHOUT this endpoint (prod/CI default: unset
+      # → spans are minted and dropped, zero export traffic). The dev contour sets it
+      # to the overlay Jaeger below (OTLP/HTTP :4318); sampling likewise env-only
+      # (OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG) — no repo defaults changed.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: zorrobpm-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      # WO-OBS-4: serve the UI from under /prometheus/ (nginx subpath, same as
+      # Grafana serve_from_sub_path). external-url proven live below; without the
+      # route-prefix the UI's asset links break off-root. Host part is env-driven
+      # (dev default = this host's frontend port; prod override in its own .env).
+      - '--web.route-prefix=/prometheus/'
+      - '--web.external-url=${PROMETHEUS_EXTERNAL_URL:-http://localhost:18081/prometheus/}'
+    volumes:
+      - ./ci/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ci/observability/scrape-token:/etc/prometheus/scrape-token:ro
+      - prometheus-data:/prometheus
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    # no ports published — access via Grafana (datasource proxy) only
+
+  grafana:
+    # WO-OBS-7 (F28, CVE-2025-4123): 11.4.0 < fixed 11.4.4+security-01 (vendor
+    # advisory: XSS via client path traversal + open redirect; fixed versions
+    # =10.4.18/=11.2.9/=11.3.6/=11.4.4/=11.5.4/=11.6.1/=12.0.0 +security-01).
+    # Same branch (11.4), minimal delta; tag + digest pinned like the main
+    # compose (postgres/rabbitmq precedent). Digest verified 2026-09-16 via
+    # `docker pull` (multi-arch list digest).
+    image: grafana/grafana:11.4.4-security-01@sha256:be4cc4527cb68f959038f1fbe9e334aec866fc029724818d0941970175ef7788
+    container_name: zorrobpm-grafana
+    restart: unless-stopped
+    # WO-OBS-6 follow-up (live-caught 2026-09-14): entrypoint-whitelist.sh resolves
+    # `frontend`'s IP via Docker's embedded DNS at container start. Without this
+    # dependency, grafana could start (and resolve) before frontend's own container
+    # recreation had fully settled -- caught live: grafana started 1.3s after frontend's
+    # own StartedAt timestamp but still resolved a stale IP (auth-proxy.invalid-ip
+    # rejecting every real request afterwards, forcing Grafana's native login instead of
+    # the ZBPM SSO flow -- the reported "falls back to Grafana's own blank login page").
+    # `service_healthy` waits for frontend's Dockerfile HEALTHCHECK to pass, which is a
+    # much stronger guarantee that its network attachment has fully settled than a fixed
+    # sleep would be.
+    depends_on:
+      frontend:
+        condition: service_healthy
+    entrypoint: ["/entrypoint-whitelist.sh"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_DISABLE_LOGIN_FORM: "false"
+      # WO-OBS-4: shared ZBPM login via nginx auth_request + Grafana auth.proxy.
+      # Identity comes ONLY from X-WEBAUTH-* headers set by nginx (see nginx.conf
+      # /grafana/ + /_zbpm_auth); auto-signup maps every valid ZBPM session.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
+      GF_AUTH_PROXY_SYNC_TTL: "60"
+      # WO-OBS-4/WO-OBS-6: MANDATORY whitelist — without it anyone reaching Grafana
+      # directly (bypassing nginx) could forge identity via header. Must be ONLY the
+      # nginx container's IP, NOT the whole subnet (e.g. app's IP) -- that's exactly
+      # what criterion 4 rules out. No grafana ports are published (see below), so the
+      # real boundary is network membership; this is defense-in-depth.
+      # Left unset here on purpose: entrypoint-whitelist.sh (below) resolves nginx's
+      # actual IP at container start and fills this in -- a static pin needs an explicit
+      # ipam.config.subnet on the shared network, which is exactly what took prod down
+      # on 2026-09-14 (conflicted with an unrelated pre-existing docker network on the
+      # host). Set GRAFANA_PROXY_WHITELIST in .env only to override for an unusual
+      # topology; normally leave it unset.
+      # Fail-closed: wrong/absent value breaks proxy-auth back to the admin
+      # login form (criterion 6), never to open access.
+      GF_AUTH_PROXY_WHITELIST: ${GRAFANA_PROXY_WHITELIST:-}
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
+      # WO-OBS-5: webhook for alerts — OFF by default (empty → dummy URL, Firing without notification, principle 5)
+      GRAFANA_ALERT_WEBHOOK_URL: ${GRAFANA_ALERT_WEBHOOK_URL:-http://localhost:0}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./ci/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ci/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./ci/observability/grafana/entrypoint-whitelist.sh:/entrypoint-whitelist.sh:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    # no ports published — access via nginx /grafana subpath only
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: zorrobpm-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DB_USERNAME:-zorrodev}:${DB_PASSWORD:-zorrodev}@postgres:5432/${DB_NAME:-zorrobpm-db}?sslmode=disable"
+      DATA_SOURCE_URI: "postgres:5432/${DB_NAME:-zorrobpm-db}?sslmode=disable"
+      DATA_SOURCE_USER: "${DB_USERNAME:-zorrodev}"
+      DATA_SOURCE_PASS: "${DB_PASSWORD:-zorrodev}"
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: zorrobpm-node-exporter
+    restart: unless-stopped
+    command:
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)'
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 32M
+    # no ports published — access via Grafana (datasource proxy) only
+
+  # WO-OBS-8: Jaeger v2 all-in-one — trace backend for the DEV contour only
+  # (criterion 1: one trace ID across ≥2 service tasks). Prod trace storage is
+  # out of scope (separate product-owner decision). OTLP/HTTP :4318 (app →
+  # collector, also set as OTEL_EXPORTER_OTLP_ENDPOINT on `app` below when this
+  # overlay is active); UI :16686 reached via the Grafana datasource proxy or
+  # direct port (dev box only).
+  # Image + digest pinned like the main compose (postgres/rabbitmq precedent);
+  # digest verified 2026-09-18 via `docker pull` (single-arch digest).
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0@sha256:b585df1b6299bbbd16bf7c679da30389349736e4b6bc8f4f500142a75bf26ca8
+    container_name: zorrobpm-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:16686:16686"
+    networks:
+      - zorrobpm
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  zorrobpm:
+    driver: bridge

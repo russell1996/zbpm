@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.zorrodev.bpm</groupId>
+        <artifactId>zorrobpm</artifactId>
+        <version>0.8.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <groupId>com.zorrodev.bpm</groupId>
+    <artifactId>zorrobpm-job-handler-spring-boot-starter</artifactId>
+    <version>0.8.0-SNAPSHOT</version>
+
+    <name>zorrobpm-job-handler-spring-boot-starter</name>
+    <description>ZBPM: a lightweight Spring Boot based BPM engine.</description>
+    <url>https://zorrobpm.dev</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>maratkalibek</id>
+            <name>Marat Kalibekov</name>
+            <email>marat@zorrodev.com</email>
+            <organizationUrl>https://zorrodev.com</organizationUrl>
+        </developer>
+    </developers>
+
+    <properties>
+        <!-- WO-SEC-53 (A6): the project's declared/CI/runtime stack is Java 21
+             (root Dockerfile uses maven:3.9.9-eclipse-temurin-21 + eclipse-temurin:21-jre,
+             .gitlab-ci.yml runs maven:3.9.9-eclipse-temurin-21). 17 was a stale leftover. -->
+        <java.version>21</java.version>
+        <!-- WO-REL-36: тот же механизм исключения broker-тестов, что в rest/engine:
+             @Tag("rabbit") гоняется только через -Dgroups=rabbit -Dzbpm.excludedGroups=.
+             WO-TEST-10: @Tag("chaos") — только через ci/run-chaos-tests.sh
+             (-Dgroups=chaos -Dzbpm.excludedGroups=). -->
+        <zbpm.excludedGroups>pg | rabbit | chaos</zbpm.excludedGroups>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jackson</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.zorrodev.bpm</groupId>
+            <artifactId>zorrobpm-exchange</artifactId>
+            <version>0.8.0-SNAPSHOT</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- WO-REL-36: bounded result-cache для идемпотентной переотправки completion
+             (тот же Caffeine-паттерн, что в engine: F38/PERF-7 — maximumSize+expireAfterAccess).
+             Версия из Spring Boot dependency management, как в zorrobpm-engine. -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
+        <!-- WO-BE-5: explicit Jackson 2 databind for Jackson2JsonMessageConverter compatibility.
+             spring-boot-starter-jackson in SB 4 provides tools.jackson (Jackson 3) by default.
+             Jackson 2 uses com.fasterxml.jackson.databind.ObjectMapper which is required by
+             the spring-amqp Jackson2JsonMessageConverter. The version is managed by
+             jackson-2-bom.version 2.22.1 (parent POM). -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <includes>
+                        <include>**/*IT.java</include>
+                    </includes>
+                    <!-- WO-TEST-10: WorkerKillChaosIT.startVictim передаёт ПОЛНЫЙ тестовый
+                         classpath новому JVM-процессу через java.class.path. По умолчанию
+                         failsafe/surefire форкают тесты через manifest-only jar (один
+                         surefirebooter*.jar в java.class.path) — victim тогда стартует с
+                         обрезанным classpath и падает NoClassDefFoundError, а тест висит
+                         120с в ожидании latch-файла. false возвращает полный classpath. -->
+                    <useManifestOnlyJar>false</useManifestOnlyJar>
+                    <!-- WO-REL-36: broker-тесты исключены из дефолтного build'а
+                         (тот же property-механизм, что в rest/engine). -->
+                    <excludedGroups>${zbpm.excludedGroups}</excludedGroups>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.11.2</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                                <configuration>
+                                    <doclint>none</doclint>
+                                    <failOnError>false</failOnError>
+                                    <quiet>true</quiet>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.10.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>validated</waitUntil>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+  <scm>
+    <tag>v0.7.14</tag>
+  </scm>
+</project>

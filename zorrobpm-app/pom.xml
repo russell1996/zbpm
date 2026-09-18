@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.zorrodev.bpm</groupId>
+        <artifactId>zorrobpm</artifactId>
+        <version>0.8.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <groupId>com.zorrodev.bpm</groupId>
+    <artifactId>zorrobpm-app</artifactId>
+    <version>0.8.0-SNAPSHOT</version>
+
+    <properties>
+        <!-- WO-SEC-53 (A6): the project's declared/CI/runtime stack is Java 21
+             (root Dockerfile uses maven:3.9.9-eclipse-temurin-21 + eclipse-temurin:21-jre,
+             .gitlab-ci.yml runs maven:3.9.9-eclipse-temurin-21). 17 was a stale leftover. -->
+        <java.version>21</java.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- WO-OPS-1: actuator for /actuator/health (public healthcheck endpoint) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- 3.1.0 (not 3.0.3): natively vendors swagger-ui 5.32.11, which is the exact version
+             WO-SEC-39 previously force-overrode on top of 3.0.3 (which vendors 5.32.2) to patch
+             the DOMPurify CVE. That override broke Swagger UI entirely: springdoc's resource
+             handler registers a hardcoded classpath location for the version IT vendors
+             (META-INF/resources/webjars/swagger-ui/5.32.2/), so once the actual jar on the
+             classpath was 5.32.11, every request to /swagger-ui/** 404'd - confirmed via
+             springdoc TRACE logging showing "Mapped to ResourceHttpRequestHandler [classpath
+             META-INF/resources/webjars/swagger-ui/5.32.2/]" / "Resource not found for path
+             [index.html]". Upgrading springdoc itself to the version that already vendors
+             5.32.11 fixes this at the root - the vendored version and the resource handler's
+             hardcoded path are back in sync, and the manual swagger-ui dependency override is
+             no longer needed (removed). -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>3.1.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.zorrodev.bpm</groupId>
+            <artifactId>zorrobpm-engine</artifactId>
+            <version>0.8.0-SNAPSHOT</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.zorrodev.bpm</groupId>
+            <artifactId>zorrobpm-rest</artifactId>
+            <version>0.8.0-SNAPSHOT</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.zorrodev.bpm</groupId>
+            <artifactId>zorrobpm-rabbitmq</artifactId>
+            <version>0.8.0-SNAPSHOT</version>
+        </dependency>
+
+        <!-- WO-AUDIT-1: first test in this module (prometheus exposure on the app
+             context) — mirrors zorrobpm-rest test deps -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+  <scm>
+    <tag>v0.7.14</tag>
+  </scm>
+</project>

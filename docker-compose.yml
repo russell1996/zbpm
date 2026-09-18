@@ -1,0 +1,209 @@
+name: zorrobpm
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    container_name: zorrobpm-postgres
+    restart: unless-stopped
+    # WO-REL-38: commit-timestamps для порядка ленты событий (FeedPositionAssigner
+    # читает pg_xact_commit_timestamp(xmin); контекст postmaster — только через
+    # командную строку. Пустой volume после этого флага стартует чисто; на
+    # СУЩЕСТВУЮЩЕМ volume старые строки без меток добираются fallback-проходом
+    # джоба по sequence — простоя/ресета данных не нужно).
+    command: ["postgres", "-c", "track_commit_timestamp=on"]
+    environment:
+      POSTGRES_DB: ${DB_NAME:-zorrobpm-db}
+      POSTGRES_USER: ${DB_USERNAME:-zorrodev}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # WO-SEC-27: bind to loopback only — the app reaches PG via the docker network (postgres:5432),
+      # so host publication is not needed and must never be exposed on 0.0.0.0. Admin access via SSH tunnel.
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-zorrodev} -d ${DB_NAME:-zorrobpm-db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # WO-SEC-50 (H5): generous safety-net ceilings, not tight capacity tuning — real prod
+    # hardware specs weren't available to size these precisely; the goal here is only to stop a
+    # runaway leak/noisy-neighbor container from starving the whole host. Revisit once actual
+    # usage is measured.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g
+        reservations:
+          memory: 256m
+    networks:
+      - zorrobpm
+
+  rabbitmq:
+    # WO-OBS-9: 3.13.7 → 4.1.8 (major, миграционно проверен: налитые classic
+    # 2000+500 сообщений, CQv1→v2-конверсия ~5ms/сообщение, 0 потерь, md5 тел
+    # совпали; клиент spring-amqp 4.0.4 совместим по матрице вендора; ключ
+    # prometheus.return_per_object_metrics в 4.x не переименован, метрики
+    # {queue=...} проверены живьём; плагины management/prometheus на месте).
+    # Тег+digest синхронизированы с CI-файлом ci/docker-compose.rabbit.yml
+    # (критерий 3: одна версия везде). Digest — list-digest 4.1.8, сверен
+    # `docker pull` 2026-09-18 (pull-дайджест совпал побайтово, образ на месте).
+    # NB: downgrade официально не поддерживается вендором; Khepri (khepri_db)
+    # держать ВЫКЛЮЧЕННЫМ до отдельного решения CTO — см. runbook.
+    image: rabbitmq:4.1-management-alpine@sha256:a3ae2541e604917be93f562ed6b2a8a0c9e52e4945978f6d152e49bd9235a809
+    container_name: zorrobpm-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-zorrodev}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      # WO-OBS-5: per-object prometheus metrics (single-file mount — image's
+      # /etc/rabbitmq/conf.d/10-defaults.conf stays in place).
+      - ./ci/observability/rabbitmq/conf.d/20-per-object-metrics.conf:/etc/rabbitmq/conf.d/20-per-object-metrics.conf:ro
+    ports:
+      # INTENDED / NORMAL — publish on all host interfaces. DO NOT re-restrict to 127.0.0.1.
+      # The host lives inside a protected network perimeter (not reachable from the public
+      # internet), and LAN consumers depend on these ports: the test k8s app connects to
+      # <internal-host>:5672 (AMQP) and the management UI is used at <internal-host>:9300.
+      # This reverts SEC-27a, whose loopback lockdown broke those consumers and whose
+      # internet-exposure premise did not hold. Any future "harden broker ports" WO must
+      # first confirm the host is actually internet-exposed — it is not.
+      - "${RABBITMQ_PORT:-5672}:5672"        # AMQP
+      - "${RABBITMQ_MGMT_PORT:-9300}:15672"  # management UI
+    expose:
+      - "15692"  # WO-OBS-2: rabbitmq_prometheus metrics (no host publish, same network as prometheus)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+        reservations:
+          memory: 128m
+    networks:
+      - zorrobpm
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zorrobpm-app:${APP_TAG:-latest}
+    container_name: zorrobpm-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      # Run under the prod profile so application-prod.yml applies (rate-limit, CORS allowlist,
+      # secure cookies, fail-fast on default JWT secret). Override with SPRING_PROFILES_ACTIVE if needed.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-zorrobpm-db}
+      DB_USERNAME: ${DB_USERNAME:-zorrodev}
+      DB_PASSWORD: ${DB_PASSWORD:-zorrodev}
+      # WO-SEC-27b: hard fail-fast on default DB/RabbitMQ creds once rotated (governance/runbooks/
+      # credential-rotation.md step 6). Bound via Binder/Environment relaxed matching in
+      # CredentialsValidator, not a `${...}` in any application.properties — set it here too or a
+      # correct .env value never reaches the container (WO-INT-6/WO-ACL-18 class of bug).
+      ZORROBPM_SECURITY_ENFORCE_DB_CREDS: ${ZORROBPM_SECURITY_ENFORCE_DB_CREDS:-false}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-zorrodev}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-zorrodev}
+      APP_FILES_DIR: /app/files
+      # REQUIRED in prod: strong secret, else the app refuses to start (WO-SEC-9). Generate: openssl rand -base64 48
+      ZORROBPM_JWT_SECRET: ${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}
+      # WO-SEC-57: optional CSV of previously active JWT secrets, accepted for verification only.
+      # Used during rotation: put the OLD secret here + the NEW one in ZORROBPM_JWT_SECRET, restart,
+      # wait one access-token TTL, then remove the old one. See governance/runbooks/jwt-key-rotation.md.
+      ZORROBPM_JWT_LEGACY_SECRETS: ${ZORROBPM_JWT_LEGACY_SECRETS:-}
+      # REQUIRED in prod: secure admin password, else the app refuses to start (WO-SEC-14 fail-fast).
+      # Must NOT be "admin". Generate a strong one.
+      ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}
+      # Browser origins allowed for the SPA (same-origin via nginx doesn't need this, but set for safety)
+      ZORROBPM_CORS_ORIGINS: ${ZORROBPM_CORS_ORIGINS:-https://test-zbpm.telecom.kz}
+      # WO-INT-5: mail transport — values in .env on host, never in repo
+      ZORROBPM_MAIL_HOST: ${ZORROBPM_MAIL_HOST:-}
+      ZORROBPM_MAIL_PORT: ${ZORROBPM_MAIL_PORT:-}
+      ZORROBPM_MAIL_USERNAME: ${ZORROBPM_MAIL_USERNAME:-}
+      ZORROBPM_MAIL_PASSWORD: ${ZORROBPM_MAIL_PASSWORD:-}
+      ZORROBPM_MAIL_FROM: ${ZORROBPM_MAIL_FROM:-}
+      ZORROBPM_MAIL_ALLOWED_RECIPIENTS: ${ZORROBPM_MAIL_ALLOWED_RECIPIENTS:-}
+      # WO-INT-6: missing from the original service definition — .env having the var is not enough,
+      # compose only forwards vars explicitly listed here into the container.
+      ZORROBPM_MAIL_PASSWORD_ENCRYPTION_KEY: ${ZORROBPM_MAIL_PASSWORD_ENCRYPTION_KEY:-}
+      # WO-ACL-18: invitation / password-reset links + rate-limit tuning.
+      ZORROBPM_MAIL_LINK_BASE_URL: ${ZORROBPM_MAIL_LINK_BASE_URL:-http://localhost:5173}
+      ZORROBPM_INVITATION_TTL_HOURS: ${ZORROBPM_INVITATION_TTL_HOURS:-24}
+      ZORROBPM_RESET_TTL_HOURS: ${ZORROBPM_RESET_TTL_HOURS:-24}
+      ZORROBPM_RESET_EMAIL_CAPACITY: ${ZORROBPM_RESET_EMAIL_CAPACITY:-5}
+      ZORROBPM_RESET_EMAIL_WINDOW: ${ZORROBPM_RESET_EMAIL_WINDOW:-3600}
+      ZORROBPM_RESET_IP_CAPACITY: ${ZORROBPM_RESET_IP_CAPACITY:-20}
+      ZORROBPM_RESET_IP_WINDOW: ${ZORROBPM_RESET_IP_WINDOW:-3600}
+      # WO-REL-27: stuck service-task watchdog (conservative defaults, see application.properties)
+      SERVICETASK_DISPATCH_TIMEOUT: ${SERVICETASK_DISPATCH_TIMEOUT:-}
+      SERVICETASK_WATCHDOG_INTERVAL_MS: ${SERVICETASK_WATCHDOG_INTERVAL_MS:-}
+      SERVICETASK_WATCHDOG_BATCH_SIZE: ${SERVICETASK_WATCHDOG_BATCH_SIZE:-}
+      # WO-PERF-8: retention chunk + outbox chunk/gauge-sampling cadence (see
+      # application.properties; empty = property default applies).
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-}
+      OUTBOX_METRICS_SAMPLE_EVERY: ${OUTBOX_METRICS_SAMPLE_EVERY:-}
+      TZ: Asia/Almaty
+    volumes:
+      - app-files:/app/files
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+        reservations:
+          memory: 512m
+    networks:
+      - zorrobpm
+
+  # Vue SPA served by nginx; also reverse-proxies /api -> app:8080 inside the network.
+  # The external production proxy (https://test-zbpm.telecom.kz) forwards to this service.
+  frontend:
+    build:
+      context: ./zorrobpm-frontend
+      dockerfile: Dockerfile
+    image: zorrobpm-frontend:${FRONTEND_TAG:-latest}
+    environment:
+      TZ: Asia/Almaty
+    container_name: zorrobpm-frontend
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+        reservations:
+          memory: 32m
+    networks:
+      - zorrobpm
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  app-files:
+
+networks:
+  zorrobpm:
+    driver: bridge

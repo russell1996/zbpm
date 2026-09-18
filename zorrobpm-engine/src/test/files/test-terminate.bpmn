@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_terminate" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-terminate" name="test-terminate" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="parallel1" />
+    <bpmn:parallelGateway id="parallel1">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flowA</bpmn:outgoing>
+      <bpmn:outgoing>flowB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowA" name="flowA" sourceRef="parallel1" targetRef="userTask1" />
+    <bpmn:userTask id="userTask1" name="userTask1">
+      <bpmn:incoming>flowA</bpmn:incoming>
+      <bpmn:outgoing>flowA2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowA2" name="flowA2" sourceRef="userTask1" targetRef="endA" />
+    <bpmn:endEvent id="endA" name="endA">
+      <bpmn:incoming>flowA2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="parallel1" targetRef="termEnd" />
+    <bpmn:endEvent id="termEnd" name="termEnd">
+      <bpmn:incoming>flowB</bpmn:incoming>
+      <bpmn:terminateEventDefinition id="TerminateDef_1" />
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
