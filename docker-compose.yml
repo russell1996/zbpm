@@ -36,7 +36,17 @@ services:
       - zorrobpm
 
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
+    # WO-OBS-9: 3.13.7 → 4.1.8 (major, миграционно проверен: налитые classic
+    # 2000+500 сообщений, CQv1→v2-конверсия ~5ms/сообщение, 0 потерь, md5 тел
+    # совпали; клиент spring-amqp 4.0.4 совместим по матрице вендора; ключ
+    # prometheus.return_per_object_metrics в 4.x не переименован, метрики
+    # {queue=...} проверены живьём; плагины management/prometheus на месте).
+    # Тег+digest синхронизированы с CI-файлом ci/docker-compose.rabbit.yml
+    # (критерий 3: одна версия везде). Digest — list-digest 4.1.8, сверен
+    # `docker pull` 2026-09-18 (pull-дайджест совпал побайтово, образ на месте).
+    # NB: downgrade официально не поддерживается вендором; Khepri (khepri_db)
+    # держать ВЫКЛЮЧЕННЫМ до отдельного решения CTO — см. runbook.
+    image: rabbitmq:4.1-management-alpine@sha256:a3ae2541e604917be93f562ed6b2a8a0c9e52e4945978f6d152e49bd9235a809
     container_name: zorrobpm-rabbitmq
     restart: unless-stopped
     environment:
