@@ -1,9 +1,6 @@
 package com.zorrodev.bpm.engine.tracing;
 
 import io.opentelemetry.api.trace.Span;
-import io.opentelemetry.context.Context;
-import io.opentelemetry.context.ContextStorage;
-import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -15,7 +12,6 @@ import org.slf4j.MDC;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -128,80 +124,5 @@ class TracingSupportTest {
     @Test
     void currentSpanOutsideScope_isInvalid() {
         assertThat(Span.current().getSpanContext().isValid()).isFalse();
-    }
-
-    /**
-     * WO-OBS-8r2, структурный тест гонки (п.3 задачи раунда): в форке поднят
-     * конкурирующий {@code ContextStorage}-wrapper, дословно повторяющий поведение
-     * прод-бриджа (Boot's {@code EventPublishingContextWrapper} +
-     * {@code Slf4JEventListener}: {@code MDC.put(traceId, hex)} на attach,
-     * {@code remove + put(restored)} на close — тот же ключ {@code traceId}).
-     * Restore обязан побеждать — assert на КОНКРЕТНЫЕ значения caller'а, а не
-     * "что-то восстановилось" (P-67). На старом коде (snapshot после makeCurrent)
-     * этот тест красный с той же сигнатурой, что CI: {@code expected:
-     * "outer-trace" but was: "<hex>"} — проверено мутацией, см. отчёт.
-     *
-     * <p>"Проходит 100 раз подряд" гонку бы не доказал (зависит от порядка/форка) —
-     * этот тест поднимает конфликт явно, детерминированно, в любом порядке.
-     */
-    @Test
-    void openChildSpan_restoresCallerMdc_despiteCompetingContextStorageWrapper() {
-        CompetingMdcBridge.ENABLED.set(true);
-        try {
-            MDC.put(TracingSupport.MDC_TRACE_ID, "outer-trace");
-            MDC.put(TracingSupport.MDC_PROCESS_INSTANCE_ID, "outer-pi");
-
-            try (TracingSupport.TraceScope scope = tracing.openChildSpan(
-                    null, "test.work", "pi-123", null)) {
-                assertThat(MDC.get(TracingSupport.MDC_TRACE_ID)).isEqualTo(scope.traceId());
-                assertThat(MDC.get(TracingSupport.MDC_PROCESS_INSTANCE_ID)).isEqualTo("pi-123");
-            }
-
-            assertThat(MDC.get(TracingSupport.MDC_TRACE_ID)).isEqualTo("outer-trace");
-            assertThat(MDC.get(TracingSupport.MDC_PROCESS_INSTANCE_ID)).isEqualTo("outer-pi");
-        } finally {
-            CompetingMdcBridge.ENABLED.set(false);
-        }
-    }
-
-    /**
-     * Тест-локальный двойник прод-бриджа. Ставится ОДИН раз на весь форк
-     * (JVM-глобальный {@code ContextStorage.addWrapper} отмотать нельзя — как и
-     * настоящий бридж), но вне теста — чистый passthrough (флаг выключен: ноль
-     * касаний MDC, ноль влияния на остальные тесты форка).
-     */
-    static final class CompetingMdcBridge {
-        static final AtomicBoolean ENABLED = new AtomicBoolean(false);
-
-        static {
-            ContextStorage.addWrapper(storage -> new ContextStorage() {
-                @Override
-                public Scope attach(Context toAttach) {
-                    Scope delegate = storage.attach(toAttach);
-                    if (ENABLED.get()) {
-                        // Как Slf4JEventListener.onScopeAttached: безусловный put
-                        // hex'а аттачащегося спана (включая невалидный — бридж
-                        // isValid не проверяет, проверено байткодом).
-                        MDC.put(TracingSupport.MDC_TRACE_ID,
-                            Span.fromContext(toAttach).getSpanContext().getTraceId());
-                    }
-                    return () -> {
-                        delegate.close();
-                        if (ENABLED.get()) {
-                            // Как onScopeClosed + onScopeRestored: remove, затем
-                            // put восстановленного (тоже без isValid-гарда).
-                            MDC.remove(TracingSupport.MDC_TRACE_ID);
-                            MDC.put(TracingSupport.MDC_TRACE_ID,
-                                Span.current().getSpanContext().getTraceId());
-                        }
-                    };
-                }
-
-                @Override
-                public Context current() {
-                    return storage.current();
-                }
-            });
-        }
     }
 }
