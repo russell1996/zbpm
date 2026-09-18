@@ -107,40 +107,6 @@ class DomainEventOutboxListenerTest {
         assertThat(key).isEqualTo("process.vacation.user-task.created.Ap_prove");
     }
 
-    /**
-     * WO-OBS-8: the domain-event hop carries the same W3C headers as the job path
-     * (traceparent verbatim from the outbox-processing span, PI from the envelope).
-     * Asserted on the real post-processed Message — dropping a header put must fail.
-     */
-    @Test
-    void obs8_on_copiesTraceParentAndProcessInstanceIdIntoAmqpHeaders() throws Exception {
-        Map<String, Object> envelope = Map.of(
-            "eventId", "obs8-event",
-            "type", "process-instance.completed",
-            "processDefinitionKey", "vacation",
-            "processInstanceId", "pi-obs8",
-            "data", Map.of()
-        );
-        String traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-
-        listener.on(new DomainEventPublished(envelope, "outbox-8", traceParent));
-
-        ArgumentCaptor<MessagePostProcessor> mpp = ArgumentCaptor.forClass(MessagePostProcessor.class);
-        verify(rabbitTemplate).convertAndSend(
-            eq(RabbitConfiguration.EVENTS_EXCHANGE),
-            eq("process.vacation.process-instance.completed"),
-            eq(envelope),
-            mpp.capture(),
-            any(CorrelationData.class));
-        org.springframework.amqp.core.Message message =
-            new org.springframework.amqp.core.Message("body".getBytes(),
-                new org.springframework.amqp.core.MessageProperties());
-        org.springframework.amqp.core.Message processed = mpp.getValue().postProcessMessage(message);
-        assertThat(processed.getMessageProperties().getHeaders())
-            .containsEntry("traceparent", traceParent)
-            .containsEntry("processInstanceId", "pi-obs8");
-    }
-
     @Test
     void buildRoutingKey_sanitizesSpaces() {
         String key = DomainEventOutboxListener.buildRoutingKey("user-task.created", "my process", null);

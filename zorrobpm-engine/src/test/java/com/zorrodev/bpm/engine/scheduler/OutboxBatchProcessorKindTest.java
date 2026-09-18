@@ -50,7 +50,7 @@ class OutboxBatchProcessorKindTest {
 
     @BeforeEach
     void setUp() {
-        processor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper, new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class), com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        processor = new OutboxBatchProcessor(outboxRepository, publisher, objectMapper, new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), mock(com.zorrodev.bpm.engine.event.DomainEventEmitter.class));
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "batchSize", 100);
         org.springframework.test.util.ReflectionTestUtils.setField(processor, "maxRetries", 5);
     }
