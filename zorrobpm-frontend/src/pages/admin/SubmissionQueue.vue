@@ -191,10 +191,10 @@ onMounted(load)
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(s.submittedAt) }}</td>
             <td class="px-4 py-3">
               <div v-if="s.status === 'APPROVED'" class="text-green-600">
-                {{ t('approvedLabel') }} · {{ s.reviewedByUsername || '—' }} · {{ formatDateTime(s.reviewedAt) }}
+                {{ t('approvedLabel') }} · {{ s.reviewedByUsername || '—' }} · {{ s.reviewedAt ? formatDateTime(s.reviewedAt) : '—' }}
               </div>
               <div v-else-if="s.status === 'REJECTED'" class="text-red-600">
-                <div>{{ t('rejectedLabel') }} · {{ s.reviewedByUsername || '—' }} · {{ formatDateTime(s.reviewedAt) }}</div>
+                <div>{{ t('rejectedLabel') }} · {{ s.reviewedByUsername || '—' }} · {{ s.reviewedAt ? formatDateTime(s.reviewedAt) : '—' }}</div>
                 <div class="text-xs break-words">{{ s.rejectReason || t('noReason') }}</div>
               </div>
               <span v-else class="text-muted-foreground">—</span>

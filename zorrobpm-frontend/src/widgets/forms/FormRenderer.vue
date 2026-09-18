@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-// @ts-expect-error form-js has no TS types
 import { Form } from '@bpmn-io/form-js'
 
 const props = defineProps<{
@@ -20,7 +19,6 @@ function initForm() {
   if (!containerRef.value) return
   formInstance = new Form({
     container: containerRef.value!,
-    data: props.data || {},
   })
   formInstance.importSchema(props.schema, props.data || {})
 }

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts"
@@ -22,7 +22,8 @@
     "tailwindcss": "^4.3.1",
     "typescript": "~6.0.2",
     "vite": "^8.0.12",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.3.11"
   },
   "dependencies": {
     "@bpmn-io/form-js": "^1.23.1",

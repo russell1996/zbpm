@@ -45,6 +45,8 @@ useBreadcrumbLabel(() => {
 const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses'>('bpmn')
 
 // WO-ACL-14 criteria 1-3: ONE tab component (TabsBar) — the local tab strip is gone.
+// WO-UI-17 F24: no `as const` — TabsBar takes a mutable TabItem[]; the literal
+// union lives on activeTab, and selectTab narrows the string payload honestly.
 const instanceTabs = computed(() => [
   { id: 'bpmn', label: t('bpmnFlow') },
   { id: 'variables', label: t('variables') },
@@ -53,7 +55,15 @@ const instanceTabs = computed(() => [
   { id: 'incidents', label: t('incidentsTab') },
   { id: 'history', label: t('history') },
   { id: 'subprocesses', label: t('subprocesses') },
-] as const)
+])
+
+// TabsBar emits `string`, but only ever one of our own tab ids — narrow it
+// through the list instead of casting blindly.
+function selectTab(id: string) {
+  if (instanceTabs.value.some((tab) => tab.id === id)) {
+    activeTab.value = id as typeof activeTab.value
+  }
+}
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
 
@@ -437,7 +447,7 @@ watch(activeTab, onTabChange)
            carried -mb-px on every button, which pushed the active underline
            under the container border (P-55). -->
       <div class="flex border-b border-border">
-        <TabsBar :tabs="instanceTabs" :active-id="activeTab" @update:active-id="activeTab = $event" class="flex-1" />
+        <TabsBar :tabs="instanceTabs" :active-id="activeTab" @update:active-id="selectTab" class="flex-1" />
       </div>
 
       <div v-if="tabLoading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>

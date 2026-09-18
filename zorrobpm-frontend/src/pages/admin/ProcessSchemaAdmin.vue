@@ -2,7 +2,8 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
-import { getProcessDefinitions, type ProcessDefinition } from '@/services/processService'
+import { getProcessDefinitions } from '@/services/processService'
+import type { ProcessDefinition } from '@/types/api'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 
 const { t } = useI18n()
