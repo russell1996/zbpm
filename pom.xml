@@ -44,6 +44,18 @@
         <!-- WO-SEC-38: override spring-amqp 4.0.3→4.0.4 to fix CVE-2026-41714 (TLS bypass, CVSS 4.0).
              Spring Boot 4.0.6 BOM pins spring-amqp 4.0.3; 4.0.4 is the patched release. -->
         <spring-amqp.version>4.0.4</spring-amqp.version>
+        <!-- WO-OBS-8r3: override kotlin-stdlib 2.2.21→2.4.20 to fix CVE-2026-53914 (CVSS 9.8).
+             Chain: spring-boot-starter-opentelemetry → opentelemetry-exporter-otlp →
+             exporter-sender-okhttp → okhttp-jvm:5.2.1 → kotlin-stdlib:2.2.21.
+             NVD: JetBrains Kotlin <2.4.20 affected (semver range, verified live
+             2026-09-18); 2.4.20 is the patched GA. okhttp 5.2.1 runs on any newer
+             2.x stdlib (Kotlin forward-compat within the 2.x line — stdlib only
+             ADDS symbols, okhttp links against 2.2-era symbols still present in
+             2.4.20); verified by full test-suite + live-broker rabbit suite below,
+             which exercise the okhttp path (OTLP sender classes load at context
+             startup). Property name follows the spring-framework.version precedent
+             in this file (Boot BOM honors kotlin.version for its managed stdlib). -->
+        <kotlin.version>2.4.20</kotlin.version>
     </properties>
 
     <groupId>com.zorrodev.bpm</groupId>

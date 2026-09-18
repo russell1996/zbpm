@@ -60,6 +60,7 @@ class ServiceTaskListenerTest {
     void tearDown() {
         logger.detachAppender(logAppender);
         logAppender.stop();
+        org.slf4j.MDC.clear();
     }
 
     @Test
@@ -119,6 +120,90 @@ class ServiceTaskListenerTest {
         verify(jobQueueDeclarer).declare("legacy-job");
         verify(rabbitTemplate).convertAndSend(eq("zorrobpm.jobs.legacy-job"), eq(detail),
             any(MessagePostProcessor.class), any(CorrelationData.class));
+    }
+
+    /**
+     * WO-OBS-8: the job hop carries the W3C trace context as AMQP headers — this is what
+     * keeps ONE trace id across the queue (criterion 1) instead of forking per hop.
+     * The post-processor is applied to a real Message so the headers are asserted on
+     * the wire object, not on the event (P-67: the mutation "drop header put" must fail).
+     */
+    @Test
+    void obs8_send_copiesTraceParentAndProcessInstanceIdIntoAmqpHeaders() throws Exception {
+        UUID pi = UUID.randomUUID();
+        JobDetailModel detail = new JobDetailModel();
+        detail.setJob("traced-job");
+        detail.setProcessInstanceId(pi);
+        String traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+
+        listener.on(new ServiceTaskEnqueued(detail, "outbox-9", traceParent));
+
+        ArgumentCaptor<MessagePostProcessor> mpp = ArgumentCaptor.forClass(MessagePostProcessor.class);
+        verify(rabbitTemplate).convertAndSend(eq("zorrobpm.jobs.traced-job"), eq(detail),
+            mpp.capture(), any(CorrelationData.class));
+        org.springframework.amqp.core.Message message =
+            new org.springframework.amqp.core.Message("body".getBytes(),
+                new org.springframework.amqp.core.MessageProperties());
+        org.springframework.amqp.core.Message processed = mpp.getValue().postProcessMessage(message);
+        assertThat(processed.getMessageProperties().getHeaders())
+            .containsEntry("traceparent", traceParent)
+            .containsEntry("processInstanceId", pi.toString());
+    }
+
+    @Test
+    void obs8_send_withoutTrace_writesNoTraceHeader() throws Exception {
+        JobDetailModel detail = new JobDetailModel();
+        detail.setJob("untraced-job");
+
+        listener.on(new ServiceTaskEnqueued(detail, "outbox-10"));
+
+        ArgumentCaptor<MessagePostProcessor> mpp = ArgumentCaptor.forClass(MessagePostProcessor.class);
+        verify(rabbitTemplate).convertAndSend(eq("zorrobpm.jobs.untraced-job"), eq(detail),
+            mpp.capture(), any(CorrelationData.class));
+        org.springframework.amqp.core.Message message =
+            new org.springframework.amqp.core.Message("body".getBytes(),
+                new org.springframework.amqp.core.MessageProperties());
+        org.springframework.amqp.core.Message processed = mpp.getValue().postProcessMessage(message);
+        assertThat(processed.getMessageProperties().getHeaders()).doesNotContainKey("traceparent");
+    }
+
+    /**
+     * WO-OBS-8: the completion hop reads the worker's headers back — MDC gets the
+     * envelope trace id (not a fresh UUID) + PI, and the engine-internal event
+     * forwards both for the SDK span. Asserted on the MDC read INSIDE publish
+     * (the only point the values are live) — not "MDC set somewhere".
+     */
+    @Test
+    void obs8_completion_propagatesHeadersIntoMdcAndEngineEvent() {
+        var data = new com.zorrodev.bpm.exchange.ServiceTaskCompleteData();
+        data.setServiceTaskId(UUID.randomUUID());
+        data.setStatus("SUCCESS");
+        String traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        Map<String, Object> headers = Map.of(
+            "traceparent", traceParent,
+            "processInstanceId", "pi-777");
+
+        // Capture the MDC values LIVE inside publish (the only point they exist —
+        // the listener restores the prior MDC before returning, so asserting after
+        // the call would read the restored state, not the propagated one).
+        var seenTraceId = new String[1];
+        var seenPi = new String[1];
+        var seenEvent = new com.zorrodev.bpm.exchange.ServiceTaskCompleted[1];
+        org.springframework.context.ApplicationEventPublisher capturingPublisher = event -> {
+            seenTraceId[0] = org.slf4j.MDC.get("traceId");
+            seenPi[0] = org.slf4j.MDC.get("processInstanceId");
+            seenEvent[0] = (com.zorrodev.bpm.exchange.ServiceTaskCompleted) event;
+        };
+        var listenerWithCapture = new ServiceTaskListener(jobQueueDeclarer, rabbitTemplate, capturingPublisher);
+        listenerWithCapture.on(data, headers);
+
+        assertThat(seenTraceId[0]).isEqualTo("0af7651916cd43dd8448eb211c80319c");
+        assertThat(seenPi[0]).isEqualTo("pi-777");
+        assertThat(seenEvent[0].getTraceParent()).isEqualTo(traceParent);
+        assertThat(seenEvent[0].getProcessInstanceId()).isEqualTo("pi-777");
+        // Container thread hygiene: prior (empty) MDC restored, nothing leaks.
+        assertThat(org.slf4j.MDC.get("traceId")).isNull();
+        assertThat(org.slf4j.MDC.get("processInstanceId")).isNull();
     }
 
     private com.zorrodev.bpm.exchange.ProcessVariable createVariable(String name, String value) {

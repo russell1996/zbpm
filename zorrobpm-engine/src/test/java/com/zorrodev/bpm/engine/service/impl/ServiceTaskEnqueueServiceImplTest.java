@@ -46,6 +46,7 @@ class ServiceTaskEnqueueServiceImplTest {
     @Mock private OutboxRepository outboxRepository;
     @Mock private tools.jackson.databind.ObjectMapper objectMapper;
     @Mock private ElementSupport elementSupport;
+    @Mock private com.zorrodev.bpm.engine.tracing.TracingSupport tracing;
 
     @InjectMocks
     private ServiceTaskEnqueueServiceImpl service;
@@ -105,6 +106,60 @@ class ServiceTaskEnqueueServiceImplTest {
         assertThat(entry.getPayload()).isNotEmpty();
         // WO-REL-12 R-01: producer writes the explicit kind — no payload guessing downstream
         assertThat(entry.getKind()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxKind.SERVICE_TASK);
+    }
+
+    /**
+     * WO-OBS-8: the enqueue path persists the CURRENT traceparent into the row so the
+     * outbox poller can continue the trace across the {@code @Scheduled} gap
+     * (persistence half of WO-REL-26). Assert on the CONCRETE value returned by the
+     * tracing collaborator — not "non-null" (P-67: null-vs-value distinguishes
+     * "copied" from "minted locally").
+     */
+    @Test
+    void obs8_enqueueAfterCommit_persistsCurrentTraceParentIntoRow() {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTask1";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("send-email");
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        try {
+            when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        String traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        when(tracing.captureTraceParent()).thenReturn(traceParent);
+
+        service.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<OutboxEntry> captor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxRepository).save(captor.capture());
+        assertThat(captor.getValue().getTraceParent()).isEqualTo(traceParent);
     }
     @Test
     void enqueueAfterCommit_nullJob_createsIncidentAndSkipsOutbox() {
@@ -242,7 +297,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // headers-only test focused (priority resolves to null, headers path untouched).
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
-            mock(ElementSupport.class), mock(ElementListenerPhaseRepository.class));
+            mock(ElementSupport.class), mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
 
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
@@ -292,7 +348,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // реально лежит в outbox-JSON, который увидит воркер.
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
-            realElementSupport(), mock(ElementListenerPhaseRepository.class));
+            realElementSupport(), mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
 
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
@@ -340,7 +397,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // РЕАЛЬНЫЙ ElementSupport, литерал без стабов).
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
-            realElementSupport(), mock(ElementListenerPhaseRepository.class));
+            realElementSupport(), mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
 
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
@@ -390,7 +448,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // null приходит из прод-кода, а не из дефолта мока.
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
-            mock(ElementListenerPhaseRepository.class));
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();
@@ -437,7 +496,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // listener-job, НЕ реальный job. SUT напрямую с реальным ElementSupport.
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
-            mock(ElementListenerPhaseRepository.class));
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();
@@ -485,7 +545,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // РЕАЛЬНЫЙ job тем же кодом (без отдельной ветки).
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
-            mock(ElementListenerPhaseRepository.class));
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();
@@ -573,7 +634,8 @@ class ServiceTaskEnqueueServiceImplTest {
         // WO-C8-11b: pendingEndListenerIndex=0 → в outbox уходит end-listener-job, НЕ реальный.
         ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
-            mock(ElementListenerPhaseRepository.class));
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
         UUID serviceTaskId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
         UUID processDefinitionId = UUID.randomUUID();

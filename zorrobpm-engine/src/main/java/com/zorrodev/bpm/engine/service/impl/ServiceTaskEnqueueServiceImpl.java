@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
+import com.zorrodev.bpm.engine.tracing.TracingSupport;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import com.zorrodev.bpm.exchange.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
@@ -46,6 +47,7 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
     private final ObjectMapper objectMapper;
     private final ElementSupport elementSupport;
     private final com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository phaseRepository;
+    private final TracingSupport tracing;
 
     @Transactional
     @Override
@@ -300,6 +302,9 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             entry.setPayload(objectMapper.writeValueAsString(detail));
             entry.setCreatedAt(Instant.now());
             entry.setPublished(false);
+            // WO-OBS-8: persist the enqueue-time traceparent so OutboxBatchProcessor
+            // can continue the trace across the @Scheduled gap (null when untraced).
+            entry.setTraceParent(tracing.captureTraceParent());
             outboxRepository.save(entry);
             log.info("Enqueued service task {} to outbox", serviceTaskId);
         } catch (Exception e) {
