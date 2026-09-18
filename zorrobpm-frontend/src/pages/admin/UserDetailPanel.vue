@@ -60,11 +60,13 @@ function getGrantForProcess(processKey: string): admin.ApiKeyGrant | undefined {
   return apiKey.value?.grants.find(g => g.processKey === processKey)
 }
 
-function isFullAccess(processKey: string): boolean {
+function isFullAccess(processKey: string | undefined): boolean {
+  if (!processKey) return false
   return getGrantForProcess(processKey)?.full ?? false
 }
 
-function hasPermission(processKey: string, perm: string): boolean {
+function hasPermission(processKey: string | undefined, perm: string): boolean {
+  if (!processKey) return false
   const grant = getGrantForProcess(processKey)
   if (!grant) return false
   if (grant.full) return true
@@ -90,11 +92,13 @@ async function updateGrant(processKey: string, newPermissions: string[], full: b
   }
 }
 
-async function toggleFull(processKey: string) {
+async function toggleFull(processKey: string | undefined) {
+  if (!processKey) return
   await updateGrant(processKey, [], !isFullAccess(processKey))
 }
 
-async function togglePermission(processKey: string, perm: string) {
+async function togglePermission(processKey: string | undefined, perm: string) {
+  if (!processKey) return
   const currentPerms = getGrantForProcess(processKey)?.full
     ? [...PERMISSIONS]
     : (getGrantForProcess(processKey)?.permissions?.split(',').filter(Boolean) ?? [])
@@ -153,7 +157,8 @@ async function addMember() {
   }
 }
 
-async function changeRole(processKey: string, newRole: string) {
+async function changeRole(processKey: string | undefined, newRole: string) {
+  if (!processKey) return
   try {
     await admin.changeMemberRole(processKey, props.user.id, newRole)
     await loadMembers()
@@ -162,7 +167,8 @@ async function changeRole(processKey: string, newRole: string) {
   }
 }
 
-async function removeMember(processKey: string) {
+async function removeMember(processKey: string | undefined) {
+  if (!processKey) return
   try {
     await admin.removeMember(processKey, props.user.id)
     await loadMembers()

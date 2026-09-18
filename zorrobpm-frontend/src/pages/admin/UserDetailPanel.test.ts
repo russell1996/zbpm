@@ -46,6 +46,8 @@ const mockUser = {
   email: null,
   role: 'USER' as const,
   active: true,
+  // WO-UI-17 F24: required by the User interface (vue-tsc checks test props too).
+  forcePasswordChange: false,
   createdAt: '',
   updatedAt: '',
 }

@@ -75,7 +75,11 @@ describe('UserList render', () => {
     // Clicking the row sets the selected user, which opens the detail Drawer.
     // (The Drawer is portaled + Presence-gated and does not render in jsdom; its
     //  content is covered by UserDetailPanel.test.ts, mounted directly.)
-    expect(wrapper.vm.selectedUser).toBeTruthy()
+    // WO-UI-17 F24: the SFC's public instance type does not expose setup
+    // bindings (same reason `wrapper.vm as any` is used in
+    // ProcessInstanceDetail.test.ts) — the selection itself is real state,
+    // asserted through the untyped handle.
+    expect((wrapper.vm as any).selectedUser).toBeTruthy()
   })
 
   it('WO-ACL-11 criterion 8: "Редактировать учётную запись" switches the Drawer to inline edit (no modal)', async () => {
@@ -89,7 +93,7 @@ describe('UserList render', () => {
     // Clicking the row opens the Drawer
     await wrapper.findAll('tbody tr')[0].trigger('click')
     await nextTickFlush()
-    expect(wrapper.vm.selectedUser).toBeTruthy()
+    expect((wrapper.vm as any).selectedUser).toBeTruthy()
 
     // No separate create/edit modal opens on top of the list when the Drawer is invoked
     // (the edit action lives inside the Drawer itself — verified in UserDetailPanel.test.ts).
@@ -104,7 +108,7 @@ describe('UserList render', () => {
     expect(row.attributes('tabindex')).toBe('0')
     await row.trigger('keydown', { key: 'Enter' })
     await nextTickFlush()
-    expect(wrapper.vm.selectedUser).toBeTruthy()
+    expect((wrapper.vm as any).selectedUser).toBeTruthy()
   })
 
   it('WO-INT-4 criterion 2: a SYSTEM account carries the system chip in the user list, a human does not', async () => {
@@ -198,7 +202,7 @@ describe('WO-UI-10 Phase 2: SYSTEM account creation', () => {
     const bobRow = wrapper.findAll('tbody tr').find((r) => r.text().includes('bob'))!
     await bobRow.trigger('click')
     await nextTickFlush()
-    expect(wrapper.vm.selectedUser).toBeTruthy()
+    expect((wrapper.vm as any).selectedUser).toBeTruthy()
     // Opening a SYSTEM user does not spawn a second create/edit modal; the Drawer's
     // inline edit (and userType immutability) is covered by UserDetailPanel.test.ts.
     expect(document.querySelector('[data-testid="form-username"]')).toBeNull()

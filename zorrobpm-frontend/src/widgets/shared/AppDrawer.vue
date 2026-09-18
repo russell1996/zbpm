@@ -84,7 +84,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50" :class="{ invisible: !open }" aria-hidden="!open">
+  <div class="fixed inset-0 z-50" :class="{ invisible: !open }" :aria-hidden="!open">
     <!-- overlay: click outside closes -->
     <div
       data-testid="drawer-overlay"

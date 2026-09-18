@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-// @ts-expect-error form-js has no TS types
 import { FormEditor } from '@bpmn-io/form-js'
 import { EMPTY_SCHEMA } from './formSchema'
 

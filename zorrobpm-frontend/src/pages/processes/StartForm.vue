@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { getStartForm, type TaskFormResponse } from '@/services/formService'
 import { dataToVariables } from '@/shared/lib/formMapping'
+import type { ProcessVariable } from '@/types/api'
 import * as instanceService from '@/services/instanceService'
 import FormRenderer from '@/widgets/forms/FormRenderer.vue'
 
@@ -26,11 +27,20 @@ async function startProcess() {
   submitting.value = true
   error.value = null
   try {
-    let variables: { name: string; type: string; value: string }[] = []
+    let variables: ProcessVariable[] = []
 
     if (formResponse.value?.type === 'embedded' && formRef.value) {
       formErrors.value = null
-      const { data, errors } = formRef.value.submit()
+      // WO-UI-17 F24: submit() is undefined when the form-js instance never
+      // initialized (no container) — starting the process with silently empty
+      // variables would drop required data, so fail loudly instead.
+      const result = formRef.value.submit()
+      if (!result) {
+        error.value = 'Failed to submit form'
+        submitting.value = false
+        return
+      }
+      const { data, errors } = result
       if (errors && Object.keys(errors).length > 0) {
         formErrors.value = errors
         submitting.value = false

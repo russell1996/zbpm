@@ -349,7 +349,7 @@ async function downloadBpmn() {
           <!-- Row 2: Name · v23 · created — center-aligned -->
           <div class="flex items-center gap-2 flex-wrap -mt-1">
             <span class="text-base font-semibold truncate">{{ store.currentDefinition.name || store.currentDefinition.key }}</span>
-            <Select v-if="store.currentVersions.length > 1" :model-value="route.params.id" :display-value="() => `v${store.currentDefinition.version}`" @update:model-value="(v) => openVersion(v as string)">
+            <Select v-if="store.currentVersions.length > 1" :model-value="route.params.id" :display-value="() => `v${store.currentDefinition?.version}`" @update:model-value="(v) => openVersion(v as string)">
               <SelectTrigger class="h-6 px-2 py-0 text-[11px] font-bold rounded-full bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-0 ring-0 focus:ring-0 focus:ring-offset-0 [&>span]:truncate w-auto gap-1">
                 <SelectValue placeholder="v?" />
               </SelectTrigger>
@@ -765,7 +765,7 @@ async function downloadBpmn() {
       and name before submit, close only on success, owner shown, rights block)
       lives in that single component now. -->
     <div
-      v-if="showDeployDialog"
+      v-if="showDeployDialog && store.currentDefinition"
       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
       @click.self="showDeployDialog = false"
     >

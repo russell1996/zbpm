@@ -43,13 +43,16 @@ async function load() {
 onMounted(load)
 
 function exportData() {
-  exportToCsv(timers.value.map((t) => ({
-    id: t.id,
-    processInstanceId: t.processInstanceId || '',
-    activityId: t.activityId || '',
-    dueAt: t.dueAt,
-    status: t.fired ? t('fired') : t('pending'),
-    createdAt: t.createdAt,
+  // WO-UI-17 F24: the callback param MUST NOT be named `t` — it shadows the
+  // i18n `t` from useI18n, so `t('fired')` called the timer row as a function
+  // (runtime TypeError on every Export click, not just a type error).
+  exportToCsv(timers.value.map((timer) => ({
+    id: timer.id,
+    processInstanceId: timer.processInstanceId || '',
+    activityId: timer.activityId || '',
+    dueAt: timer.dueAt,
+    status: timer.fired ? t('fired') : t('pending'),
+    createdAt: timer.createdAt,
   })), 'timers.csv')
 }
 </script>
