@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.rabbitmq;
 
 import com.zorrodev.bpm.exchange.DomainEventPublished;
+import com.zorrodev.bpm.exchange.TraceHeaders;
 import com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,8 +41,17 @@ public class DomainEventOutboxListener {
             // WO-REL-12 (R-06): carry the outbox id on the message properties too — the broker
             // return callback only sees the returned message (no CorrelationData object), so
             // without this it cannot match the failure back to the DB row.
+            // WO-OBS-8: same W3C discipline as the job path — traceparent + PI ride as
+            // headers (tolerant: absent when the entry was enqueued outside any trace).
             m -> {
                 m.getMessageProperties().setCorrelationId(event.getOutboxId());
+                if (event.getTraceParent() != null) {
+                    m.getMessageProperties().setHeader(TraceHeaders.TRACE_PARENT_HEADER, event.getTraceParent());
+                }
+                Object pi = envelope.get("processInstanceId");
+                if (pi != null) {
+                    m.getMessageProperties().setHeader(TraceHeaders.PROCESS_INSTANCE_ID_HEADER, pi.toString());
+                }
                 return m;
             },
             new CorrelationData(event.getOutboxId()));

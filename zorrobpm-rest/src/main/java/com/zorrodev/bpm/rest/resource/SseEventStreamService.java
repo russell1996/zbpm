@@ -4,6 +4,7 @@ import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.UiUserLookupService;
 import com.zorrodev.bpm.engine.service.ApiKeyService;
 import com.zorrodev.bpm.engine.service.EventQueryService;
+import com.zorrodev.bpm.exchange.TraceHeaders;
 import com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -364,6 +365,16 @@ public class SseEventStreamService implements SmartLifecycle {
      * so one slow client never blocks the others (WO-PERF-6).
      */
     public void onDomainEvent(String messageBody) {
+        onDomainEvent(messageBody, null);
+    }
+
+    /**
+     * WO-OBS-8: header-aware overload — the SSE bridge passes the real AMQP headers
+     * so the trace continues here (MDC traceId + processInstanceId for the fan-out
+     * logs). The body-only overload (tests, direct calls) behaves as before: PI from
+     * the envelope, no traceId. Never throws on bad headers — delivery first.
+     */
+    public void onDomainEvent(String messageBody, Map<String, ?> amqpHeaders) {
         Map<String, Object> envelope;
         try {
             envelope = objectMapper.readValue(messageBody, Map.class);
@@ -389,6 +400,50 @@ public class SseEventStreamService implements SmartLifecycle {
                 return;
             }
         }
+
+        // WO-OBS-8: MDC for the fan-out below (SSE is the fifth WO point: HTTP, worker,
+        // completion, outbox, SSE). PI prefers the header (no parse cost), falls back to
+        // the envelope; traceId comes only from the W3C header. Save/restore: the bridge
+        // thread is a shared consumer thread, never leak one event's MDC into the next.
+        String priorTraceId = org.slf4j.MDC.get(TraceHeaders.MDC_TRACE_ID);
+        String priorPi = org.slf4j.MDC.get(TraceHeaders.MDC_PROCESS_INSTANCE_ID);
+        if (amqpHeaders != null) {
+            Object piHeader = amqpHeaders.get(TraceHeaders.PROCESS_INSTANCE_ID_HEADER);
+            if (piHeader != null) {
+                processInstanceId = piHeader.toString();
+            }
+            Object tpHeader = amqpHeaders.get(TraceHeaders.TRACE_PARENT_HEADER);
+            String headerTraceId = tpHeader != null
+                ? TraceHeaders.extractTraceId(tpHeader.toString()) : null;
+            if (headerTraceId != null) {
+                org.slf4j.MDC.put(TraceHeaders.MDC_TRACE_ID, headerTraceId);
+            }
+        }
+        if (processInstanceId != null) {
+            org.slf4j.MDC.put(TraceHeaders.MDC_PROCESS_INSTANCE_ID, processInstanceId);
+        }
+        try {
+            dispatchToClientsTraced(envelope, eventType, processInstanceId, pdUuid, sequence);
+            // WO-OBS-8: the per-dispatch line inside the MDC window — this is the
+            // greppable proof (criterion 2 extends to SSE): trace + PI on one line.
+            log.info("SSE dispatch: type={}, processInstanceId={}, sequence={}",
+                eventType, processInstanceId, sequence);
+        } finally {
+            restoreSseMdc(TraceHeaders.MDC_TRACE_ID, priorTraceId);
+            restoreSseMdc(TraceHeaders.MDC_PROCESS_INSTANCE_ID, priorPi);
+        }
+    }
+
+    private static void restoreSseMdc(String key, String prior) {
+        if (prior == null) {
+            org.slf4j.MDC.remove(key);
+        } else {
+            org.slf4j.MDC.put(key, prior);
+        }
+    }
+
+    private void dispatchToClientsTraced(Map<String, Object> envelope, String eventType,
+            String processInstanceId, UUID pdUuid, long sequence) {
 
         for (SseClientInfo client : clients.values()) {
             // Check type filter
@@ -929,7 +984,9 @@ public class SseEventStreamService implements SmartLifecycle {
         container.setQueueNames(queueName);
         container.setMessageListener((message) -> {
             String body = new String(message.getBody());
-            onDomainEvent(body);
+            // WO-OBS-8: headers ride along (traceparent + processInstanceId) — the
+            // body-only overload stays for tests/direct calls.
+            onDomainEvent(body, message.getMessageProperties().getHeaders());
         });
         // Outside the lock as well: may block up to the consumer-start
         // timeout on a sick broker.

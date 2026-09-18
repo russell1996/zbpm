@@ -5,6 +5,7 @@ import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
+import com.zorrodev.bpm.engine.tracing.TracingSupport;
 import com.zorrodev.bpm.exchange.DomainEventPublished;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import com.zorrodev.bpm.exchange.MailRequest;
@@ -44,6 +45,7 @@ public class OutboxBatchProcessor {
     private final ObjectMapper objectMapper;
     private final BpmMetrics bpmMetrics;
     private final DomainEventEmitter domainEventEmitter;
+    private final TracingSupport tracing;
 
     /**
      * WO-PERF-8: half the worst-case transaction (was 100). Drain rate at the default
@@ -98,48 +100,90 @@ public class OutboxBatchProcessor {
             sampleGauges.run();
         }
         for (OutboxEntry entry : pending) {
-            try {
-                OutboxKind kind = entry.getKind() != null ? entry.getKind() : OutboxKind.SERVICE_TASK;
-                switch (kind) {
-                    case DOMAIN_EVENT -> {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> envelope = objectMapper.readValue(entry.getPayload(), Map.class);
-                        publisher.publishEvent(new DomainEventPublished(envelope, entry.getId().toString()));
-                        log.info("Published domain event outbox entry {}: type={}", entry.getId(), envelope.get("type"));
-                    }
-                    case SERVICE_TASK -> {
-                        JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
-                        publisher.publishEvent(new ServiceTaskEnqueued(detail, entry.getId().toString()));
-                        log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
-                    }
-                    case EMAIL -> {
-                        MailRequest request = objectMapper.readValue(entry.getPayload(), MailRequest.class);
-                        publisher.publishEvent(new MailSendRequested(request, entry.getId().toString()));
-                        log.info("Published mail outbox entry {} to {}", entry.getId(), request.getTo());
-                    }
-                }
-                // WO-REL-12 R-02: no markPublished here — the row is marked only after the
-                // broker ACK arrives (OutboxDeliveryResultListener), so a lost message can't
-                // look "delivered" in the DB.
-            } catch (Exception e) {
-                int nextAttempt = entry.getAttempts() + 1;
-                String errorSummary = truncate(e.getMessage(), 500);
-                if (nextAttempt >= maxRetries) {
-                    // WO-REL-22 (B3): emit only on the FIRST transition (markFailed is
-                    // conditional) — duplicate marks must not re-emit.
-                    if (outboxRepository.markFailed(entry.getId()) == 1) {
-                        emitQuarantined(entry, nextAttempt, errorSummary);
-                    }
-                    bpmMetrics.outboxFailed();
-                    log.error("Outbox entry {} quarantined after {} attempts (max={}): {}",
-                        entry.getId(), nextAttempt, maxRetries, errorSummary);
-                } else {
-                    outboxRepository.recordFailure(entry.getId(), nextAttempt, errorSummary);
-                    log.warn("Outbox entry {} failed (attempt {}/{}): {}",
-                        entry.getId(), nextAttempt, maxRetries, errorSummary);
-                }
+            // WO-OBS-8: continue the enqueue-time trace across the @Scheduled gap
+            // (the poll thread was never on the author's stack — MDC alone cannot
+            // cross it; the stored trace_parent can). One span + MDC per entry;
+            // Spring-event listeners below inherit the scope on this thread.
+            try (TracingSupport.TraceScope ignored = tracing.openChildSpan(
+                    entry.getTraceParent(), "outbox.process",
+                    processInstanceIdOf(entry),
+                    TracingSupport.attrs("outbox.id", entry.getId().toString(),
+                        "outbox.kind", String.valueOf(entry.getKind())))) {
+                processOne(entry);
             }
         }
+    }
+
+    private void processOne(OutboxEntry entry) {
+        try {
+            OutboxKind kind = entry.getKind() != null ? entry.getKind() : OutboxKind.SERVICE_TASK;
+            // WO-OBS-8: the CURRENT span is the per-entry child opened above (same
+            // traceId as the stored parent) — forward ITS traceparent so the broker
+            // hop links as grandchild, not sibling. Null when untraced/noop.
+            String childTraceParent = tracing.captureTraceParent();
+            switch (kind) {
+                case DOMAIN_EVENT -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> envelope = objectMapper.readValue(entry.getPayload(), Map.class);
+                    publisher.publishEvent(new DomainEventPublished(envelope, entry.getId().toString(), childTraceParent));
+                    log.info("Published domain event outbox entry {}: type={}", entry.getId(), envelope.get("type"));
+                }
+                case SERVICE_TASK -> {
+                    JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
+                    publisher.publishEvent(new ServiceTaskEnqueued(detail, entry.getId().toString(), childTraceParent));
+                    log.info("Published outbox entry {} for service task {}", entry.getId(), detail.getServiceTaskId());
+                }
+                case EMAIL -> {
+                    MailRequest request = objectMapper.readValue(entry.getPayload(), MailRequest.class);
+                    publisher.publishEvent(new MailSendRequested(request, entry.getId().toString()));
+                    log.info("Published mail outbox entry {} to {}", entry.getId(), request.getTo());
+                }
+            }
+            // WO-REL-12 R-02: no markPublished here — the row is marked only after the
+            // broker ACK arrives (OutboxDeliveryResultListener), so a lost message can't
+            // look "delivered" in the DB.
+        } catch (Exception e) {
+            int nextAttempt = entry.getAttempts() + 1;
+            String errorSummary = truncate(e.getMessage(), 500);
+            if (nextAttempt >= maxRetries) {
+                // WO-REL-22 (B3): emit only on the FIRST transition (markFailed is
+                // conditional) — duplicate marks must not re-emit.
+                if (outboxRepository.markFailed(entry.getId()) == 1) {
+                    emitQuarantined(entry, nextAttempt, errorSummary);
+                }
+                bpmMetrics.outboxFailed();
+                log.error("Outbox entry {} quarantined after {} attempts (max={}): {}",
+                    entry.getId(), nextAttempt, maxRetries, errorSummary);
+            } else {
+                outboxRepository.recordFailure(entry.getId(), nextAttempt, errorSummary);
+                log.warn("Outbox entry {} failed (attempt {}/{}): {}",
+                    entry.getId(), nextAttempt, maxRetries, errorSummary);
+            }
+        }
+    }
+
+    /**
+     * WO-OBS-8: processInstanceId for the per-entry scope/MDC. SERVICE_TASK entries
+     * carry it in the payload; DOMAIN_EVENT envelopes carry it too; EMAIL has none
+     * (null → scope without PI, still traced). Never throws — malformed payload is
+     * the poison path's job, not tracing's.
+     */
+    private String processInstanceIdOf(OutboxEntry entry) {
+        try {
+            if (entry.getKind() == null || entry.getKind() == OutboxKind.SERVICE_TASK) {
+                JobDetailModel detail = objectMapper.readValue(entry.getPayload(), JobDetailModel.class);
+                return detail.getProcessInstanceId() != null ? detail.getProcessInstanceId().toString() : null;
+            }
+            if (entry.getKind() == OutboxKind.DOMAIN_EVENT) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> envelope = objectMapper.readValue(entry.getPayload(), Map.class);
+                Object pi = envelope.get("processInstanceId");
+                return pi != null ? pi.toString() : null;
+            }
+        } catch (Exception e) {
+            log.debug("Could not extract processInstanceId for tracing from outbox entry {}", entry.getId());
+        }
+        return null;
     }
 
     private static String truncate(String s, int maxLen) {

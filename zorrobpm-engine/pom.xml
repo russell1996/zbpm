@@ -160,6 +160,43 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- WO-OBS-8: native Boot OTel starter (not the javaagent, not the community
+             starter — see escalation). Single dep: OTel API + micrometer-tracing-bridge-otel
+             + OTLP HTTP/protobuf exporter + OTLP metrics registry, versions from Boot BOM.
+             No OTLP endpoint in repo → SDK no-op by default (prod/CI silent); endpoint +
+             sampling only via dev-overlay env.
+             WO-OBS-8r3: micrometer-registry-otlp EXCLUDED (CVE-2026-0994, 8.2, in its
+             transitive protobuf-java:4.32.0 — the ONLY protobuf-java path in this tree,
+             verified by dependency:tree; the span exporter needs no protobuf at all,
+             exporter-otlp-common has exactly one dep: exporter-common). Our metrics go
+             to Prometheus (micrometer-registry-prometheus, PrometheusActuatorAppTest),
+             nothing configures OTLP metrics export and no code references
+             OtlpMeterRegistry — Boot's OtlpMeterRegistryConfiguration backs off on
+             @ConditionalOnClass. Span export to dev Jaeger (criterion 1) is unaffected:
+             opentelemetry-exporter-otlp + sender-okhttp stay, with kotlin-stdlib pinned
+             to patched 2.4.20 in the root pom. Exclusion (not suppression): the flagged
+             bytes leave the classpath entirely instead of being risk-accepted. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.micrometer</groupId>
+                    <artifactId>micrometer-registry-otlp</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- WO-OBS-8, test-only: in-memory span exporter for trace-continuity asserts
+             (criterion 1) — version pinned to the OTel release Boot 4.0.6 manages
+             (1.55.0, verified resolvable from Maven Central 2026-09-17). -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <version>1.55.0</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
