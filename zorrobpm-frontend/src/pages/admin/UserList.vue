@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import type { User, UserRole } from '@/entities/user/User'
+import type { User, UserRole, CreationMode } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
@@ -100,7 +100,11 @@ async function saveEdit() {
     // omit fields, which would otherwise render as "—" until a page refresh).
     await loadUsers()
     const refreshed = users.value.find((u) => u.id === updated.id)
-    selectedUser.value = refreshed ?? updated
+    // WO-UI-17 F24: updateUser returns IdDTO (id only), not a full User — the
+    // reloaded row is the display object; if the edited user fell out of the
+    // reloaded list (e.g. search filter), keep the previous full object rather
+    // than rendering an id-only stub as dashes.
+    selectedUser.value = refreshed ?? selectedUser.value
     editing.value = false
     editForm.password = ''
     toast.success(t('saved'))
@@ -140,7 +144,7 @@ async function save() {
       email: formEmail.value || null,
       role: formRole.value,
       active: formActive.value,
-      creationMode: formUserType.value === 'SYSTEM' ? undefined : formCreationMode.value,
+      creationMode: formUserType.value === 'SYSTEM' ? undefined : (formCreationMode.value as CreationMode),
       userType: formUserType.value,
     })
     showForm.value = false

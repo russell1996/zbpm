@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { useAuth } from '@/features/auth/useAuth'
 
 const { t } = useI18n()
-const { login } = useAuth()
 </script>
 
 <template>
@@ -13,7 +11,7 @@ const { login } = useAuth()
       <p class="text-muted-foreground mb-6">{{ t('accessDeniedMessage') }}</p>
       <button
         class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity"
-        @click="login()"
+        @click="$router.push({ name: 'login' })"
       >
         {{ t('tryAgain') }}
       </button>

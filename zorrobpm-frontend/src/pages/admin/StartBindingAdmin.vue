@@ -2,7 +2,8 @@
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
-import { getProcessDefinitions, getProcessDefinitionStructure, type ProcessDefinition, type BpmnNode } from '@/services/processService'
+import { getProcessDefinitions, getProcessDefinitionStructure } from '@/services/processService'
+import type { ProcessDefinition, BpmnNode } from '@/types/api'
 import { listForms, createElementBinding, type FormSummary } from '@/services/formService'
 
 const { t } = useI18n()

@@ -134,8 +134,7 @@ describe('TimerList: instance navigation and full id (WO-ACL-11 criteria 6/9/10)
     expect(idSpan.attributes('title')).toBe(LONG_ID)
   })
 
-  it('criterion 6: the status badge carries its icon inside (with-icon)', async () => {
-    const wrapper = mount(TimerList, { global: { plugins: [makeRouter(), createPinia()] } })
+  it('criterion 6: the status badge carries its icon inside (with-icon)', async () => {    const wrapper = mount(TimerList, { global: { plugins: [makeRouter(), createPinia()] } })
     await flushPromises()
 
     // row 0: fired=false → WAITING → clock icon inside the badge pill
@@ -144,5 +143,29 @@ describe('TimerList: instance navigation and full id (WO-ACL-11 criteria 6/9/10)
     // row 1: fired=true → FIRED → check-circle icon inside the pill
     const fired = wrapper.findAll('tbody tr')[1].find('span.rounded-full svg.lucide-circle-check-big')
     expect(fired.exists()).toBe(true)
+  })
+
+  it('WO-UI-17 F24: Export calls exportToCsv with the mapped rows (no shadowed-t crash)', async () => {
+    // Regression: the map callback was named `t`, shadowing i18n `t`, so
+    // `t('fired')` invoked the timer row as a function — every Export click
+    // threw TypeError. vue-tsc caught it as TS2349; this test pins the runtime.
+    const { exportToCsv } = await import('@/shared/lib/export')
+    const wrapper = mount(TimerList, { global: { plugins: [makeRouter(), createPinia()] } })
+    await flushPromises()
+
+    const exportBtn = wrapper.findAll('button').find((b) => b.text() === 'export')
+    expect(exportBtn?.exists()).toBe(true)
+    await exportBtn!.trigger('click')
+    await flushPromises()
+
+    expect(exportToCsv).toHaveBeenCalledTimes(1)
+    expect(exportToCsv).toHaveBeenCalledWith(
+      [
+        { id: LONG_ID, processInstanceId: 'inst-aaa-bbb-ccc', activityId: 'act-1', dueAt: '2026-01-01', status: 'pending', createdAt: '2026-01-01' },
+        { id: 'timer-2', processInstanceId: '', activityId: 'act-only', dueAt: '2026-01-02', status: 'fired', createdAt: '2026-01-02' },
+        { id: 'timer-3', processInstanceId: '', activityId: '', dueAt: '2026-01-03', status: 'pending', createdAt: '2026-01-03' },
+      ],
+      'timers.csv',
+    )
   })
 })
