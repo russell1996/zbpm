@@ -472,7 +472,22 @@ deploy:
     - trap 'rm -f "$SCRAPE_TOKEN_BAK"' EXIT
     - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" "$SCRAPE_TOKEN_BAK"; fi
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
-    - cp -a ./ "$DEPLOY_DIR"/
+    # WO-OPS-4b O-03: copy ONLY the runtime bundle — never the full checkout
+    # (.git/governance/docs stay on the runner). The set below is exactly what
+    # `docker compose -f docker-compose.yml -f docker-compose.observability.yml up`
+    # reads at runtime: both compose files plus every ./ci/observability path
+    # bind-mounted :ro into rabbitmq/prometheus/grafana (verified by reading all
+    # three compose files; build-time sources — Dockerfile/entrypoint/frontend
+    # sources — are NOT needed: images are built in the build stage before this
+    # job runs, and `up -d` without --build never rebuilds). ci/*.sh helpers run
+    # on the RUNNER from the checkout (e.g. disk-space-check.sh above), not from
+    # DEPLOY_DIR — also not copied. Directories are (re)created because the wipe
+    # above removed them; scrape-token/.env mechanics below are untouched.
+    - mkdir -p "$DEPLOY_DIR/ci/observability/rabbitmq/conf.d" "$DEPLOY_DIR/ci/observability/grafana"
+    - cp -a docker-compose.yml docker-compose.observability.yml "$DEPLOY_DIR"/
+    - cp -a ci/observability/prometheus.yml "$DEPLOY_DIR/ci/observability"/
+    - cp -a ci/observability/rabbitmq/conf.d/20-per-object-metrics.conf "$DEPLOY_DIR/ci/observability/rabbitmq/conf.d"/
+    - cp -a ci/observability/grafana/provisioning ci/observability/grafana/dashboards ci/observability/grafana/entrypoint-whitelist.sh "$DEPLOY_DIR/ci/observability/grafana"/
     - if [ -f "$SCRAPE_TOKEN_BAK" ]; then sudo mv "$SCRAPE_TOKEN_BAK" "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
     # ловушка больше не нужна — файл уже перемещён (mv) либо пуст; снимаем trap явно
     - trap - EXIT; rm -f "$SCRAPE_TOKEN_BAK"
@@ -529,10 +544,6 @@ deploy:
     url: https://test-zbpm.telecom.kz
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes: *code-changes-paths
-      when: manual
-      allow_failure: false
-    - if: '$CI_COMMIT_BRANCH'
       changes: *code-changes-paths
       when: manual
       allow_failure: false
