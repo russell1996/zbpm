@@ -152,18 +152,6 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
         // Имена внутри одного вызова уникальны (ключ включает name), так что
         // порядок тотален без tiebreak. Копия списка — входной list вызывающих
         // не мутирует (у части вызывающих — List.of/неизменяемые).
-        // WO-REL-44 (CRITICAL прод-инцидент): канонический порядок апсертов по
-        // имени ПЕРЕД циклом. Две конкурентные транзакции одного process
-        // instance пишут пересекающиеся имена каждая в своём порядке
-        // (порядок ioMapping в BPMN конкретного элемента) — без сортировки это
-        // классический ABBA lock-order deadlock: TxA держит X и ждёт Y, TxB
-        // держит Y и ждёт X (3 реальных deadlock'а в прод-логах за 48ч, все —
-        // одна и та же пара UPSERT-стейтментов на variables). Сортировка
-        // гарантирует, что ЛЮБЫЕ две такие транзакции берут построчные локи в
-        // ОДНОМ порядке — класс гонки устранён целиком, не патч на случай.
-        // Имена внутри одного вызова уникальны (ключ включает name), так что
-        // порядок тотален без tiebreak. Копия списка — входной list вызывающих
-        // не мутирует (у части вызывающих — List.of/неизменяемые).
         List<ProcessVariable> ordered = new ArrayList<>(variables);
         ordered.sort(java.util.Comparator.comparing(ProcessVariable::getName,
             java.util.Comparator.nullsFirst(String::compareTo)));
