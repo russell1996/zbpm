@@ -271,4 +271,54 @@ class VariableDbOperationsImplTest {
         verify(jdbcTemplate).update(contains("INSERT"), any(Object[].class));
         verify(executionContext).recordVariableChange("agg", "update");
     }
+
+    // WO-REL-44 (CRITICAL прод-инцидент): канонический порядок апсертов.
+    // Две конкурентные транзакции одного инстанса с пересекающимися именами
+    // в разном порядке = ABBA-deadlock (3 реальных в прод-логах). Сортировка
+    // по имени перед циклом заставляет любые такие транзакции брать локи в
+    // одном порядке. Оба теста гоняют вход в ОБРАТНОМ порядке и ассертят
+    // порядок реальных JDBC-вызовов (не "сортировка вызвана", а наблюдаемый
+    // порядок записей — P-67: мутация "убрать sort" валит оба).
+
+    @Test
+    void setVariables_postgres_upsertsInCanonicalNameOrder() throws Exception {
+        givenProduct("PostgreSQL");
+        UUID pi = UUID.randomUUID();
+        java.util.List<String> namesInJdbcOrder = new java.util.ArrayList<>();
+        when(jdbcTemplate.queryForObject(contains("ON CONFLICT"), eq(Boolean.class),
+            any(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+                namesInJdbcOrder.add((String) inv.getArguments()[5]);
+                return Boolean.TRUE;
+            });
+
+        // List.of — immutable: заодно доказывает, что прод копирует список
+        // перед сортировкой, а не мутирует вход вызывающих.
+        db.setVariables(pi, List.of(pv("z-var", "1"), pv("m-var", "2"), pv("a-var", "3")));
+
+        assertThat(namesInJdbcOrder).containsExactly("a-var", "m-var", "z-var");
+        verify(executionContext).recordVariableChange("a-var", "create");
+        verify(executionContext).recordVariableChange("m-var", "create");
+        verify(executionContext).recordVariableChange("z-var", "create");
+    }
+
+    @Test
+    void setVariables_h2_upsertsInCanonicalNameOrder() throws Exception {
+        givenProduct("H2");
+        UUID pi = UUID.randomUUID();
+        java.util.List<String> namesInJdbcOrder = new java.util.ArrayList<>();
+        when(jdbcTemplate.update(contains("UPDATE"), any(Object[].class))).thenAnswer(inv -> {
+            // Mockito может отдать varargs как упакованный Object[] ([1][3])
+            // или развёрнуто ([4] = name в (sql, type, value, pi, name)).
+            Object[] callArgs = inv.getArguments();
+            String name = callArgs[1] instanceof Object[] packed
+                ? (String) packed[3]
+                : (String) callArgs[4];
+            namesInJdbcOrder.add(name);
+            return 1;
+        });
+
+        db.setVariables(pi, List.of(pv("z-var", "1"), pv("m-var", "2"), pv("a-var", "3")));
+
+        assertThat(namesInJdbcOrder).containsExactly("a-var", "m-var", "z-var");
+    }
 }
