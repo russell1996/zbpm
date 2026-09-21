@@ -382,7 +382,9 @@ public class ElementSupport {
         if (mappings == null || mappings.isEmpty()) {
             return;
         }
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId, activityId);
+        // WO-DIFF-1 п.2: mappings see the element's own scope PLUS every enclosing
+        // sub-process scope down to root (nearest-wins) — not just root+own.
+        List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
         List<ProcessVariable> results = new ArrayList<>();
         for (IoMappingExtensionModel.Mapping mapping : mappings) {
             ProcessVariable result = evaluateMapping(mapping, variables);
@@ -394,6 +396,63 @@ public class ElementSupport {
             dbService.setVariables(processInstanceId, inputs ? activityId : null, results);
             log.info("{}: Applied {} {} mapping(s) at {} (scope {})", processInstanceId, results.size(), inputs ? "input" : "output", element.getId(), inputs ? activityId : "root");
         }
+    }
+
+    /**
+     * WO-DIFF-1 п.2: the variable context an ioMapping source evaluates against —
+     * process root overlaid with the chain of enclosing sub-process scopes,
+     * outermost first, the element's own scope last (nearest-wins for duplicate
+     * names). Elements with no enclosing scope get exactly the historical
+     * root+own merged view (same single repository read, zero behaviour change).
+     * Reuses the existing merged {@code getVariables} reads only — no new
+     * repository methods (the variable-ownership boundary stays untouched).
+     */
+    public List<ProcessVariable> visibleVariables(UUID processInstanceId, UUID activityId) {
+        List<UUID> enclosing = enclosingScopeChain(processInstanceId, activityId);
+        if (enclosing.isEmpty()) {
+            return dbService.getVariables(processInstanceId, activityId);
+        }
+        Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
+        for (ProcessVariable v : dbService.getVariables(processInstanceId)) {
+            merged.put(v.getName(), v);
+        }
+        for (UUID scopeId : enclosing) {
+            for (ProcessVariable v : dbService.getVariables(processInstanceId, scopeId)) {
+                merged.put(v.getName(), v);
+            }
+        }
+        for (ProcessVariable v : dbService.getVariables(processInstanceId, activityId)) {
+            merged.put(v.getName(), v);
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * WO-DIFF-1 п.2: ids of the sub-process container activities enclosing the
+     * given activity, outermost first, own scope excluded. Walked through the
+     * token parent chain ({@code scopeActivityId} marks "inside this container");
+     * null-safe ({@code findToken}) so a stale token reference yields an empty
+     * chain instead of an exception (WO-REL-30 B-4 philosophy).
+     */
+    public List<UUID> enclosingScopeChain(UUID processInstanceId, UUID activityId) {
+        com.zorrodev.bpm.engine.dto.Activity activity = dbService.getActivity(activityId);
+        if (activity == null || activity.getToken() == null) {
+            return List.of();
+        }
+        List<UUID> chain = new ArrayList<>();
+        java.util.Optional<com.zorrodev.bpm.engine.dto.Token> token =
+            dbService.findToken(activity.getToken());
+        while (token.isPresent()) {
+            UUID scopeId = token.get().getScopeActivityId();
+            if (scopeId != null && !scopeId.equals(activityId) && !chain.contains(scopeId)) {
+                chain.add(scopeId);
+            }
+            UUID parentId = token.get().getParentId();
+            token = parentId == null ? java.util.Optional.empty() : dbService.findToken(parentId);
+        }
+        // Walked innermost-first; callers overlay outermost-first (nearest-wins).
+        java.util.Collections.reverse(chain);
+        return chain;
     }
 
     /**

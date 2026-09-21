@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-DIFF-1: mirror of Raxon S-027-subprocess-scope (raxon-bpm/scenarios/S-027-subprocess-scope/process.bpmn).
+     Embedded subprocess with ioMapping (input =parentVar -> subLocal, output =subLocal -> subOut);
+     inner service task (input =subLocal -> innerSeen, output =noSuchVar -> nullOut);
+     trailing task (input =subLocal -> lateRead).
+     Oracle (Zeebe) final vars: {parentVar, subLocal, innerSeen, innerOut, nullOut, subOut, lateRead, workResult}. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_DIFF1_S027"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="diff1-s027" name="DIFF-1 S-027 mirror" isExecutable="true">
+
+    <bpmn:startEvent id="start" name="Start">
+      <bpmn:outgoing>flow-start-sub</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="flow-start-sub" sourceRef="start" targetRef="sub"/>
+
+    <bpmn:subProcess id="sub" name="Sub">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=parentVar" target="subLocal"/>
+          <zeebe:output source="=subLocal" target="subOut"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-start-sub</bpmn:incoming>
+      <bpmn:outgoing>flow-sub-end</bpmn:outgoing>
+      <bpmn:startEvent id="sub-start" name="Sub start">
+        <bpmn:outgoing>flow-substart-inner</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flow-substart-inner" sourceRef="sub-start" targetRef="inner"/>
+      <bpmn:serviceTask id="inner" name="Inner work">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="diff1-s027-inner"/>
+          <zeebe:ioMapping>
+            <zeebe:input source="=subLocal" target="innerSeen"/>
+            <zeebe:output source="=noSuchVar" target="nullOut"/>
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>flow-substart-inner</bpmn:incoming>
+        <bpmn:outgoing>flow-inner-subend</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="flow-inner-subend" sourceRef="inner" targetRef="sub-end"/>
+      <bpmn:endEvent id="sub-end" name="Sub end">
+        <bpmn:incoming>flow-inner-subend</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+
+    <bpmn:sequenceFlow id="flow-sub-end" sourceRef="sub" targetRef="after"/>
+
+    <bpmn:serviceTask id="after" name="After sub">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="diff1-s027-after"/>
+        <zeebe:ioMapping>
+          <zeebe:input source="=subLocal" target="lateRead"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-sub-end</bpmn:incoming>
+      <bpmn:outgoing>flow-after-end</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="flow-after-end" sourceRef="after" targetRef="end"/>
+
+    <bpmn:endEvent id="end" name="End">
+      <bpmn:incoming>flow-after-end</bpmn:incoming>
+    </bpmn:endEvent>
+
+  </bpmn:process>
+</bpmn:definitions>
