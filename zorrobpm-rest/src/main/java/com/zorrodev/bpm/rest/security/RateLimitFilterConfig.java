@@ -37,7 +37,11 @@ public class RateLimitFilterConfig {
     @Value("${zorrobpm.security.rate-limit.window-seconds:60}")
     private int windowSeconds;
 
-    @Value("${zorrobpm.security.rate-limit.data-capacity:120}")
+    // WO-DIFF-6: 120 -> 300/min — диагностический поллинг list-эндпоинтов
+    // (Raxon S-018: ~150 запросов за 15с упирался в 121-й). 300/мин = 5 r/s
+    // средний — всё ещё в 6 раз ниже nginx-гейта 30 r/s; чтения дешёвые,
+    // login/account/refresh-бакеты не тронуты.
+    @Value("${zorrobpm.security.rate-limit.data-capacity:300}")
     private int dataCapacity;
 
     @Value("${zorrobpm.security.rate-limit.data-window-seconds:60}")

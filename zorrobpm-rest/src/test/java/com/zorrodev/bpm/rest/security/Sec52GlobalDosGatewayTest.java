@@ -16,7 +16,7 @@ import static org.mockito.Mockito.mock;
  *
  * <p>Meeting the CTO HOLD (round review) requirements:
  * <ul>
- *   <li>Crit-3 is exercised on the REAL prod default (dataCapacity=120 / dataWindowSeconds=60),
+ *   <li>Crit-3 is exercised on the REAL prod default (dataCapacity=300 / dataWindowSeconds=60),
  *       not a tautological capacity=5 — proves normal cursor pagination does not trip a false 429.</li>
  *   <li>Crit-1 proves the data bucket actually triggers 429 when the real prod default is exceeded.</li>
  *   <li>SEC-4 POF: with a trusted proxy in front, spoofing the LEFTMOST X-Forwarded-For entry must NOT
@@ -38,7 +38,7 @@ class Sec52GlobalDosGatewayTest {
         filter.setAccountCapacity(5);
         filter.setRefreshCapacity(30);
         filter.setRefreshWindowSeconds(60);
-        filter.setDataCapacity(120);
+        filter.setDataCapacity(300);
         filter.setDataWindowSeconds(60);
         filter.setTrustedProxies(Set.of());
         filter.reset();
@@ -57,15 +57,15 @@ class Sec52GlobalDosGatewayTest {
         return resp.getStatus();
     }
 
-    // --- Crit-3: normal cursor pagination under PROD DEFAULT (120/60s) — no false 429 ---
+    // --- Crit-3: normal cursor pagination under PROD DEFAULT (300/60s) — no false 429 ---
 
     @Test
     void crit3_normalEventsPagination_noFalse429_onProdDefault() throws Exception {
-        // Prod defaults: 120 requests / 60s window. A normal UI poll/scan issues far fewer.
+        // Prod defaults (WO-DIFF-6): 300 requests / 60s window. A normal UI poll/scan issues far fewer.
         for (int i = 0; i < 20; i++) {
             int s = status(req("GET", "10.0.0.7", "/events?cursor=abc"));
             assertThat(s)
-                .as("Normal pagination request %d must pass on prod default 120/60s", i)
+                .as("Normal pagination request %d must pass on prod default 300/60s", i)
                 .isEqualTo(200);
         }
     }
@@ -74,16 +74,16 @@ class Sec52GlobalDosGatewayTest {
 
     @Test
     void crit1_floodEvents_exceedsProdDefault_returns429() throws Exception {
-        for (int i = 0; i < 120; i++) {
+        for (int i = 0; i < 300; i++) {
             int s = status(req("GET", "10.0.0.8", "/events?cursor=x"));
             assertThat(s)
                 .as("Within prod default capacity request %d should pass", i)
                 .isEqualTo(200);
         }
-        // 121st in the same window -> 429
+        // 301st in the same window -> 429
         int s = status(req("GET", "10.0.0.8", "/events?cursor=y"));
         assertThat(s)
-            .as("Exceeding prod default 120/60s must return 429")
+            .as("Exceeding prod default 300/60s must return 429")
             .isEqualTo(429);
     }
 
@@ -91,7 +91,7 @@ class Sec52GlobalDosGatewayTest {
 
     @Test
     void processDefinitions_isRateLimited() throws Exception {
-        for (int i = 0; i < 120; i++) {
+        for (int i = 0; i < 300; i++) {
             assertThat(status(req("GET", "10.0.0.9", "/process-definitions")))
                 .isEqualTo(200);
         }
