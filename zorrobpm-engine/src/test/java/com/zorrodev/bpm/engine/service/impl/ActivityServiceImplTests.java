@@ -425,6 +425,10 @@ public class ActivityServiceImplTests {
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow2"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flow4"))).thenReturn(UUID.randomUUID());
         when(scriptService.evaluateScript(eq("x = 1"), any())).thenReturn(Boolean.TRUE);
+        // WO-DIFF-2 (reverse document order): flow3 ("x = 2") is evaluated BEFORE flow2 now,
+        // so it needs its own stub — without it strict-stubs throws PotentialStubbingProblem on
+        // the same-method/different-arg call and the gateway parks an incident instead of routing.
+        when(scriptService.evaluateScript(eq("x = 2"), any())).thenReturn(Boolean.FALSE);
 
         activityService.execute(processInstanceId, token, "startEvent");
 
