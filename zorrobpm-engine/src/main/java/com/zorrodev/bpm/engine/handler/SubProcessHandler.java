@@ -27,6 +27,7 @@ import java.util.UUID;
 public class SubProcessHandler implements ElementHandler, TypedElementHandler {
 
     private final DBService dbService;
+    private final ElementSupport elementSupport;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.SUB_PROCESS; }
@@ -48,6 +49,12 @@ public class SubProcessHandler implements ElementHandler, TypedElementHandler {
 
         Token childToken = dbService.createToken(tokenId, activityId);
         log.info("{}/{}: Entering {}: {}/{} (scope token {})", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), childToken.getId());
+
+        // WO-DIFF-1 п.1: seed the sub scope with the container's input mappings
+        // (ElementSupport evaluates them against the parent context; write scope is
+        // the container activity — the same activity-scoped write task handlers use).
+        // Runs BEFORE the nested start so inner elements already see seeded values.
+        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
 
         ctx.executor().execute(processInstanceId, childToken.getId(), bpmn, bpmn.getElement(startEventId));
     }
