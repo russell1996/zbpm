@@ -471,7 +471,10 @@ deploy:
     - export SCRAPE_TOKEN_BAK="$(mktemp /tmp/scrape-token-bak-$CI_PIPELINE_ID-XXXXXX)"
     - trap 'rm -f "$SCRAPE_TOKEN_BAK"' EXIT
     - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" "$SCRAPE_TOKEN_BAK"; fi
-    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' -exec rm -rf {} +
+    # WO-OPS-1: `backups` исключён из wipe — там лежит ретенция pg_dump'ов
+    # (BACKUP_DIR по умолчанию $DEPLOY_DIR/backups); без исключения первая же
+    # выкатка после включения бэкапов сносила бы всю историю.
+    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' ! -name backups -exec rm -rf {} +
     # WO-OPS-4b O-03: copy ONLY the runtime bundle — never the full checkout
     # (.git/governance/docs stay on the runner). The set below is exactly what
     # `docker compose -f docker-compose.yml -f docker-compose.observability.yml up`
@@ -594,6 +597,29 @@ rollback:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: manual
       allow_failure: true
+
+# ---------------------------------------------------------------------------
+# PG backup — WO-OPS-1 (P0): nightly logical backup of the production database.
+# Runs ONLY on schedule (GitLab Pipeline Schedules are configured by the CTO
+# after merge — not part of this diff), on the same zbpm runner that does deploy
+# (direct `docker exec` into zorrobpm-postgres, see ci/pg-backup.sh). Never on
+# push/MR: it touches the LIVE production container and must not run per-commit.
+# needs: [] detaches it from stage ordering (same pattern as `rollback` below):
+# a backup must not wait on an unrelated build/test pipeline of the same run —
+# on a scheduled pipeline test:chaos also matches, and waiting for slow
+# fault-injection tests before dumping the database would be absurd.
+# No CI variables required: DB_* are read from $DEPLOY_DIR/.env on the host
+# (the same file compose reads), BACKUP_DIR/RETENTION_DAYS carry sane defaults.
+# ---------------------------------------------------------------------------
+
+backup:pg:
+  stage: deploy
+  tags: [zbpm]
+  needs: []
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  script:
+    - bash ci/pg-backup.sh
 
 # ---------------------------------------------------------------------------
 # GitHub fork mirror — auto, on every push to master. Publishes a code-only
