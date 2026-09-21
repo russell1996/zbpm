@@ -33,6 +33,20 @@ public interface RuntimeService {
      *  {@code retries} is optional (Camunda {@code failJob} semantics): null decrements by one. */
     IdDTO failServiceTask(UUID id, String errorMessage, Integer retries);
 
+    /**
+     * WO-DIFF-5: throws a BPMN error from a service task (boundary matching, not generic failure);
+     * see {@link ActivityService#throwServiceTaskError}.
+     */
+    com.zorrodev.bpm.contract.dto.ThrowErrorResultDTO throwServiceTaskError(UUID id,
+        com.zorrodev.bpm.contract.dto.ThrowErrorDTO dto);
+
+    /**
+     * WO-DIFF-5: publishes a message event into the correlation machinery;
+     * see {@link ActivityService#publishMessage}.
+     */
+    com.zorrodev.bpm.contract.dto.MessagePublishResultDTO publishMessage(
+        com.zorrodev.bpm.contract.dto.PublishMessageDTO dto);
+
     IdDTO completeUserTask(UUID id, List<ProcessVariable> variables);
 
     IdDTO resolveIncident(UUID id, List<ProcessVariable> variables);

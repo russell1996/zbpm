@@ -64,7 +64,7 @@ class ErrorEscalationThrowerTest {
         TokenExecutor executor = org.mockito.Mockito.mock(TokenExecutor.class);
 
         // When
-        boolean result = errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, executor);
+        boolean result = errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, null, executor);
 
         // Then
         assertThat(result).isFalse();
@@ -117,7 +117,7 @@ class ErrorEscalationThrowerTest {
         TokenExecutor executor = org.mockito.Mockito.mock(TokenExecutor.class);
 
         // When
-        boolean result = errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, executor);
+        boolean result = errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, null, executor);
 
         // Then
         assertThat(result).isTrue();
@@ -170,7 +170,7 @@ class ErrorEscalationThrowerTest {
         TokenExecutor executor = org.mockito.Mockito.mock(TokenExecutor.class);
 
         // When
-        boolean result = errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, executor);
+        boolean result = errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, null, executor);
 
         // Then
         assertThat(result).isTrue();

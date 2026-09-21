@@ -64,6 +64,15 @@ public interface ActivityService {
     void correlateMessage(String messageName, String correlationKey, UUID processInstanceId, List<ProcessVariable> variables);
 
     /**
+     * WO-DIFF-5: the {@code POST /messages/publish} counterpart of
+     * {@link #correlateMessage(String, String, UUID, List)} — same correlation machinery,
+     * but reports back what happened: subscriptions woken ({@code correlated}) and instances
+     * started via message start events ({@code started}).
+     */
+    com.zorrodev.bpm.engine.dto.MessagePublishResult publishMessage(String messageName, String correlationKey,
+        UUID processInstanceId, List<ProcessVariable> variables);
+
+    /**
      * Fires an interrupting timer boundary: if the host activity is still active it is cancelled
      * and flow continues from the boundary event's outgoing flows. Called by the timer scheduler.
      */
@@ -124,6 +133,19 @@ public interface ActivityService {
      * @return true if an error boundary handled the error, false if unhandled.
      */
     boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode);
+
+    /**
+     * WO-DIFF-5: throws a BPMN error from a service task ({@code POST
+     * /service-tasks/{id}/throw-error}). Resolves the activity (lock + stale guard, mirror of
+     * {@code completeServiceTask}), applies {@code variables} before the throw so the escape
+     * branch observes them, then throws with the task's own boundary checked first
+     * (WO-DIFF-5 self-check in {@code ErrorEscalationThrower}). A stale task (not
+     * CREATED/IN_PROGRESS) is a 409 {@code THROW_ERROR_STALE}, never a silent no-op.
+     * Unhandled throws mirror the automatic {@code ErrorEndEvent} path: the activity is marked
+     * ERROR and an incident is raised.
+     */
+    com.zorrodev.bpm.engine.dto.ThrowServiceTaskErrorResult throwServiceTaskError(UUID serviceTaskId,
+        String errorCode, List<ProcessVariable> variables);
 
     /** Extracts the escalation code from an element's event definition extensions. */
     String escalationCode(BpmnElementModel element);

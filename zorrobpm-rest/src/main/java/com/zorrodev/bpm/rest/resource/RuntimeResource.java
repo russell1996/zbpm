@@ -6,8 +6,12 @@ import com.zorrodev.bpm.contract.dto.AdHocJobResultDTO;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
+import com.zorrodev.bpm.contract.dto.MessagePublishResultDTO;
+import com.zorrodev.bpm.contract.dto.PublishMessageDTO;
 import com.zorrodev.bpm.contract.dto.ResolveIncidentDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.contract.dto.ThrowErrorDTO;
+import com.zorrodev.bpm.contract.dto.ThrowErrorResultDTO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -26,6 +30,7 @@ public class RuntimeResource implements RuntimeContract {
     private final ProcessInstanceRuntimeOperations processInstanceRuntimeOperations;
     private final ServiceTaskRuntimeOperations serviceTaskRuntimeOperations;
     private final UserTaskRuntimeOperations userTaskRuntimeOperations;
+    private final MessageRuntimeOperations messageRuntimeOperations;
 
     /**
      * WO-API-1 (API-1): create → 201 + Location (Location ставит имплементация,
@@ -51,6 +56,16 @@ public class RuntimeResource implements RuntimeContract {
     @Override
     public IdDTO failServiceTask(@PathVariable UUID id, @Valid @RequestBody FailServiceTaskDTO dto) {
         return serviceTaskRuntimeOperations.failServiceTask(id, dto);
+    }
+
+    @Override
+    public ThrowErrorResultDTO throwServiceTaskError(@PathVariable UUID id, @Valid @RequestBody ThrowErrorDTO dto) {
+        return serviceTaskRuntimeOperations.throwServiceTaskError(id, dto);
+    }
+
+    @Override
+    public MessagePublishResultDTO publishMessage(@Valid @RequestBody PublishMessageDTO dto) {
+        return messageRuntimeOperations.publishMessage(dto);
     }
 
     @Override

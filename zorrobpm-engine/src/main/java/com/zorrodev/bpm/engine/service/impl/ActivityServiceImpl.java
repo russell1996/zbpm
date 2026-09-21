@@ -46,6 +46,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -258,19 +259,33 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         correlateMessage(messageName, null, processInstanceId, variables);
     }
 
-    /**
-     * Correlates a message, optionally by a correlation-key value. When {@code correlationKey} is given,
-     * only subscriptions whose stored key matches are woken (targeted delivery — this disambiguates
-     * multiple instances waiting on the same message name); otherwise the message correlates by name
-     * (optionally narrowed to {@code processInstanceId}).
-     *
-     * <p><b>WO-REL-31 CR-3:</b> subscriptions are fetched in keyset-paged batches (≤500 rows per
-     * page, id-DESC order, cursor = previous page min id). This prevents OOM on wide fan-outs
-     * (10k+ subscribers) and gives deterministic ordering — concurrent correlations touch
-     * the same batch boundaries, reducing contention hot spots.</p>
-     */
     @Override
     public void correlateMessage(String messageName, String correlationKey, UUID processInstanceId, List<ProcessVariable> variables) {
+        correlateCounted(messageName, correlationKey, processInstanceId, variables);
+    }
+
+    /**
+     * WO-DIFF-5: counted variant backing both the silent internal correlate path and the
+     * reporting {@link #publishMessage}. Body is the pre-existing correlation logic verbatim,
+     * plus two counters: message-start launches ({@code started}) and actually-woken
+     * subscriptions ({@code correlated} — a subscription whose consume lost the race is not
+     * counted, it was not woken by this call).
+     */
+    @Override
+    public com.zorrodev.bpm.engine.dto.MessagePublishResult publishMessage(String messageName, String correlationKey,
+            UUID processInstanceId, List<ProcessVariable> variables) {
+        int[] counts = correlateCounted(messageName, correlationKey, processInstanceId, variables);
+        return new com.zorrodev.bpm.engine.dto.MessagePublishResult(counts[0], counts[1]);
+    }
+
+    /**
+     * WO-DIFF-5: counted core of {@link #correlateMessage(String, String, UUID, List)}.
+     * Returns {@code [correlated, started]}. Pre-existing body verbatim (incl. WO-REL-31 CR-3
+     * keyset-paged fan-out); only the two counters are new.
+     */
+    private int[] correlateCounted(String messageName, String correlationKey, UUID processInstanceId, List<ProcessVariable> variables) {
+        int correlated = 0;
+        int started = 0;
         // untargeted correlation by name (no instance, no key) may also start new instances via message starts
         List<com.zorrodev.bpm.engine.dto.MessageStartSubscription> startSubscriptions =
             (processInstanceId == null && correlationKey == null) ? dbService.findMessageStartSubscriptions(messageName) : List.of();
@@ -279,6 +294,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
             for (com.zorrodev.bpm.engine.dto.MessageStartSubscription start : startSubscriptions) {
                 log.info("Message '{}' starting a new instance of {} at {}", messageName, start.getProcessDefinitionId(), start.getElementId());
                 eventTrigger.startProcessInstanceAt(null, start.getProcessDefinitionId(), start.getElementId(), variables, this);
+                started++;
             }
         }
 
@@ -307,6 +323,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
                     if (shouldFire) {
                         log.info("Correlating message '{}' to event sub-process {} on instance {}", messageName, subscription.getEventSubprocessId(), subscription.getProcessInstanceId());
                         eventTrigger.triggerEventSubprocess(subscription.getProcessInstanceId(), subscription.getEventSubprocessId(), variables, this);
+                        correlated++;
                     }
                     continue;
                 }
@@ -318,6 +335,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
                         log.info("Correlating message '{}' to instance {} activity {}", messageName, subscription.getProcessInstanceId(), subscription.getActivityId());
                         signal(subscription.getActivityId(), variables);
                     }
+                    correlated++;
                 }
             }
             if (page.size() < DBService.FAN_OUT_BATCH_SIZE) {
@@ -328,6 +346,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         if (!sawSubscriptions && startSubscriptions.isEmpty()) {
             log.info("No active subscription for message '{}' (instance {}, key {})", messageName, processInstanceId, correlationKey);
         }
+        return new int[]{correlated, started};
     }
 
     /**
@@ -391,7 +410,39 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * @return {@code true} if an error boundary handled the error, {@code false} if it escaped unhandled.
      */
     public boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode) {
-        return errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, this);
+        return errorEscalationThrower.throwError(processInstanceId, tokenId, errorCode, null, this);
+    }
+
+    /**
+     * WO-DIFF-5: manual BPMN-error throw from a service task. Stale tasks (anything but
+     * CREATED/IN_PROGRESS — already completed, cancelled by a boundary, errored) are a 409
+     * {@code THROW_ERROR_STALE}: silently returning {@code handled=false} + an incident for a
+     * task that is not even live would fabricate failure evidence.
+     */
+    @Override
+    public com.zorrodev.bpm.engine.dto.ThrowServiceTaskErrorResult throwServiceTaskError(UUID serviceTaskId,
+            String errorCode, List<ProcessVariable> variables) {
+        com.zorrodev.bpm.engine.dto.Activity activity = elementSupport.lockAndReload(serviceTaskId);
+        if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.CONFLICT, "THROW_ERROR_STALE",
+                "Service task " + serviceTaskId + " is " + activity.getStatus() + " — cannot throw an error from it",
+                Map.of("serviceTaskId", serviceTaskId.toString()));
+        }
+        UUID processInstanceId = activity.getProcessInstanceId();
+        if (variables != null && !variables.isEmpty()) {
+            dbService.setVariables(processInstanceId, variables);
+        }
+        boolean handled = errorEscalationThrower.throwError(processInstanceId, activity.getToken(),
+            errorCode, activity.getBpmnElementId(), this);
+        if (handled) {
+            return new com.zorrodev.bpm.engine.dto.ThrowServiceTaskErrorResult(true, null);
+        }
+        // mirror of EndEventHandler.ErrorEndEvent: a manual throw is never quieter than automatic
+        dbService.errorActivity(serviceTaskId);
+        UUID incidentId = dbService.createIncident(serviceTaskId,
+            "Unhandled BPMN error" + (errorCode != null ? " '" + errorCode + "'" : ""));
+        return new com.zorrodev.bpm.engine.dto.ThrowServiceTaskErrorResult(false, incidentId);
     }
 
 
