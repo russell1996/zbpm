@@ -102,7 +102,30 @@ public class BoundaryScheduler {
                 .map(BoundaryEventExtensionModel::getAttachedToRef)
                 .orElse(null);
             if (host.getId().equals(attachedTo)) {
-                java.time.Instant dueAt = elementSupport.computeDueAt(element, processInstanceId);
+                final java.time.Instant dueAt;
+                try {
+                    dueAt = elementSupport.computeDueAt(element, processInstanceId);
+                } catch (EngineException e) {
+                    // WO-DIFF-7 (Raxon finding #12, S-055 — boundary half): same soft-fail
+                    // as TimerCatchHandler, but the incident parks on the HOST activity,
+                    // not the boundary element. Rationale (matches the live Zeebe probe in
+                    // Raxon WO-027 pkey ...280): the arming failure belongs to the host
+                    // task, which stays alive and completable — erroring the host would
+                    // strand the user's task, and a phantom boundary-element activity
+                    // (IncidentService fallback) would confuse resolveIncident into
+                    // re-executing a bare boundary id. Message shape mirrors
+                    // IncidentService ("SimpleName: msg"). Only EngineException (eval/type
+                    // failure) is parked — infra failures still propagate and roll back.
+                    // RESIDUAL (documented, no re-arm): resolving this incident closes it
+                    // without arming the timer (host is still active → close-without-
+                    // re-execution guard); Zeebe would re-evaluate on resolve — follow-up.
+                    String message = e.getClass().getSimpleName()
+                        + (e.getMessage() != null ? ": " + e.getMessage() : "");
+                    log.warn("{}/{}: Boundary timer {} FEEL evaluation failed, parking incident on host activity {}: {}",
+                        processInstanceId, hostActivityId, element.getId(), hostActivityId, message);
+                    dbService.createIncident(hostActivityId, message);
+                    continue;
+                }
                 // WO-REL-17: the FIRST job of a repeating (timeCycle) boundary must carry the
                 // persisted cycle expression and the remaining count (repeatCount - 1), exactly
                 // like TimerCatchHandler does for catch timers. Otherwise the re-arm in
