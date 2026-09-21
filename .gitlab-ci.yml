@@ -610,15 +610,24 @@ rollback:
 # fault-injection tests before dumping the database would be absurd.
 # No CI variables required: DB_* are read from $DEPLOY_DIR/.env on the host
 # (the same file compose reads), BACKUP_DIR/RETENTION_DAYS carry sane defaults.
+# resource_group: same production host as deploy/rollback (docker exec into a live
+# container) — without it, a backup mid-dump could race a concurrent deploy/rollback
+# on this compose stack, exactly the class of conflict deploy/rollback already guard
+# against between each other.
+# disk-space-check.sh: same filesystem deploy protects before writing anything —
+# nightly dumps accumulate for up to RETENTION_DAYS before pruning and must not
+# silently erode the margin that check exists to guard.
 # ---------------------------------------------------------------------------
 
 backup:pg:
   stage: deploy
   tags: [zbpm]
   needs: []
+  resource_group: zorrobpm-production
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
   script:
+    - bash ci/disk-space-check.sh
     - bash ci/pg-backup.sh
 
 # ---------------------------------------------------------------------------

@@ -155,11 +155,20 @@ elif [ "$MECH" = "cycle" ]; then
   before="$(docker exec "$C" psql -U "$U" -d "$DB" -tA -c "SELECT count(*), md5(string_agg(payload, ',' ORDER BY id)) FROM wo_ops1_proof;")"
   echo "before backup: $before"
   echo "== dump via REAL ci/pg-backup.sh =="
-  BACKUP_DIR="$WORK" PG_CONTAINER="$C" DB_NAME="$DB" DB_USERNAME="$U" DB_PASSWORD="$P" \
+  # BACKUP_DIR не создан заранее (в отличие от $WORK самого mktemp -d, у которого
+  # mode 700 по умолчанию и без нашего кода) — так проверка permissions ниже реально
+  # тестирует `mkdir -m 700` в скрипте, а не совпадение с чужим дефолтом.
+  BDIR="$WORK/backups"
+  BACKUP_DIR="$BDIR" PG_CONTAINER="$C" DB_NAME="$DB" DB_USERNAME="$U" DB_PASSWORD="$P" \
     bash ci/pg-backup.sh
-  dump="$(ls -t "$WORK"/*.dump | head -1)"
+  dump="$(ls -t "$BDIR"/*.dump | head -1)"
   [ -s "$dump" ] || { echo "FAIL: dump file missing or empty"; exit 1; }
   echo "dump: $dump ($(stat -c%s "$dump") bytes)"
+  # Дамп — полная прод-БД (PII, хэши паролей): world-readable недопустим.
+  dperm="$(stat -c%a "$BDIR")"; fperm="$(stat -c%a "$dump")"
+  [ "$dperm" = "700" ] || { echo "FAIL: BACKUP_DIR perms expected:<700> but was:<$dperm>"; exit 1; }
+  [ "$fperm" = "600" ] || { echo "FAIL: dump file perms expected:<600> but was:<$fperm>"; exit 1; }
+  echo "OK: BACKUP_DIR=700, dump file=600 (not world-readable)"
   # Валидный -Fc: pg_restore --list читает оглавление.
   docker cp "$dump" "$C:/tmp/restore.dump"
   docker exec "$C" pg_restore --list /tmp/restore.dump | grep -q "wo_ops1_proof" \
