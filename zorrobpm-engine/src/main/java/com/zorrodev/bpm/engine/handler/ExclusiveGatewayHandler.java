@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -51,7 +53,17 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
 
             List<com.zorrodev.bpm.contract.model.ProcessVariable> cachedVariables = dbService.getVariables(processInstanceId);
             String matchedOutgoing = null;
-            for (String outgoing : outgoings) {
+            // WO-DIFF-2 (Raxon находка №2, WO-014 S-016): при нескольких одновременно
+            // истинных условиях настоящий Zeebe берёт ПОСЛЕДНИЙ по документному порядку
+            // (reverse document order — тот же механизм, что fork-take в parallel gateway,
+            // Raxon WO-013). Список outgoings идёт в документном порядке (JAXB сохраняет
+            // порядок повторяющихся <outgoing>), поэтому оцениваем его с конца.
+            // Переиспользуемой утилиты порядка в Zorro нет (ParallelGatewayHandler идёт
+            // вперёд; fork-take WO-013 — код Raxon-трека, не этого репозитория), копия
+            // обязательна: модель парса кэшируется, разворот на месте отравил бы кэш.
+            List<String> evaluationOrder = new ArrayList<>(outgoings);
+            Collections.reverse(evaluationOrder);
+            for (String outgoing : evaluationOrder) {
                 Boolean defaultFlow = Objects.equals(outgoing, defaultFlowId);
                 UUID flowActivityId = flowNavigator.processFlow(processInstanceId, token, outgoing, true, defaultFlow, cachedVariables);
                 if (flowActivityId != null) {
