@@ -222,4 +222,88 @@ public class Diff1IoMappingScopeReproTest {
         assertThat(variableRepository.findByProcessInstanceIdAndScopeId(processInstanceId, subActivity.getId()))
             .as("closed sub scope cleaned").isEmpty();
     }
+
+    @Transactional
+    @Test
+    void hold_nestedSubInSub_bothIoMappingsParsedSeededAndPromoted() throws Exception {
+        // WO-DIFF-1 HOLD (CTO counter-example, verified by isolated run of the same logic):
+        // <subProcess id="outer">…<subProcess id="inner">…</subProcess>…</subProcess>.
+        // The old scanner found outer first (mine=false when searching inner), took the
+        // INNERMOST "</bpmn:subProcess>" as outer's close, and leapt clean over inner's
+        // open tag — inner's ioMapping came back null silently (no log, no exception).
+        // WO-C8-14b supports subProcess-in-subProcess as a first-class construct, so this
+        // is a real gap, not hypothetical.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-diff1-nested-sub.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        // Parse: BOTH containers carry their own ioMapping, extracted independently.
+        // (Before the fix: outer parsed, inner null — the exact HOLD symptom.)
+        BpmnProcessDefinitionModel parsed = bpmnService.getProcessDefinitionModelById(model.getId());
+        BpmnElementModel outer = parsed.getElement("outer");
+        BpmnElementModel inner = parsed.getElement("inner");
+        assertThat(outer).as("parsed outer element").isNotNull();
+        assertThat(inner).as("parsed inner element").isNotNull();
+        assertThat(outer.getExtensions().getIoMappingExtension())
+            .as("outer ioMapping parsed").isNotNull();
+        assertThat(outer.getExtensions().getIoMappingExtension().getInputs())
+            .as("outer input mappings").hasSize(1);
+        assertThat(outer.getExtensions().getIoMappingExtension().getOutputs())
+            .as("outer output mappings").hasSize(1);
+        assertThat(inner.getExtensions().getIoMappingExtension())
+            .as("inner ioMapping parsed").isNotNull();
+        assertThat(inner.getExtensions().getIoMappingExtension().getInputs())
+            .as("inner input mappings").hasSize(1);
+        assertThat(inner.getExtensions().getIoMappingExtension().getOutputs())
+            .as("inner output mappings").hasSize(1);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        dto.setVariables(List.of(var("outerRoot", ProcessVariableType.STRING, "r")));
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        // Runtime: each level's input mapping is seeded into its own scope at entry.
+        ActivityEntity outerActivity = activityOf(processInstanceId, "outer");
+        assertThat(variableRepository
+            .findByProcessInstanceIdAndScopeId(processInstanceId, outerActivity.getId()).stream()
+            .filter(e -> e.getName().equals("outerLocal"))
+            .map(ProcessVariableEntity::getTextValue))
+            .as("seeded outerLocal at outer scope")
+            .containsExactly("r");
+        ActivityEntity innerActivity = activityOf(processInstanceId, "inner");
+        assertThat(variableRepository
+            .findByProcessInstanceIdAndScopeId(processInstanceId, innerActivity.getId()).stream()
+            .filter(e -> e.getName().equals("innerLocal"))
+            .map(ProcessVariableEntity::getTextValue))
+            .as("seeded innerLocal at inner scope (resolved down through outer)")
+            .containsExactly("r");
+
+        // Visibility down two levels: the innermost task input =innerLocal -> workSeen
+        // resolves through the inner scope mid-flight (was "" before the p.1 fix family).
+        ActivityEntity workActivity = activityOf(processInstanceId, "work");
+        assertThat(variableRepository
+            .findByProcessInstanceIdAndScopeId(processInstanceId, workActivity.getId()).stream()
+            .filter(e -> e.getName().equals("workSeen"))
+            .map(ProcessVariableEntity::getTextValue))
+            .as("workSeen resolved down through inner+outer scopes")
+            .containsExactly("r");
+
+        runtimeService.completeServiceTask(openServiceTaskId(processInstanceId, "diff1-nested-work"),
+            List.of(var("workResult", ProcessVariableType.STRING, "done")));
+
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNotNull();
+
+        // Both levels' outputs promoted to root on scope close (inner first, then outer —
+        // outer's source still resolves because the outer scope is alive at its own close).
+        assertThat(rootVars(processInstanceId).keySet())
+            .containsExactlyInAnyOrder("outerRoot", "workResult", "workPromoted", "innerOut", "outerOut");
+        assertThat(rootVars(processInstanceId))
+            .containsEntry("workPromoted", "r")
+            .containsEntry("innerOut", "r")
+            .containsEntry("outerOut", "r");
+        // Both closed scopes cleaned like any completed task scope.
+        assertThat(variableRepository.findByProcessInstanceIdAndScopeId(processInstanceId, innerActivity.getId()))
+            .as("closed inner scope cleaned").isEmpty();
+        assertThat(variableRepository.findByProcessInstanceIdAndScopeId(processInstanceId, outerActivity.getId()))
+            .as("closed outer scope cleaned").isEmpty();
+    }
 }
