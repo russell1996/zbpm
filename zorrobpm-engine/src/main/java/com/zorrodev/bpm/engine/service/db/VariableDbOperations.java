@@ -46,6 +46,27 @@ public interface VariableDbOperations {
     void appendJsonElement(@NonNull UUID processInstanceId, String name, String jsonElement);
 
     /**
+     * WO-DIFF-3 (#4): atomically writes one JSON element at a FIXED index of a
+     * root JSON-list variable, creating/padding/overwriting as needed:
+     * absent row → fresh list of {@code index+1} slots ({@code null} before
+     * the value); shorter stored array → {@code null}-padded to
+     * {@code index+1}; in-bounds index → overwrite in place. Only a stored
+     * JSON <i>array</i> is kept, anything else (scalar, object, corrupt text)
+     * restarts from a fresh padded list — the same fail-open contract as
+     * {@link #appendJsonElement}. Like the append, the whole read-modify-write
+     * happens in ONE statement per dialect, so concurrent MI completions at
+     * DIFFERENT indexes cannot lose each other (same guarantee class as
+     * WO-REL-41 B-8 п.1). Reports the write kind for conditional tracking like
+     * {@link #setVariables(UUID, List)} does.
+     *
+     * @param jsonElement the element already serialised to JSON (no further quoting).
+     * @param index zero-based slot; negative indexes throw
+     *        {@code IllegalArgumentException} (fail-closed — a corrupt slot is
+     *        a bug, never a silent append).
+     */
+    void setJsonElementAt(@NonNull UUID processInstanceId, String name, int index, String jsonElement);
+
+    /**
      * WO-ENG-16 (WB-003): минимальный способ прочитать историю — хронология
      * всех изменений переменных инстанса (старые первые). REST-эндпоинт
      * сознательно НЕ добавлен (стоп-список G-C, WO допускает service/SQL

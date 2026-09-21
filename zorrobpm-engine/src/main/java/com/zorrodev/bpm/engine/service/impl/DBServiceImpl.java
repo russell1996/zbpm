@@ -393,6 +393,11 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void setJsonElementAt(@NonNull UUID processInstanceId, String name, int index, String jsonElement) {
+        variableDbOperations.setJsonElementAt(processInstanceId, name, index, jsonElement);
+    }
+
+    @Override
     public void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId) {
         variableDbOperations.deleteVariables(processInstanceId, scopeId);
     }

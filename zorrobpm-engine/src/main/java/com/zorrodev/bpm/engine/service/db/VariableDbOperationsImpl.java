@@ -94,6 +94,42 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
         "ELSE '[' || ? || ']' END) " +
         "WHERE process_instance_id = ? AND name = ? AND scope_id IS NULL";
 
+    /**
+     * WO-DIFF-3 (#4): позиционная запись в JSON-массив одним стейтментом.
+     * Проверено живьём на PG16: {@code jsonb_set} с {@code create_if_missing}
+     * НЕ паддингует гэпы (пишет элемент в слот 0 — данные на неверной
+     * позиции), поэтому сборка списка явная: {@code FRESH_PADDED_LIST}
+     * ({@code null} × index + элемент через {@code generate_series}).
+     * Ветки CASE: отсутствие строки → свежий паддингом список; хранимый
+     * JSON-массив в границах индекса → {@code jsonb_set} на месте; массив
+     * короче индекса → {@code ||} хвоста-паддинга; всё остальное
+     * (скаляр/объект/битый текст) → свежий список (тот же fail-open, что
+     * APPEND_PG-ELSE). Индекс отрицательным быть не может — проверено в
+     * Java до стейтмента; повтор {@code ?} под индекс — один и тот же слот
+     * во всех ветках.
+     */
+    private static final String FRESH_PADDED_LIST =
+        "(SELECT jsonb_agg(CASE WHEN g.i < ? THEN 'null'::jsonb ELSE ?::jsonb END ORDER BY g.i) " +
+        "FROM generate_series(0, ?) AS g(i))";
+
+    private static final String SET_AT_PG =
+        "INSERT INTO variables (id, process_instance_id, scope_id, name, type, text_value) " +
+        "VALUES (?, ?, NULL, ?, 'JSON', " + FRESH_PADDED_LIST + "::text) " +
+        "ON CONFLICT (process_instance_id, name, scope_id) DO UPDATE " +
+        "SET type = 'JSON', " +
+        "    text_value = (CASE WHEN variables.type = 'JSON' AND variables.text_value ~ '^\\s*\\[' " +
+        "THEN (CASE WHEN jsonb_array_length(variables.text_value::jsonb) > ? " +
+        "  THEN jsonb_set(variables.text_value::jsonb, ARRAY[?::text], ?::jsonb, true)::text " +
+        "  ELSE (variables.text_value::jsonb || (SELECT jsonb_agg(CASE WHEN g.i < (? - jsonb_array_length(variables.text_value::jsonb)) THEN 'null'::jsonb ELSE ?::jsonb END) " +
+        "    FROM generate_series(0, (? - jsonb_array_length(variables.text_value::jsonb))) AS g(i)))::text END) " +
+        "ELSE (" + FRESH_PADDED_LIST + ")::text END) " +
+        "RETURNING (xmax = 0)";
+
+    /** WO-DIFF-3 (#4), H2: перезапись целиком (текст собран в {@link #mergeAtIndex}). */
+    private static final String SET_AT_H2_UPDATE =
+        "UPDATE variables SET type = 'JSON', text_value = ? " +
+        "WHERE process_instance_id = ? AND name = ? AND scope_id IS NULL";
+
     private final VariableRepository variableRepository;
     private final com.zorrodev.bpm.engine.repository.VariableHistoryRepository historyRepository;
     private final ExecutionContext executionContext;
@@ -297,14 +333,26 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
     }
 
     /**
-     * WO-REL-41 (B-8, п.1), прод-путь: один стейтмент, атомарно, безопасно
-     * внутри чужой транзакции (та же причина, что UPSERT_PG в CR-1).
+     * WO-DIFF-3 (#4), прод-путь: один стейтмент, атомарно (см. SET_AT_PG —
+     * ветви и паддинг-семантика там; живьём проверено на PG16, что
+     * {@code jsonb_set} гэпы НЕ паддингует, поэтому короткий хвост
+     * достраивается явным {@code ||}-паддингом).
+     * {@code RETURNING (xmax = 0)} отличает вставку от обновления как в
+     * UPSERT_PG/APPEND_PG.
      *
      * @return "create" если строка вставлена, "update" если расширена/перезаписана.
      */
-    private String appendJsonElementPostgres(UUID processInstanceId, String name, String jsonElement) {
-        Boolean inserted = jdbcTemplate.queryForObject(APPEND_PG, Boolean.class,
-            UUID.randomUUID(), processInstanceId, name, jsonElement, jsonElement, jsonElement);
+    private String setJsonElementAtPostgres(UUID processInstanceId, String name, int index, String jsonElement) {
+        // Порядок строго по SET_AT_PG (15 плейсхолдеров после id/pi/name):
+        // INSERT-ветка (idx, elem, idx); UPDATE-ветка — len-check idx;
+        // jsonb_set idx-as-text, elem; pad-хвост (idx-delta, elem, idx-delta);
+        // ELSE-ветка (idx, elem, idx).
+        Boolean inserted = jdbcTemplate.queryForObject(SET_AT_PG, Boolean.class,
+            UUID.randomUUID(), processInstanceId, name,
+            index, jsonElement, index,
+            index, index, jsonElement,
+            index, jsonElement, index,
+            index, jsonElement, index);
         return Boolean.TRUE.equals(inserted) ? "create" : "update";
     }
 
@@ -315,6 +363,18 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
      *
      * @return "create" если строка вставлена, "update" если расширена/перезаписана.
      */
+    /**
+     * WO-REL-41 (B-8, п.1), прод-путь: один стейтмент, атомарно, безопасно
+     * внутри чужой транзакции (та же причина, что UPSERT_PG в CR-1).
+     *
+     * @return "create" если строка вставлена, "update" если обновлена.
+     */
+    private String appendJsonElementPostgres(UUID processInstanceId, String name, String jsonElement) {
+        Boolean inserted = jdbcTemplate.queryForObject(APPEND_PG, Boolean.class,
+            UUID.randomUUID(), processInstanceId, name, jsonElement, jsonElement, jsonElement);
+        return Boolean.TRUE.equals(inserted) ? "create" : "update";
+    }
+
     private String appendJsonElementGuarded(UUID processInstanceId, String name, String jsonElement) {
         if (jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, jsonElement, processInstanceId, name) == 1) {
             return "update";
@@ -327,6 +387,145 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
             jdbcTemplate.update(APPEND_H2_UPDATE, jsonElement, jsonElement, jsonElement, processInstanceId, name);
             return "update";
         }
+    }
+
+    @Override
+    public void setJsonElementAt(@NonNull UUID processInstanceId, String name, int index, String jsonElement) {
+        if (index < 0) {
+            // WO-DIFF-3 (#4): fail-closed — отрицательный слот всегда баг
+            // вызывающего (loopCounter ≥ 1), молчаливый append спрятал бы его.
+            throw new IllegalArgumentException("JSON-list index must be non-negative: " + index);
+        }
+        boolean postgres = "PostgreSQL".equals(getDatabaseProduct());
+        String kind = postgres
+            ? setJsonElementAtPostgres(processInstanceId, name, index, jsonElement)
+            : setJsonElementAtGuarded(processInstanceId, name, index, jsonElement);
+        if ("update".equals(kind)) {
+            // Same stale-managed-copy reason as appendJsonElement above.
+            evictVariable(processInstanceId, null, name);
+        }
+        // Same post-write contract as appendJsonElement above: history records
+        // the RESULTING value (strictly after the evict), conditional tracking
+        // follows the reported kind.
+        ProcessVariable snapshot = new ProcessVariable();
+        snapshot.setName(name);
+        snapshot.setType(com.zorrodev.bpm.contract.model.ProcessVariableType.JSON);
+        snapshot.setValue(getVariableTextValue(processInstanceId, name).orElse("[" + jsonElement + "]"));
+        historyWriter.record(processInstanceId, null, snapshot, VariableHistoryWriter.SOURCE_APPEND);
+        executionContext.recordVariableChange(name, kind);
+    }
+
+    /**
+     * WO-DIFF-3 (#4), H2-путь (тесты): та же слот-семантика текстовой
+     * хирургией — jsonb в H2 нет. Строка разбирается в Java (Jackson уже
+     * читает JSON в этом классе через history-снапшот выше — формат единый),
+     * затем один UPDATE; отсутствующая строка → INSERT свежего паддингом
+     * списка; проигранная гонка на вставке сходится повторным UPDATE, как
+     * appendJsonElementGuarded. Не-массив/битый текст → свежий список
+     * (тот же fail-open, что APPEND_H2_UPDATE-ELSE).
+     *
+     * @return "create" если строка вставлена, "update" если расширена/перезаписана.
+     */
+    private String setJsonElementAtGuarded(UUID processInstanceId, String name, int index, String jsonElement) {
+        String current = null;
+        try {
+            current = jdbcTemplate.queryForObject(
+                "SELECT text_value FROM variables WHERE process_instance_id = ? AND name = ? AND scope_id IS NULL",
+                String.class, processInstanceId, name);
+        } catch (org.springframework.dao.EmptyResultDataAccessException absent) {
+            current = null;
+        }
+        String merged = mergeAtIndex(current, index, jsonElement);
+        if (current != null
+            && jdbcTemplate.update(SET_AT_H2_UPDATE, merged, processInstanceId, name) == 1) {
+            return "update";
+        }
+        try {
+            jdbcTemplate.update(INSERT_H2, UUID.randomUUID(), processInstanceId, null,
+                name, "JSON", merged);
+            return "create";
+        } catch (DuplicateKeyException insertRaceLost) {
+            jdbcTemplate.update(SET_AT_H2_UPDATE, merged, processInstanceId, name);
+            return "update";
+        }
+    }
+
+    /**
+     * WO-DIFF-3 (#4): чистая слот-функция (диалект-независимая, тестируема без
+     * БД): разбирает текущий текст, ставит элемент в слот {@code index}
+     * (паддинг {@code null} при коротком/отсутствующем списке), собирает
+     * обратно. Не-массив/битый текст/отсутствие → свежий паддингом список.
+     */
+    static String mergeAtIndex(String current, int index, String jsonElement) {
+        java.util.List<String> slots = new java.util.ArrayList<>();
+        if (current != null) {
+            String trimmed = current.trim();
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                String inner = trimmed.substring(1, trimmed.length() - 1).trim();
+                if (!inner.isEmpty()) {
+                    // Элементы уже сериализованы в JSON (append-путь пишет их
+                    // через запятую без внешнего экранирования) — режем по
+                    // верхнеуровневым запятым, а не наивным split(",").
+                    slots.addAll(splitTopLevel(inner));
+                }
+            }
+        }
+        while (slots.size() <= index) {
+            slots.add("null");
+        }
+        slots.set(index, jsonElement);
+        return "[" + String.join(",", slots) + "]";
+    }
+
+    /**
+     * WO-DIFF-3 (#4): разрез JSON-списка по верхнеуровневым запятым (вложенные
+     * массивы/объекты/строки с запятыми и экранированием не рвутся).
+     */
+    static List<String> splitTopLevel(String inner) {
+        List<String> parts = new java.util.ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < inner.length(); i++) {
+            char c = inner.charAt(i);
+            if (inString) {
+                cur.append(c);
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            switch (c) {
+                case '"' -> {
+                    inString = true;
+                    cur.append(c);
+                }
+                case '[', '{' -> {
+                    depth++;
+                    cur.append(c);
+                }
+                case ']', '}' -> {
+                    depth--;
+                    cur.append(c);
+                }
+                case ',' -> {
+                    if (depth == 0) {
+                        parts.add(cur.toString().trim());
+                        cur.setLength(0);
+                    } else {
+                        cur.append(c);
+                    }
+                }
+                default -> cur.append(c);
+            }
+        }
+        parts.add(cur.toString().trim());
+        return parts;
     }
 
     @Override

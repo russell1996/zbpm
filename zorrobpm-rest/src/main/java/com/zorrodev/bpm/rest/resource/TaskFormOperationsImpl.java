@@ -155,6 +155,10 @@ public class TaskFormOperationsImpl implements TaskFormOperations {
         if (processInstanceId == null) return data;
         java.util.List<ProcessVariable> vars = dbService.getVariables(processInstanceId);
         for (ProcessVariable v : vars) {
+            // WO-DIFF-3 (#5): engine-internal MI bookkeeping is not form data.
+            if (v.getName() != null && v.getName().startsWith("_mi_batch_")) {
+                continue;
+            }
             if (v.getName() != null && v.getValue() != null) {
                 data.put(v.getName(), v.getValue());
             }

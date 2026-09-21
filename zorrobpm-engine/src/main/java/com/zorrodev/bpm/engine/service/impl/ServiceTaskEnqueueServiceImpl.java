@@ -283,6 +283,10 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
     /** Shared variables mapping (single + phase paths carry the same variable shape). */
     private Map<String, ProcessVariable> toJobVariables(List<com.zorrodev.bpm.contract.model.ProcessVariable> candidated) {
         return candidated.stream()
+            // WO-DIFF-3 (#5): engine-internal MI bookkeeping never reaches
+            // the worker-visible job payload (same exclusion as the variables
+            // API — the join still reads the row from storage directly).
+            .filter(pv -> pv.getName() == null || !pv.getName().startsWith("_mi_batch_"))
             .collect(Collectors.toMap(com.zorrodev.bpm.contract.model.ProcessVariable::getName, pv -> {
                 ProcessVariable v = new ProcessVariable();
                 v.setName(pv.getName());
