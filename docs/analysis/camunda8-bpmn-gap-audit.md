@@ -209,50 +209,6 @@ Hit policies — полный набор подтверждён: UNIQUE/FIRST/AN
 
 ---
 
-## Addendum (2026-09-04, CTO лично) — реальный Zeebe 8.6, не только документация
-
-Всё выше — сверка кода против документации/схемы, не против живого движка. Поднял локально
-реальный Camunda 8.6 (Zeebe broker + Elasticsearch exporter + Operate/Tasklist query-слой,
-`camunda/zeebe:8.6.0`, non-production use — покрывается бесплатной Camunda Self-Managed
-Non-Production License, см. `docs.camunda.io/docs/reference/licenses/`) и прогнал через него ТЕ ЖЕ
-fixture-файлы, что уже лежат в `zorrobpm-engine/src/test/files/` (WO-C8-1).
-
-**Error-priority (`test-c8-error-priority.bpmn`) — подтверждено эмпирически, не только по докам.**
-Тот же XML-файл (catch-all боундари объявлен ПЕРВЫМ, specific-боундари — ВТОРЫМ), задеплоен и
-запущен в реальном Zeebe 8.6: полная трасса событий (Elasticsearch-экспорт стрима, `partitionId=1`)
-показывает, что боундари `specific` (errorCode-специфичный) активируется и завершается,
-`endSpecific` достигается, а `catchAll`/`endCatchAll` **не активируются вообще** — ни разу за весь
-жизненный цикл инстанса. Т.е. Camunda 8 реально игнорирует порядок объявления в XML и всегда берёт
-специфичный код. Это **ровно противоположно** тому, что доказал `errorBoundary_specificVsCatchAll_
-firstMatchInIterationWins` в WO-C8-1 для ZorroBPM (у нас с тем же XML побеждает `catchAll`, т.к.
-он объявлен первым). Расхождение подтверждено на обеих сторонах реальным прогоном, не
-предположением по коду ни с одной из сторон. Усиливает приоритет WO-C8-4 (error/escalation
-приоритет) — это не гипотетический, а дважды эмпирически подтверждённый баг.
-
-**Manual Task** — задеплоено успешно в реальный Zeebe 8.6 (`<bpmn:manualTask>` в потоке между
-двумя обычными задачами, HTTP 200, `processDefinitionKey` выдан) — подтверждает §C.1 находку
-"поддерживается" эмпирически, не только по перечню в документации Camunda. Полную трассу
-исполнения (завершился ли инстанс) не снял — упёрся в auth-стену Camunda 8.6's unified security
-layer (`CAMUNDA_SECURITY_AUTHENTICATION_UNPROTECTED_API=true` не убрал 403 на `/v2/deployments`/
-`/v2/element-instances/search` для последующих попыток — вероятно нужна полноценная RBAC/Identity
-настройка, не тривиальный флаг; не стал углубляться дальше ради одной этой конструкции).
-
-**Escalation-priority — НЕ прогнано на реальном Zeebe** (тот же auth-барьер настиг раньше, чем
-успел продеплоить `test-c8-escalation-parent.bpmn`). Официальная документация Camunda 8
-(источник #9 в §A) утверждает симметричный механизм с error-приоритетом — экстраполирую по
-симметрии и документации, но это НЕ независимо подтверждено эмпирически так же, как error. Стоит
-попробовать снова при следующей возможности (например когда WO-C8-4 будет в работе) — не
-дублировать эту попытку бездумно, сначала разобраться с auth (либо полноценный
-`docker-compose` из `camunda/camunda-platform` с уже готовой конфигурацией, либо gRPC-путь через
-`zbctl`/клиент вместо REST v2, который может не иметь той же auth-стены).
-
-Сырая ES-трасса (JSON, 31 событие) сохранена вне репозитория — не коммитил, доказательство здесь и
-в отчёте достаточно; при необходимости можно легко переснять (сетап поднимается за ~2 минуты, все
-команды — `docker run camunda/zeebe:8.6.0` + `docker.elastic.co/elasticsearch/elasticsearch:8.13.4`
-+ ES exporter env vars).
-
----
-
 ## Файлы, прочитанные построчно (для воспроизводимости)
 
 `zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/bpmn/model/BpmnElementType.java`; `.../bpmn/xml/ExtensionElements.java`; `.../bpmn/xml/extension/{AssignmentDefinitionModel,CalledDecisionModel,CalledElementModel,FormDefinitionModel,IoMappingModel,SubscriptionModel,TaskDefinitionModel,UserTaskExtensionModel,ZeebeLoopCharacteristicsModel,ZeebeScriptModel}.java`; `.../bpmn/xml/BpmnMultiInstanceModel.java`, `BpmnExclusiveGatewayModel.java`; `.../bpmn/model/{CallActivityExtensionModel,ExclusiveGatewayExtensionModel,MultiInstanceExtensionModel,BusinessRuleExtensionModel,BpmnConditionExpressionModel}.java`; `.../handler/{HandlerRegistry,ElementSupport,BoundaryScheduler,ErrorEscalationThrower,EventTrigger,CompensationThrowHandler,MultiInstanceExecutor,FlowNavigator,CallActivityHandler,StartThrowEventHandler,SyncTaskHandler,IncidentService}.java`; `.../service/impl/{BpmnParseServiceImpl(частично, 1-220 строк),DmnServiceImpl,ScriptServiceImpl}.java`; `.../configuration/ScriptEngineConfiguration.java`; `.../dmn/xml/DmnDecisionModel.java`.
