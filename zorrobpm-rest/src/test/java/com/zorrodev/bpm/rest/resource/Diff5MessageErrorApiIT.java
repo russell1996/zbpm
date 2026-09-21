@@ -266,19 +266,37 @@ class Diff5MessageErrorApiIT {
 
     @Test
     void publishMessage_sameBody_replays() throws Exception {
-        // WO-DIFF-5 (verifier finding 1): /messages/publish idempotency proven by replay,
-        // not just by the isIdempotentPath registration — same key+body returns the stored
-        // response instead of correlating twice.
-        String body = "{\"messageName\":\"diff5-replay-nobody-" + UUID.randomUUID().toString().substring(0, 8)
-            + "\",\"variables\":[]}";
+        // WO-DIFF-5 (verifier HOLD: a nobody-listens replay proves nothing — (0,0) is
+        // deterministic either way). Replay against a LIVE waiting boundary instead: the
+        // first publish wakes it (correlated=1) and consumes it; the replay must return
+        // the STORED response (correlated=1 again), while a re-execution without the
+        // filter would find nobody left waiting (correlated=0) — so removing the
+        // "/messages/publish" registration from IdempotencyFilter turns this RED.
+        String msg = "diff5-replay-" + UUID.randomUUID().toString().substring(0, 8);
+        String key = "diff5-pubr-" + UUID.randomUUID().toString().substring(0, 8);
+        UUID piId = start(deploy(String.format(MSG_BPMN, msg, key, key)));
+
+        String body = "{\"messageName\":\"" + msg + "\",\"variables\":[]}";
         String idemKey = UUID.randomUUID().toString();
         MvcResult first = mockMvc.perform(post("/messages/publish")
                 .header("Authorization", "Bearer " + adminToken).header("Idempotency-Key", idemKey)
                 .content(body).contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
+        assertThat(mapper.readTree(first.getResponse().getContentAsString()).get("correlated").asInt())
+            .as("first publish must wake the waiting boundary").isEqualTo(1);
         MvcResult second = mockMvc.perform(post("/messages/publish")
                 .header("Authorization", "Bearer " + adminToken).header("Idempotency-Key", idemKey)
                 .content(body).contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
         assertThat(second.getResponse().getContentAsString()).isEqualTo(first.getResponse().getContentAsString());
+        assertThat(mapper.readTree(second.getResponse().getContentAsString()).get("correlated").asInt())
+            .as("replay must return the STORED correlated=1, not a re-execution (which would see 0)")
+            .isEqualTo(1);
+
+        // control: without the idempotency key the same publish now finds nobody waiting
+        MvcResult third = mockMvc.perform(post("/messages/publish")
+                .header("Authorization", "Bearer " + adminToken)
+                .content(body).contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
+        assertThat(mapper.readTree(third.getResponse().getContentAsString()).get("correlated").asInt())
+            .as("control: re-execution after consumption correlates nothing").isZero();
     }
 
     @Test

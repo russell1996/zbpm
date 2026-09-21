@@ -45,7 +45,11 @@ public class IdempotencyFilterConfig {
             "/auth/register",
             "/user-tasks/*",
             "/service-tasks/*",
-            "/incidents/*"
+            "/incidents/*",
+            // WO-DIFF-5: POST /messages/publish is idempotent (create-like) — without this
+            // the filter never executes for it and the isIdempotentPath registration is dead.
+            "/messages",
+            "/messages/*"
         );
         registration.setName("idempotencyFilter");
         return registration;
