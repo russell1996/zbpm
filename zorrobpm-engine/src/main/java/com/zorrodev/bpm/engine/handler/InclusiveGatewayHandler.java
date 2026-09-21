@@ -88,7 +88,10 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
             if (expected != null && arrived.size() >= expected) {
                 dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
                 Token token = dbService.getToken(tokenId);
-                UUID oldTokenId = token.getParentId();
+                // WO-DIFF-4: same null-parent guard as ParallelGatewayHandler — a
+                // non-interrupting boundary fork leaves the host branch on the (possibly
+                // ROOT) host token; collapsing to a null parent would continue on null.
+                UUID oldTokenId = token.getParentId() != null ? token.getParentId() : tokenId;
                 UUID activityId = dbService.createActivity(processInstanceId, oldTokenId, bpmnElement);
                 dbService.completeActivity(activityId);
                 log.info("{}/{}: Entering and completing {}: {}/{} (all {} branches arrived)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), expected);

@@ -25,6 +25,7 @@ public class ServiceTaskHandler implements ElementHandler, TypedElementHandler {
     private final DBService dbService;
     private final ElementSupport elementSupport;
     private final MultiInstanceExecutor multiInstanceExecutor;
+    private final BoundaryScheduler boundaryScheduler;
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
 
     @Override
@@ -65,6 +66,14 @@ public class ServiceTaskHandler implements ElementHandler, TypedElementHandler {
             dbService.setServiceTaskRetries(activityId, elementSupport.listenerBudget(startListeners.get(0)));
         }
         elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+
+        // WO-DIFF-4: serviceTask hosts never armed their boundary events — UserTaskHandler
+        // (postCreation) and MultiInstanceExecutor both call this trio, ServiceTaskHandler
+        // did not, so timer/message/signal boundaries on a serviceTask never fired
+        // (Raxon findings #9/#10). Same call order as the user-task path.
+        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, token, bpmnElement.getType(), activityId, bpmnElement.getId());
 

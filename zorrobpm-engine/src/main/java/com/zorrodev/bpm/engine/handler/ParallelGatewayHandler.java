@@ -65,7 +65,12 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
             if (reached) {
                 dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
                 Token token = dbService.getToken(tokenId);
-                UUID oldTokenId = token.getParentId();
+                // WO-DIFF-4: a non-interrupting boundary forks on a CHILD token of the host's
+                // token, so the host branch still runs on the (possibly ROOT) host token. When
+                // that branch arrives LAST, getParentId() is null — collapsing to it would
+                // continue the tail on a null token (DataIntegrityViolation on TOKEN NOT NULL).
+                // A root token is its own survivor: continue on the arriving token itself.
+                UUID oldTokenId = token.getParentId() != null ? token.getParentId() : tokenId;
                 UUID activityId = dbService.createActivity(processInstanceId, oldTokenId, bpmnElement);
                 dbService.completeActivity(activityId);
                 log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());

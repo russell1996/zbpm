@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-DIFF-4: mirrors Raxon S-033 (interrupting timer boundary on serviceTask).
+     cancelActivity is deliberately ABSENT (BPMN default = true, interrupting),
+     exactly like the Raxon fixture. PT2S matches S-033. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_diff4_interrupting"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-diff4-interrupting" name="test-diff4-interrupting" isExecutable="true">
+    <bpmn:startEvent id="start" name="Start">
+      <bpmn:outgoing>flow-start-work</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow-start-work" sourceRef="start" targetRef="work" />
+    <bpmn:serviceTask id="work" name="Work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="diff4-work" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-start-work</bpmn:incoming>
+      <bpmn:outgoing>flow-work-end</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="timeout" name="Timeout" attachedToRef="work">
+      <bpmn:outgoing>flow-timeout-escape</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration>PT2S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flow-work-end" sourceRef="work" targetRef="end" />
+    <bpmn:sequenceFlow id="flow-timeout-escape" sourceRef="timeout" targetRef="escape" />
+    <bpmn:serviceTask id="escape" name="Escape">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="diff4-escape" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-timeout-escape</bpmn:incoming>
+      <bpmn:outgoing>flow-escape-end</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flow-escape-end" sourceRef="escape" targetRef="end" />
+    <bpmn:endEvent id="end" name="End">
+      <bpmn:incoming>flow-work-end</bpmn:incoming>
+      <bpmn:incoming>flow-escape-end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
