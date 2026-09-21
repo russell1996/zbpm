@@ -37,6 +37,7 @@ import com.zorrodev.bpm.engine.bpmn.model.ExclusiveGatewayExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.xml.SecureXmlParser;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.ArrayList;
@@ -46,11 +47,30 @@ import java.util.Map;
 import java.util.Optional;
 
 @Service
+@Slf4j
 public class BpmnParseServiceImpl implements BpmnParseService {
+
+    private final com.zorrodev.bpm.engine.service.FileService fileService;
+
+    /** WO-DIFF-1: unit-test seam — production code always injects FileService. */
+    BpmnParseServiceImpl(boolean unused) {
+        this.fileService = null;
+    }
+
+    public BpmnParseServiceImpl(com.zorrodev.bpm.engine.service.FileService fileService) {
+        this.fileService = fileService;
+    }
+
+    /** WO-DIFF-1: keeps the pre-existing no-arg construction compiling for unit tests. */
+    public BpmnParseServiceImpl() {
+        this(true);
+    }
 
     @Override
     public com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel parse(String bpmn) throws BpmnParseException {
         try {
+            // WO-DIFF-1: the raw source rides along as an explicit parameter (no field, no
+            // state) so container-level ioMapping can be extracted without JAXB changes.
             BpmnDefinitionsModel definitions = SecureXmlParser.unmarshal(bpmn, BpmnDefinitionsModel.class);
             BpmnProcessDefinitionModel process = definitions.getProcess();
 
@@ -315,8 +335,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (process.getSubProcesses() != null) {
                 for (BpmnSubProcessModel subProcess : process.getSubProcesses()) {
-                    BpmnElementModel element = toSubProcessElement(subProcess, pd, registry, messageNames, messageKeys);
+                    BpmnElementModel element = toSubProcessElement(subProcess, bpmn, pd, registry, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
+                    // WO-DIFF-1: container-level zeebe:ioMapping of a plain subProcess/transaction.
+                    // JAXB has no field for it on BpmnSubProcessModel (the ad-hoc subclass owns the
+                    // only extensionElements binding — promoting it to the parent would rebind ad-hoc's
+                    // elements and blind the ad-hoc reader), so the raw XML is re-scanned for the
+                    // container's own <bpmn:extensionElements> (same unmarshalled source string, no
+                    // second parser, narrow child-only match — nested elements keep their own mappings).
+                    attachSubProcessIoMapping(element, bpmn, subProcess.getId());
                     pd.addElement(element);
                 }
             }
@@ -325,8 +352,9 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             // are carried by its cancel-end event and cancel boundary, not the container type
             if (process.getTransactions() != null) {
                 for (BpmnSubProcessModel transaction : process.getTransactions()) {
-                    BpmnElementModel element = toSubProcessElement(transaction, pd, registry, messageNames, messageKeys);
+                    BpmnElementModel element = toSubProcessElement(transaction, bpmn, pd, registry, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
+                    attachSubProcessIoMapping(element, bpmn, transaction.getId());
                     pd.addElement(element);
                 }
             }
@@ -335,7 +363,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             // leak into the regular-subprocess path above (own type + own handler).
             if (process.getAdHocSubProcesses() != null) {
                 for (BpmnAdHocSubProcessModel adHoc : process.getAdHocSubProcesses()) {
-                    BpmnElementModel element = toAdHocSubProcessElement(adHoc, pd, registry, messageNames, messageKeys);
+                    BpmnElementModel element = toAdHocSubProcessElement(adHoc, bpmn, pd, registry, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -505,7 +533,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         return element;
     }
 
-    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
+    private BpmnElementModel toSubProcessElement(BpmnSubProcessModel sub, String rawBpmn, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(sub.getId());
         element.setName(sub.getName());
@@ -568,19 +596,218 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 pd.addElement(child);
             }
         }
-        flattenSubProcessChildren(sub, pd, registry, messageNames, messageKeys);
+        flattenSubProcessChildren(sub, rawBpmn, pd, registry, messageNames, messageKeys);
 
         element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setSubProcessExtension(ext);
+        // WO-DIFF-1: the container's own ioMapping is attached by the CALLER
+        // (attachSubProcessIoMapping at each toSubProcessElement call site — it holds
+        // the raw source there), not here: this method is also reached from nested
+        // recursion paths where the raw source is not available.
         return element;
     }
 
     /**
-     * WO-C8-32: maps {@code <bpmn:adHocSubProcess>} — same shape as
-     * {@link #toSubProcessElement} minus start/end (forbidden: loud
-     * {@code BpmnParseException}, never silent) plus the ad-hoc metadata.
+     * WO-DIFF-1: attaches a plain subProcess/transaction container's OWN
+     * {@code zeebe:ioMapping} (input seed / output promote) to its element.
+     * The container has no JAXB {@code extensionElements} field (the only binding
+     * lives on the ad-hoc subclass and must stay there — see its javadoc), so the
+     * raw BPMN source is scanned for the container's direct
+     * {@code <bpmn:extensionElements>} child block, and the block is unmarshalled
+     * through the SAME {@code ExtensionElements} JAXB type the task readers use
+     * (no simplified copy: the very same {@code attachIoMapping} maps it).
+     * Narrow by construction: only the container's own direct block (match ends at
+     * the first nested flow-node open tag), never nested elements' blocks; absent
+     * block or absent ioMapping → silent no-op (plain sub without mappings is the
+     * common case — zero behaviour change for it).
      */
-    private BpmnElementModel toAdHocSubProcessElement(BpmnAdHocSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
+    private void attachSubProcessIoMapping(BpmnElementModel element, String rawBpmn, String containerId) {
+        IoMappingModel io = readSubProcessIoMapping(rawBpmn, containerId);
+        if (io == null) {
+            return;
+        }
+        ExtensionElements ee = new ExtensionElements();
+        ee.setIoMapping(io);
+        attachIoMapping(element, ee);
+    }
+
+    /**
+     * WO-DIFF-1: test-visible extraction step — raw XML of the container's own
+     * direct {@code <bpmn:extensionElements>} block → {@code IoMappingModel}
+     * (null when the container carries none). The mapping parse itself reuses
+     * {@code attachIoMapping} (see {@link #attachSubProcessIoMapping}).
+     */
+    static IoMappingModel readSubProcessIoMapping(String rawBpmn, String containerId) {
+        String block = subProcessExtensionBlock(rawBpmn, containerId);
+        if (block == null) {
+            return null;
+        }
+        try {
+            // The block carries BOTH namespaces on its wrapper so the shared JAXB
+            // types unmarshall it directly. Loud on parse failure (log + null would
+            // silently drop the user's mappings — a quieter bug than the one fixed):
+            // the caller treats null as "no mappings", so log BEFORE swallowing.
+            BpmnSubProcessIoMappingWrapper wrapper =
+                SecureXmlParser.unmarshal(block, BpmnSubProcessIoMappingWrapper.class);
+            if (wrapper == null || wrapper.getIoMapping() == null) {
+                log.warn("WO-DIFF-1: subProcess '{}' extension block parsed to no ioMapping — mappings ignored", containerId);
+                return null;
+            }
+            return wrapper.getIoMapping();
+        } catch (RuntimeException e) {
+            log.warn("WO-DIFF-1: subProcess '{}' extension block failed to parse — mappings ignored: {}", containerId, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * WO-DIFF-1: locates the DIRECT {@code <bpmn:extensionElements>} child block of
+     * the {@code <bpmn:subProcess id="...">} (or {@code <bpmn:transaction>}) container
+     * and returns it wrapped as a standalone {@code <extensionElements>} document
+     * (BPMN-namespace wrapper so the shared JAXB type unmarshalls it). Returns null
+     * when the container has no direct block. The scan stops the container's own
+     * block at the first nested flow-node open tag — nested elements' own blocks
+     * are never picked up.
+     */
+    static String subProcessExtensionBlock(String rawBpmn, String containerId) {
+        if (rawBpmn == null || containerId == null || containerId.isBlank()) {
+            return null;
+        }
+        int from = 0;
+        while (true) {
+            int sub = rawBpmn.indexOf("<bpmn:subProcess", from);
+            int txn = rawBpmn.indexOf("<bpmn:transaction", from);
+            int open;
+            String tag;
+            if (sub == -1 && txn == -1) {
+                return null;
+            } else if (sub != -1 && (txn == -1 || sub < txn)) {
+                open = sub;
+                tag = "subProcess";
+            } else {
+                open = txn;
+                tag = "transaction";
+            }
+            // The open tag ends at the first '>' that is NOT inside a quoted
+            // attribute value (FEEL sources contain '>' comparisons, e.g.
+            // source="=x > 5" — a naive indexOf('>') would cut the head mid-tag).
+            int headEnd = tagHeadEnd(rawBpmn, open);
+            if (headEnd == -1) {
+                return null;
+            }
+            String head = rawBpmn.substring(open, headEnd);
+            boolean mine = head.contains("id=\"" + containerId + "\"")
+                || head.contains("id='" + containerId + "'");
+            String closeTag = "</bpmn:" + tag + ">";
+            int close = rawBpmn.indexOf(closeTag, headEnd);
+            if (close == -1) {
+                return null;
+            }
+            from = close + closeTag.length();
+            if (!mine) {
+                continue;
+            }
+            String body = rawBpmn.substring(headEnd + 1, close);
+            // The container's direct <bpmn:extensionElements> is the FIRST child element
+            // of the container (BPMN XSD sequence: extensionElements precedes incoming/
+            // outgoing/flow nodes). Skip only whitespace/comments — the first real child
+            // tag decides: extensionElements → own block; anything else → the container
+            // has none (a nested element's block can never be "the container's own").
+            // NOTE: the tag may carry attributes or be self-closed across files, so the
+            // match is prefix-based ("<bpmn:extensionElements" + '>' or whitespace),
+            // never an exact "<bpmn:extensionElements>" literal.
+            int cursor = 0;
+            while (cursor < body.length() && Character.isWhitespace(body.charAt(cursor))) {
+                cursor++;
+            }
+            if (body.startsWith("<!--", cursor)) {
+                int commentEnd = body.indexOf("-->", cursor + 4);
+                if (commentEnd == -1) {
+                    return null;
+                }
+                cursor = commentEnd + 3;
+                while (cursor < body.length() && Character.isWhitespace(body.charAt(cursor))) {
+                    cursor++;
+                }
+            }
+            String extPrefix = "<bpmn:extensionElements";
+            if (!body.startsWith(extPrefix, cursor)) {
+                return null;
+            }
+            int extHeadEnd = tagHeadEnd(body, cursor + extPrefix.length() - 1);
+            if (extHeadEnd == -1) {
+                return null;
+            }
+            // Self-closed "<bpmn:extensionElements .../>" → no inner block, no ioMapping.
+            if (body.charAt(extHeadEnd - 1) == '/') {
+                return null;
+            }
+            int innerFrom = extHeadEnd + 1;
+            // The container's own block ends at ITS close tag. Inner content is
+            // zeebe:* (ioMapping/input/output, different prefix, never confused)
+            // plus whitespace/comments, so the close tag is searched directly.
+            // Narrowness guard after: the block must not smuggle a nested flow
+            // node. Any other '<bpmn:' open before the close (outside a comment)
+            // means this extension block belongs to a nested element, not to the
+            // container.
+            int extClose = body.indexOf("</bpmn:extensionElements>", innerFrom);
+            if (extClose == -1) {
+                return null;
+            }
+            String between = body.substring(innerFrom, extClose);
+            int probe = 0;
+            while (true) {
+                int nested = between.indexOf("<bpmn:", probe);
+                if (nested == -1) {
+                    break;
+                }
+                if (between.startsWith("<!--", nested)) {
+                    int commentEnd = between.indexOf("-->", nested + 4);
+                    if (commentEnd == -1) {
+                        return null;
+                    }
+                    probe = commentEnd + 3;
+                    continue;
+                }
+                return null;
+            }
+            return "<subProcessIoMapping xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\""
+                + " xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">"
+                + between + "</subProcessIoMapping>";
+        }
+    }
+
+    /**
+     * WO-DIFF-1: end of an XML open tag starting at {@code open} (the index of
+     * {@code '<'}): the first {@code '>'} outside single/double-quoted attribute
+     * values, or -1 when unterminated. FEEL sources routinely contain bare
+     * {@code >} comparisons ({@code source="=x > 5"}), so a naive
+     * {@code indexOf('>')} would cut the tag mid-attribute.
+     */
+    static int tagHeadEnd(String xml, int open) {
+        boolean inSingle = false;
+        boolean inDouble = false;
+        for (int i = open; i < xml.length(); i++) {
+            char c = xml.charAt(i);
+            if (c == '\'' && !inDouble) {
+                inSingle = !inSingle;
+            } else if (c == '"' && !inSingle) {
+                inDouble = !inDouble;
+            } else if (c == '>' && !inSingle && !inDouble) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * WO-C8-32: maps {@code <bpmn:adHocSubProcess>} — same shape as
+     * {@code toSubProcessElement} minus start/end (forbidden: loud
+     * {@code BpmnParseException}, never silent) plus the ad-hoc metadata.
+     * The extra {@code rawBpmn} parameter exists only so nested-sub recursion
+     * shares one signature — ad-hoc ignores it (its extensions stay JAXB-bound).
+     */
+    private BpmnElementModel toAdHocSubProcessElement(BpmnAdHocSubProcessModel sub, String rawBpmnUnused, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(sub.getId());
         element.setName(sub.getName());
@@ -611,7 +838,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         ext.setCancelRemainingInstances(sub.getCancelRemainingInstances());
         collectAdHocInnerElements(sub, ext);
 
-        flattenSubProcessChildren(sub, pd, registry, messageNames, messageKeys);
+        flattenSubProcessChildren(sub, null, pd, registry, messageNames, messageKeys);
 
         element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setAdHocSubProcessExtension(ext);
@@ -693,7 +920,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
      * three cannot diverge. Start/end events are NOT handled here (regular containers
      * map them in their own prologue; ad-hoc forbids them outright).
      */
-    private void flattenSubProcessChildren(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
+    private void flattenSubProcessChildren(BpmnSubProcessModel sub, String rawBpmn, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
         if (sub.getServiceTasks() != null) {
             for (BpmnServiceTaskModel serviceTask : sub.getServiceTasks()) {
                 BpmnElementModel child = toElementModel(serviceTask);
@@ -823,21 +1050,23 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         }
         if (sub.getSubProcesses() != null) {
             for (BpmnSubProcessModel nested : sub.getSubProcesses()) {
-                BpmnElementModel child = toSubProcessElement(nested, pd, registry, messageNames, messageKeys);
+                BpmnElementModel child = toSubProcessElement(nested, rawBpmn, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
+                attachSubProcessIoMapping(child, rawBpmn, nested.getId());
                 pd.addElement(child);
             }
         }
         if (sub.getTransactions() != null) {
             for (BpmnSubProcessModel transaction : sub.getTransactions()) {
-                BpmnElementModel child = toSubProcessElement(transaction, pd, registry, messageNames, messageKeys);
+                BpmnElementModel child = toSubProcessElement(transaction, rawBpmn, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
+                attachSubProcessIoMapping(child, rawBpmn, transaction.getId());
                 pd.addElement(child);
             }
         }
         if (sub.getAdHocSubProcesses() != null) {
             for (BpmnAdHocSubProcessModel nested : sub.getAdHocSubProcesses()) {
-                BpmnElementModel child = toAdHocSubProcessElement(nested, pd, registry, messageNames, messageKeys);
+                BpmnElementModel child = toAdHocSubProcessElement(nested, rawBpmn, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
                 pd.addElement(child);
             }

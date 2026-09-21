@@ -14,6 +14,17 @@ import lombok.Setter;
  * ignoring them silently). Carries the native BPMN bits ({@code completionCondition},
  * {@code cancelRemainingInstances}) plus {@code zeebe:adHoc}; nested containers
  * ({@code subProcess}/{@code transaction}/{@code adHocSubProcess}) are inherited.
+ * <p>
+ * WO-DIFF-1: the {@code extensionElements} binding lives HERE (not on the
+ * {@code BpmnSubProcessModel} parent) ON PURPOSE — plain
+ * {@code <bpmn:subProcess>}/{@code <bpmn:transaction>} carry NO bindable
+ * extensionElements in this project (their ioMapping arrives … nowhere: the
+ * sub-container has no JAXB field for it and never did). Promoting the binding
+ * to the parent would silently rebind ad-hoc's elements onto the parent
+ * accessors (JAXB maps both — parent first — and the ad-hoc reader
+ * {@code sub.getExtensionElements()} would go blind). The sub-container parse
+ * for WO-DIFF-1 reads the raw DOM ({@code getSubProcessExtensionElements},
+ * same class, no JAXB change), so this field stays the single binding.
  */
 @Getter
 @Setter

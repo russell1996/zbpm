@@ -432,9 +432,23 @@ public class FlowNavigator {
             // end of an embedded subprocess scope: complete the container and continue the parent
             // token from the subprocess's outgoing flows; the process instance stays running
             UUID subProcessActivityId = endToken.getScopeActivityId();
-            dbService.completeActivity(subProcessActivityId);
             Activity subProcessActivity = dbService.getActivity(subProcessActivityId);
             BpmnElementModel subProcessElement = bpmn.getElement(subProcessActivity.getBpmnElementId());
+            // WO-DIFF-1 п.1: promote the container's output mappings to root BEFORE
+            // completing it (output sources evaluate against the still-live sub scope
+            // via ElementSupport's enclosing-chain reads), then drop the closed scope's
+            // locals — the same task-local lifecycle task completion uses. Gated to
+            // SUB_PROCESS only: event sub-processes share the parse but stay runtime-inert
+            // here (different trigger/lifecycle path), and ad-hoc containers have their
+            // own completion machinery below. No ioMapping → zero behaviour change.
+            if (subProcessElement != null
+                && subProcessElement.getType() == BpmnElementType.SUB_PROCESS
+                && subProcessElement.getExtensions() != null
+                && subProcessElement.getExtensions().getIoMappingExtension() != null) {
+                elementSupport.applyIoMappings(processInstanceId, subProcessActivityId, subProcessElement, false);
+                dbService.deleteVariables(processInstanceId, subProcessActivityId);
+            }
+            dbService.completeActivity(subProcessActivityId);
             UUID parentTokenId = endToken.getParentId();
             log.info("{}/{}: Completing {}: {}/{}", processInstanceId, parentTokenId, subProcessElement.getType(), subProcessActivityId, subProcessElement.getId());
             proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement, executor);
