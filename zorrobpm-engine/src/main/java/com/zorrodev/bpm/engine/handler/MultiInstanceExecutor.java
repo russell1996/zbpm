@@ -87,6 +87,10 @@ public class MultiInstanceExecutor {
         }
         if (count == 0) {
             log.info("{}/{}: Multi-instance {} has zero instances, skipping", processInstanceId, token, bpmnElement.getId());
+            // WO-DIFF-3 (#6): Zeebe/Raxon still create the output variable as
+            // an empty array when the collection is empty — an absent variable
+            // is not the same as an empty one for the external observer.
+            writeEmptyOutputCollection(processInstanceId, mi);
             flowNavigator.proceedToOutgoing(processInstanceId, token, bpmnElement.getProcessDefinition(), bpmnElement, executor);
             return;
         }
@@ -150,7 +154,15 @@ public class MultiInstanceExecutor {
         return false;
     }
 
-    /** Appends a multi-instance instance's outputElement to the outputCollection. No-op unless both are configured. */
+    /**
+     * WO-DIFF-3 (#4): writes a multi-instance instance's outputElement into
+     * the outputCollection POSITIONALLY — at the instance's
+     * {@code loopCounter - 1} slot — not in completion order. Zeebe collects
+     * by loopCounter index regardless of which iteration finishes first;
+     * the old completion-order append is kept only for the ad-hoc path
+     * ({@link ElementSupport#appendToJsonList}), which has no index.
+     * No-op unless both outputCollection and outputElement are configured.
+     */
     public void aggregateMultiInstanceOutput(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
         MultiInstanceExtensionModel mi = Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
@@ -160,7 +172,8 @@ public class MultiInstanceExecutor {
             return;
         }
         Object value = scriptService.evaluateExpression(mi.getOutputElement(), dbService.getVariables(processInstanceId, scopeId));
-        appendToJsonList(processInstanceId, mi.getOutputCollection(), value);
+        dbService.setJsonElementAt(processInstanceId, mi.getOutputCollection(), miSlot(processInstanceId, scopeId) - 1,
+            objectMapper.writeValueAsString(elementSupport.toJavaStructure(value)));
     }
 
     // ─── Private MI-only helpers ───────────────────────────────────────────
@@ -297,6 +310,46 @@ public class MultiInstanceExecutor {
         // WO-C8-32: single shared mechanism in ElementSupport (ad-hoc output aggregation
         // reuses it); this delegate keeps MI behaviour byte-identical.
         elementSupport.appendToJsonList(processInstanceId, name, value);
+    }
+
+    /**
+     * WO-DIFF-3 (#4): the completing instance's 1-based {@code loopCounter}
+     * (written by {@link #bindMiInstanceVariables} at spawn). Sourced from
+     * the instance's own scope — never from a stale root copy — so a
+     * concurrent completion of a sibling cannot shift this write's slot.
+     */
+    private int miSlot(UUID processInstanceId, UUID scopeId) {
+        return dbService.getVariables(processInstanceId, scopeId).stream()
+            .filter(v -> "loopCounter".equals(v.getName()))
+            .findFirst()
+            .map(v -> {
+                try {
+                    return Integer.parseInt(v.getValue().trim());
+                } catch (NumberFormatException e) {
+                    throw new EngineException("Multi-instance instance has a non-numeric loopCounter: " + v.getValue());
+                }
+            })
+            .orElseThrow(() -> new EngineException("Multi-instance instance has no loopCounter in its scope"));
+    }
+
+    /**
+     * WO-DIFF-3 (#6): creates the output variable as an empty JSON array when
+     * the MI entry spawns zero instances. Only when outputCollection is
+     * configured (no output name → nothing to create); never overwrites an
+     * existing value (re-entry over a completed MI keeps prior results).
+     */
+    private void writeEmptyOutputCollection(UUID processInstanceId, MultiInstanceExtensionModel mi) {
+        if (mi.getOutputCollection() == null || mi.getOutputCollection().isBlank()) {
+            return;
+        }
+        if (dbService.getVariableTextValue(processInstanceId, mi.getOutputCollection()).isPresent()) {
+            return;
+        }
+        ProcessVariable empty = new ProcessVariable();
+        empty.setName(mi.getOutputCollection());
+        empty.setType(ProcessVariableType.JSON);
+        empty.setValue("[]");
+        dbService.setVariables(processInstanceId, List.of(empty));
     }
 
     private Object collectionElement(Object collection, int index) {

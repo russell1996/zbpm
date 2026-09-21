@@ -52,6 +52,12 @@ public class VariableQueryOperationsImpl implements VariableQueryOperations {
         } else {
             specifications.add(VariableRepository.byRootScope());
         }
+        // WO-DIFF-3 (#5): the MI join-bookkeeping row (_mi_batch_<miId>) is an
+        // engine-internal detail (WO-ENG-7) — never part of the externally
+        // visible variable list, exactly like Zeebe/Raxon expose no such
+        // variable. The row itself stays in storage (the join reads it via
+        // the pinpoint getVariableTextValue, not via this query).
+        specifications.add(Specification.not(VariableRepository.byNamePrefix("_mi_batch_")));
         Specification<ProcessVariableEntity> all = Specification.allOf(specifications);
         return queryPaginationSupport.toDTO(variableRepository.findAll(all, queryPaginationSupport.clampedPage(query.getPageIndex(), query.getPageSize(), Sort.unsorted())), variableMapper::toDTO);
     }

@@ -242,6 +242,13 @@ public interface DBService {
      */
     void appendJsonElement(@NonNull UUID processInstanceId, String name, String jsonElement);
 
+    /**
+     * WO-DIFF-3 (#4): atomic positional JSON-list write of one element at a
+     * fixed index (null-padded when short, created when absent).
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#setJsonElementAt}.
+     */
+    void setJsonElementAt(@NonNull UUID processInstanceId, String name, int index, String jsonElement);
+
     /** Drops all variables of a local scope (e.g. an activity's IO-mapping inputs after it completes). */
     void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId);
 

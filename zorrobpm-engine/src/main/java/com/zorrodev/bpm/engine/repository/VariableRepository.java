@@ -33,6 +33,11 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
         return ((root, query, criteriaBuilder) ->  criteriaBuilder.equal(root.get("value"), value));
     }
 
+    /** WO-DIFF-3 (#5): excludes engine-internal bookkeeping names by prefix. */
+    static Specification<ProcessVariableEntity> byNamePrefix(String prefix) {
+        return ((root, query, criteriaBuilder) -> criteriaBuilder.like(root.get("name"), prefix + "%"));
+    }
+
     /** WO-ENG-14: root scope only (process-instance variables, not activity-local ones). */
     static Specification<ProcessVariableEntity> byRootScope() {
         return ((root, query, criteriaBuilder) -> criteriaBuilder.isNull(root.get("scopeId")));
