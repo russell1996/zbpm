@@ -55,6 +55,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private static final Pattern MUTATION_COMPLETE_USER = Pattern.compile("^/user-tasks/[^/]+/complete$");
     private static final Pattern MUTATION_COMPLETE_SERVICE = Pattern.compile("^/service-tasks/[^/]+/complete$");
     private static final Pattern MUTATION_FAIL = Pattern.compile("^/service-tasks/[^/]+/fail$");
+    // WO-DIFF-5: BPMN error throw mutates like fail (variables + boundary continuation/incident)
+    private static final Pattern MUTATION_THROW_ERROR = Pattern.compile("^/service-tasks/[^/]+/throw-error$");
+    // WO-DIFF-5: message publish is create-like (repeat = double correlation without a key)
     private static final Pattern MUTATION_RESOLVE = Pattern.compile("^/incidents/[^/]+/resolve$");
     private static final Pattern MUTATION_CLAIM = Pattern.compile("^/user-tasks/[^/]+/claim$");
     private static final Pattern MUTATION_UNCLAIM = Pattern.compile("^/user-tasks/[^/]+/unclaim$");
@@ -67,9 +70,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     static boolean isIdempotentPath(String normalized) {
         if (EXACT_PATHS.contains(normalized)) return true;
+        if ("/messages/publish".equals(normalized)) return true;
         return MUTATION_COMPLETE_USER.matcher(normalized).matches()
             || MUTATION_COMPLETE_SERVICE.matcher(normalized).matches()
             || MUTATION_FAIL.matcher(normalized).matches()
+            || MUTATION_THROW_ERROR.matcher(normalized).matches()
             || MUTATION_RESOLVE.matcher(normalized).matches()
             || MUTATION_CLAIM.matcher(normalized).matches()
             || MUTATION_UNCLAIM.matcher(normalized).matches()

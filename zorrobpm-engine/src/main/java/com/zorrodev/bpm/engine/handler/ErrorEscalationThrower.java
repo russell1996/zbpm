@@ -37,15 +37,51 @@ public class ErrorEscalationThrower {
     /**
      * Propagates a BPMN error from {@code tokenId} outward through the scope hierarchy, looking for
      * an interrupting error boundary that matches {@code errorCode} (a boundary without a code is a
-     * catch-all). Search order: enclosing embedded subprocess scopes (innermost first), then — if the
-     * instance is a called process — the call activity in the parent instance, recursively. When a
-     * handler is found the interrupted scope is cancelled and flow continues from the boundary.
+     * catch-all). Search order: the throwing activity's OWN boundary first (WO-DIFF-5: a service
+     * task reuses its incoming token, so without this self-check a boundary attached directly to
+     * the throwing task — e.g. Raxon S-046 {@code s046-guarded} — is never examined), then enclosing
+     * embedded subprocess scopes (innermost first), then — if the instance is a called process —
+     * the call activity in the parent instance, recursively. When a handler is found the
+     * interrupted scope is cancelled and flow continues from the boundary.
+     *
+     * <p>For the pre-existing end-event path pass {@code throwingActivityBpmnElementId == null}:
+     * an end event cannot carry a boundary (BPMN forbids attaching to end events), so the old
+     * walk is byte-identical. The recursive parent-propagation call below also passes null —
+     * the call activity's own boundary is checked explicitly once at the propagation site,
+     * and re-checking it in the recursion would fire the boundary twice.
      *
      * @return {@code true} if an error boundary handled the error, {@code false} if it escaped unhandled.
      */
-    public boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode, TokenExecutor executor) {
+    public boolean throwError(UUID processInstanceId, UUID tokenId, String errorCode,
+            String throwingActivityBpmnElementId, TokenExecutor executor) {
         ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+
+        // WO-DIFF-5 self-check: the throwing activity's own boundary first. Only the throwing
+        // activity is cancelled (never the whole token: sibling branches of a parallel fork
+        // share one token — cancelling for the token would kill the sibling too).
+        // Residual edge (documented, not handled): an error boundary on a multi-instance task
+        // itself — cancelling one instance while siblings continue diverges from Zeebe
+        // (which terminates all); the pre-existing subprocess-scoped walk is unchanged.
+        Token throwingTok = dbService.getToken(tokenId);
+        if (throwingActivityBpmnElementId != null && throwingTok != null) {
+            Activity throwing = dbService.getActivitiesByTokenAndBpmnElementId(tokenId, throwingActivityBpmnElementId)
+                .stream()
+                .filter(a -> processInstanceId.equals(a.getProcessInstanceId())
+                    && (a.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
+                        || a.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS))
+                .findFirst()
+                .orElse(null);
+            if (throwing != null) {
+                BpmnElementModel boundary = findErrorBoundary(bpmn, throwingActivityBpmnElementId, errorCode);
+                if (boundary != null) {
+                    dbService.cancelActivity(throwing.getId());
+                    log.info("{}: error '{}' caught by boundary {} on throwing activity {}", processInstanceId, errorCode, boundary.getId(), throwingActivityBpmnElementId);
+                    flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary, executor);
+                    return true;
+                }
+            }
+        }
 
         // walk enclosing embedded-subprocess scopes, innermost first
         Token tok = dbService.getToken(tokenId);
@@ -90,7 +126,7 @@ public class ErrorEscalationThrower {
                 return true;
             }
             // not caught on the call activity: keep propagating within the parent instance
-            return throwError(parentInstanceId, callActivity.getToken(), errorCode, executor);
+            return throwError(parentInstanceId, callActivity.getToken(), errorCode, null, executor);
         }
 
         return false;

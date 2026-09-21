@@ -3,6 +3,8 @@ package com.zorrodev.bpm.rest.resource;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
+import com.zorrodev.bpm.contract.dto.ThrowErrorDTO;
+import com.zorrodev.bpm.contract.dto.ThrowErrorResultDTO;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
@@ -128,5 +130,49 @@ class ServiceTaskRuntimeOperationsImplTest {
         assertThatThrownBy(() -> impl.failServiceTask(id, dto))
             .isInstanceOf(ResponseStatusException.class)
             .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void throwServiceTaskError_happyPath_usesCompleteServiceTaskGrant() {
+        // WO-DIFF-5 (P-46 guard wiring): throw-error must pass through the same
+        // COMPLETE_SERVICE_TASK grant as fail — a rollback to any other action fails here.
+        UUID id = UUID.randomUUID();
+        ThrowErrorDTO dto = new ThrowErrorDTO();
+        dto.setErrorCode("E-1");
+        dto.setVariables(List.of());
+        String key = "key";
+        Principal principal = new Principal.UserPrincipal(UUID.randomUUID(), "user", "USER");
+        ThrowErrorResultDTO expected = new ThrowErrorResultDTO();
+        expected.setHandled(true);
+        when(runtimeOperationSupport.resolveDefinitionKeyByServiceTask(id)).thenReturn(key);
+        doNothing().when(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
+        when(runtimeService.throwServiceTaskError(id, dto)).thenReturn(expected);
+        when(runtimeOperationSupport.getPrincipal()).thenReturn(principal);
+
+        ThrowErrorResultDTO result = impl.throwServiceTaskError(id, dto);
+
+        assertThat(result).isEqualTo(expected);
+        verify(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
+        verify(runtimeService).throwServiceTaskError(id, dto);
+        verify(auditLogService).record(principal, "THROW_ERROR", key, id.toString());
+    }
+
+    @Test
+    void throwServiceTaskError_denyWhenNotAuthorized() {
+        UUID id = UUID.randomUUID();
+        ThrowErrorDTO dto = new ThrowErrorDTO();
+        dto.setErrorCode("E-1");
+        dto.setVariables(List.of());
+        String key = "key";
+        when(runtimeOperationSupport.resolveDefinitionKeyByServiceTask(id)).thenReturn(key);
+        doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied"))
+            .when(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
+
+        assertThatThrownBy(() -> impl.throwServiceTaskError(id, dto))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
+
+        verify(runtimeService, never()).throwServiceTaskError(any(), any());
+        verify(auditLogService, never()).record(any(), any(), any(), any());
     }
 }

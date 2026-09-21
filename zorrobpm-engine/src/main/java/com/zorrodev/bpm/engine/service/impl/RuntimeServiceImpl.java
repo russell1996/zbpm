@@ -103,6 +103,30 @@ public class RuntimeServiceImpl implements RuntimeService {
     }
 
     @Override
+    public com.zorrodev.bpm.contract.dto.ThrowErrorResultDTO throwServiceTaskError(UUID id,
+            com.zorrodev.bpm.contract.dto.ThrowErrorDTO dto) {
+        com.zorrodev.bpm.engine.dto.ThrowServiceTaskErrorResult outcome =
+            activityService.throwServiceTaskError(id, dto.getErrorCode(), dto.getVariables());
+        com.zorrodev.bpm.contract.dto.ThrowErrorResultDTO result =
+            new com.zorrodev.bpm.contract.dto.ThrowErrorResultDTO();
+        result.setHandled(outcome.isHandled());
+        result.setIncidentId(outcome.getIncidentId());
+        return result;
+    }
+
+    @Override
+    public com.zorrodev.bpm.contract.dto.MessagePublishResultDTO publishMessage(
+            com.zorrodev.bpm.contract.dto.PublishMessageDTO dto) {
+        com.zorrodev.bpm.engine.dto.MessagePublishResult outcome = activityService.publishMessage(
+            dto.getMessageName(), dto.getCorrelationKey(), dto.getProcessInstanceId(), dto.getVariables());
+        com.zorrodev.bpm.contract.dto.MessagePublishResultDTO result =
+            new com.zorrodev.bpm.contract.dto.MessagePublishResultDTO();
+        result.setCorrelated(outcome.getCorrelated());
+        result.setStarted(outcome.getStarted());
+        return result;
+    }
+
+    @Override
     public IdDTO completeUserTask(UUID id, List<ProcessVariable> variables) {
         activityService.completeUserTask(id, variables);
         IdDTO result = new IdDTO();

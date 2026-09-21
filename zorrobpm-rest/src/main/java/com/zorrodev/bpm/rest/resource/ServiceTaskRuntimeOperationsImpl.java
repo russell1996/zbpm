@@ -4,6 +4,8 @@ import com.zorrodev.bpm.contract.dto.AdHocJobResultDTO;
 import com.zorrodev.bpm.contract.dto.CompleteTaskDTO;
 import com.zorrodev.bpm.contract.dto.FailServiceTaskDTO;
 import com.zorrodev.bpm.contract.dto.IdDTO;
+import com.zorrodev.bpm.contract.dto.ThrowErrorDTO;
+import com.zorrodev.bpm.contract.dto.ThrowErrorResultDTO;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -49,6 +51,16 @@ public class ServiceTaskRuntimeOperationsImpl implements ServiceTaskRuntimeOpera
         runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
         IdDTO result = Optional.ofNullable(runtimeService.failServiceTask(id, dto.getMessage(), dto.getRetries())).map(runtimeOperationSupport::toDTO).orElseThrow();
         auditLogService.record(runtimeOperationSupport.getPrincipal(), "FAIL_SERVICE_TASK", key, id.toString());
+        return result;
+    }
+
+    @Transactional
+    @Override
+    public ThrowErrorResultDTO throwServiceTaskError(UUID id, ThrowErrorDTO dto) {
+        String key = runtimeOperationSupport.resolveDefinitionKeyByServiceTask(id);
+        runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.COMPLETE_SERVICE_TASK);
+        ThrowErrorResultDTO result = Optional.ofNullable(runtimeService.throwServiceTaskError(id, dto)).orElseThrow();
+        auditLogService.record(runtimeOperationSupport.getPrincipal(), "THROW_ERROR", key, id.toString());
         return result;
     }
 }
