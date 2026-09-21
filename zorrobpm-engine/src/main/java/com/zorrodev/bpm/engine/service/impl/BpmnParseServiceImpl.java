@@ -697,15 +697,24 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             String head = rawBpmn.substring(open, headEnd);
             boolean mine = head.contains("id=\"" + containerId + "\"")
                 || head.contains("id='" + containerId + "'");
-            String closeTag = "</bpmn:" + tag + ">";
-            int close = rawBpmn.indexOf(closeTag, headEnd);
+            // WO-DIFF-1 HOLD (nested subProcess-in-subProcess): the close must be the
+            // one PAIRED with this open (depth-aware) — a plain indexOf finds the
+            // INNERMOST nested same-tag container's close first and, combined with the
+            // skip below, jumps clean over a nested container (its open tag never seen
+            // again → its ioMapping silently null, no log, no exception).
+            int close = matchingCloseTag(rawBpmn, headEnd, tag);
             if (close == -1) {
                 return null;
             }
-            from = close + closeTag.length();
             if (!mine) {
+                // Descend: the wanted container may be nested INSIDE this one — skipping
+                // past its paired close would jump clean over it (exactly the HOLD bug:
+                // outer is found first, mine=false, and the old code leapt over inner).
+                from = headEnd + 1;
                 continue;
             }
+            String closeTag = "</bpmn:" + tag + ">";
+            from = close + closeTag.length();
             String body = rawBpmn.substring(headEnd + 1, close);
             // The container's direct <bpmn:extensionElements> is the FIRST child element
             // of the container (BPMN XSD sequence: extensionElements precedes incoming/
@@ -775,6 +784,84 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 + between + "</subProcessIoMapping>";
         }
     }
+
+    /**
+     * WO-DIFF-1 HOLD (nested subProcess-in-subProcess): index of the CLOSE tag paired
+     * with the container whose open tag ends at {@code headEnd}. Same-tag nested
+     * containers are counted (depth), so the match is the TRUE paired close, not the
+     * first textual occurrence (which belongs to the innermost nested container).
+     * Returns -1 when unterminated. Self-closed same-tag elements and tag-like text
+     * inside XML comments/CDATA never change the depth.
+     */
+     static int matchingCloseTag(String rawBpmn, int headEnd, String tag) {
+         String openPrefix = "<bpmn:" + tag;
+         String closeTag = "</bpmn:" + tag + ">";
+         int depth = 1;
+         int cursor = headEnd + 1;
+         while (depth > 0) {
+             int comment = rawBpmn.indexOf("<!--", cursor);
+             int cdata = rawBpmn.indexOf("<![CDATA[", cursor);
+             int nextOpen = rawBpmn.indexOf(openPrefix, cursor);
+             int nextClose = rawBpmn.indexOf(closeTag, cursor);
+             if (nextClose == -1) {
+                 return -1;
+             }
+             // An XML comment or CDATA section opening first — skip it wholesale so
+             // tag-like text inside documentation never perturbs the depth count.
+             if (comment != -1 && comment < nextClose && (nextOpen == -1 || comment < nextOpen)
+                 && (cdata == -1 || comment < cdata)) {
+                 int commentEnd = rawBpmn.indexOf("-->", comment + 4);
+                 if (commentEnd == -1) {
+                     return -1;
+                 }
+                 cursor = commentEnd + 3;
+                 continue;
+             }
+             if (cdata != -1 && cdata < nextClose && (nextOpen == -1 || cdata < nextOpen)) {
+                 int cdataEnd = rawBpmn.indexOf("]]>", cdata + 9);
+                 if (cdataEnd == -1) {
+                     return -1;
+                 }
+                 cursor = cdataEnd + 3;
+                 continue;
+             }
+             if (nextOpen != -1 && nextOpen < nextClose) {
+                 // A longer tag name merely sharing the prefix (no such BPMN tag today)
+                 // is not an open of this container — skip the occurrence.
+                 int afterPrefix = nextOpen + openPrefix.length();
+                 if (afterPrefix < rawBpmn.length()) {
+                     char delim = rawBpmn.charAt(afterPrefix);
+                     if (delim != '>' && delim != '/' && !Character.isWhitespace(delim)) {
+                         cursor = afterPrefix;
+                         continue;
+                     }
+                 }
+                 int openEnd = tagHeadEnd(rawBpmn, nextOpen);
+                 if (openEnd == -1) {
+                     return -1;
+                 }
+                 // Self-closed "<bpmn:subProcess ... />" holds no children — depth unchanged
+                 // (whitespace-tolerant: "<... / >" is legal XML too).
+                 int back = openEnd - 1;
+                 while (back > nextOpen && Character.isWhitespace(rawBpmn.charAt(back))) {
+                     back--;
+                 }
+                 if (rawBpmn.charAt(back) == '/') {
+                     cursor = openEnd + 1;
+                     continue;
+                 }
+                 depth++;
+                 cursor = openEnd + 1;
+             } else {
+                 depth--;
+                 if (depth == 0) {
+                     return nextClose;
+                 }
+                 cursor = nextClose + closeTag.length();
+             }
+         }
+         return -1;
+     }
 
     /**
      * WO-DIFF-1: end of an XML open tag starting at {@code open} (the index of
