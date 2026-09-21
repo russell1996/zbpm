@@ -265,6 +265,23 @@ class Diff5MessageErrorApiIT {
     }
 
     @Test
+    void publishMessage_sameBody_replays() throws Exception {
+        // WO-DIFF-5 (verifier finding 1): /messages/publish idempotency proven by replay,
+        // not just by the isIdempotentPath registration — same key+body returns the stored
+        // response instead of correlating twice.
+        String body = "{\"messageName\":\"diff5-replay-nobody-" + UUID.randomUUID().toString().substring(0, 8)
+            + "\",\"variables\":[]}";
+        String idemKey = UUID.randomUUID().toString();
+        MvcResult first = mockMvc.perform(post("/messages/publish")
+                .header("Authorization", "Bearer " + adminToken).header("Idempotency-Key", idemKey)
+                .content(body).contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
+        MvcResult second = mockMvc.perform(post("/messages/publish")
+                .header("Authorization", "Bearer " + adminToken).header("Idempotency-Key", idemKey)
+                .content(body).contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
+        assertThat(second.getResponse().getContentAsString()).isEqualTo(first.getResponse().getContentAsString());
+    }
+
+    @Test
     void publishMessage_global_nonAdmin_403() throws Exception {
         String body = "{\"messageName\":\"diff5-nobody-listens-" + UUID.randomUUID().toString().substring(0, 8)
             + "\",\"variables\":[]}";
