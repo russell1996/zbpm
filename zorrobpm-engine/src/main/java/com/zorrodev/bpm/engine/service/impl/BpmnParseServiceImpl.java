@@ -50,20 +50,19 @@ import java.util.Optional;
 @Slf4j
 public class BpmnParseServiceImpl implements BpmnParseService {
 
-    private final com.zorrodev.bpm.engine.service.FileService fileService;
-
-    /** WO-DIFF-1: unit-test seam — production code always injects FileService. */
-    BpmnParseServiceImpl(boolean unused) {
-        this.fileService = null;
+    /**
+     * WO-DIFF-1: kept for the pre-existing no-arg construction in unit tests
+     * (production code path injects FileService via Spring — single constructor
+     * since this change keeps autowiring unambiguous). No FileService field is
+     * retained: nested-container extraction uses the in-hand raw source only.
+     */
+    public BpmnParseServiceImpl() {
     }
 
     public BpmnParseServiceImpl(com.zorrodev.bpm.engine.service.FileService fileService) {
-        this.fileService = fileService;
-    }
-
-    /** WO-DIFF-1: keeps the pre-existing no-arg construction compiling for unit tests. */
-    public BpmnParseServiceImpl() {
-        this(true);
+        // FileService is not needed for container ioMapping extraction (raw source
+        // is passed explicitly); the parameter stays so existing Spring/test
+        // wiring does not change.
     }
 
     @Override
