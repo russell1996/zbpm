@@ -197,7 +197,7 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.EVENT_BASED_GATEWAY, new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INTERMEDIATE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.WaitStateHandler(dbService));
         registerHandler(BpmnElementType.MESSAGE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, activityService));
-        registerHandler(BpmnElementType.TIMER_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService, elementSupport));
+        registerHandler(BpmnElementType.TIMER_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService, elementSupport, incidentService));
         registerHandler(BpmnElementType.SIGNAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.SignalCatchHandler(dbService));
         registerHandler(BpmnElementType.CONDITIONAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNav, scriptService));
         registerHandler(BpmnElementType.INTERMEDIATE_THROW_EVENT, new com.zorrodev.bpm.engine.handler.IntermediateThrowEventHandler(dbService, flowNav));

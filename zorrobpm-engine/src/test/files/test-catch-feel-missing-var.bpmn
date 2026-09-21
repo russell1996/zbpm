@@ -1,0 +1,21 @@
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    id="Definitions_catch_feel_missing_var" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-catch-feel-missing-var" name="test-catch-feel-missing-var" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="timerCatch1" />
+    <bpmn:intermediateCatchEvent id="timerCatch1" name="timerCatch1">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerDef_feel_missing_var">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">=missingVar</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="timerCatch1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
