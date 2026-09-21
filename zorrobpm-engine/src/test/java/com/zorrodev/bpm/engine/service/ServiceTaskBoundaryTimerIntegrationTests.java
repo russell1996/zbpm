@@ -16,6 +16,7 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
 import org.junit.jupiter.api.Test;
@@ -67,7 +68,48 @@ class ServiceTaskBoundaryTimerIntegrationTests {
     private TimerJobRepository timerJobRepository;
 
     @Autowired
+    private ServiceTaskRepository serviceTaskRepository;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager txManager;
+
+    @Autowired
     private TimerJobExecutor timerJobExecutor;
+
+    @org.junit.jupiter.api.AfterEach
+    void cleanOwnTimerState() {
+        // Same leak class as WO-REL-13 (EventSubProcessIntegrationTests.cleanup): this
+        // class fires its timers explicitly, so fired=true rows linger in the shared H2
+        // and break TimerMessageQueryIntegrationTests' "no fired rows" assertion.
+        // Scoped to THIS class's instances only (job types diff4-*), never global.
+        org.springframework.transaction.support.TransactionTemplate tt =
+            new org.springframework.transaction.support.TransactionTemplate(txManager);
+        tt.execute(s -> {
+            timerJobRepository.findAll().stream()
+                .filter(r -> "timeout".equals(r.getBoundaryElementId()))
+                .filter(r -> {
+                    try {
+                        var a = activityRepository.findById(r.getActivityId());
+                        return a.isPresent()
+                            && ("diff4-work".equals(jobOf(a.get()))
+                                || "diff4-ni-work".equals(jobOf(a.get())));
+                    } catch (Exception e) {
+                        return false;
+                    }
+                })
+                .forEach(r -> timerJobRepository.deleteById(r.getId()));
+            return null;
+        });
+    }
+
+    private String jobOf(ActivityEntity a) {
+        try {
+            var st = serviceTaskRepository.findById(a.getId());
+            return st.map(s -> s.getJob()).orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     private UUID deployAndStart(String bpmnFile) throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/" + bpmnFile));

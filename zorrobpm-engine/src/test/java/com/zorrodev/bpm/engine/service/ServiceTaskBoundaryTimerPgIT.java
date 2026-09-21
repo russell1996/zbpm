@@ -14,6 +14,7 @@ import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -47,6 +48,22 @@ class ServiceTaskBoundaryTimerPgIT extends PostgresIT {
 
     @Autowired
     private TimerJobExecutor timerJobExecutor;
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @org.junit.jupiter.api.AfterEach
+    void cleanTimerState() {
+        // Cross-test timer_jobs rows leak through the shared database (WO-REL-13
+        // window-cleanup precedent); AFTER (not before) so other classes' rows created
+        // while PG tests run interleaved are not deleted from under them mid-suite.
+        jdbc.execute("DELETE FROM timer_jobs WHERE process_instance_id IN "
+            + "(SELECT id FROM process_instances WHERE id IN "
+            + "(SELECT process_instance_id FROM activities WHERE bpmn_element_id IN ('work','escape')))");
+    }
 
     @Test
     void interrupting_boundaryScheduledAndFiresOnRealPostgres() throws Exception {
