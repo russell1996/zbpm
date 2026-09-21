@@ -45,7 +45,8 @@ class CompensationCancelServiceTaskHandlerTest {
 
     @Test
     void serviceTaskHandler_elementTypeAndHandler() {
-        ServiceTaskHandler handler = new ServiceTaskHandler(dbService, elementSupport, multiInstanceExecutor, serviceTaskEnqueueService);
+        ServiceTaskHandler handler = new ServiceTaskHandler(dbService, elementSupport, multiInstanceExecutor,
+            new BoundaryScheduler(dbService, elementSupport), serviceTaskEnqueueService);
         assertEquals(BpmnElementType.SERVICE_TASK, handler.elementType());
         assertSame(handler, handler.handler());
     }
