@@ -29,8 +29,6 @@ BACKUP_DIR="${BACKUP_DIR:-/opt/zorro-bpm/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 PG_CONTAINER="${PG_CONTAINER:-zorrobpm-postgres}"
 
-: "${BACKUP_DIR:?BACKUP_DIR must not be empty}"
-
 case "$RETENTION_DAYS" in
   ''|*[!0-9]*|0)
     echo "pg-backup: ERROR: RETENTION_DAYS must be a positive integer, got '${RETENTION_DAYS}'" >&2
@@ -58,7 +56,7 @@ DB_NAME="${DB_NAME:-zorrobpm-db}"
 DB_USERNAME="${DB_USERNAME:-zorrodev}"
 DB_PASSWORD="${DB_PASSWORD:-}"
 
-mkdir -p "$BACKUP_DIR"
+mkdir -p -m 700 "$BACKUP_DIR"
 
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
 final="$BACKUP_DIR/zorrobpm-db_${ts}.dump"
@@ -69,8 +67,12 @@ if [ "${PG_BACKUP_SKIP_DUMP:-0}" != "1" ]; then
   tmp="$BACKUP_DIR/.pg-backup-${ts}.part"
   trap 'rm -f "$tmp"' EXIT
   # Пароль — только через окружение дочернего процесса, не через аргументы и не в лог.
-  docker exec -e PGPASSWORD="$DB_PASSWORD" "$PG_CONTAINER" \
-    pg_dump -Fc -U "$DB_USERNAME" -d "$DB_NAME" > "$tmp"
+  # umask 077 + chmod 600: дамп — полная прод-БД (PII, хэши паролей), по умолчанию
+  # umask раннера (обычно 022) оставил бы его world-readable — тот же класс секрета,
+  # что scrape-token в job'е deploy (там тоже chmod 400).
+  (umask 077; docker exec -e PGPASSWORD="$DB_PASSWORD" "$PG_CONTAINER" \
+    pg_dump -Fc -U "$DB_USERNAME" -d "$DB_NAME" > "$tmp")
+  chmod 600 "$tmp"
   mv "$tmp" "$final"
   trap - EXIT
   echo "pg-backup: wrote $final ($(stat -c%s "$final") bytes)"
