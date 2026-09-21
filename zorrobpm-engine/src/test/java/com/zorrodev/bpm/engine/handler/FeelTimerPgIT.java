@@ -25,9 +25,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
-import static org.assertj.core.api.Assertions.catchThrowable;
+
 
 /**
  * WO-ENG-2: FEEL expressions in timer event definitions.
@@ -61,6 +60,22 @@ public class FeelTimerPgIT extends PostgresIT {
     @BeforeEach
     void setUp() {
         tx = new TransactionTemplate(txManager);
+        // WO-DIFF-7: this class commits instances+incidents (soft-fail assertions need
+        // committed rows); wipe children-before-parents so later PgIT classes in the
+        // shared-PG suite never see our residue (same order as RepeatingBoundaryTimerPgIT —
+        // user_tasks/service_tasks BEFORE activities, they FK into process_instances).
+        jdbc.execute("DELETE FROM timer_jobs");
+        jdbc.execute("DELETE FROM message_subscriptions");
+        jdbc.execute("DELETE FROM signal_subscriptions");
+        jdbc.execute("DELETE FROM incidents");
+        jdbc.execute("DELETE FROM user_tasks");
+        jdbc.execute("DELETE FROM service_tasks");
+        jdbc.execute("DELETE FROM variables");
+        jdbc.execute("DELETE FROM activities");
+        jdbc.execute("DELETE FROM tokens");
+        jdbc.execute("DELETE FROM events");
+        jdbc.execute("DELETE FROM process_instances");
+        jdbc.execute("DELETE FROM process_definitions WHERE code LIKE 'test-%'");
     }
 
     // ----------------------------------------------------------------
@@ -176,24 +191,119 @@ public class FeelTimerPgIT extends PostgresIT {
     }
 
     // ----------------------------------------------------------------
-    // Criterion #4: FEEL returns non-date/duration type → EngineException
+    // Criterion #4 (WO-DIFF-7 redefined): FEEL eval failure → incident, not 422.
+    // ----------------------------------------------------------------
+    // WO-DIFF-7 (Raxon finding #12, S-055): a boundary timer whose FEEL expression
+    // fails to evaluate used to throw EngineException out of startProcessInstance
+    // (HTTP 422 ENGINE_ERROR, no instance at all). Zeebe instead creates the
+    // instance and parks an incident on the arming point. The old test
+    // `feelExpressionReturnsGarbage_throwsEngineException` pinned the throw; it is
+    // superseded by the test below (same BPMN fixture, inverted expectation —
+    // G20: old name named explicitly here as deliberately dropped).
     // ----------------------------------------------------------------
 
     @Test
-    void feelExpressionReturnsGarbage_throwsEngineException() {
-        // Deploying the process itself succeeds; the exception happens at runtime when the
-        // boundary timer is scheduled during user task entry.
-        // deployAndStart wraps in RuntimeException, so we catch the cause.
-        Throwable thrown = catchThrowable(() ->
-            deployAndStart("test-boundary-feel-garbage.bpmn", null)
-        );
-        assertThat(thrown)
-            .as("FEEL expression returning true as timeDuration should raise EngineException")
-            .isNotNull()
-            .isInstanceOf(RuntimeException.class)
-            .hasCauseInstanceOf(EngineException.class);
-        assertThat(thrown.getCause())
-            .as("EngineException should contain the element id")
-            .hasMessageContaining("boundary1");
+    void feelExpressionReturnsGarbage_boundaryTimer_raisesIncidentInsteadOfThrowing() {
+        // Deploy succeeds; start must NOT throw — the instance must exist with an
+        // open incident on the boundary timer, host task alive, no timer job armed.
+        UUID pi = deployAndStart("test-boundary-feel-garbage.bpmn", null);
+
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM process_instances WHERE id = ?", Long.class, pi))
+            .as("process instance must exist after FEEL timer eval failure (no 422)")
+            .isEqualTo(1L);
+
+        List<String> messages = jdbc.queryForList(
+            "SELECT i.message FROM incidents i " +
+            "JOIN activities a ON a.id = i.activity_id " +
+            "WHERE a.process_instance_id = ? AND i.completed_at IS NULL",
+            String.class, pi);
+        assertThat(messages)
+            .as("exactly one open incident for the failed boundary timer")
+            .hasSize(1);
+        assertThat(messages.get(0))
+            .as("incident message must name the failing timer element")
+            .contains("boundary1");
+
+        assertThat(findTimerJobsForInstance(pi))
+            .as("no timer job may be armed when the FEEL expression failed")
+            .isEmpty();
+
+        String hostStatus = jdbc.queryForObject(
+            "SELECT status FROM activities WHERE process_instance_id = ? AND bpmn_element_id = 'userTask1'",
+            String.class, pi);
+        assertThat(hostStatus)
+            .as("host user task must stay alive (Zeebe: incident on arming point, host completable)")
+            .isNotEqualTo("ERROR");
+    }
+
+    // ----------------------------------------------------------------
+    // WO-DIFF-7 (S-055 verbatim): catch timer with timeDuration="=missingVar"
+    // ----------------------------------------------------------------
+
+    @Test
+    void feelMissingVar_catchTimer_raisesIncidentInsteadOfThrowing() {
+        // S-055 shape: intermediate catch event, FEEL reference to a variable that
+        // does not exist. Zeebe: instance created + EXTRACT_VALUE_ERROR-style
+        // incident on the `wait` element. Zorro before fix: 422, no instance.
+        UUID pi = deployAndStart("test-catch-feel-missing-var.bpmn", null);
+
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM process_instances WHERE id = ?", Long.class, pi))
+            .as("process instance must exist after FEEL timer eval failure (no 422)")
+            .isEqualTo(1L);
+
+        List<String> messages = jdbc.queryForList(
+            "SELECT i.message FROM incidents i " +
+            "JOIN activities a ON a.id = i.activity_id " +
+            "WHERE a.process_instance_id = ? AND i.completed_at IS NULL " +
+            "AND a.bpmn_element_id = 'timerCatch1'",
+            String.class, pi);
+        assertThat(messages)
+            .as("exactly one open incident parked on the failed catch timer element")
+            .hasSize(1);
+        assertThat(messages.get(0))
+            .as("incident message must name the failing timer element")
+            .contains("timerCatch1");
+
+        String timerStatus = jdbc.queryForObject(
+            "SELECT status FROM activities WHERE process_instance_id = ? AND bpmn_element_id = 'timerCatch1'",
+            String.class, pi);
+        assertThat(timerStatus)
+            .as("failed catch timer activity must be parked as ERROR")
+            .isEqualTo("ERROR");
+
+        assertThat(findTimerJobsForInstance(pi))
+            .as("no timer job may be armed when the FEEL expression failed")
+            .isEmpty();
+    }
+
+    // ----------------------------------------------------------------
+    // WO-DIFF-7: resolve with the missing variable re-arms the timer
+    // (Zeebe re-evaluation gateway: setVariables + resolve → timer armed).
+    // ----------------------------------------------------------------
+
+    @Test
+    void feelMissingVar_catchTimer_resolveWithFix_rearmsTimer() {
+        UUID pi = deployAndStart("test-catch-feel-missing-var.bpmn", null);
+
+        UUID incidentId = jdbc.queryForObject(
+            "SELECT i.id FROM incidents i " +
+            "JOIN activities a ON a.id = i.activity_id " +
+            "WHERE a.process_instance_id = ? AND i.completed_at IS NULL " +
+            "AND a.bpmn_element_id = 'timerCatch1'",
+            UUID.class, pi);
+
+        tx.execute(s ->
+            runtimeService.resolveIncident(incidentId,
+                List.of(var("missingVar", ProcessVariableType.STRING, "PT5M"))));
+
+        List<UUID> jobs = findTimerJobsForInstance(pi);
+        assertThat(jobs)
+            .as("resolve with the missing variable must re-arm the catch timer (re-evaluation)")
+            .hasSize(1);
+        assertThat(findTimerJobDueAt(jobs.get(0)).toInstant())
+            .as("re-armed timer must resolve the supplied duration")
+            .isCloseTo(Instant.now().plus(Duration.ofMinutes(5)), within(2, ChronoUnit.MINUTES));
     }
 }

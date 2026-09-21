@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.handler;
 
+import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
@@ -28,6 +29,7 @@ public class TimerCatchHandler implements ElementHandler, TypedElementHandler {
 
     private final DBService dbService;
     private final ElementSupport elementSupport;
+    private final IncidentService incidentService;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.TIMER_CATCH_EVENT; }
@@ -41,7 +43,21 @@ public class TimerCatchHandler implements ElementHandler, TypedElementHandler {
         UUID tokenId = ctx.tokenId();
 
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        Instant dueAt = elementSupport.computeDueAt(bpmnElement, processInstanceId);
+        final Instant dueAt;
+        try {
+            dueAt = elementSupport.computeDueAt(bpmnElement, processInstanceId);
+        } catch (EngineException e) {
+            // WO-DIFF-7 (Raxon finding #12, S-055): a FEEL timer expression that fails
+            // to evaluate (e.g. `=missingVar` → null) parks an incident on THIS timer
+            // element instead of aborting the whole start (Zeebe: EXTRACT_VALUE_ERROR
+            // incident, instance created). Same canonical path as ActivityServiceImpl's
+            // element-failure catch (IncidentService, incl. WO-REL-40 fallback), so a
+            // later resolveIncident with the missing variable re-executes this element
+            // and re-arms the timer (re-evaluation, Zeebe parity). Only EngineException
+            // (eval/type failure) is parked — infra failures still propagate.
+            incidentService.raiseIncident(processInstanceId, tokenId, bpmnElement, e);
+            return;
+        }
         Integer remainingCount = computeRemainingCount(bpmnElement);
         // WO-REL-14: persist the cycle expression so re-arm (TimerJobExecutor) uses the real
         // interval instead of a hardcoded zero-second cycle. Null for non-CYCLE timers.
