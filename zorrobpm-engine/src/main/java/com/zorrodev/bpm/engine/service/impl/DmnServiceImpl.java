@@ -146,6 +146,11 @@ public class DmnServiceImpl implements DmnService {
     }
 
     @Override
+    public boolean decisionExists(String decisionId) {
+        return dmnDefinitionRepository.findFirstByDecisionIdOrderByVersionDesc(decisionId).isPresent();
+    }
+
+    @Override
     public Object evaluate(String decisionId, List<ProcessVariable> variables, UUID pinnedProcessDefinitionId) {
         if (pinnedProcessDefinitionId == null) {
             return evaluate(decisionId, variables);
