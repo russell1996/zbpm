@@ -27,6 +27,18 @@ public interface DmnService {
     Object evaluate(String decisionId, List<ProcessVariable> variables);
 
     /**
+     * WO-DIFF-8: light existence probe for the execution path. A business rule task
+     * referencing an undeployed decision must park a CALLED_DECISION_ERROR incident
+     * (Zeebe/Raxon S-059 parity: the process stalls, the start is NOT rejected with
+     * 422) — and the incident channel is {@code IllegalStateException}, never the
+     * {@code EngineException} that {@link #evaluate(String, List)} throws. The plain
+     * {@code evaluate} keeps its {@code EngineException} contract untouched (REST
+     * {@code POST /dmn/{id}/evaluate} maps it to 400, existing DMN tests pin it) —
+     * the handler pre-checks with this probe instead of changing the shared method.
+     */
+    boolean decisionExists(String decisionId);
+
+    /**
      * WO-C8-20: evaluates the latest deployed version annotated with the given version tag
      * ({@code bindingType="versionTag"} pinning). Signature form (named method, not a third
      * overload or enum param): the two existing overloads stay byte-identical, and the call
