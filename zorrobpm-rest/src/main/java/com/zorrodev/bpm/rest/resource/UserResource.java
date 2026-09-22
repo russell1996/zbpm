@@ -66,10 +66,10 @@ public class UserResource implements UserContract {
             // WO-ACL-18: the chosen creation path is recorded (criterion 3), and an
             // invitation link is emailed when the INVITE path was selected.
             if ("INVITE".equalsIgnoreCase(dto.getCreationMode())) {
-                invitationService.createInvitation(id, principalFromRequest());
-                auditLogService.record(principalFromRequest(), "USER_CREATE_INVITE", null, id.toString());
+                invitationService.createInvitation(id, getPrincipal());
+                auditLogService.record(getPrincipal(), "USER_CREATE_INVITE", null, id.toString());
             } else {
-                auditLogService.record(principalFromRequest(), "USER_CREATE_PASSWORD", null, id.toString());
+                auditLogService.record(getPrincipal(), "USER_CREATE_PASSWORD", null, id.toString());
             }
             if (httpResponse != null) {
                 httpResponse.setHeader("Location", "/users/" + id);
@@ -102,7 +102,7 @@ public class UserResource implements UserContract {
     @org.springframework.web.bind.annotation.PostMapping("/users/{id}/reset-password")
     public IdDTO resetPassword(@PathVariable UUID id) {
         try {
-            invitationService.adminReset(id, principalFromRequest());
+            invitationService.adminReset(id, getPrincipal());
             return id(id);
         } catch (EngineException e) {
             log.warn("Failed to reset password for {}: {}", id, e.getMessage());
@@ -111,12 +111,14 @@ public class UserResource implements UserContract {
     }
 
     /**
-     * WO-SEC-64 (S-RBAC-2): read the already-resolved {@code principal}, not
-     * {@code authClaims}. The claims attribute is empty for service principals
-     * (API key) — the old code returned null there and broke every service-key
-     * path through this resource, where the principal works.
+     * WO-SEC-69: canonical principal lookup — the same one-liner as the rest
+     * of the REST layer ({@code request.getAttribute("principal")}, set by
+     * JwtAuthFilter). Replaces the former {@code principalFromRequest()}, which
+     * after WO-SEC-64 had become an identical private copy of this expression;
+     * kept as a named method (not inlined at call sites) so every principal
+     * read in this resource goes through one spelling.
      */
-    private Principal principalFromRequest() {
+    private Principal getPrincipal() {
         Object attr = request.getAttribute("principal");
         return attr instanceof Principal p ? p : null;
     }
