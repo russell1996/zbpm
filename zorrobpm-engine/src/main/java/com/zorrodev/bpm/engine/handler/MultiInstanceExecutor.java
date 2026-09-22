@@ -14,8 +14,10 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -50,6 +52,91 @@ public class MultiInstanceExecutor {
      */
     static final int MAX_MI_CARDINALITY = 1_000;
 
+    /**
+     * WO-PERF-9 (B-8, full-scan): identifiers potentially referenced by a
+     * FEEL expression — a conservative SUPERSET of every name the Camunda
+     * FEEL engine could resolve from the variable bindings. Fetching exactly
+     * these rows evaluates byte-identically to the full-scope read: bindings
+     * are a map keyed by exact name and FEEL names are case-sensitive, so any
+     * name the engine can look up appears verbatim as an identifier token in
+     * the source. Unreferenceable spellings (string literals are stripped;
+     * comment/keyword tokens that remain) only add harmless extra fetches —
+     * they never remove a needed row. Dotted paths ({@code a.b}) contribute
+     * both parts (the root {@code a} is what the engine resolves). Unicode
+     * letters are included — FEEL identifiers are not ASCII-only.
+     */
+    static Set<String> extractFeelVariableNames(String expression) {
+        Set<String> names = new LinkedHashSet<>();
+        if (expression == null || expression.isBlank()) {
+            return names;
+        }
+        StringBuilder cur = new StringBuilder();
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                flushFeelToken(cur, names);
+                inString = true;
+                continue;
+            }
+            if (c == '_' || Character.isLetter(c)) {
+                cur.append(c);
+                continue;
+            }
+            if (cur.length() > 0 && Character.isDigit(c)) {
+                cur.append(c);
+                continue;
+            }
+            flushFeelToken(cur, names);
+        }
+        flushFeelToken(cur, names);
+        return names;
+    }
+
+    private static void flushFeelToken(StringBuilder cur, Set<String> names) {
+        if (cur.length() > 0) {
+            names.add(cur.toString());
+            cur.setLength(0);
+        }
+    }
+
+    /**
+     * WO-PERF-9: root variables needed to evaluate the given FEEL
+     * expressions — one indexed SELECT for exactly the referenced names
+     * instead of {@code getVariables(pi)} over the whole instance scope.
+     */
+    private List<ProcessVariable> rootVariablesFor(UUID processInstanceId, String... expressions) {
+        Set<String> names = new LinkedHashSet<>();
+        for (String e : expressions) {
+            names.addAll(extractFeelVariableNames(e));
+        }
+        return dbService.getVariablesByNames(processInstanceId, names);
+    }
+
+    /**
+     * WO-PERF-9: scoped counterpart of {@link #rootVariablesFor} — the
+     * root+scope merged view restricted to the referenced names ("scoped
+     * wins" preserved by the query layer).
+     */
+    private List<ProcessVariable> scopedVariablesFor(UUID processInstanceId, UUID scopeId, String... expressions) {
+        Set<String> names = new LinkedHashSet<>();
+        for (String e : expressions) {
+            names.addAll(extractFeelVariableNames(e));
+        }
+        return dbService.getScopedVariablesByNames(processInstanceId, scopeId, names);
+    }
+
     public boolean isMultiInstance(BpmnElementModel element) {
         return Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
@@ -71,7 +158,11 @@ public class MultiInstanceExecutor {
             // eval per entry — shared by the cardinality resolution below and
             // the spawn that follows, instead of each fetching/evaluating them
             // again on the same transition.
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            // WO-PERF-9 (B-8, full-scan): the read is pinpoint — only the
+            // variables the inputCollection/loopCardinality expressions can
+            // reference, not the whole instance scope.
+            List<ProcessVariable> variables =
+                rootVariablesFor(processInstanceId, mi.getInputCollection(), mi.getCardinality());
             collection = null;
             if (mi.getInputCollection() != null && !mi.getInputCollection().isBlank()) {
                 collection = scriptService.evaluateExpression(mi.getInputCollection(), variables);
@@ -171,7 +262,11 @@ public class MultiInstanceExecutor {
             || mi.getOutputElement() == null || mi.getOutputElement().isBlank()) {
             return;
         }
-        Object value = scriptService.evaluateExpression(mi.getOutputElement(), dbService.getVariables(processInstanceId, scopeId));
+        // WO-PERF-9 (B-8, full-scan): the outputElement expression only needs
+        // its own referenced names from the instance scope — one indexed
+        // SELECT, not the root+scope merge over the whole scope.
+        Object value = scriptService.evaluateExpression(mi.getOutputElement(),
+            scopedVariablesFor(processInstanceId, scopeId, mi.getOutputElement()));
         dbService.setJsonElementAt(processInstanceId, mi.getOutputCollection(), miSlot(processInstanceId, scopeId) - 1,
             objectMapper.writeValueAsString(elementSupport.toJavaStructure(value)));
     }
@@ -290,7 +385,10 @@ public class MultiInstanceExecutor {
             || mi.getInputCollection() == null || mi.getInputCollection().isBlank()) {
             return null;
         }
-        return scriptService.evaluateExpression(mi.getInputCollection(), dbService.getVariables(processInstanceId));
+        // WO-PERF-9 (B-8, full-scan): sequential-continue re-evaluates the
+        // inputCollection on its own transition — pinpoint, same as enter().
+        return scriptService.evaluateExpression(mi.getInputCollection(),
+            rootVariablesFor(processInstanceId, mi.getInputCollection()));
     }
 
     private void bindMiInstanceVariables(UUID processInstanceId, UUID scopeId, MultiInstanceExtensionModel mi, Object collection, int index) {
@@ -319,7 +417,9 @@ public class MultiInstanceExecutor {
      * concurrent completion of a sibling cannot shift this write's slot.
      */
     private int miSlot(UUID processInstanceId, UUID scopeId) {
-        return dbService.getVariables(processInstanceId, scopeId).stream()
+        // WO-PERF-9 (B-8, full-scan): only the loopCounter row is needed —
+        // one indexed read, never the scope merge.
+        return dbService.getScopedVariablesByNames(processInstanceId, scopeId, Set.of("loopCounter")).stream()
             .filter(v -> "loopCounter".equals(v.getName()))
             .findFirst()
             .map(v -> {
@@ -392,7 +492,9 @@ public class MultiInstanceExecutor {
         // These are NOT persisted — they exist only for the duration of this FEEL evaluation.
         // NOTE: use evaluateExpression (not evaluateScript) because completionCondition is a FEEL expression,
         // not a unary test. evaluateScript would misinterpret the expression.
-        List<ProcessVariable> variables = new ArrayList<>(dbService.getVariables(processInstanceId));
+        // WO-PERF-9 (B-8, full-scan): the condition only needs its own
+        // referenced names — one indexed SELECT, not the whole scope.
+        List<ProcessVariable> variables = new ArrayList<>(rootVariablesFor(processInstanceId, expression));
         long total = expected != null ? expected : 0;
         long active = expected != null ? Math.max(0, expected - arrived) : 0;
         addLocalLong(variables, "completedInstances", arrived);

@@ -82,6 +82,46 @@ class VariableDbOperationsImplTest {
     }
 
     @Test
+    void getVariablesByNames_mapsOnlyNamedRows() {
+        UUID pi = UUID.randomUUID();
+        ProcessVariableEntity e = new ProcessVariableEntity(); e.setId(UUID.randomUUID()); e.setProcessInstanceId(pi); e.setName("items"); e.setType(ProcessVariableType.JSON); e.setTextValue("[1,2]");
+        when(variableRepository.findByProcessInstanceIdAndScopeIdIsNullAndNameIn(eq(pi), org.mockito.ArgumentMatchers.argThat(names -> names != null && names.contains("items"))))
+            .thenReturn(List.of(e));
+        List<ProcessVariable> result = db.getVariablesByNames(pi, java.util.Set.of("items", "k"));
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getName()).isEqualTo("items");
+        assertThat(result.get(0).getValue()).isEqualTo("[1,2]");
+    }
+
+    @Test
+    void getVariablesByNames_emptyNames_noQuery() {
+        UUID pi = UUID.randomUUID();
+        assertThat(db.getVariablesByNames(pi, java.util.Set.of())).isEmpty();
+        // WO-PERF-9: пустой набор → запроса нет вообще (IN () невалиден, да и не нужен).
+        verify(variableRepository, never()).findByProcessInstanceIdAndScopeIdIsNullAndNameIn(any(), any());
+        verify(variableRepository, never()).findByProcessInstanceIdAndScopeIdIsNull(any());
+    }
+
+    @Test
+    void getScopedVariablesByNames_scopedWins() {
+        UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
+        ProcessVariableEntity root = new ProcessVariableEntity(); root.setId(UUID.randomUUID()); root.setProcessInstanceId(pi); root.setName("item"); root.setType(ProcessVariableType.LONG); root.setTextValue("1");
+        ProcessVariableEntity scoped = new ProcessVariableEntity(); scoped.setId(UUID.randomUUID()); scoped.setProcessInstanceId(pi); scoped.setScopeId(scope); scoped.setName("item"); scoped.setType(ProcessVariableType.LONG); scoped.setTextValue("2");
+        when(variableRepository.findRootAndScopedByNames(eq(pi), eq(scope), any())).thenReturn(List.of(root, scoped));
+        List<ProcessVariable> result = db.getScopedVariablesByNames(pi, scope, java.util.Set.of("item"));
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getValue()).isEqualTo("2");
+    }
+
+    @Test
+    void getScopedVariablesByNames_emptyNames_noQuery() {
+        UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
+        assertThat(db.getScopedVariablesByNames(pi, scope, java.util.Set.of())).isEmpty();
+        verify(variableRepository, never()).findRootAndScopedByNames(any(), any(), any());
+        verify(variableRepository, never()).findRootAndScoped(any(), any());
+    }
+
+    @Test
     void setVariables_postgres_insert_recordsCreate() throws Exception {
         givenProduct("PostgreSQL");
         UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();

@@ -120,14 +120,18 @@ class MultiInstanceExecutorBatchUuidTest {
         element.getExtensions().getMultiInstanceExtension().setCardinality(null);
         element.getExtensions().getMultiInstanceExtension().setInputCollection("=items");
         element.getExtensions().getMultiInstanceExtension().setInputElement("item");
-        when(dbService.getVariables(pi)).thenReturn(List.of());
+        // WO-PERF-9: enter reads pinpoint (only the FEEL-referenced names),
+        // never the full scope.
+        when(dbService.getVariablesByNames(eq(pi), argThat(names -> names != null && names.contains("items"))))
+            .thenReturn(List.of());
         when(scriptService.evaluateExpression(eq("=items"), any())).thenReturn(List.of(10, 20));
 
         // When
         executor.enter(pi, token, element, org.mockito.Mockito.mock(TokenExecutor.class));
 
-        // Then — WO-REL-41 п.3: один корневой read, один FEEL-eval коллекции.
-        verify(dbService).getVariables(pi);
+        // Then — WO-REL-41 п.3 + WO-PERF-9: один точечный read, один FEEL-eval коллекции.
+        verify(dbService).getVariablesByNames(eq(pi), argThat(names -> names != null && names.contains("items")));
+        verify(dbService, never()).getVariables(any(UUID.class));
         verify(scriptService).evaluateExpression(eq("=items"), any());
         verify(dbService).recordInclusiveExpected(eq(pi), argThat(k -> k != null && k.startsWith("mi::")), eq(2));
     }

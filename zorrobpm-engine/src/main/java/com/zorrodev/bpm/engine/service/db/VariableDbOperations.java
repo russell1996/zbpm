@@ -23,6 +23,23 @@ public interface VariableDbOperations {
     void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId);
 
     /**
+     * WO-PERF-9 (B-8, full-scan): pinpoint read of a few ROOT variables by
+     * name (one indexed SELECT, not the full instance scope). Empty names →
+     * empty list without touching the DB (also avoids an {@code IN ()} query).
+     */
+    List<ProcessVariable> getVariablesByNames(@NonNull UUID processInstanceId,
+        java.util.Collection<String> names);
+
+    /**
+     * WO-PERF-9 (B-8, full-scan): scoped pinpoint — the merged root+scope
+     * view of {@link #getVariables(UUID, UUID)} restricted to the named rows
+     * ("scoped wins for duplicate names" preserved). Empty names → empty
+     * list without touching the DB.
+     */
+    List<ProcessVariable> getScopedVariablesByNames(@NonNull UUID processInstanceId, UUID scopeId,
+        java.util.Collection<String> names);
+
+    /**
      * WO-REL-41 (B-8, п.2): pinpoint read of ONE root variable's text value
      * (the MI batch-UUID lookup). Root scope only — a scoped variable with
      * the same name must never leak in. Empty when the row is absent.

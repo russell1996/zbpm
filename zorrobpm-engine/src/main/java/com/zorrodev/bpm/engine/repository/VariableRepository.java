@@ -69,6 +69,14 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
     Optional<ProcessVariableEntity> findByProcessInstanceIdAndNameAndScopeIdIsNull(
         UUID processInstanceId, String name);
 
+    /**
+     * WO-PERF-9 (B-8, full-scan): pinpoint read of a few root variables by
+     * name — the caller's FEEL expression only needs these, not the whole
+     * instance scope. Backed by uk_variables__pi_name_scope (pi, name, scope).
+     */
+    List<ProcessVariableEntity> findByProcessInstanceIdAndScopeIdIsNullAndNameIn(
+        UUID processInstanceId, java.util.Collection<String> names);
+
     List<ProcessVariableEntity> findByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 
     /**
@@ -84,6 +92,23 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
         """)
     List<ProcessVariableEntity> findRootAndScoped(@Param("processInstanceId") UUID processInstanceId,
             @Param("scopeId") UUID scopeId);
+
+    /**
+     * WO-PERF-9 (B-8, full-scan): scoped pinpoint — same root+scope merge as
+     * {@link #findRootAndScoped}, but only the named rows (e.g. an MI
+     * outputElement's FEEL identifiers). Order/merge contract identical:
+     * root rows first, so the caller's "scoped wins" merge is preserved.
+     * Backed by uk_variables__pi_name_scope (pi, name, scope).
+     */
+    @Query("""
+        select v from ProcessVariableEntity v
+        where v.processInstanceId = :processInstanceId
+          and (v.scopeId is null or v.scopeId = :scopeId)
+          and v.name in :names
+        order by case when v.scopeId is null then 0 else 1 end, v.name
+        """)
+    List<ProcessVariableEntity> findRootAndScopedByNames(@Param("processInstanceId") UUID processInstanceId,
+            @Param("scopeId") UUID scopeId, @Param("names") java.util.Collection<String> names);
 
     void deleteByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 }

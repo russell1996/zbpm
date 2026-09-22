@@ -231,6 +231,22 @@ public interface DBService {
     void setVariables(@NonNull UUID processInstanceId, UUID scopeId, List<ProcessVariable> variables);
 
     /**
+     * WO-PERF-9 (B-8, full-scan): pinpoint read of a few ROOT variables by
+     * name — one indexed SELECT instead of the full instance scope.
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#getVariablesByNames}.
+     */
+    List<ProcessVariable> getVariablesByNames(@NonNull UUID processInstanceId,
+        java.util.Collection<String> names);
+
+    /**
+     * WO-PERF-9 (B-8, full-scan): scoped pinpoint — the merged root+scope
+     * view restricted to the named rows ("scoped wins" preserved).
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#getScopedVariablesByNames}.
+     */
+    List<ProcessVariable> getScopedVariablesByNames(@NonNull UUID processInstanceId, UUID scopeId,
+        java.util.Collection<String> names);
+
+    /**
      * WO-REL-41 (B-8, п.2): pinpoint read of ONE root variable's text value.
      * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#getVariableTextValue}.
      */
