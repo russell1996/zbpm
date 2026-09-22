@@ -164,6 +164,22 @@ public class SyncTaskHandler {
                     }
                     result = dmnService.evaluateByVersionTag(decisionId, variables, tag);
                 } else {
+                    // WO-DIFF-8: an undeployed decision is a CALLED_DECISION_ERROR incident
+                    // (Zeebe/Raxon S-059 parity: the process stalls, the start is NOT
+                    // rejected with 422). IllegalStateException — not EngineException — is
+                    // deliberate: ActivityServiceImpl.execute rethrows EngineException as an
+                    // abort (HTTP 422), while any other exception parks the token as an
+                    // incident — the same mechanics as the deployment/versionTag branches
+                    // above. dmnService.evaluate keeps its EngineException contract
+                    // untouched (REST POST /dmn/{id}/evaluate maps it to 400, existing DMN
+                    // tests pin it) — the probe decides before the shared method is called.
+                    if (!dmnService.decisionExists(decisionId)) {
+                        // WO-DIFF-8: broker-verbatim message (Raxon WO-028 differential probe:
+                        // "Expected to evaluate decision 'X', but no decision found for id 'X'"
+                        // with errorType CALLED_DECISION_ERROR).
+                        throw new IllegalStateException("Expected to evaluate decision '" + decisionId
+                            + "', but no decision found for id '" + decisionId + "'");
+                    }
                     result = dmnService.evaluate(decisionId, variables);
                 }
             } else if (ext.getExpression() != null && !ext.getExpression().isBlank()) {
