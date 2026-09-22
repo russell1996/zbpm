@@ -50,6 +50,10 @@ class CompletionServiceTest {
     @Mock
     private ElementListenerPhaseService elementListenerPhaseService;
 
+    // WO-QW-2: BpmMetrics mock for the activityTransitionIgnored hook.
+    @Mock
+    private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
+
     @InjectMocks
     private CompletionService completionService;
 
@@ -123,5 +127,31 @@ class CompletionServiceTest {
         verify(dbService, never()).setServiceTaskRetries(eq(serviceTaskId), org.mockito.ArgumentMatchers.anyInt());
         verify(dbService, never()).errorActivity(any());
         verify(dbService, never()).createIncident(any(), any());
+    }
+
+    /**
+     * WO-QW-2 criterion 4 (behavioral POF anchor): a stale-status completion
+     * drives the idempotent guard, which must call the metric hook exactly
+     * once. POF-мутация — убрать вызов {@code bpmMetrics} в guard'е:
+     * этот тест краснеет ({@code Wanted but not invoked}), остальные —
+     * нет (хук только здесь).
+     */
+    @Test
+    void staleStatusCompletion_incrementsIgnoredMetric() {
+        UUID serviceTaskId = UUID.randomUUID();
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setStatus(ActivityStatus.COMPLETED);
+        activity.setProcessInstanceId(UUID.randomUUID());
+        activity.setToken(UUID.randomUUID());
+        activity.setBpmnElementId("serviceTask1");
+
+        when(elementSupport.lockAndReload(serviceTaskId)).thenReturn(activity);
+
+        completionService.completeServiceTask(serviceTaskId, java.util.List.of(),
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.TokenExecutor.class));
+
+        verify(bpmMetrics).activityTransitionIgnored("stale_status");
     }
 }

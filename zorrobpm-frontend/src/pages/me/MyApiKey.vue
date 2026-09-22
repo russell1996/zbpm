@@ -158,6 +158,8 @@ onMounted(loadApiKey)
           <span class="text-amber-500 text-xl">&#x26A0;&#xFE0F;</span>
           <h3 class="font-bold text-lg">{{ t('newApiKeySave') }}</h3>
         </div>
+        <!-- WO-QW-2: v-html is safe ONLY because newApiKeyHint is a static i18n string.
+             If user-controlled input ever flows into this key — switch to {{ }} text. -->
         <p class="text-sm text-muted-foreground" v-html="t('newApiKeyHint')">
         </p>
         <div class="bg-muted rounded p-3 font-mono text-sm break-all select-all border border-border">
