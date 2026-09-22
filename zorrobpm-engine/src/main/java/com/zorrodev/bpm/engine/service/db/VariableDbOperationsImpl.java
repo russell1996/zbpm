@@ -304,6 +304,36 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
     }
 
     @Override
+    public List<ProcessVariable> getVariablesByNames(@NonNull UUID processInstanceId,
+            java.util.Collection<String> names) {
+        // WO-PERF-9: no names → no query (IN () is invalid SQL on some dialects,
+        // and a literal-cardinality MI needs nothing from the DB at all).
+        if (names == null || names.isEmpty()) {
+            return List.of();
+        }
+        return variableRepository.findByProcessInstanceIdAndScopeIdIsNullAndNameIn(processInstanceId, names)
+            .stream()
+            .map(this::toProcessVariable)
+            .toList();
+    }
+
+    @Override
+    public List<ProcessVariable> getScopedVariablesByNames(@NonNull UUID processInstanceId, UUID scopeId,
+            java.util.Collection<String> names) {
+        // WO-PERF-9: same scoped-wins merge as getVariables(pi, scopeId), but
+        // over the named rows only — one indexed SELECT instead of the merge
+        // over the whole root+scope.
+        if (names == null || names.isEmpty()) {
+            return List.of();
+        }
+        Map<String, ProcessVariable> merged = new LinkedHashMap<>();
+        for (ProcessVariableEntity e : variableRepository.findRootAndScopedByNames(processInstanceId, scopeId, names)) {
+            merged.put(e.getName(), toProcessVariable(e));
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    @Override
     public Optional<String> getVariableTextValue(@NonNull UUID processInstanceId, String name) {
         return variableRepository.findByProcessInstanceIdAndNameAndScopeIdIsNull(processInstanceId, name)
             .map(ProcessVariableEntity::getTextValue);
