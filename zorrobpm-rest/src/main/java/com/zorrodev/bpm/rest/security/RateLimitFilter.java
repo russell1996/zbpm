@@ -248,13 +248,28 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private boolean isDataEndpoint(String method, String path) {
         // WO-SEC-64 (S-16): all mutating methods share the data bucket — PUT/PATCH/DELETE
         // used to bypass the limit entirely (GET/POST only). Reads stay covered as before.
+        // WO-API-4 (Finding #2, High): the audit whitelist stopped at 7 read-prefixes;
+        // the mutating admin/aux paths below shared NOTHING with any bucket, so one
+        // compromised SUPER_ADMIN key could flood batch deploys unthrottled. They join
+        // the SAME data bucket (no new key, no new fail-fast surface — P-41): these
+        // are admin-UI reads/writes with the same cost profile as the existing reads,
+        // and per-key bucketing (resolveDataBucketKey, WO-INT-4) already contains a
+        // compromised key without punishing the shared prod proxy address (P-63).
         if ("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method)
                 || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)
                 || "DELETE".equalsIgnoreCase(method)) {
             return path.startsWith("/events") || path.startsWith("/variables")
                 || path.startsWith("/process-instances") || path.startsWith("/user-tasks")
                 || path.startsWith("/service-tasks") || path.startsWith("/incidents")
-                || path.startsWith("/process-definitions");
+                || path.startsWith("/process-definitions")
+                || path.startsWith("/deployments")
+                || path.startsWith("/users")
+                || path.startsWith("/dmn")
+                || path.startsWith("/forms")
+                || path.startsWith("/me/api-key")
+                || path.startsWith("/variable-schemas")
+                || path.startsWith("/admin/")
+                || path.contains("/members");
         }
         return false;
     }

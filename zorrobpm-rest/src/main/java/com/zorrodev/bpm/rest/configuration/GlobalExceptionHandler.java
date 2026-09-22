@@ -51,12 +51,20 @@ public class GlobalExceptionHandler {
         // WO-SEC-62: an oversized BPMN upload is a 413, not a 400 — same code/params
         // shape as the service-level BPMN_TOO_LARGE below. Only the bpmn @Size
         // violation maps here; every other field error keeps the old 400 contract.
+        // WO-API-4: the same @Size cap on the batch item field
+        // ("resources[0].content", "resources[1].content", ...) maps to the same
+        // 413 via the same handler — no separate handling (per WO §3). The field
+        // test matches the exact nested Bean Validation path shape Spring emits
+        // for a cascaded List element ("resources[<i>].content"), never a bare
+        // "content" (that shape cannot occur: content exists only inside the list).
         boolean bpmnTooLarge = ex.getBindingResult().getFieldErrors().stream()
-            .anyMatch(fe -> "bpmn".equals(fe.getField())
+            .anyMatch(fe -> ("bpmn".equals(fe.getField())
+                    || (fe.getField() != null && fe.getField().matches("resources\\[\\d+\\]\\.content")))
                 && fe.getCode() != null && fe.getCode().contains("Size"));
         if (bpmnTooLarge) {
             int actualLength = ex.getBindingResult().getFieldErrors().stream()
-                .filter(fe -> "bpmn".equals(fe.getField()))
+                .filter(fe -> "bpmn".equals(fe.getField())
+                    || (fe.getField() != null && fe.getField().matches("resources\\[\\d+\\]\\.content")))
                 .map(fe -> fe.getRejectedValue())
                 .filter(String.class::isInstance)
                 .mapToInt(v -> ((String) v).length())

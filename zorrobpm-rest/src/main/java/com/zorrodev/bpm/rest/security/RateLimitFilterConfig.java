@@ -21,6 +21,12 @@ import java.util.stream.Collectors;
  *                 /service-tasks, /incidents (per-IP generous limit).
  * WO-SEC-64 (S-16): the same data paths now cover PUT/PATCH/DELETE, not only
  * GET/POST (method check lives in the filter; registration is path-based).
+ * WO-API-4 (Finding #2): the admin/aux paths the audit found unthrottled
+ * (/deployments, /users, /dmn, /forms, /me/api-key, /variable-schemas,
+ * /admin/..., member paths) join the same data bucket — so they must be
+ * registered here too, otherwise the filter never executes for them
+ * (registration is path-based, the in-filter guard alone is dead code
+ * for unregistered paths).
  *
  * WO-SCALE-2: rate-limit state is stored in PostgreSQL via {@code PgRateLimiter}
  * (cluster-safe), not in per-instance Caffeine caches.
@@ -95,6 +101,11 @@ public class RateLimitFilterConfig {
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
         // WO-SEC-44: auth endpoints
         // WO-SEC-45: data endpoints (isDataEndpoint guard inside filter handles method+path matching)
+        // WO-API-4: admin/aux endpoints join the data bucket — registration must name
+        // every prefix the guard matches (bare path + /* children, mirroring the
+        // IdempotencyFilterConfig precedent for /deployments); the catch-all
+        // /processes/* + /me/* registrations cover the */members* member paths
+        // (/processes/{key}/members*, /me/memberships) — the guard narrows inside.
         registration.addUrlPatterns(
             "/auth/login",
             "/auth/refresh",
@@ -105,7 +116,23 @@ public class RateLimitFilterConfig {
             "/user-tasks/*",
             "/service-tasks/*",
             "/incidents/*",
-            "/process-definitions/*"
+            "/process-definitions/*",
+            "/deployments",
+            "/deployments/*",
+            "/users",
+            "/users/*",
+            "/dmn",
+            "/dmn/*",
+            "/forms",
+            "/forms/*",
+            "/me/api-key",
+            "/me/api-key/*",
+            "/me/memberships",
+            "/me/memberships/*",
+            "/me/*",
+            "/variable-schemas/*",
+            "/processes/*",
+            "/admin/*"
         );
         registration.setName("rateLimitFilter");
         return registration;
