@@ -66,6 +66,20 @@ public class BpmnStructureCoverageTest {
     }
 
     @Test
+    void getStructure_untypedTask_isMapped() throws Exception {
+        // WO-DIFF-9: bare <bpmn:task> must stay visible in the structure tree,
+        // not silently dropped like it was from the element map.
+        String bpmn = Files.readString(Paths.get("src/test/files/test-diff9-untyped-task.bpmn"));
+        ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);
+
+        BpmnProcessStructure structure = bpmnStructureService.getStructure(def.getId()).orElseThrow();
+
+        BpmnNode task = node(structure.getNodes(), "plain");
+        assertThat(task).isNotNull();
+        assertThat(task.getType()).isEqualTo("task");
+    }
+
+    @Test
     void getStructure_manualAndBusinessRuleTasks_areMapped() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/test-structure-coverage.bpmn"));
         ProcessDefinition def = processDefinitionService.addProcessDefinition(bpmn);

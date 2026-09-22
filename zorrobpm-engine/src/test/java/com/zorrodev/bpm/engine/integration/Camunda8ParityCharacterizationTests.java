@@ -2569,6 +2569,41 @@ public class Camunda8ParityCharacterizationTests {
         assertThat(incidentsOfInstance(piId)).isEmpty();
     }
 
+    // ==================== WO-DIFF-9: нетипизированный <bpmn:task> ====================
+
+    @Test
+    @Transactional
+    void untypedTask_passesThroughAndCompletes() throws Exception {
+        // WO-DIFF-9: голый <bpmn:task> (задача без выбранного типа из Modeler) — no-op
+        // pass-through, как MANUAL_TASK (проверено на реальном Zeebe 8.5): инстанс
+        // проходит насквозь и завершается, 0 инцидентов.
+        String key = uniq("diff9task");
+        String xml = bpmn("test-diff9-untyped-task.bpmn").replace("diff9-untyped-task", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(activity(piId, "plain").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void untypedTask_insideSubprocess_passesThrough() throws Exception {
+        // WO-DIFF-9, критерий 5: голый <bpmn:task> внутри embedded subprocess парсится
+        // и проходится так же, как на верхнем уровне.
+        String key = uniq("diff9tasksub");
+        String xml = bpmn("test-diff9-untyped-task-subprocess.bpmn").replace("diff9-untyped-subprocess", key);
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+
+        UUID piId = start(model.getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNotNull();
+        assertThat(activity(piId, "plain").getStatus()).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(incidentsOfInstance(piId)).isEmpty();
+    }
+
     // ==================== §C.1: processIdExpression / businessId ====================
 
     @Test

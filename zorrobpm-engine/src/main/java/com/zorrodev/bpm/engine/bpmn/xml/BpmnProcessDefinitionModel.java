@@ -48,6 +48,9 @@ public class BpmnProcessDefinitionModel {
     private List<BpmnReceiveTaskModel> receiveTasks;
     @XmlElement(name = "manualTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnManualTaskModel> manualTasks;
+    // WO-DIFF-9: bare <bpmn:task> (untyped — no concrete task type selected in the modeler).
+    @XmlElement(name = "task", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
+    private List<BpmnTaskModel> tasks;
     @XmlElement(name = "scriptTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
     private List<BpmnScriptTaskModel> scriptTasks;
     @XmlElement(name = "businessRuleTask", namespace = "http://www.omg.org/spec/BPMN/20100524/MODEL")
