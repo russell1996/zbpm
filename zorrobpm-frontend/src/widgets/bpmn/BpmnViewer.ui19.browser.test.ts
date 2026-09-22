@@ -8,9 +8,12 @@
  * programmatically (same call the dblclick handler issues internally);
  * assertions are geometry + computed style, not screenshots.
  *
- * The REAL bpmn-js CSS bundle is imported exactly as main.ts loads it. If
- * main.ts drops the import, the browser measures UA defaults and the
- * visibility assertions go red (proved by the POF mutation below).
+ * The REAL bpmn-js CSS bundle is imported exactly as main.ts loads it. NOTE the
+ * scope limit (proven by mutation, see report): these imports apply ONLY to
+ * this test's iframe — they prove the CSS exists and styles the breadcrumb,
+ * but they do NOT prove main.ts loads them (a main.ts without the import
+ * still passes here). The main.ts-import proof is the jsdom test; browser +
+ * jsdom together close the loop (P-47 lesson from WO-ACL-8).
  */
 import { describe, it, expect } from 'vitest'
 import { page } from 'vitest/browser'
