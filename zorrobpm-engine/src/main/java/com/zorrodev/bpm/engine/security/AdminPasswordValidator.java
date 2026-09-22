@@ -12,7 +12,13 @@ import org.springframework.stereotype.Component;
 import java.util.Set;
 
 /**
- * WO-SEC-14 + WO-SEC-31c: In prod, reject startup if admin password is weak.
+ * WO-SEC-14 + WO-SEC-31c: reject startup if admin password is weak.
+ *
+ * WO-SEC-68: the check runs on EVERY profile EXCEPT the explicit safe list
+ * ({@code dev}, {@code test} — same allowlist-exception as
+ * {@code TokenService.SECRET_OPTIONAL_PROFILES}). The previous prod-only gate
+ * silently skipped validation on any non-prod launch (default profile, staging
+ * without the exact {@code prod} name, forgotten deploy flag).
  *
  * Checks:
  *  - Password must differ from default "admin"
@@ -27,7 +33,13 @@ import java.util.Set;
 public class AdminPasswordValidator implements BeanFactoryPostProcessor {
 
     private static final String DEFAULT_ADMIN_PASSWORD = "admin";
-    private static final Set<String> PROD_REQUIRED_PROFILES = Set.of("prod");
+    /**
+     * WO-SEC-68: allowlist-EXCEPTION — validation is SKIPPED only on these
+     * profiles (local dev / CI). Everywhere else (prod, staging, default
+     * profile with no explicit name) it runs. Same set as
+     * {@code TokenService.SECRET_OPTIONAL_PROFILES} — keep in sync.
+     */
+    private static final Set<String> SAFE_PROFILES = Set.of("dev", "test");
     private static final int MIN_PASSWORD_LENGTH = 12;
 
     /** WO-SEC-31c: blocklist of commonly weak passwords that must be rejected. */
@@ -42,9 +54,9 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
     public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
         Environment environment = beanFactory.getBean(Environment.class);
 
-        boolean isProd = java.util.Arrays.stream(environment.getActiveProfiles())
-            .anyMatch(PROD_REQUIRED_PROFILES::contains);
-        if (!isProd) return;
+        boolean safeProfile = java.util.Arrays.stream(environment.getActiveProfiles())
+            .anyMatch(SAFE_PROFILES::contains);
+        if (safeProfile) return;
 
         String password = Binder.get(environment)
             .bind("zorrobpm.security.default-admin-password", Bindable.of(String.class))
