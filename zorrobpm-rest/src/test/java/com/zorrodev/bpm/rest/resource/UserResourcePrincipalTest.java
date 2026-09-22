@@ -66,6 +66,12 @@ class UserResourcePrincipalTest {
     }
 
     @Test
+    void getPrincipal_noAttribute_returnsNull() throws Exception {
+        when(request.getAttribute("principal")).thenReturn(null);
+        assertThat(invoke()).isNull();
+    }
+
+    @Test
     void createUser_invitePassesServicePrincipal() {
         // Сквозной якорь: createUser(INVITE) передаёт getPrincipal в
         // invitationService.createInvitation + auditLogService.record. Со старым
