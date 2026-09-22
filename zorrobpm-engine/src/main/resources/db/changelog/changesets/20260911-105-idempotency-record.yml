@@ -67,3 +67,7 @@ databaseChangeLog:
               COMMENT ON COLUMN idempotency_record.response_body IS 'Сохранённое тело ответа для replay';
               COMMENT ON COLUMN idempotency_record.response_content_type IS 'Content-Type сохранённого ответа';
               COMMENT ON COLUMN idempotency_record.created_at IS 'Момент сохранения (TTL-очистка по нему)';
+      rollback:
+        # WO-OPS-15: index + COMMENTs die with the table — no separate inverses needed.
+        - dropTable:
+            tableName: idempotency_record

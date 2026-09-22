@@ -29,3 +29,11 @@ databaseChangeLog:
               COMMENT ON TABLE process IS 'Реестр процессов (одна строка на definitionKey) — членство, архивация';
               COMMENT ON COLUMN process.archived IS 'Архивирован ли процесс (скрыт из списка по умолчанию, WO-ENG-9)';
               COMMENT ON COLUMN process.archived_at IS 'Когда процесс архивирован (null если не архивирован)';
+      rollback:
+        # WO-OPS-15: COMMENTs die with the dropped columns.
+        - dropColumn:
+            tableName: process
+            columnName: archived_at
+        - dropColumn:
+            tableName: process
+            columnName: archived

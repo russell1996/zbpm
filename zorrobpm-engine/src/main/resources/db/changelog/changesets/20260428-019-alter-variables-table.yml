@@ -31,3 +31,19 @@ databaseChangeLog:
             tableName: variables
             columnNames: process_instance_id, name
             constraintName: uk_variables__process_instance_id_name
+      rollback:
+        # WO-OPS-15: full reverse of the PK swap. The backfill UPDATE has no
+        # inverse (generated UUIDs vanish with the dropped column). Pre-019 PK
+        # was (process_instance_id, name) — see 20251008-005.
+        - dropUniqueConstraint:
+            tableName: variables
+            constraintName: uk_variables__process_instance_id_name
+        - dropPrimaryKey:
+            tableName: variables
+        - addPrimaryKey:
+            tableName: variables
+            columnNames: process_instance_id, name
+            constraintName: pk_variables
+        - dropColumn:
+            tableName: variables
+            columnName: id

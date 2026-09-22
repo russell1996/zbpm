@@ -17,3 +17,8 @@ databaseChangeLog:
             tableName: form
             columnName: kind
             columnDataType: varchar(32)
+      rollback:
+        # WO-OPS-15: backfill UPDATE reversed by dropping the column.
+        - dropColumn:
+            tableName: form
+            columnName: kind
