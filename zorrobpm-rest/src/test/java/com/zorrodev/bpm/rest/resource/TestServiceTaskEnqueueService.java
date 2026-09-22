@@ -14,7 +14,8 @@ import java.util.UUID;
  * boot of the rest {@code TestMain} (prod/default/dev) alongside the production
  * {@code ServiceTaskEnqueueServiceImpl} ({@code @Profile("!test")}) — those boots
  * only survived because a fail-fast fired first and masked the collision.
- * Under the {@code test} profile the bean set is unchanged (double only).
+ * Under the {@code test} profile the bean set is unchanged (double only;
+ * {@code @Primary} is a harmless explicit marker while it is the sole bean).
  */
 @Slf4j
 @Service
