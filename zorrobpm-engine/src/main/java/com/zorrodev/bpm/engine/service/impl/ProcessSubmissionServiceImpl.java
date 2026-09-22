@@ -227,12 +227,13 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
                 Map.of("processKey", key));
         }
 
-        ProcessEntity process = new ProcessEntity();
-        process.setId(UUID.randomUUID());
-        process.setDefinitionKey(key);
-        process.setName(submission.getName() != null ? submission.getName() : key);
-        process.setCreatedAt(Instant.now());
-        processRepository.save(process);
+        // WO-ENG-18: the registry row already exists — addProcessDefinition above funnels
+        // through the shared ensureProcessRow helper (P-24: reuse, don't duplicate). The
+        // submitter becomes OWNER below exactly as before (ADR-8 п.3); name falls back to
+        // the submission name only if the row somehow predates this approve (same value
+        // submit() stored — model name — so no observable change either way).
+        ProcessEntity process = processDefinitionService.ensureProcessRow(
+            key, submission.getName() != null ? submission.getName() : key);
 
         // ADR-8 п.3: the submitter becomes OWNER of the approved process — they asked for it.
         ProcessMemberEntity owner = new ProcessMemberEntity();

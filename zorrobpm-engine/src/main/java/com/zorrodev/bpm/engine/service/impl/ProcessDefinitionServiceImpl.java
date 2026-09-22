@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
+import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.FileService;
@@ -14,6 +15,7 @@ import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -23,6 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Base64;
 import java.util.LinkedList;
@@ -124,6 +127,13 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             // (double-checked dedup): the loser sees the winner's row and returns it.
             // xact-scoped: joins the caller's tx (single deploy or batch item alike).
             advisoryDeployLock.acquireForKey(key);
+            // WO-ENG-18: every deployed key owns exactly one process-registry row, no
+            // matter which path deployed it (single, batch, version-upload,
+            // submission-approve — all funnel through here). Unconditional on purpose:
+            // it also heals orphaned keys on dedup-hit/redeploy (same sha) and in the
+            // REL-15 repair path, not just on version creation. Runs under the key lock
+            // above, inside this tx — a rolled-back deploy leaves no orphaned row.
+            ensureProcessRow(key, name);
             Optional<ProcessDefinitionEntity> processDefinitionEntityOptional = processDefinitionRepository.findBySha256(sha256);
 
             ProcessDefinitionEntity processDefinitionEntity;
@@ -342,6 +352,34 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             return data;
         }
         return getProcessDefinitions(parameters);
+    }
+
+    /**
+     * WO-ENG-18: shared find-or-create for the {@code process}-registry row (see the
+     * interface for the invariant). Race guard mirrors the
+     * {@code ProcessSubmissionServiceImpl.submit} pattern: pre-check + save, and the
+     * unique {@code definition_key} converts a concurrent first-deploy race into a
+     * {@code DataIntegrityViolationException} — in that case the winner's row is
+     * re-read, so two racers never leave two rows (and never 500).
+     */
+    @Override
+    public ProcessEntity ensureProcessRow(String definitionKey, String name) {
+        return processRepository.findByDefinitionKey(definitionKey)
+            .orElseGet(() -> {
+                ProcessEntity process = new ProcessEntity();
+                process.setId(UUID.randomUUID());
+                process.setDefinitionKey(definitionKey);
+                process.setName(name != null ? name : definitionKey);
+                process.setCreatedAt(Instant.now());
+                try {
+                    return processRepository.save(process);
+                } catch (DataIntegrityViolationException e) {
+                    log.debug("WO-ENG-18: concurrent process-row insert for key={}, using winner's row",
+                        definitionKey);
+                    return processRepository.findByDefinitionKey(definitionKey)
+                        .orElseThrow(() -> e);
+                }
+            });
     }
 
     @Override
