@@ -174,9 +174,9 @@ public class SyncTaskHandler {
                     // untouched (REST POST /dmn/{id}/evaluate maps it to 400, existing DMN
                     // tests pin it) — the probe decides before the shared method is called.
                     if (!dmnService.decisionExists(decisionId)) {
-                        // WO-DIFF-8: broker-verbatim message (Raxon WO-028 probe against
-                        // live Zeebe 8.6: "Expected to evaluate decision 'X', but no
-                        // decision found for id 'X'" with errorType CALLED_DECISION_ERROR).
+                        // WO-DIFF-8: broker-verbatim message (Raxon WO-028 differential probe:
+                        // "Expected to evaluate decision 'X', but no decision found for id 'X'"
+                        // with errorType CALLED_DECISION_ERROR).
                         throw new IllegalStateException("Expected to evaluate decision '" + decisionId
                             + "', but no decision found for id '" + decisionId + "'");
                     }
