@@ -122,6 +122,39 @@ class ProcessArchiveIntegrationTest {
         assertThat(afterData.get(0).get("archived").asBoolean()).isFalse();
     }
 
+    /**
+     * WO-ENG-18 criterion 2: a process deployed through the ordinary batch path
+     * ({@code POST /deployments}, NOT the submission flow) must be archivable —
+     * pre-fix this returned 404 {@code "Process not found: <key>"} because the batch
+     * path never created the {@code process} registry row.
+     */
+    @Test
+    void batchDeploy_archiveReturns200_not404() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/process1.bpmn"));
+        String key = "eng18-batch-" + UUID.randomUUID().toString().substring(0, 8);
+        bpmn = bpmn.replace("process1", key).replace("Process 1", key);
+        String batchBody = mapper.writeValueAsString(mapper.createObjectNode()
+            .put("description", "eng18")
+            .set("resources", mapper.createArrayNode().add(
+                mapper.createObjectNode().put("type", "BPMN").put("content", bpmn))));
+        MvcResult deployed = mockMvc.perform(post("/deployments")
+                .header("Authorization", "Bearer " + adminToken)
+                .content(batchBody)
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isCreated()).andReturn();
+        String deployedKey = mapper.readTree(deployed.getResponse().getContentAsString())
+            .get("processes").get(0).get("key").asText();
+        assertThat(deployedKey).isEqualTo(key);
+
+        mockMvc.perform(post("/processes/" + deployedKey + "/archive")
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(post("/processes/" + deployedKey + "/unarchive")
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk());
+    }
+
     @Test
     void archive_requiresDeployAuth() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/process1.bpmn"));
