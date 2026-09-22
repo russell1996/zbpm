@@ -14,7 +14,12 @@ import org.springframework.mail.javamail.JavaMailSender;
  * that no-mail-config deployments do not have — context startup died (fail-fast by accident).
  */
 @SpringBootTest(classes = TestMain.class,
-    properties = "zorrobpm.security.jwt-secret=startup-test-secret-0123456789abcdef0123456789abcdef")
+    properties = {
+        "zorrobpm.security.jwt-secret=startup-test-secret-0123456789abcdef0123456789abcdef",
+        // WO-SEC-68: no-profile startup now also validates the admin password
+        // (was prod-only) — production-like boot needs a strong one, same as the secret above.
+        "zorrobpm.security.default-admin-password=startup-test-strong-admin-password"
+    })
 class MailNoTransportStartupTest {
 
     @Autowired ApplicationContext ctx;
