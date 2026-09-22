@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
@@ -51,6 +52,7 @@ public class CompletionService {
     private final ElementListenerPhaseService elementListenerPhaseService;
     private final AdHocSubProcessHandler adHocSubProcessHandler;
     private final tools.jackson.databind.ObjectMapper objectMapper;
+    private final BpmMetrics bpmMetrics;
 
     /**
      * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
@@ -135,6 +137,8 @@ public class CompletionService {
             // only an active task may complete — ignore a duplicate/late completion, a boundary-timer
             // interruption (CANCELLED) or a task superseded by incident-resolve (ERROR) to avoid double execution
             log.info("Ignoring completion of user task {} in status {}", userTaskId, activity.getStatus());
+            // WO-QW-2: observability for the idempotent guard above (log level + no-op unchanged).
+            bpmMetrics.activityTransitionIgnored("stale_status");
             return false;
         }
         return true;
@@ -436,6 +440,8 @@ public class CompletionService {
                 // interruption (CANCELLED), an already-COMPLETED task, or a task parked on an incident
                 // (ERROR) that was superseded by incident-resolve re-execution.
                 log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
+                // WO-QW-2: observability for the idempotent guard above (log level + no-op unchanged).
+                bpmMetrics.activityTransitionIgnored("stale_status");
                 return false;
             }
         }

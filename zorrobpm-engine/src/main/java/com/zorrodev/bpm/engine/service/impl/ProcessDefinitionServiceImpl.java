@@ -233,7 +233,7 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
         artifactRegistrar.registerSignalStartSubscriptions(entity.getKey(), id, model);
         artifactRegistrar.registerUserTaskForms(id, model, entity.getDeploymentId());
 
-        bindingRepository.findByProcessDefinitionId(id).forEach(bindingRepository::delete);
+        bindingRepository.deleteByProcessDefinitionId(id);
         if (entity.getVersion() != null && entity.getVersion() > 1) {
             artifactRegistrar.carryForwardBindings(entity.getKey(), entity.getVersion() - 1, entity);
         }
