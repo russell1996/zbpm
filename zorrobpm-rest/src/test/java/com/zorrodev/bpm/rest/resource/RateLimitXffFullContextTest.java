@@ -70,12 +70,24 @@ class RateLimitXffFullContextTest {
         assertThat(registrations).hasSize(1);
         FilterRegistrationBean registration = registrations.get(0);
         assertThat(registration.getOrder()).isEqualTo(Ordered.HIGHEST_PRECEDENCE);
+        // WO-API-4: admin/aux prefixes joined the data bucket — the registration
+        // must name every prefix the guard matches (bare + /* children), or the
+        // filter never executes for them.
         assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder(
             "/auth/login", "/auth/refresh", "/me/password",
             "/events/*", "/variables/*",
             "/process-instances/*", "/user-tasks/*",
             "/service-tasks/*", "/incidents/*",
-            "/process-definitions/*");
+            "/process-definitions/*",
+            "/deployments", "/deployments/*",
+            "/users", "/users/*",
+            "/dmn", "/dmn/*",
+            "/forms", "/forms/*",
+            "/me/api-key", "/me/api-key/*",
+            "/me/memberships", "/me/memberships/*", "/me/*",
+            "/variable-schemas/*",
+            "/processes/*",
+            "/admin/*");
     }
 
     private HttpRequest buildLoginRequest(String xffValue) throws Exception {

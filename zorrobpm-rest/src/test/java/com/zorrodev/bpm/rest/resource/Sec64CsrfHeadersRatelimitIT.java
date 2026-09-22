@@ -223,8 +223,8 @@ class Sec64CsrfHeadersRatelimitIT {
     @Test
     void criterion4_putRateLimited_likePost() throws Exception {
         // PUT /process-definitions/{id} — data-путь, покрытый RateLimitFilter
-        // (регистрация по /process-definitions/*). /users/* фильтром не покрыт
-        // вообще — проверять лимит там значило бы проверять отсутствие.
+        // (регистрация по /process-definitions/*). WO-API-4: /users/* теперь тоже
+        // в data-бакете — комментарий выше про «не покрыт вообще» устарел.
         // data-бакет в этом классе = 5/час: первые 5 проходят, 6-й — 429.
         UUID fakeId = UUID.randomUUID();
         String body = "{\"name\":\"SEC64 RL\"}";
