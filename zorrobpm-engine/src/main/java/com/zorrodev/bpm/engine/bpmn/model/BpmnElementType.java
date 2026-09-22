@@ -6,6 +6,9 @@ public enum BpmnElementType {
     SEND_TASK,
     RECEIVE_TASK,
     MANUAL_TASK,
+    // WO-DIFF-9: bare <bpmn:task> — untyped task, no-op pass-through like MANUAL_TASK,
+    // but a distinct type so diagnostics tell "forgotten type" apart from "real manual task".
+    UNDEFINED_TASK,
     SCRIPT_TASK,
     BUSINESS_RULE_TASK,
     USER_TASK,
