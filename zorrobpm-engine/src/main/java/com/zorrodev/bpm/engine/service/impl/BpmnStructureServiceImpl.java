@@ -96,6 +96,7 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         addDocs(process.getParallelGateways(), docs);
         addDocs(process.getCallActivities(), docs);
         addDocs(process.getManualTasks(), docs);
+        addDocs(process.getTasks(), docs);
         addDocs(process.getScriptTasks(), docs);
         addDocs(process.getBusinessRuleTasks(), docs);
         addDocs(process.getInclusiveGateways(), docs);
@@ -174,6 +175,8 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         forEach(process.getEndEvents(), e -> nodes.add(mapEndEvent(e, refs)));
         forEach(process.getServiceTasks(), t -> nodes.add(mapServiceTask(t)));
         forEach(process.getManualTasks(), t -> nodes.add(simpleNode(t.getId(), t.getName(), "manualTask", t.getIncoming(), t.getOutgoing())));
+        // WO-DIFF-9: bare <bpmn:task> (untyped) — must stay visible, not silently dropped.
+        forEach(process.getTasks(), t -> nodes.add(simpleNode(t.getId(), t.getName(), "task", t.getIncoming(), t.getOutgoing())));
         forEach(process.getScriptTasks(), t -> nodes.add(simpleNode(t.getId(), t.getName(), "scriptTask", t.getIncoming(), t.getOutgoing())));
         forEach(process.getBusinessRuleTasks(), t -> nodes.add(simpleNode(t.getId(), t.getName(), "businessRuleTask", t.getIncoming(), t.getOutgoing())));
         forEach(process.getSendTasks(), t -> nodes.add(mapMessageTask(t.getId(), t.getName(), "sendTask", t.getIncoming(), t.getOutgoing(), t.getMessageRef(), refs)));
@@ -288,6 +291,8 @@ public class BpmnStructureServiceImpl implements BpmnStructureService {
         forEach(s.getStartEvents(), e -> children.getNodes().add(mapStartEvent(e, refs)));
         forEach(s.getEndEvents(), e -> children.getNodes().add(mapEndEvent(e, refs)));
         forEach(s.getServiceTasks(), t -> children.getNodes().add(mapServiceTask(t)));
+        // WO-DIFF-9: bare <bpmn:task> nested in an embedded subprocess.
+        forEach(s.getTasks(), t -> children.getNodes().add(simpleNode(t.getId(), t.getName(), "task", t.getIncoming(), t.getOutgoing())));
         forEach(s.getUserTasks(), t -> children.getNodes().add(mapUserTask(t)));
         forEach(s.getCallActivities(), c -> children.getNodes().add(mapCallActivity(c)));
         forEach(s.getIntermediateCatchEvents(), e -> children.getNodes().add(mapCatchEvent(e, refs)));

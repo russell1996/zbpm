@@ -111,6 +111,37 @@ public class SyncTaskHandler {
         }
     }
 
+    /**
+     * Handler for UNDEFINED_TASK elements (WO-DIFF-9): a bare {@code <bpmn:task>}
+     * with no concrete type selected in the modeler. Real Zeebe 8.5 treats it as a
+     * no-op pass-through (verified live) — body identical to {@link ManualTask},
+     * separate type so diagnostics tell "forgotten type" apart from "real manual task".
+     */
+    @Component
+    @RequiredArgsConstructor
+    public static class UndefinedTask implements ElementHandler, TypedElementHandler {
+        private final DBService dbService;
+        private final FlowNavigator flowNavigator;
+        private final ActivityService activityService;
+
+        @Override
+        public BpmnElementType elementType() { return BpmnElementType.UNDEFINED_TASK; }
+
+        @Override
+        public ElementHandler handler() { return this; }
+
+        @Override
+        public void handle(ExecutionCtx ctx, BpmnProcessDefinitionModel bpmn, BpmnElementModel el) {
+            UUID processInstanceId = ctx.processInstanceId();
+            UUID tokenId = ctx.tokenId();
+
+            UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
+            dbService.completeActivity(activityId);
+            flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, el, ctx.executor());
+            activityService.triggerConditionalEvents(processInstanceId);
+        }
+    }
+
     @Component
     @RequiredArgsConstructor
     public static class BusinessRuleTask implements ElementHandler, TypedElementHandler {

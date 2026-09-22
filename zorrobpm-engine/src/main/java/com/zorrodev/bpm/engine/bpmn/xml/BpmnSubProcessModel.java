@@ -59,6 +59,10 @@ public class BpmnSubProcessModel implements Documented {
     @XmlElement(name = "manualTask", namespace = NS)
     private List<BpmnManualTaskModel> manualTasks;
 
+    // WO-DIFF-9: bare <bpmn:task> nested in an embedded subprocess.
+    @XmlElement(name = "task", namespace = NS)
+    private List<BpmnTaskModel> tasks;
+
     @XmlElement(name = "exclusiveGateway", namespace = NS)
     private List<BpmnExclusiveGatewayModel> exclusiveGateways;
 

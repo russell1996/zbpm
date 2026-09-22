@@ -227,6 +227,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     pd.addElement(element);
                 }
             }
+            // WO-DIFF-9: bare <bpmn:task> (untyped) — no-op pass-through, like manual task.
+            if (Optional.ofNullable(process.getTasks()).isPresent()) {
+                for (BpmnTaskModel task : process.getTasks()) {
+                    BpmnElementModel element = toElementModel(task);
+                    element.setProcessDefinition(pd);
+                    pd.addElement(element);
+                }
+            }
             if (Optional.ofNullable(process.getScriptTasks()).isPresent()) {
                 for (BpmnScriptTaskModel scriptTask : process.getScriptTasks()) {
                     BpmnElementModel element = toElementModel(scriptTask);
@@ -949,6 +957,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         addInnerElements(ext, sub.getScriptTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnScriptTaskModel::getExtensionElements);
         addInnerElements(ext, sub.getUserTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnUserTaskModel::getExtensionElements);
         addInnerElements(ext, sub.getManualTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, null);
+        // WO-DIFF-9: bare <bpmn:task> activates in ad-hoc like any other inner element.
+        addInnerElements(ext, sub.getTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, null);
         addInnerElements(ext, sub.getBusinessRuleTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnBusinessRuleTaskModel::getExtensionElements);
         addInnerElements(ext, sub.getSendTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnSendTaskModel::getExtensionElements);
         addInnerElements(ext, sub.getReceiveTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, null);
@@ -1031,6 +1041,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (sub.getManualTasks() != null) {
             for (BpmnManualTaskModel manualTask : sub.getManualTasks()) {
                 BpmnElementModel child = toElementModel(manualTask);
+                child.setProcessDefinition(pd);
+                pd.addElement(child);
+            }
+        }
+        // WO-DIFF-9: bare <bpmn:task> nested in an embedded subprocess.
+        if (sub.getTasks() != null) {
+            for (BpmnTaskModel task : sub.getTasks()) {
+                BpmnElementModel child = toElementModel(task);
                 child.setProcessDefinition(pd);
                 pd.addElement(child);
             }
@@ -1533,6 +1551,19 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         element.setType(BpmnElementType.MANUAL_TASK);
         element.setIncoming(manualTask.getIncoming());
         element.setOutgoing(manualTask.getOutgoing());
+        return element;
+    }
+
+    // WO-DIFF-9: bare <bpmn:task> maps to its own type (not MANUAL_TASK) so
+    // diagnostics distinguish "forgotten type" from "real manual task"; the
+    // runtime behavior is identical (pass-through, see SyncTaskHandler.UndefinedTask).
+    private BpmnElementModel toElementModel(BpmnTaskModel task) {
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(task.getId());
+        element.setName(task.getName());
+        element.setType(BpmnElementType.UNDEFINED_TASK);
+        element.setIncoming(task.getIncoming());
+        element.setOutgoing(task.getOutgoing());
         return element;
     }
 
