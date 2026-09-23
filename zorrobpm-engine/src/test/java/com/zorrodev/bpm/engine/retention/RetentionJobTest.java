@@ -37,11 +37,17 @@ class RetentionJobTest {
     void enabled_delegatesToBatchProcessor() {
         config.setTtlDays(90);
         config.setBatchSize(10);
-        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(10))).thenReturn(java.util.List.of());
+        // WO-REL-49: instance pass is a claim loop now — first call empty ends it.
+        // eq(90) is ttlDays (fallbackDays), not batchSize: the claim carries no batch size.
+        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
+            .thenReturn(java.util.Optional.empty());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(0);
         job.run();
-        verify(batchProcessor).findEligibleInstances(any(), anyInt(), eq(10));
+        verify(batchProcessor).claimAndDeleteOneInstance(any(), eq(90));
         verify(batchProcessor).deleteOrphanedBoundaryTimers(any(), eq(10));
+        // The old split path (select commits before delete) must not be used anymore:
+        // it let two replicas select the same IDs after lock release (audit §5.2).
+        verify(batchProcessor, never()).findEligibleInstances(any(), anyInt(), anyInt());
         verify(batchProcessor, never()).deleteInstances(any());
     }
 
@@ -49,7 +55,8 @@ class RetentionJobTest {
     void enabled_cleansOrphanedBoundaryTimersInBatches() {
         config.setTtlDays(90);
         config.setBatchSize(10);
-        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(10))).thenReturn(java.util.List.of());
+        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
+            .thenReturn(java.util.Optional.empty());
         // two full batches then a short one → loop must stop after the short batch
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(10, 10, 4);
         job.run();
@@ -60,7 +67,8 @@ class RetentionJobTest {
     void enabled_batchSizeZero_doesNotLoopForever() {
         config.setTtlDays(90);
         config.setBatchSize(0);
-        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(0))).thenReturn(java.util.List.of());
+        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
+            .thenReturn(java.util.Optional.empty());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(0))).thenReturn(0);
         // Preemptive timeout: with the pre-fix guard "deleted < batchSize" the loop never exits
         // (0 < 0 is false) and run() spins forever issuing DELETE LIMIT 0 — the timeout kills it.
@@ -78,9 +86,9 @@ class RetentionJobTest {
     }
 
     /**
-     * WO-PERF-8 (R2): one instance per transaction — the job must call
-     * {@code deleteInstances} once per id, never with the whole batch (that single
-     * call was one transaction for up to batchSize instances).
+     * WO-PERF-8 (R2) intent, preserved under the WO-REL-49 claim loop: one instance per
+     * transaction — the job must claim+delete one id per call, never a whole batch in one
+     * call (that single call was one transaction for up to batchSize instances).
      */
     @Test
     void enabled_deletesInstancesOnePerTransaction() {
@@ -88,21 +96,19 @@ class RetentionJobTest {
         config.setBatchSize(10);
         UUID id1 = UUID.randomUUID();
         UUID id2 = UUID.randomUUID();
-        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(10)))
-            .thenReturn(java.util.List.of(id1, id2), java.util.List.of());
+        // Two claimed instances, then an empty claim ends the loop.
+        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
+            .thenReturn(java.util.Optional.of(new RetentionBatchProcessor.ClaimedDelete(id1, 5)),
+                java.util.Optional.of(new RetentionBatchProcessor.ClaimedDelete(id2, 7)),
+                java.util.Optional.empty());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(0);
-        when(batchProcessor.deleteInstances(java.util.List.of(id1))).thenReturn(5);
-        when(batchProcessor.deleteInstances(java.util.List.of(id2))).thenReturn(7);
-        // Mutant shape (pre-fix single call with the whole batch): stubbed leniently
-        // so a regressed job fails the explicit never()-verify below instead of
-        // erroring on a strict-stubbing mismatch.
-        lenient().when(batchProcessor.deleteInstances(java.util.List.of(id1, id2))).thenReturn(12);
 
         job.run();
 
-        verify(batchProcessor).deleteInstances(java.util.List.of(id1));
-        verify(batchProcessor).deleteInstances(java.util.List.of(id2));
-        verify(batchProcessor, never()).deleteInstances(java.util.List.of(id1, id2));
+        verify(batchProcessor, times(3)).claimAndDeleteOneInstance(any(), eq(90));
+        // The old split path must stay unused (see enabled_delegatesToBatchProcessor).
+        verify(batchProcessor, never()).findEligibleInstances(any(), anyInt(), anyInt());
+        verify(batchProcessor, never()).deleteInstances(any());
     }
 
     /**
@@ -118,7 +124,8 @@ class RetentionJobTest {
         UUID id2 = UUID.randomUUID();
         UUID id3 = UUID.randomUUID();
 
-        when(batchProcessor.findEligibleInstances(any(), anyInt(), eq(2))).thenReturn(java.util.List.of());
+        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
+            .thenReturn(java.util.Optional.empty());
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(2))).thenReturn(0);
         // one full batch (2) + one partial (1), then an empty poll ends the loop
         when(batchProcessor.findEligibleSubmissions(any(), eq(2), any()))
