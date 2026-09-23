@@ -488,8 +488,12 @@ public class ElementSupport {
             variable.setType(ProcessVariableType.BOOLEAN);
             variable.setValue(b.toString());
         } else if (result instanceof Number number && isIntegral(number)) {
+            // WO-ENG-21 (N10): целое вне диапазона Long — явный EngineException,
+            // а не молчаливое усечение longValue() (у BigDecimal теряются старшие
+            // биты, у double — насыщение к Long.MAX_VALUE; оба тихо меняют
+            // значение). Контракт: integral && withinLongRange → LONG точно.
             variable.setType(ProcessVariableType.LONG);
-            variable.setValue(Long.toString(number.longValue()));
+            variable.setValue(Long.toString(longValueExact(name, number)));
         } else if (result instanceof Number number) {
             java.math.BigDecimal bd = (number instanceof java.math.BigDecimal x)
                 ? x : java.math.BigDecimal.valueOf(number.doubleValue());
@@ -503,6 +507,48 @@ public class ElementSupport {
             variable.setValue(result == null ? "" : result.toString());
         }
         return variable;
+    }
+
+    /**
+     * WO-ENG-21 (N10): точное целое в диапазоне Long. Целое ВНЕ диапазона
+     * (например 2^63 из FEEL/DMN-результата) — EngineException с именем
+     * переменной и границами, а не усечённое значение. Тот же тип исключения,
+     * что у соседних числовых domain-ошибок (cardinality F23 в
+     * {@code MultiInstanceExecutor}, priority WO-C8-30) — и та же маршрутизация
+     * в вызывающих путях; откат в binary double для денег запрещён самим WO.
+     */
+    private long longValueExact(String name, Number number) {
+        try {
+            if (number instanceof java.math.BigDecimal bd) {
+                return bd.longValueExact();
+            }
+            if (number instanceof java.math.BigInteger bi) {
+                return bi.longValueExact();
+            }
+            if (number instanceof Long l) {
+                return l;
+            }
+            if (number instanceof Integer i) {
+                return i;
+            }
+            if (number instanceof Short s) {
+                return s;
+            }
+            if (number instanceof Byte b) {
+                return b;
+            }
+            // Double/Float/прочие: через точное десятичное представление —
+            // longValueExact() отказывает и на выходе за диапазон, и на дроби
+            // (дроби сюда не доходят — только isIntegral(), но guard полный).
+            // Сюда попадают и целозначные double вне диапазона (насыщение
+            // longValue() вместо отказа — та же тихая порча, что у BigDecimal).
+            return new java.math.BigDecimal(number.toString()).longValueExact();
+        } catch (ArithmeticException e) {
+            throw new com.zorrodev.bpm.contract.exception.EngineException(
+                "Variable '" + name + "' value " + number + " is an integer outside LONG range"
+                    + " [" + Long.MIN_VALUE + ", " + Long.MAX_VALUE + "]"
+                    + " — refusing to store a truncated value", e);
+        }
     }
 
     public boolean isIntegral(Number number) {
