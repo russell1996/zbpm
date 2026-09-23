@@ -34,6 +34,195 @@ public class FormValidator {
     static final int MAX_PATTERN_LENGTH = 256;
     static final int MAX_PATTERN_VALUE_LENGTH = 4096;
 
+    /**
+     * WO-SEC-75 (N11): wall-clock fuse for a single pattern match. Length caps
+     * alone do not stop ReDoS: short patterns with nested ambiguous
+     * quantifiers (e.g. {@code ^((a+)*)+$} — 10 chars) fit the caps freely and
+     * backtrack exponentially on the calling thread. The static
+     * {@link #isDangerousPattern} reject below stops the known shapes without
+     * running the engine at all; this fuse is the second layer for shapes the
+     * static check does not know yet. 500ms is orders of magnitude above a
+     * legitimate form-js format match (microseconds — the formats are short
+     * anchored expressions over values of a few KB at most) and far below a
+     * request-hang. The match runs on a bounded worker pool (daemon threads,
+     * never the request thread), so a pathological pattern burns one pooled
+     * slot for half a second instead of hanging the caller forever.
+     */
+    static final long PATTERN_MATCH_TIMEOUT_MS = 500;
+    /**
+     * WO-SEC-75 layer-2 pool: cached (threads are created per concurrent
+     * pathological match and reaped 60s after use — idle cost zero), daemon
+     * (a timed-out match still burning CPU must never block JVM shutdown),
+     * bounded queue discipline via AbortPolicy: when the pool is saturated
+     * the submit itself throws RejectedExecutionException → fail-closed
+     * invalid, exactly like a timeout. Cached+unbounded-thread-creation
+     * alone would let N pathological patterns spawn N threads; the
+     * SynchronousQueue handoff + AbortPolicy bounds the damage to what the
+     * pool can absorb instead of hanging the request thread forever.
+     */
+    private static final java.util.concurrent.ExecutorService PATTERN_MATCH_POOL =
+        new java.util.concurrent.ThreadPoolExecutor(0, 32,
+            60L, java.util.concurrent.TimeUnit.SECONDS,
+            new java.util.concurrent.SynchronousQueue<>(),
+            r -> {
+                Thread t = new Thread(r, "form-pattern-match");
+                t.setDaemon(true);
+                return t;
+            },
+            new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+
+    /**
+     * WO-SEC-75 (N11): static reject of regex shapes known to backtrack
+     * catastrophically — checked BEFORE the engine ever runs, so these
+     * patterns cost microseconds, not a fuse timeout. Rejects:
+     * <ul>
+     *   <li>nested ambiguous quantifiers — a quantified group
+     *   ({@code (...)}, {@code [...]}) whose body contains an inner
+     *   quantifier AND which is itself quantified from the outside
+     *   ({@code (a+)+}, {@code (a*)*}, {@code ([a-z]+)+});</li>
+     *   <li>backreferences ({@code \1}) — force re-matching of captured
+     *   groups and defeat the engine's linear fast paths.</li>
+     * </ul>
+     * Legitimate form-js formats (email/phone/zip/code, alternations like
+     * {@code ^(red|green|blue)$}, bounded repetitions like {@code \d{5}})
+     * contain neither shape and pass through untouched. Fail-closed like the
+     * rest of this class: a rejected pattern means "value does not match".
+     */
+    static boolean isDangerousPattern(String pattern) {
+        return hasBackreference(pattern) || hasNestedQuantifier(pattern);
+    }
+
+    /** WO-SEC-75: {@code \1}..\{@code \9} outside a character class. */
+    private static boolean hasBackreference(String pattern) {
+        boolean escaped = false;
+        boolean inClass = false;
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (escaped) {
+                if (!inClass && c >= '1' && c <= '9') return true;
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') { escaped = true; continue; }
+            if (c == '[') { inClass = true; continue; }
+            if (c == ']' && inClass) { inClass = false; }
+        }
+        return false;
+    }
+
+    /**
+     * WO-SEC-75: a repeated group whose body contains an AMBIGUOUS split —
+     * a free repetition choice ({@code +}, {@code *}, open/{@code n>1}
+     * {@code {m,n}}) inside a group that is itself repeatable from outside
+     * ({@code +}, {@code *}, open/{@code n>1} {@code {m,n}}). Re-entering the
+     * group multiplies the search: the split between inner repetitions and
+     * outer repetitions is free. Linear counter-cases that must PASS:
+     * fixed-shape atoms ({@code \d{3}}, literals, classes, {@code ?}-optionals)
+     * even when the group repeats ({@code ^(\d{3})+$} — the partition is
+     * forced); {@code ?}/{@code {1}} outside (re-enter at most once, e.g.
+     * {@code (-\d{4})?}); single-char repetitions ({@code \d+},
+     * {@code [a-z]*}, {@code a+}); plain alternations of fixed shapes
+     * ({@code ^(red|green|blue)$}).
+     * Runs in O(n) with an explicit stack (no regex-on-regex, no recursion).
+     */
+    private static boolean hasNestedQuantifier(String pattern) {
+        int n = pattern.length();
+        // groupStack: for each open '(' — whether its body already contains a
+        // free repetition choice (the ambiguity source). A bare fixed
+        // repetition like \d{3} is NOT recorded (see isInnerMultiQuantifierAt).
+        java.util.ArrayDeque<Boolean> bodyHasInnerMultiQuant = new java.util.ArrayDeque<>();
+        boolean escaped = false;
+        boolean inClass = false;
+        for (int i = 0; i < n; i++) {
+            char c = pattern.charAt(i);
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\') { escaped = true; continue; }
+            if (inClass) {
+                if (c == ']') inClass = false;
+                continue;
+            }
+            if (c == '[') { inClass = true; continue; }
+            if (c == '(') {
+                bodyHasInnerMultiQuant.push(false);
+                continue;
+            }
+            if (c == ')') {
+                if (bodyHasInnerMultiQuant.isEmpty()) continue; // unbalanced — compile will fail-closed later
+                boolean inner = bodyHasInnerMultiQuant.pop();
+                // Catastrophe needs the group repeatable MORE than once from
+                // the outside (+, *, {m,n} with n>1 or open). A lone '?' (0..1)
+                // or '{1}' cannot re-enter the body, so (-\d{4})? stays linear.
+                if (inner && isRepeatableQuantifierAt(pattern, i + 1)) return true;
+                continue;
+            }
+            if (isInnerMultiQuantifierAt(pattern, i)) {
+                if (!bodyHasInnerMultiQuant.isEmpty()) {
+                    bodyHasInnerMultiQuant.pop();
+                    bodyHasInnerMultiQuant.push(true);
+                }
+                // skip the rest of a {m,n} token so its digits/commas are
+                // not re-scanned as independent characters
+                if (pattern.charAt(i) == '{') {
+                    int j = pattern.indexOf('}', i);
+                    if (j > i) i = j;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * WO-SEC-75: "repeatable from outside" — the group can be re-entered more
+     * than once ({@code +}, {@code *}, {@code {m,n}} with n &gt; 1 or open
+     * upper bound). A lone {@code ?} or {@code {1}} repeats at most once and
+     * cannot re-enter the body, so e.g. {@code (-\d{4})?} stays linear and is
+     * NOT dangerous. Lazy modifiers ({@code +?}) do not change repeatability.
+     */
+    private static boolean isRepeatableQuantifierAt(String pattern, int i) {
+        if (i >= pattern.length()) return false;
+        char c = pattern.charAt(i);
+        if (c == '*' || c == '+') return true;
+        if (c == '{') {
+            int j = pattern.indexOf('}', i);
+            if (j <= i) return false;
+            String inside = pattern.substring(i + 1, j);
+            if (!inside.matches("[0-9]+(,[0-9]*)?")) return false;
+            int comma = inside.indexOf(',');
+            if (comma < 0) return Integer.parseInt(inside) > 1;
+            String after = inside.substring(comma + 1);
+            return after.isEmpty() || Integer.parseInt(after) > 1;
+        }
+        return false;
+    }
+
+    /**
+     * Inner ambiguity source: a quantifier at i that introduces a FREE
+     * repetition choice inside a group body — {@code *}, {@code +},
+     * {@code {m,n}} with n &gt; 1 or open upper bound. Deliberately NOT
+     * counted: fixed repetitions ({@code {3}}, {@code {1}}) — a fixed-shape
+     * atom like {@code \d{3}} leaves no split choice, so
+     * {@code ^(\d{3})+$} is linear and must pass. {@code ?} consumes at most
+     * one char — linear, not counted. The laziness modifier
+     * ({@code +?}) sits AFTER a real quantifier and adds no choice.
+     */
+    private static boolean isInnerMultiQuantifierAt(String pattern, int i) {
+        if (i >= pattern.length()) return false;
+        char c = pattern.charAt(i);
+        if (c == '*' || c == '+') return true;
+        if (c == '{') {
+            int j = pattern.indexOf('}', i);
+            if (j <= i) return false;
+            String inside = pattern.substring(i + 1, j);
+            if (!inside.matches("[0-9]+(,[0-9]*)?")) return false;
+            int comma = inside.indexOf(',');
+            if (comma < 0) return false; // fixed {m} — no free choice
+            String after = inside.substring(comma + 1);
+            // {m,} — open upper bound: free choice. {m,n} — iff n > 1.
+            return after.isEmpty() || Integer.parseInt(after) > 1;
+        }
+        return false;
+    }
+
     private final ObjectMapper objectMapper;
 
     public FormValidator(ObjectMapper objectMapper) {
@@ -176,8 +365,25 @@ public class FormValidator {
                 pattern.length(), value.length());
             return false;
         }
+        // WO-SEC-75 (N11) layer 1: known catastrophic shapes never reach the
+        // engine — microseconds, fail-closed, no thread burned at all.
+        if (isDangerousPattern(pattern)) {
+            log.warn("Form pattern rejected as ReDoS-dangerous without execution: patternLen={}",
+                pattern.length());
+            return false;
+        }
+        // WO-SEC-75 (N11) layer 2: wall-clock fuse for shapes the static check
+        // does not know yet. The match runs on a bounded worker pool, never on
+        // the calling (request) thread; on timeout the value is invalid.
+        java.util.concurrent.Future<Boolean> future =
+            PATTERN_MATCH_POOL.submit(() -> Pattern.compile(pattern).matcher(value).find());
         try {
-            return Pattern.compile(pattern).matcher(value).find();
+            return future.get(PATTERN_MATCH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            future.cancel(true);
+            log.warn("Form pattern match timed out after {}ms, rejected: patternLen={}, valueLen={}",
+                PATTERN_MATCH_TIMEOUT_MS, pattern.length(), value.length());
+            return false;
         } catch (Exception e) {
             // WO-SEC-59 #3, та же fail-closed дисциплина: битый pattern схемы —
             // невалидное значение, не пропуск.
