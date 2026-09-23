@@ -55,7 +55,7 @@ class ScriptServiceGenerationsTest {
             new tools.jackson.databind.ObjectMapper(),
             new com.zorrodev.bpm.engine.metrics.BpmMetrics(
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
-            timeoutSeconds);
+            timeoutSeconds, 2);
     }
 
     private static ThreadPoolExecutor readPool(ScriptServiceImpl service) throws Exception {

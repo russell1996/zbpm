@@ -48,6 +48,11 @@ public class BpmMetrics {
     private final Counter scriptTimeout;
     private final AtomicLong scriptActiveWorkers = new AtomicLong(0);
     private final AtomicLong scriptQueueDepth = new AtomicLong(0);
+    // WO-REL-46: конфигурированный размер FEEL-пула — знаменатель для Grafana-правила
+    // насыщения (active >= size), чтобы порог не был захардкожен в алерте отдельно
+    // от application.properties. Домент тот же, что у соседних script-метрик выше, —
+    // отдельный бин под один gauge плодить нечем (см. эскалацию god-class в agent-to-cto.md).
+    private final AtomicLong scriptPoolSize = new AtomicLong(0);
 
     // --- Outbox gauges + counters ---
     private final Counter outboxPublished;
@@ -112,6 +117,9 @@ public class BpmMetrics {
         Gauge.builder("zbpm.script.pool.queue", scriptQueueDepth, AtomicLong::doubleValue)
             .description("Script pool queue depth")
             .register(registry);
+        Gauge.builder("zbpm.script.pool.size", scriptPoolSize, AtomicLong::doubleValue)
+            .description("Configured script evaluation pool size")
+            .register(registry);
 
         // Outbox
         this.outboxPublished = Counter.builder("zbpm.outbox.published")
@@ -167,6 +175,8 @@ public class BpmMetrics {
         scriptActiveWorkers.set(executor.getActiveCount());
         scriptQueueDepth.set(executor.getQueue().size());
     }
+
+    public void setScriptPoolSize(long size) { scriptPoolSize.set(size); }
 
     // --- Outbox ---
     public void outboxPublished() { outboxPublished.increment(); }

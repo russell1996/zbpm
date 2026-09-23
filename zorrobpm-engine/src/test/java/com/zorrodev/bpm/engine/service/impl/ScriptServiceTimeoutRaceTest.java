@@ -35,7 +35,7 @@ class ScriptServiceTimeoutRaceTest {
     private ScriptService serviceWithTimeout(long seconds) {
         ScriptEngine unary = new FeelUnaryTestsScriptEngineFactory().getScriptEngine();
         ScriptEngine expression = new FeelScriptEngineFactory().getScriptEngine();
-        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper(), new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), seconds);
+        return new ScriptServiceImpl(unary, expression, new tools.jackson.databind.ObjectMapper(), new com.zorrodev.bpm.engine.metrics.BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), seconds, 2);
     }
 
     @Test

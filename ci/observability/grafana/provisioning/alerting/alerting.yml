@@ -1,6 +1,6 @@
 apiVersion: 1
 
-# WO-OBS-5: Grafana provisioned alerting — 9 rules, contact point, notification policy.
+# WO-OBS-5: Grafana provisioned alerting — 10 rules, contact point, notification policy.
 # Principle 5: alerts OFF by default — GRAFANA_ALERT_WEBHOOK_URL empty → Firing without notification.
 # All from files, not UI.
 
@@ -313,6 +313,37 @@ groups:
           severity: warning
         annotations:
           summary: "Incident spike — rate(zbpm_tokens_stuck[15m]) > 0.1"
+
+      - uid: zbpm-feel-pool-saturated
+        title: FEEL pool saturated
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: zbpm_script_pool_active >= zbpm_script_pool_size
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: "FEEL pool saturated — active == size for 5m"
+          description: "zbpm_script_pool_active >= zbpm_script_pool_size for 5m: non-cooperative stuck workers may be pinning slots (WO-REL-46)"
 
 templates:
   - orgId: 1
