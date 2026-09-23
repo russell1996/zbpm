@@ -120,8 +120,13 @@ public class ScriptServiceImpl implements ScriptService {
 
     /**
      * WO-A-09: code reference for logging — length + hash, NOT full code.
+     * WO-DIFF-10: null-safe — evaluateScript(null) падал ВТОРОЙ маскирующей NPE
+     * прямо здесь, пряча реальную причину сбоя FEEL-движка.
      */
     private static String codeRef(String code) {
+        if (code == null) {
+            return "null";
+        }
         return "len=" + code.length() + ",hash=" + code.hashCode();
     }
 
