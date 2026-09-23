@@ -331,7 +331,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             ));
     }
 
-    private String extractTokenFromCookie(HttpServletRequest request) {
+    /**
+     * WO-SEC-71: single resolver for the access-token cookie, shared with
+     * {@code RateLimitFilter} so rate-limit identity can never drift from auth
+     * identity again (N04: the filter read only the legacy name while auth had
+     * already moved to {@code __Host-}). Package-visible static — no behavior
+     * change for this filter (order/config untouched).
+     */
+    static String extractTokenFromCookie(HttpServletRequest request) {
         jakarta.servlet.http.Cookie[] cookies = request.getCookies();
         if (cookies == null) return null;
         String legacy = null;
