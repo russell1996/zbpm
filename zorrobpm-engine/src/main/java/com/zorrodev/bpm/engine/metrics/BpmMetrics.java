@@ -59,6 +59,10 @@ public class BpmMetrics {
     private final Counter outboxFailed;
     private final AtomicLong outboxBacklog = new AtomicLong(0);
     private final AtomicLong outboxQuarantine = new AtomicLong(0);
+    // WO-REL-50: terminal submissions that failed cleanup in the last retention pass
+    // (stuck head rows — FK-blocked or otherwise undeletable). Set (not incremented)
+    // once per pass by RetentionJob, same shape as setOutboxQuarantine.
+    private final AtomicLong retentionSubmissionsStuck = new AtomicLong(0);
 
     // --- Rabbit publish failures ---
     private final Counter rabbitPublishFailures;
@@ -85,9 +89,6 @@ public class BpmMetrics {
     private final AtomicLong feedBacklog = new AtomicLong(0);
     private final AtomicLong feedAgeMaxSeconds = new AtomicLong(0);
     private final Timer feedAssignDuration;
-
-    // --- Activity transitions (WO-QW-2) ---
-    private final Counter activityTransitionIgnored;
 
     public BpmMetrics(MeterRegistry registry) {
         // Process lifecycle
@@ -155,6 +156,12 @@ public class BpmMetrics {
             .description("Outbox entries in quarantine (status=FAILED)")
             .register(registry);
 
+        // WO-REL-50: stuck cleanup rows, visible to the operator instead of silently
+        // blocking the submissions pass.
+        Gauge.builder("zbpm.retention.submissions.stuck", retentionSubmissionsStuck, AtomicLong::doubleValue)
+            .description("Terminal process submissions that failed cleanup in the last retention pass")
+            .register(registry);
+
         // Rabbit
         this.rabbitPublishFailures = Counter.builder("zbpm.rabbit.publish.failures")
             .description("RabbitMQ publish failures (broker NACK)")
@@ -215,6 +222,9 @@ public class BpmMetrics {
     public void outboxFailed() { outboxFailed.increment(); }
     public void setOutboxBacklog(long count) { outboxBacklog.set(count); }
     public void setOutboxQuarantine(long count) { outboxQuarantine.set(count); }
+
+    // --- Retention (WO-REL-50) ---
+    public void setRetentionSubmissionsStuck(long count) { retentionSubmissionsStuck.set(count); }
 
     // --- Rabbit ---
     public void rabbitPublishFailed() { rabbitPublishFailures.increment(); }
