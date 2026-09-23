@@ -380,7 +380,7 @@
   "ownerRole": "ИЕСІ",
   "designerRole": "ДИЗАЙНЕР",
   "revokeApiKeyDescription": "Бұл кілтті дереу жарамсыз етеді. Оны қолданатын интеграциялар жұмысын тоқтатады.",
-  "jsonPlaceholder": "мыс. [\"u1\",\"u2\"] немесе {\"key\":\"val\"}",
+  "jsonPlaceholder": "мыс. [\"u1\",\"u2\"] немесе {'{'}\"key\":\"val\"{'}'}",
   "bpmnXml": "BPMN XML",
   "characters": "таңба",
   "uploadProcess": "Процесті жүктеу",

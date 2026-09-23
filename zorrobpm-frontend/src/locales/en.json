@@ -380,7 +380,7 @@
   "ownerRole": "OWNER",
   "designerRole": "DESIGNER",
   "revokeApiKeyDescription": "This will immediately invalidate the key. Any integrations using it will stop working.",
-  "jsonPlaceholder": "e.g. [\"u1\",\"u2\"] or {\"key\":\"val\"}",
+  "jsonPlaceholder": "e.g. [\"u1\",\"u2\"] or {'{'}\"key\":\"val\"{'}'}",
   "bpmnXml": "BPMN XML",
   "characters": "characters",
   "uploadProcess": "Upload Process",
