@@ -44,11 +44,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * без межтестовых связей).
  *
  * <p>POF: убери второй Set-Cookie в {@code AuthResource} (только
- * {@code Path=/auth/refresh}) — тест 1 идёт RED (нет Path под {@code /api/...},
- * path-match доказывает: браузер бы куку не прислал), тесты 2–3 остаются GREEN:
- * бэкенд куку и раньше принимал — ломался именно браузерный выбор, и RED
- * приходится ровно на него (P-67: ассерты на конкретные Path-значения, не на
- * «кука вообще есть»).
+ * {@code Path=/auth/refresh}) — ВСЕ ТРИ теста идут RED: тест 1 (нет Path под
+ * {@code /api/...}, path-match доказывает: браузер бы куку не прислал), тест 2
+ * (ротация обязана перевыпустить оба Path) и тест 3 (logout обязан погасить оба
+ * Path). RED приходится ровно на различающие ассерты (P-67: конкретные
+ * Path-значения через {@code containsExactlyInAnyOrder}, не «кука вообще есть»).
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
