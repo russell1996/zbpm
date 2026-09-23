@@ -69,71 +69,126 @@ public class FeedPositionAssigner {
     private final JdbcTemplate jdbcTemplate;
     private final DataSource dataSource;
     private final AdvisoryDeployLock advisoryDeployLock;
+    private final com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
+
+    /**
+     * WO-REL-48 (N14): bound of ONE tick — one advisory-locked transaction
+     * never takes more than this many rows. 500 keeps the batchUpdate small
+     * (memory + lock hold time bounded) while draining a post-downtime
+     * backlog in a handful of 2s poll ticks. The remaining backlog is NOT
+     * skipped: the next tick continues from the commit-ordered head
+     * (the two-pass discipline below always takes the OLDEST eligible rows
+     * first, so every pass makes progress on the same global order).
+     */
+    static final int FEED_BATCH_SIZE = 500;
 
     private volatile String databaseProduct;
 
     /**
-     * @return сколько строк получили позицию за тик (0 — нечего делать)
+     * @return сколько строк получили позицию за ВСЕ проходы этого вызова
+     *         (0 — нечего делать). Один вызов дренирует весь допущенный
+     *         backlog проход за проходом, но КАЖДЫЙ проход — свой батч не
+     *         больше {@link #FEED_BATCH_SIZE} со своим SELECT, своим
+     *         {@code MAX(feed_position)} и своим batchUpdate: память и
+     *         advisory-hold одного прохода ограничены, а порядок и
+     *         непрерывность — те же (проходы идут с головы commit-порядка,
+     *         base перечитывается каждый раз).
      */
     @Transactional
     public int assignPendingPositions() {
+        long startedNanos = System.nanoTime();
         // Single-writer: xact-scoped, умирает с этой транзакцией (тот же
         // контракт, что deploy-пути WO-SCALE-1). На H2 — no-op внутри.
         advisoryDeployLock.acquireForKey("feed-position-assign");
 
-        List<Long> eligible = selectEligibleSequences();
-        if (eligible.isEmpty()) {
-            return 0;
-        }
-        Long base = jdbcTemplate.queryForObject(
-            "SELECT COALESCE(MAX(feed_position), 0) FROM events", Long.class);
-        long next = (base != null ? base : 0L) + 1;
+        publishBacklogMetrics();
+        int totalAssigned = 0;
+        long nextBase = 0;
+        while (true) {
+            List<Long> eligible = selectEligibleSequences();
+            if (eligible.isEmpty()) {
+                break;
+            }
+            Long base = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(MAX(feed_position), 0) FROM events", Long.class);
+            long next = (base != null ? base : 0L) + 1;
 
-        List<Object[]> batch = new ArrayList<>(eligible.size());
-        for (Long sequence : eligible) {
-            batch.add(new Object[]{next++, sequence});
+            List<Object[]> batch = new ArrayList<>(eligible.size());
+            for (Long sequence : eligible) {
+                batch.add(new Object[]{next++, sequence});
+            }
+            int[] updated = jdbcTemplate.batchUpdate(
+                "UPDATE events SET feed_position = ? WHERE sequence = ? AND feed_position IS NULL",
+                batch);
+            for (int n : updated) {
+                totalAssigned += n;
+            }
+            nextBase = next;
         }
-        int[] updated = jdbcTemplate.batchUpdate(
-            "UPDATE events SET feed_position = ? WHERE sequence = ? AND feed_position IS NULL",
-            batch);
-        int assigned = 0;
-        for (int n : updated) {
-            assigned += n;
+        publishBacklogMetrics();
+        bpmMetrics.recordFeedAssignDuration(
+            java.time.Duration.ofNanos(System.nanoTime() - startedNanos));
+        log.info("Assigned feed positions to {} events (next position {})", totalAssigned, nextBase);
+        return totalAssigned;
+    }
+
+    /**
+     * WO-REL-48 (N14): backlog visibility — published on EVERY tick (before
+     * and after the batch), so an operator sees the queue grow BEFORE it
+     * becomes a problem. Size = rows still without position; age = oldest
+     * unassigned row by {@code occurred_at} (seconds, 0 when empty).
+     */
+    private void publishBacklogMetrics() {
+        try {
+            Long pending = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM events WHERE feed_position IS NULL", Long.class);
+            bpmMetrics.setFeedBacklog(pending != null ? pending : 0);
+            Long ageSeconds = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(EXTRACT(EPOCH FROM (now() - MIN(occurred_at)))::bigint, 0) "
+                + "FROM events WHERE feed_position IS NULL", Long.class);
+            bpmMetrics.setFeedAgeMaxSeconds(ageSeconds != null ? ageSeconds : 0);
+        } catch (Exception e) {
+            // Metrics must never break the assign tick (H2-test profile
+            // included — EXTRACT(EPOCH...) is PG-only; on H2 this falls back
+            // to silent zero, the tick itself is unaffected).
+            log.debug("Feed backlog metrics skipped: {}", e.getMessage());
         }
-        log.info("Assigned feed positions to {} events (next position {})", assigned, next);
-        return assigned;
     }
 
     private List<Long> selectEligibleSequences() {
         if (isPostgres()) {
             // Проход 1: строки с известной меткой коммита — по времени коммита.
+            // WO-REL-48: LIMIT батча С ТЕМ ЖЕ ORDER BY — берутся СТАРЕЙШИЕ по
+            // коммиту (голова глобального порядка), следующий тик продолжит с
+            // того же места: feed_position IS NULL исключает уже взятых, так
+            // что keyset-курсор не нужен — незакрытый хвост сам голова.
             List<Long> byCommitTime = jdbcTemplate.queryForList(
                 "SELECT sequence FROM events " +
                 "WHERE feed_position IS NULL " +
                 "AND xmin::text::bigint < pg_snapshot_xmin(pg_current_snapshot())::text::bigint " +
                 "AND xmin::text::bigint >= 3 " +
                 "AND pg_xact_commit_timestamp(xmin) IS NOT NULL " +
-                "ORDER BY pg_xact_commit_timestamp(xmin), sequence",
+                "ORDER BY pg_xact_commit_timestamp(xmin), sequence " +
+                "LIMIT " + FEED_BATCH_SIZE,
                 Long.class);
             if (!byCommitTime.isEmpty()) {
                 return byCommitTime;
             }
             // Проход 2: только исторический мусор без меток (живой поток всегда
-            // с меткой) — по sequence. Отдельным проходом, а не NULLS LAST в
-            // одном SELECT: иначе вечный хвост NULL-строк вставал бы ПЕРЕД...
-            // нет, NULLS LAST — после; но один проход смешивал бы эпохи. Два
-            // прохода: сначала весь известный порядок, потом мусор.
+            // с меткой) — по sequence, тем же батчем с головы порядка.
             return jdbcTemplate.queryForList(
                 "SELECT sequence FROM events " +
                 "WHERE feed_position IS NULL " +
                 "AND xmin::text::bigint < pg_snapshot_xmin(pg_current_snapshot())::text::bigint " +
                 "AND xmin::text::bigint >= 3 " +
-                "ORDER BY sequence",
+                "ORDER BY sequence " +
+                "LIMIT " + FEED_BATCH_SIZE,
                 Long.class);
         }
         // H2: тестовый профиль без xmin — записи тестов всегда закоммичены.
         return jdbcTemplate.queryForList(
-            "SELECT sequence FROM events WHERE feed_position IS NULL ORDER BY sequence",
+            "SELECT sequence FROM events WHERE feed_position IS NULL ORDER BY sequence "
+            + "LIMIT " + FEED_BATCH_SIZE,
             Long.class);
     }
 
