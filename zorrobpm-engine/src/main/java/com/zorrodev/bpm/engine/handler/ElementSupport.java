@@ -12,10 +12,10 @@ import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.FeelBudget;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
-import org.camunda.feel.api.FeelEngineApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -39,7 +39,12 @@ public class ElementSupport {
 
     private final DBService dbService;
     private final ScriptService scriptService;
-    private final FeelEngineApi feelEngineApi;
+    /**
+     * WO-ENG-20 (N09): прямое {@code FeelEngineApi}-поле заменено единой точкой входа
+     * с лимитами — {@code =expr}-резолв ниже идёт через общий пул/timeout WO-REL-46,
+     * а не напрямую в caller-thread без ограничения.
+     */
+    private final FeelBudget feelBudget;
     private final tools.jackson.databind.ObjectMapper objectMapper;
 
     /**
@@ -54,11 +59,11 @@ public class ElementSupport {
     private final ZoneId businessZone;
 
     public ElementSupport(DBService dbService, ScriptService scriptService,
-            FeelEngineApi feelEngineApi, tools.jackson.databind.ObjectMapper objectMapper,
+            FeelBudget feelBudget, tools.jackson.databind.ObjectMapper objectMapper,
             @Value("${zorrobpm.business-timezone:Asia/Almaty}") ZoneId businessZone) {
         this.dbService = dbService;
         this.scriptService = scriptService;
-        this.feelEngineApi = feelEngineApi;
+        this.feelBudget = feelBudget;
         this.objectMapper = objectMapper;
         this.businessZone = businessZone;
     }
@@ -213,7 +218,9 @@ public class ElementSupport {
 
         if (raw.startsWith("=")) {
             Map<String, Object> vars = variablesToMap(processInstanceId);
-            EvaluationResult result = feelEngineApi.evaluateExpression(raw.substring(1), vars);
+            // WO-ENG-20: через общий бюджет — timeout/bulkhead вместо прямого вызова
+            // в caller-thread. Контракт неуспеха прежний: warn + null.
+            EvaluationResult result = feelBudget.evaluateExpression(raw.substring(1), vars);
             if (!result.isSuccess()) {
                 log.warn("FEEL expression '{}' failed in instance {}: {}", raw, processInstanceId, result.failure());
                 return null;

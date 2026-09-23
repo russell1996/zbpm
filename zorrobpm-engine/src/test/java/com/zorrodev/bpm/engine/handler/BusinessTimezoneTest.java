@@ -12,9 +12,8 @@ import com.zorrodev.bpm.engine.scheduler.TimerStartJobExecutor;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.FeelBudget;
 import com.zorrodev.bpm.engine.service.ScriptService;
-import org.camunda.feel.api.EvaluationResult;
-import org.camunda.feel.api.FeelEngineApi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,7 +60,7 @@ class BusinessTimezoneTest {
     @Mock
     private ScriptService scriptService;
     @Mock
-    private FeelEngineApi feelEngineApi;
+    private FeelBudget feelBudget;
     @Mock
     private ActivityService activityService;
     @Mock
@@ -73,7 +72,7 @@ class BusinessTimezoneTest {
     void setUp() {
         // Create a real ElementSupport with mocked dependencies
         // WO-QW-1 A-C-5e: explicit constructor, zone passed directly (no reflection needed).
-        elementSupport = new ElementSupport(dbService, scriptService, feelEngineApi, null, ALMATY);
+        elementSupport = new ElementSupport(dbService, scriptService, feelBudget, null, ALMATY);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -221,7 +220,7 @@ class BusinessTimezoneTest {
     void defaultBusinessZoneIsAsiaAlmaty() {
         // WO-QW-1 A-C-5e: final field, set through the constructor — Spring injects
         // the @Value default (Asia/Almaty); explicitly passed zones win.
-        ElementSupport fresh = new ElementSupport(dbService, scriptService, feelEngineApi, null, ALMATY);
+        ElementSupport fresh = new ElementSupport(dbService, scriptService, feelBudget, null, ALMATY);
         ZoneId zone = (ZoneId) ReflectionTestUtils.getField(fresh, "businessZone");
         assertThat(zone)
             .as("businessZone passed via constructor must stick")

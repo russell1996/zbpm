@@ -16,6 +16,7 @@ import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.FeelBudget;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import org.junit.jupiter.api.Test;
@@ -56,7 +57,7 @@ class ServiceTaskEnqueueServiceImplTest {
     // (mock.resolvePriority вернул бы 0 для Integer — ассерт зависел бы от мока, не от кода).
     private ElementSupport realElementSupport() {
         return new ElementSupport(
-            dbService, mock(ScriptService.class), mock(org.camunda.feel.api.FeelEngineApi.class),
+            dbService, mock(ScriptService.class), mock(FeelBudget.class),
             new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"));
     }
 
