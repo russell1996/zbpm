@@ -66,6 +66,11 @@ public class BpmMetrics {
     // --- Timer lag ---
     private final Timer timerLag;
 
+    // --- Feed position assigner (WO-REL-48) ---
+    private final AtomicLong feedBacklog = new AtomicLong(0);
+    private final AtomicLong feedAgeMaxSeconds = new AtomicLong(0);
+    private final Timer feedAssignDuration;
+
     // --- Activity transitions (WO-QW-2) ---
     private final Counter activityTransitionIgnored;
 
@@ -145,6 +150,18 @@ public class BpmMetrics {
             .description("Lag between timer due and actual fire")
             .register(registry);
 
+        // WO-REL-48: feed-position backlog visibility — size/age gauges sampled
+        // on every assign tick (before AND after the batch) + tick duration.
+        Gauge.builder("zbpm.feed.backlog", feedBacklog, AtomicLong::doubleValue)
+            .description("Events still without feed_position (unassigned backlog)")
+            .register(registry);
+        Gauge.builder("zbpm.feed.age.max", feedAgeMaxSeconds, AtomicLong::doubleValue)
+            .description("Age of oldest event without feed_position (seconds)")
+            .register(registry);
+        this.feedAssignDuration = Timer.builder("zbpm.feed.assign.duration")
+            .description("Feed position assign tick duration")
+            .register(registry);
+
         // WO-QW-2: idempotent status-guard no-ops in CompletionService
         // (duplicate/late completions). Counter with a reason tag so future
         // ignore-reasons can reuse the same meter.
@@ -191,6 +208,11 @@ public class BpmMetrics {
     public void recordTimerLag(Duration lag) {
         timerLag.record(lag.isNegative() ? Duration.ZERO : lag);
     }
+
+    // --- Feed position assigner (WO-REL-48) ---
+    public void setFeedBacklog(long count) { feedBacklog.set(count); }
+    public void setFeedAgeMaxSeconds(long seconds) { feedAgeMaxSeconds.set(seconds); }
+    public void recordFeedAssignDuration(Duration duration) { feedAssignDuration.record(duration); }
 
     // --- Activity transitions (WO-QW-2) ---
     public void activityTransitionIgnored(String reason) {
