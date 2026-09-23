@@ -31,7 +31,12 @@ public class WebConfiguration implements WebMvcConfigurer {
             .allowedOrigins(cleaned)
             .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
             // WO-SEC-31a: explicit header list instead of "*" — narrower surface with credentials
-            .allowedHeaders("Authorization", "Content-Type", "X-On-Behalf-Of", "Last-Event-ID")
+            // WO-QW-3 (N12): Idempotency-Key must be usable by allowed cross-origin
+            // clients — without it the preflight does not echo the header and browsers
+            // refuse to send it. No exposedHeaders change: IdempotencyFilter sets no
+            // custom response headers, there is nothing new for JS to read.
+            .allowedHeaders("Authorization", "Content-Type", "X-On-Behalf-Of", "Last-Event-ID",
+                "Idempotency-Key")
             .allowCredentials(true);
     }
 }
