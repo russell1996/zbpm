@@ -20,6 +20,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Service
@@ -40,19 +41,34 @@ public class ScriptServiceImpl implements ScriptService {
      * инвариант WO-REL-24 сохранён доказанно его же тестом.
      */
     private final ThreadPoolExecutor executor;
+    /**
+     * WO-REL-46: троттлинг warn'а о насыщении — при полном простое каждый запрос
+     * иначе писал бы warn и топил лог ровно в момент инцидента. 60с: насыщение
+     * держится минутами (non-cooperative слот не освобождается сам), повтор
+     * раньше — шум, не информация.
+     */
+    private static final long SATURATION_WARN_INTERVAL_MS = 60_000;
+    private final AtomicLong lastSaturationWarnMs = new AtomicLong(0);
 
     public ScriptServiceImpl(@Qualifier("feelScriptEngine") ScriptEngine scriptEngine,
                              @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine,
                              ObjectMapper objectMapper,
                              BpmMetrics bpmMetrics,
-                             @Value("${zorrobpm.engine.script-timeout-seconds:10}") long timeoutSeconds) {
+                             @Value("${zorrobpm.engine.script-timeout-seconds:10}") long timeoutSeconds,
+                             @Value("${zorrobpm.engine.script-pool-size:8}") int poolSize) {
         this.scriptEngine = scriptEngine;
         this.feelExpressionScriptEngine = feelExpressionScriptEngine;
         this.objectMapper = objectMapper;
         this.bpmMetrics = bpmMetrics;
         this.timeoutMs = timeoutSeconds * 1000;
-        // WO-A-02: bounded bulkhead — bounded pool + bounded queue + abort policy
-        int poolSize = 2; // default: 2 concurrent script evaluations
+        if (poolSize < 1) {
+            throw new IllegalArgumentException(
+                "zorrobpm.engine.script-pool-size must be >= 1, got " + poolSize);
+        }
+        // WO-A-02: bounded bulkhead — bounded pool + bounded queue + abort policy.
+        // WO-REL-46: размер конфигурируется (дефолт 8 — порог одновременных
+        // зависших non-cooperative скриптов, нужный для полного outage, выше,
+        // чем был при хардкоде 2).
         int queueCapacity = 10; // small buffer for queued expressions
         this.executor = new ThreadPoolExecutor(
             poolSize, poolSize, 0L, TimeUnit.MILLISECONDS,
@@ -64,6 +80,7 @@ public class ScriptServiceImpl implements ScriptService {
             },
             new ThreadPoolExecutor.AbortPolicy()
         );
+        bpmMetrics.setScriptPoolSize(poolSize);
     }
 
     @Override
@@ -78,6 +95,13 @@ public class ScriptServiceImpl implements ScriptService {
 
     private Object evalWithTimeout(ScriptEngine engine, String code, List<ProcessVariable> variables) {
         ScriptContext ctx = buildContext(variables);
+
+        // WO-REL-46: ранний сигнал насыщения — все воркеры заняты, запрос сейчас
+        // встанет в очередь. getActiveCount() приблизителен, для warn-уровня
+        // достаточно; точная картина — в zbpm.script.pool.active/size.
+        if (executor.getActiveCount() >= executor.getMaximumPoolSize()) {
+            recordSaturation();
+        }
 
         // WO-A-02: bulkhead — bounded queue rejects if pool is full (AbortPolicy)
         java.util.concurrent.Future<Object> future;
@@ -103,7 +127,6 @@ public class ScriptServiceImpl implements ScriptService {
             // задача пиннит слот, остальное — штатный bulkhead.
             future.cancel(true);
             bpmMetrics.scriptTimeout();
-            bpmMetrics.updateScriptPoolMetrics(executor);
             // A-09: no code in exception, correlation via length/hash
             throw new EngineException("Script execution timed out after " + (timeoutMs / 1000) + "s (" + codeRef(code) + ")");
         } catch (java.util.concurrent.ExecutionException e) {
@@ -115,6 +138,26 @@ public class ScriptServiceImpl implements ScriptService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new EngineException("Script execution interrupted");
+        } finally {
+            // WO-REL-46: gauges свежие после КАЖДОГО eval, а не только после
+            // timeout/reject — иначе Grafana-правило насыщения смотрит на
+            // протухшие значения ровно тогда, когда они нужны.
+            bpmMetrics.updateScriptPoolMetrics(executor);
+        }
+    }
+
+    /**
+     * WO-REL-46: троттлированный warn о насыщении пула (см. поле
+     * {@code lastSaturationWarnMs}).
+     */
+    private void recordSaturation() {
+        long now = System.currentTimeMillis();
+        long last = lastSaturationWarnMs.get();
+        if (now - last >= SATURATION_WARN_INTERVAL_MS && lastSaturationWarnMs.compareAndSet(last, now)) {
+            log.warn("Script pool saturated: {}/{} workers active, new evaluations queue "
+                    + "(pool size via zorrobpm.engine.script-pool-size)",
+                executor.getActiveCount(), executor.getMaximumPoolSize());
+            bpmMetrics.updateScriptPoolMetrics(executor);
         }
     }
 
