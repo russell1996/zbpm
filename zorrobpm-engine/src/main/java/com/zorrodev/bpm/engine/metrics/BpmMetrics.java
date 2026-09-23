@@ -66,7 +66,22 @@ public class BpmMetrics {
     // --- Timer lag ---
     private final Timer timerLag;
 
-    // --- Feed position assigner (WO-REL-48) ---
+    // --- Activity transitions (WO-QW-2) ---
+    private final Counter activityTransitionIgnored;
+
+    /**
+     * WO-REL-48: feed-position backlog visibility. NOT new injected
+     * dependencies — these three meters live in BpmMetrics because that is
+     * the domain this class already owns (Micrometer registry → Prometheus;
+     * every meter here is registered in the same constructor and pushed from
+     * a single call-site in FeedPositionAssigner). A separate component for
+     * three gauges of the same registry would be a распил ради распила, not a
+     * god-class cut: BpmMetrics' fields are all same-shaped meter holders
+     * (Counter/Timer/AtomicLong) with no logic, no branching, no cross-domain
+     * behavior — the WO-DEBT-1 god-class failure mode (16-18 injected
+     * collaborators + half the domain model in methods) does not apply.
+     * (G19: this comment is the explicit god-class/распил escalation.)
+     */
     private final AtomicLong feedBacklog = new AtomicLong(0);
     private final AtomicLong feedAgeMaxSeconds = new AtomicLong(0);
     private final Timer feedAssignDuration;
@@ -209,7 +224,7 @@ public class BpmMetrics {
         timerLag.record(lag.isNegative() ? Duration.ZERO : lag);
     }
 
-    // --- Feed position assigner (WO-REL-48) ---
+    // --- Feed position assigner (WO-REL-48, meters declared above) ---
     public void setFeedBacklog(long count) { feedBacklog.set(count); }
     public void setFeedAgeMaxSeconds(long seconds) { feedAgeMaxSeconds.set(seconds); }
     public void recordFeedAssignDuration(Duration duration) { feedAssignDuration.record(duration); }
