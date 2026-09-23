@@ -47,9 +47,6 @@ public interface DBService {
     /** Active (created/in-progress) activities for a specific token and BPMN element. */
     boolean hasActiveActivityOnTokenAndElement(UUID tokenId, String bpmnElementId);
 
-    /** WO-REL-28: COMPLETED activity for (token, element) — guard against duplicate re-execution. */
-    boolean hasCompletedActivityOnTokenAndElement(UUID tokenId, String bpmnElementId);
-
     /** Open (unresolved) incidents linked to any of the given activity IDs. */
     List<com.zorrodev.bpm.contract.dto.Incident> findOpenIncidentsByActivityIds(List<UUID> activityIds);
 
