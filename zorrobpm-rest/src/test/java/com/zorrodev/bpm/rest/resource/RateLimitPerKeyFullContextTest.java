@@ -151,6 +151,8 @@ class RateLimitPerKeyFullContextTest {
         HttpResponse<String> resp = httpClient.send(HttpRequest.newBuilder()
                 .uri(URI.create("http://localhost:" + port + "/auth/login"))
                 .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                // WO-SEC-70: this helper needs the JSON token for follow-up calls
+                .header("X-Auth-Transport", "bearer")
                 .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(dto)))
                 .build(), HttpResponse.BodyHandlers.ofString());
         assertThat(resp.statusCode()).isEqualTo(200);

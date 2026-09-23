@@ -66,7 +66,7 @@ class VariableNullValueTest {
         LoginDTO loginDto = new LoginDTO();
         loginDto.setUsername("sec23admin");
         loginDto.setPassword("admin");
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

@@ -120,7 +120,7 @@ class ContractValidationIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("admin");
         dto.setPassword("admin");
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

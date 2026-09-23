@@ -64,7 +64,7 @@ class SecurityHardeningIntegrationTest {
         loginDTO.setUsername("admin");
         loginDTO.setPassword("admin");
 
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -109,7 +109,7 @@ class SecurityHardeningIntegrationTest {
         loginDTO.setUsername(testUser.getUsername());
         loginDTO.setPassword("initial-password");
 
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -128,7 +128,7 @@ class SecurityHardeningIntegrationTest {
         reloginDTO.setUsername(testUser.getUsername());
         reloginDTO.setPassword("new-secure-password-123");
 
-        MvcResult reloginResult = mockMvc.perform(post("/auth/login")
+        MvcResult reloginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(reloginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

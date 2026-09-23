@@ -74,7 +74,7 @@ class AccessTokenRevocationIT {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(password);
-        MvcResult r = mockMvc.perform(post("/auth/login")
+        MvcResult r = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk())
@@ -199,7 +199,7 @@ class AccessTokenRevocationIT {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(PASS);
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk())
@@ -216,6 +216,8 @@ class AccessTokenRevocationIT {
         Thread.sleep(1100);
 
         MvcResult refreshResult = mockMvc.perform(post("/auth/refresh")
+                // WO-SEC-70: this test asserts the JSON body carries the same token
+                .header("X-Auth-Transport", "bearer")
                 .cookie(new Cookie("refresh_token", refreshToken)))
             .andExpect(status().isOk())
             .andReturn();
@@ -259,7 +261,7 @@ class AccessTokenRevocationIT {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(PASS);
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk())

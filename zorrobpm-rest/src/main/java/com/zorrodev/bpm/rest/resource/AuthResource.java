@@ -51,6 +51,32 @@ public class AuthResource implements AuthContract {
     @Value("${zorrobpm.security.jwt-ttl-minutes:30}")
     private long jwtTtlMinutes;
 
+    /**
+     * WO-SEC-70 (раунд 3 — исправление решения CTO после G-H red-team пасса):
+     * гейт JSON-копии access token по Fetch Metadata, а не по кастомному заголовку.
+     * {@code POST /auth/login} и {@code POST /auth/refresh} всегда ставят
+     * httpOnly access cookie; поле {@code token} в JSON-теле отдаётся только когда
+     * запрос пришёл НЕ из same-origin браузерного контекста.
+     *
+     * <p>Почему не {@code X-Auth-Transport} (раунд 2, отозван): кастомный заголовок
+     * ставит любой JS на странице, включая XSS-пейлоад — он сам добавил бы его к
+     * своему запросу на {@code /auth/refresh} (httpOnly refresh-cookie браузер
+     * приложил бы автоматически) и получил бы {@code token} в JSON. «SPA сам не
+     * шлёт заголовок» не равно «XSS не может его выставить» — гейт не держал ту
+     * атаку, ради которой заведена задача.
+     *
+     * <p>{@code Sec-Fetch-Site} вычисляет и подставляет сам браузер (Fetch Metadata
+     * Request Headers) — JS не может ни установить, ни переопределить это имя
+     * (forbidden header name). Запрос со страницы SPA к своему же бэкенду —
+     * {@code same-origin} и у легитимного кода, и у XSS на той же странице:
+     * различить их нельзя и не нужно, оба получают одинаковый безопасный ответ
+     * без token. Небраузерные клиенты (curl, SDK, server-to-server) этот заголовок
+     * вообще не шлют — получают token как раньше, ничего настраивать не надо.
+     * Совпадение — exact match, детерминировано, тестируется тривиально.
+     */
+    public static final String SEC_FETCH_SITE_HEADER = "Sec-Fetch-Site";
+    public static final String SEC_FETCH_SITE_SAME_ORIGIN = "same-origin";
+
     @Override
     public AuthResponse login(@Valid @RequestBody LoginDTO dto) {
         AuthResponse authResponse = userService.login(dto)
@@ -84,6 +110,13 @@ public class AuthResource implements AuthContract {
             refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
             refreshCookie.setAttribute("SameSite", "Strict");
             response.addCookie(refreshCookie);
+        }
+
+        // WO-SEC-70 (раунд 3): стираем JSON-копию для same-origin браузерных
+        // запросов. Всё выше (access cookie, выпуск refresh) уже использовало
+        // настоящий токен — меняется только JSON-эхо, никогда cookie.
+        if (!jsonTokenRequested()) {
+            authResponse.setToken(null);
         }
 
         return authResponse;
@@ -195,7 +228,11 @@ public class AuthResource implements AuthContract {
         addAccessCookie(newAccessToken);
 
         AuthResponse authResponse = new AuthResponse();
-        authResponse.setToken(newAccessToken);
+        // WO-SEC-70 (раунд 3): тот же Sec-Fetch-Site гейт, что в login() —
+        // access cookie выше ставится всегда, JSON-копия только вне same-origin.
+        if (jsonTokenRequested()) {
+            authResponse.setToken(newAccessToken);
+        }
         return authResponse;
     }
 
@@ -269,6 +306,21 @@ public class AuthResource implements AuthContract {
             }
         }
         return null;
+    }
+
+    /**
+     * WO-SEC-70 (раунд 3): отдавать ли JSON-копию access token. Читает инжектированный
+     * request — сигнатуры контракта не меняются.
+     *
+     * @return true если заголовка {@code Sec-Fetch-Site} нет вообще (небраузерный
+     *         клиент) или он отличен от {@code same-origin} ({@code cross-site} /
+     *         {@code same-site} / {@code none} — все получают token); false только
+     *         для {@code same-origin} — легитимный SPA и XSS на нём получают
+     *         одинаковый ответ без token
+     */
+    private boolean jsonTokenRequested() {
+        String site = request.getHeader(SEC_FETCH_SITE_HEADER);
+        return site == null || !SEC_FETCH_SITE_SAME_ORIGIN.equals(site);
     }
 
     /**

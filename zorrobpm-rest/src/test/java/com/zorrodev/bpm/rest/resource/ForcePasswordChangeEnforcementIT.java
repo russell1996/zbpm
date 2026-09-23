@@ -80,7 +80,7 @@ class ForcePasswordChangeEnforcementIT {
         loginDTO.setUsername(user.getUsername());
         loginDTO.setPassword("initial-password");
 
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -121,7 +121,7 @@ class ForcePasswordChangeEnforcementIT {
         reloginDTO.setUsername(userRepository.findById(forcePwUserId).orElseThrow().getUsername());
         reloginDTO.setPassword("new-secure-password-456");
 
-        MvcResult reloginResult = mockMvc.perform(post("/auth/login")
+        MvcResult reloginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(reloginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -162,7 +162,7 @@ class ForcePasswordChangeEnforcementIT {
         LoginDTO pofLogin = new LoginDTO();
         pofLogin.setUsername(pofUser.getUsername());
         pofLogin.setPassword("pof-password-123");
-        MvcResult pofResult = mockMvc.perform(post("/auth/login")
+        MvcResult pofResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(pofLogin))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -189,7 +189,7 @@ class ForcePasswordChangeEnforcementIT {
         LoginDTO relogin = new LoginDTO();
         relogin.setUsername(pofUser.getUsername());
         relogin.setPassword("pof-new-password-456");
-        MvcResult reloginResult = mockMvc.perform(post("/auth/login")
+        MvcResult reloginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(relogin))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -213,7 +213,7 @@ class ForcePasswordChangeEnforcementIT {
         loginDTO.setUsername(userRepository.findById(forcePwUserId).orElseThrow().getUsername());
         loginDTO.setPassword("new-secure-password-456"); // password was changed in criterion4
 
-        mockMvc.perform(post("/auth/login")
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
