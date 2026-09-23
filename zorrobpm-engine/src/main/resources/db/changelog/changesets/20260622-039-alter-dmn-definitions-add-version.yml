@@ -40,3 +40,22 @@ databaseChangeLog:
             tableName: dmn_definitions
             columnNames: decision_id, version
             constraintName: uk_dmn_definitions__decision_id_version
+      rollback:
+        # WO-OPS-15: full reverse. Pre-039 PK was (decision_id) — see
+        # 20260620-034. Backfill UPDATE has no inverse (values vanish with
+        # the dropped columns).
+        - dropUniqueConstraint:
+            tableName: dmn_definitions
+            constraintName: uk_dmn_definitions__decision_id_version
+        - dropPrimaryKey:
+            tableName: dmn_definitions
+        - addPrimaryKey:
+            tableName: dmn_definitions
+            columnNames: decision_id
+            constraintName: pk_dmn_definitions
+        - dropColumn:
+            tableName: dmn_definitions
+            columnName: version
+        - dropColumn:
+            tableName: dmn_definitions
+            columnName: id

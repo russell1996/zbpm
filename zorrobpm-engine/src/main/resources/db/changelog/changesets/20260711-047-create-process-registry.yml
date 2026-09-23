@@ -41,3 +41,7 @@ databaseChangeLog:
               SELECT random_uuid(), pd.code, MAX(pd.name), CURRENT_TIMESTAMP
               FROM process_definitions pd
               GROUP BY pd.code;
+      rollback:
+        # WO-OPS-15: the backfilled rows die with the table — no separate inverse needed.
+        - dropTable:
+            tableName: process

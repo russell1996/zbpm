@@ -27,3 +27,8 @@ databaseChangeLog:
               UPDATE process_definitions pd
               SET deployment_state = 'PENDING'
               WHERE NOT EXISTS (SELECT 1 FROM bpmn b WHERE b.id = pd.id)
+      rollback:
+        # WO-OPS-15: backfill UPDATE reversed by dropping the column.
+        - dropColumn:
+            tableName: process_definitions
+            columnName: deployment_state

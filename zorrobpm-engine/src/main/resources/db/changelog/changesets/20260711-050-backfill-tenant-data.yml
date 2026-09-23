@@ -18,3 +18,11 @@ databaseChangeLog:
                 SELECT 1 FROM process_member pm
                 WHERE pm.process_id = pr.id AND pm.user_id = ui.id
               );
+      rollback:
+        # WO-OPS-15: data backfill is intentionally forward-only — promoted
+        # ADMIN→SUPER_ADMIN rows and backfilled OWNER memberships are
+        # indistinguishable from native ones, so no faithful inverse exists
+        # (an eager inverse would demote live super-admins). Explicit no-op
+        # so rollback-count succeeds instead of RollbackImpossibleException.
+        - sql:
+            sql: SELECT 1

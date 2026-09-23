@@ -42,3 +42,14 @@ databaseChangeLog:
               ALTER TABLE variables
                 ADD CONSTRAINT uk_variables__pi_name_scope
                 UNIQUE NULLS NOT DISTINCT (process_instance_id, name, scope_id)
+      rollback:
+        # WO-OPS-15: restores the plain UNIQUE. The pre-dedupe DELETE has no
+        # inverse (removed duplicate rows cannot be reconstructed) — accepted
+        # data loss, same trade-off as the forward change documents.
+        - dropUniqueConstraint:
+            tableName: variables
+            constraintName: uk_variables__pi_name_scope
+        - addUniqueConstraint:
+            tableName: variables
+            columnNames: process_instance_id, name, scope_id
+            constraintName: uk_variables__pi_name_scope
