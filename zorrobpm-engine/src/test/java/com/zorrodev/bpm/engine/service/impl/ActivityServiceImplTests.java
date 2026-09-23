@@ -150,7 +150,8 @@ public class ActivityServiceImplTests {
             new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.ElementListenerPhaseService.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.AdHocSubProcessHandler.class),
-            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class));
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class),
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.metrics.BpmMetrics.class));
         try {
             var csField = ActivityServiceImpl.class.getDeclaredField("completionService");
             csField.setAccessible(true);

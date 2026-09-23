@@ -3,6 +3,21 @@ FROM maven:3.9.9-eclipse-temurin-21@sha256:3a4ab3276a087bf276f79cae96b1af04f5373
 
 WORKDIR /build
 
+# WO-QW-2: layer-cache — dependency download is its own layer. pom.xml changes
+# invalidate only this layer; source edits invalidate only the layer below.
+# (Module list mirrors <modules> in pom.xml — keep in sync when adding modules.)
+COPY pom.xml .
+COPY zorrobpm-contract/pom.xml zorrobpm-contract/pom.xml
+COPY zorrobpm-client/pom.xml zorrobpm-client/pom.xml
+COPY zorrobpm-engine/pom.xml zorrobpm-engine/pom.xml
+COPY zorrobpm-rest/pom.xml zorrobpm-rest/pom.xml
+COPY zorrobpm-job-handler-spring-boot-starter/pom.xml zorrobpm-job-handler-spring-boot-starter/pom.xml
+COPY zorrobpm-test/pom.xml zorrobpm-test/pom.xml
+COPY zorrobpm-exchange/pom.xml zorrobpm-exchange/pom.xml
+COPY zorrobpm-rabbitmq/pom.xml zorrobpm-rabbitmq/pom.xml
+COPY zorrobpm-app/pom.xml zorrobpm-app/pom.xml
+RUN mvn -B -ntp dependency:go-offline
+
 COPY . .
 
 RUN mvn -B -ntp clean package -DskipTests
@@ -13,6 +28,20 @@ RUN mvn -B -ntp clean package -DskipTests
 FROM maven:3.9.9-eclipse-temurin-21@sha256:3a4ab3276a087bf276f79cae96b1af04f53731bec53fb2e651aca79e4b10211e AS test
 
 WORKDIR /build
+
+# WO-QW-2: same layer-cache split as the builder stage above.
+# (Module list mirrors <modules> in pom.xml — keep in sync when adding modules.)
+COPY pom.xml .
+COPY zorrobpm-contract/pom.xml zorrobpm-contract/pom.xml
+COPY zorrobpm-client/pom.xml zorrobpm-client/pom.xml
+COPY zorrobpm-engine/pom.xml zorrobpm-engine/pom.xml
+COPY zorrobpm-rest/pom.xml zorrobpm-rest/pom.xml
+COPY zorrobpm-job-handler-spring-boot-starter/pom.xml zorrobpm-job-handler-spring-boot-starter/pom.xml
+COPY zorrobpm-test/pom.xml zorrobpm-test/pom.xml
+COPY zorrobpm-exchange/pom.xml zorrobpm-exchange/pom.xml
+COPY zorrobpm-rabbitmq/pom.xml zorrobpm-rabbitmq/pom.xml
+COPY zorrobpm-app/pom.xml zorrobpm-app/pom.xml
+RUN mvn -B -ntp dependency:go-offline
 
 COPY . .
 

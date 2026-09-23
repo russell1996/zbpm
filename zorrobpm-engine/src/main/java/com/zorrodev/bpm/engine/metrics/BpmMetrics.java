@@ -61,6 +61,9 @@ public class BpmMetrics {
     // --- Timer lag ---
     private final Timer timerLag;
 
+    // --- Activity transitions (WO-QW-2) ---
+    private final Counter activityTransitionIgnored;
+
     public BpmMetrics(MeterRegistry registry) {
         // Process lifecycle
         this.processStarted = Counter.builder("zbpm.process.started")
@@ -133,6 +136,14 @@ public class BpmMetrics {
         this.timerLag = Timer.builder("zbpm.timer.lag")
             .description("Lag between timer due and actual fire")
             .register(registry);
+
+        // WO-QW-2: idempotent status-guard no-ops in CompletionService
+        // (duplicate/late completions). Counter with a reason tag so future
+        // ignore-reasons can reuse the same meter.
+        this.activityTransitionIgnored = Counter.builder("zbpm.activity.transition.ignored")
+            .description("Activity completions ignored by the idempotent status guard")
+            .tag("reason", "stale_status")
+            .register(registry);
     }
 
     // --- Process lifecycle ---
@@ -169,5 +180,12 @@ public class BpmMetrics {
     // --- Timer lag (floored at zero — early fires are not negative lag) ---
     public void recordTimerLag(Duration lag) {
         timerLag.record(lag.isNegative() ? Duration.ZERO : lag);
+    }
+
+    // --- Activity transitions (WO-QW-2) ---
+    public void activityTransitionIgnored(String reason) {
+        // Single pre-registered reason tag today ("stale_status"); the parameter
+        // keeps the call-site honest if a second reason ever appears.
+        if ("stale_status".equals(reason)) activityTransitionIgnored.increment();
     }
 }

@@ -9,8 +9,10 @@ import java.util.concurrent.Executor;
 
 /**
  * Polls for due timer jobs and fires each one (resuming the parked token via signal).
- * Delegates to TimerBatchProcessor (@Transactional) so that FOR UPDATE SKIP LOCKED
- * row locks are held until commit (L6 fix).
+ * Delegates to TimerBatchProcessor (@Transactional) so the poll loop itself stays
+ * NON-transactional: candidate selection runs in its own SHORT transaction and
+ * SKIP LOCKED row locks are released as soon as the SELECT returns (WO-REL-13) —
+ * each fire() then commits in its own REQUIRES_NEW transaction.
  *
  * WO-PERF-6 (P-1): offloads batch to dedicated {@code timerDispatcherExecutor}
  * (1-2 threads) so the scheduling pool (Outbox/Watchdog) never blocks on timer
