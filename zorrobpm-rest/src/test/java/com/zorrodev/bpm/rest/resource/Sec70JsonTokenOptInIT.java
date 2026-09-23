@@ -16,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -26,17 +27,24 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * WO-SEC-70: explicit opt-in for the JSON copy of the access token.
+ * WO-SEC-70 (раунд 3): гейт JSON-копии access token по Fetch Metadata.
  *
- * <p>{@code POST /auth/login} and {@code POST /auth/refresh} always set the
- * httpOnly access cookie; the {@code token} field in the JSON body is only
- * echoed when the caller sends {@code X-Auth-Transport: bearer}. Every test
- * uses its OWN dedicated user (P-8: no seeded-admin mutation, no cross-test
- * coupling).
+ * <p>{@code POST /auth/login} и {@code POST /auth/refresh} всегда ставят httpOnly
+ * access cookie; поле {@code token} в JSON-теле отдаётся только когда запрос пришёл
+ * НЕ из same-origin браузерного контекста: заголовка {@code Sec-Fetch-Site} нет
+ * вообще (небраузерный клиент — curl, SDK, server-to-server) или он отличен от
+ * {@code same-origin} ({@code cross-site} — внешний фронт на другом origin).
+ * Запрос с {@code Sec-Fetch-Site: same-origin} (легитимный SPA и XSS на нём —
+ * браузер ставит заголовок сам, JS его не переопределяет) получает cookie-only
+ * ответ: оба получают ОДИНАКОВЫЙ безопасный ответ без token.
  *
- * <p>POF: remove the strip/guard in {@code AuthResource} (always echo the
- * token) — the without-header tests go RED (token unexpectedly present) while
- * the with-header tests stay GREEN, proving the tests distinguish both paths.
+ * <p>Каждый тест использует СВОЕГО пользователя (P-8: без мутации seeded-admin,
+ * без межтестовых связей).
+ *
+ * <p>POF: убери гейт в {@code AuthResource} (всегда эхо token) — same-origin тесты
+ * идут RED (token неожиданно присутствует), остальные остаются GREEN: тесты
+ * различают оба пути, а не «что-то вообще вызвалось» (P-67: ассерты на конкретные
+ * значения {@code isNull()} / {@code isEqualTo(cookie)}, не на непустоту).
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -73,42 +81,56 @@ class Sec70JsonTokenOptInIT {
         return userRepository.findById(id).orElseThrow().getUsername();
     }
 
-    private MvcResult doLogin(String username, boolean withOptInHeader) throws Exception {
+    private MockHttpServletRequestBuilder loginRequest(String username) throws Exception {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(PASS);
-        var req = post("/auth/login")
+        return post("/auth/login")
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON);
-        if (withOptInHeader) {
-            req = req.header(AuthResource.AUTH_TRANSPORT_HEADER, AuthResource.AUTH_TRANSPORT_BEARER);
-        }
-        return mockMvc.perform(req)
-                .andExpect(status().isOk())
-                .andReturn();
     }
 
-    private MvcResult doRefresh(String refreshToken, boolean withOptInHeader) throws Exception {
-        var req = post("/auth/refresh")
+    private MockHttpServletRequestBuilder refreshRequest(String refreshToken) {
+        return post("/auth/refresh")
                 .cookie(new Cookie("refresh_token", refreshToken));
-        if (withOptInHeader) {
-            req = req.header(AuthResource.AUTH_TRANSPORT_HEADER, AuthResource.AUTH_TRANSPORT_BEARER);
-        }
-        return mockMvc.perform(req)
-                .andExpect(status().isOk())
-                .andReturn();
     }
 
-    // --- login WITHOUT the header: cookie present, JSON token null ---
+    // --- login БЕЗ Sec-Fetch-Site (небраузерный клиент): JSON token есть ---
 
     @Test
-    void login_withoutOptInHeader_jsonTokenNull_cookiePresent() throws Exception {
-        UUID id = createUser("sec70-nohdr");
-        MvcResult login = doLogin(usernameOf(id), false);
+    void login_noSecFetchSiteHeader_jsonTokenPresent_byteIdenticalToCookie() throws Exception {
+        UUID id = createUser("sec70-nosfs");
+        MvcResult login = mockMvc.perform(loginRequest(usernameOf(id)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        Cookie accessCookie = login.getResponse().getCookie("__Host-zbpm_token");
+        assertThat(accessCookie).isNotNull();
+
+        JsonNode body = mapper.readTree(login.getResponse().getContentAsString());
+        String jsonToken = body.get("token").asText();
+        assertThat(jsonToken)
+                .as("login without Sec-Fetch-Site (non-browser client) must echo the token in JSON")
+                .isNotBlank();
+        assertThat(jsonToken)
+                .as("JSON token must be byte-identical to the cookie (old behavior)")
+                .isEqualTo(accessCookie.getValue());
+    }
+
+    // --- login С Sec-Fetch-Site: same-origin (SPA и XSS на нём): JSON token НЕТ ---
+
+    @Test
+    void login_sameOrigin_jsonTokenNull_cookiePresent() throws Exception {
+        UUID id = createUser("sec70-sameorigin");
+        MvcResult login = mockMvc.perform(loginRequest(usernameOf(id))
+                        .header(AuthResource.SEC_FETCH_SITE_HEADER,
+                                AuthResource.SEC_FETCH_SITE_SAME_ORIGIN))
+                .andExpect(status().isOk())
+                .andReturn();
 
         Cookie accessCookie = login.getResponse().getCookie("__Host-zbpm_token");
         assertThat(accessCookie)
-                .as("login without opt-in must still set the httpOnly access cookie")
+                .as("login with Sec-Fetch-Site: same-origin must still set the httpOnly access cookie")
                 .isNotNull();
         assertThat(accessCookie.getValue()).isNotBlank();
 
@@ -117,7 +139,7 @@ class Sec70JsonTokenOptInIT {
                 .as("token field stays in the contract (null, not removed)")
                 .isTrue();
         assertThat(body.get("token").isNull())
-                .as("login without X-Auth-Transport: bearer must NOT echo the token in JSON")
+                .as("login with Sec-Fetch-Site: same-origin must NOT echo the token in JSON")
                 .isTrue();
 
         // the cookie alone authenticates — cookie-only SPA flow intact
@@ -126,12 +148,15 @@ class Sec70JsonTokenOptInIT {
                 .andExpect(status().isOk());
     }
 
-    // --- login WITH the header: JSON token present, byte-identical to cookie ---
+    // --- login С Sec-Fetch-Site: cross-site (внешний фронт): JSON token есть ---
 
     @Test
-    void login_withOptInHeader_jsonTokenPresent_byteIdenticalToCookie() throws Exception {
-        UUID id = createUser("sec70-hdr");
-        MvcResult login = doLogin(usernameOf(id), true);
+    void login_crossSite_jsonTokenPresent_byteIdenticalToCookie() throws Exception {
+        UUID id = createUser("sec70-crosssite");
+        MvcResult login = mockMvc.perform(loginRequest(usernameOf(id))
+                        .header(AuthResource.SEC_FETCH_SITE_HEADER, "cross-site"))
+                .andExpect(status().isOk())
+                .andReturn();
 
         Cookie accessCookie = login.getResponse().getCookie("__Host-zbpm_token");
         assertThat(accessCookie).isNotNull();
@@ -139,47 +164,116 @@ class Sec70JsonTokenOptInIT {
         JsonNode body = mapper.readTree(login.getResponse().getContentAsString());
         String jsonToken = body.get("token").asText();
         assertThat(jsonToken)
-                .as("login with X-Auth-Transport: bearer must echo the token in JSON")
+                .as("login with Sec-Fetch-Site: cross-site (external frontend) must echo the token in JSON")
                 .isNotBlank();
         assertThat(jsonToken)
-                .as("opt-in JSON token must be byte-identical to the cookie (old behavior)")
+                .as("JSON token must be byte-identical to the cookie (old behavior)")
                 .isEqualTo(accessCookie.getValue());
     }
 
-    // --- refresh WITHOUT the header: rotated cookie present, JSON token null ---
+    // --- ATTACK-сценарий: same-origin + поддельный X-Auth-Transport (XSS пишет
+    //     кастомные заголовки сам) — всё равно НЕТ token. Именно эта мутация
+    //     (OR по кастомному заголовку поверх Sec-Fetch-Site) переоткрыла бы дыру
+    //     раунда 2: браузер всё равно штампует same-origin, и гейт держит. ---
 
     @Test
-    void refresh_withoutOptInHeader_jsonTokenNull_cookieRotated() throws Exception {
-        UUID id = createUser("sec70-refnohdr");
-        MvcResult login = doLogin(usernameOf(id), false);
+    void login_sameOrigin_plusForgedCustomHeader_stillNoJsonToken() throws Exception {
+        UUID id = createUser("sec70-forged");
+        MvcResult login = mockMvc.perform(loginRequest(usernameOf(id))
+                        .header(AuthResource.SEC_FETCH_SITE_HEADER,
+                                AuthResource.SEC_FETCH_SITE_SAME_ORIGIN)
+                        .header("X-Auth-Transport", "bearer"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        Cookie accessCookie = login.getResponse().getCookie("__Host-zbpm_token");
+        assertThat(accessCookie)
+                .as("forged-header attack must still set the httpOnly access cookie")
+                .isNotNull();
+
+        JsonNode body = mapper.readTree(login.getResponse().getContentAsString());
+        assertThat(body.get("token").isNull())
+                .as("Sec-Fetch-Site: same-origin + forged X-Auth-Transport must still NOT echo the token — "
+                        + "a custom header settable by page JS must never override the browser-computed gate")
+                .isTrue();
+    }
+
+    // --- refresh БЕЗ Sec-Fetch-Site: ротация cookie + JSON token есть ---
+
+    @Test
+    void refresh_noSecFetchSiteHeader_jsonTokenPresent_cookieRotated() throws Exception {
+        UUID id = createUser("sec70-refnosfs");
+        MvcResult login = mockMvc.perform(loginRequest(usernameOf(id)))
+                .andExpect(status().isOk())
+                .andReturn();
         String refreshToken = login.getResponse().getCookie("refresh_token").getValue();
         assertThat(refreshToken).isNotBlank();
 
-        MvcResult refresh = doRefresh(refreshToken, false);
+        MvcResult refresh = mockMvc.perform(refreshRequest(refreshToken))
+                .andExpect(status().isOk())
+                .andReturn();
 
         Cookie accessCookie = refresh.getResponse().getCookie("__Host-zbpm_token");
         assertThat(accessCookie)
-                .as("refresh without opt-in must still rotate the httpOnly access cookie")
+                .as("refresh without Sec-Fetch-Site must still rotate the httpOnly access cookie")
+                .isNotNull();
+        assertThat(accessCookie.getValue()).isNotBlank();
+
+        JsonNode body = mapper.readTree(refresh.getResponse().getContentAsString());
+        String jsonToken = body.get("token").asText();
+        assertThat(jsonToken)
+                .as("refresh without Sec-Fetch-Site (non-browser client) must echo the token in JSON")
+                .isNotBlank();
+        assertThat(jsonToken)
+                .as("JSON token must be byte-identical to the cookie (old behavior)")
+                .isEqualTo(accessCookie.getValue());
+    }
+
+    // --- refresh С Sec-Fetch-Site: same-origin: ротация cookie, JSON token НЕТ ---
+
+    @Test
+    void refresh_sameOrigin_jsonTokenNull_cookieRotated() throws Exception {
+        UUID id = createUser("sec70-refsameorigin");
+        MvcResult login = mockMvc.perform(loginRequest(usernameOf(id)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String refreshToken = login.getResponse().getCookie("refresh_token").getValue();
+        assertThat(refreshToken).isNotBlank();
+
+        MvcResult refresh = mockMvc.perform(refreshRequest(refreshToken)
+                        .header(AuthResource.SEC_FETCH_SITE_HEADER,
+                                AuthResource.SEC_FETCH_SITE_SAME_ORIGIN))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        Cookie accessCookie = refresh.getResponse().getCookie("__Host-zbpm_token");
+        assertThat(accessCookie)
+                .as("refresh with Sec-Fetch-Site: same-origin must still rotate the httpOnly access cookie")
                 .isNotNull();
         assertThat(accessCookie.getValue()).isNotBlank();
 
         JsonNode body = mapper.readTree(refresh.getResponse().getContentAsString());
         assertThat(body.has("token")).isTrue();
         assertThat(body.get("token").isNull())
-                .as("refresh without X-Auth-Transport: bearer must NOT echo the token in JSON")
+                .as("refresh with Sec-Fetch-Site: same-origin must NOT echo the token in JSON")
                 .isTrue();
     }
 
-    // --- refresh WITH the header: JSON token present, byte-identical to cookie ---
+    // --- refresh С Sec-Fetch-Site: cross-site: JSON token есть ---
 
     @Test
-    void refresh_withOptInHeader_jsonTokenPresent_byteIdenticalToCookie() throws Exception {
-        UUID id = createUser("sec70-refhdr");
-        MvcResult login = doLogin(usernameOf(id), false);
+    void refresh_crossSite_jsonTokenPresent_byteIdenticalToCookie() throws Exception {
+        UUID id = createUser("sec70-refcrosssite");
+        MvcResult login = mockMvc.perform(loginRequest(usernameOf(id)))
+                .andExpect(status().isOk())
+                .andReturn();
         String refreshToken = login.getResponse().getCookie("refresh_token").getValue();
         assertThat(refreshToken).isNotBlank();
 
-        MvcResult refresh = doRefresh(refreshToken, true);
+        MvcResult refresh = mockMvc.perform(refreshRequest(refreshToken)
+                        .header(AuthResource.SEC_FETCH_SITE_HEADER, "cross-site"))
+                .andExpect(status().isOk())
+                .andReturn();
 
         Cookie accessCookie = refresh.getResponse().getCookie("__Host-zbpm_token");
         assertThat(accessCookie).isNotNull();
@@ -187,10 +281,10 @@ class Sec70JsonTokenOptInIT {
         JsonNode body = mapper.readTree(refresh.getResponse().getContentAsString());
         String jsonToken = body.get("token").asText();
         assertThat(jsonToken)
-                .as("refresh with X-Auth-Transport: bearer must echo the token in JSON")
+                .as("refresh with Sec-Fetch-Site: cross-site must echo the token in JSON")
                 .isNotBlank();
         assertThat(jsonToken)
-                .as("opt-in JSON token must be byte-identical to the cookie (old behavior)")
+                .as("JSON token must be byte-identical to the cookie (old behavior)")
                 .isEqualTo(accessCookie.getValue());
     }
 }

@@ -36,10 +36,14 @@ POST /process-instances                        → { processDefinitionKey | proc
 `POST /auth/login` → `{ token, ... }`, а также httpOnly-cookie `zbpm_token`. Дальше — `Authorization:
 Bearer <token>` (приоритет) либо cookie (fallback), см. `JwtAuthFilter.java`.
 
-> WO-SEC-70: JSON-поле `token` в ответах `/auth/login`/`/auth/refresh` возвращается только с явным
-> opt-in — добавь заголовок `X-Auth-Transport: bearer` к запросу, если тебе нужен JSON `token`
-> (без него придёт только httpOnly-cookie, а `token` будет `null`). Браузерному SPA этот заголовок
-> слать не нужно и нельзя: XSS-инъекция на странице перехватила бы `token` из тела ответа.
+> WO-SEC-70: JSON-поле `token` в ответах `/auth/login`/`/auth/refresh` возвращается
+> всем запросам, кроме same-origin браузерных: браузер сам ставит заголовок
+> `Sec-Fetch-Site: same-origin` на запросы со своей страницы к своему бэкенду
+> (Fetch Metadata — JS его не ставит и не переопределяет), и только такие запросы
+> получают cookie-only ответ (`token: null`). Ничего специально слать не надо —
+> ни SPA, ни внешнему клиенту: небраузерные клиенты (curl, SDK) этот заголовок
+> вообще не шлют и получают `token` как раньше, внешний фронт на другом origin
+> автоматически шлёт `Sec-Fetch-Site: cross-site` и тоже получает `token`.
 
 **Важный технический нюанс, если фронт на другом домене/origin:** нативный браузерный `EventSource`
 (на нём построен Контракт C, Шаг 3) **не умеет** отправлять произвольные заголовки — значит `Authorization:
