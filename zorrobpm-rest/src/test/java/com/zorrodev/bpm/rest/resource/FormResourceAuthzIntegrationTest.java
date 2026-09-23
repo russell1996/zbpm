@@ -117,7 +117,7 @@ class FormResourceAuthzIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(password);
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .header("Authorization", "Bearer none")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))

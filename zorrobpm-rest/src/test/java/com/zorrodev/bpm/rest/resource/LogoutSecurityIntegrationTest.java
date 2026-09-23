@@ -59,7 +59,7 @@ class LogoutSecurityIntegrationTest {
     }
 
     private LoginResult loginAndExtract() throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -174,7 +174,7 @@ class LogoutSecurityIntegrationTest {
 
     @Test
     void criterion4_login_setsAccessTokenCookieMaxAge() throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -194,7 +194,7 @@ class LogoutSecurityIntegrationTest {
 
     @Test
     void criterion5_loginStillSetsRefreshCookie() throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

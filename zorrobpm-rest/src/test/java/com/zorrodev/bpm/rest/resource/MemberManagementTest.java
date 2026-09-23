@@ -128,7 +128,7 @@ class MemberManagementTest {
     }
 
     private String login(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDto(username, password)))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

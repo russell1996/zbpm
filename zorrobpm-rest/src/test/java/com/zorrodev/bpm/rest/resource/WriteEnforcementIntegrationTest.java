@@ -98,7 +98,7 @@ class WriteEnforcementIntegrationTest {
         LoginDTO loginDto = new LoginDTO();
         loginDto.setUsername("admin");
         loginDto.setPassword("admin");
-        MvcResult adminResult = mockMvc.perform(post("/auth/login")
+        MvcResult adminResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -109,7 +109,7 @@ class WriteEnforcementIntegrationTest {
         LoginDTO userDto = new LoginDTO();
         userDto.setUsername(nonMemberUsername);
         userDto.setPassword("user");
-        MvcResult userResult = mockMvc.perform(post("/auth/login")
+        MvcResult userResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(userDto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -120,7 +120,7 @@ class WriteEnforcementIntegrationTest {
         LoginDTO ownerDto = new LoginDTO();
         ownerDto.setUsername(ownerUsername);
         ownerDto.setPassword("owner");
-        MvcResult ownerResult = mockMvc.perform(post("/auth/login")
+        MvcResult ownerResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(ownerDto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

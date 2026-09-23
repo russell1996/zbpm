@@ -54,7 +54,7 @@ class Rel32F06FaultIT {
     }
     private String login(String u,String p) throws Exception {
         LoginDTO dto=new LoginDTO(); dto.setUsername(u); dto.setPassword(p);
-        var r=mockMvc.perform(post("/auth/login").content(mapper.writeValueAsString(dto)).contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
+        var r=mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer").content(mapper.writeValueAsString(dto)).contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
         return mapper.readTree(r.getResponse().getContentAsString()).get("token").asText();
     }
     private void deploy(String key) throws Exception {

@@ -83,7 +83,7 @@ class PasswordTokenIntegrationTest {
         LoginDTO beforeLogin = new LoginDTO();
         beforeLogin.setUsername(username);
         beforeLogin.setPassword("whatever");
-        mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer").contentType(MediaType.APPLICATION_JSON)
                         .content(mapper.writeValueAsString(beforeLogin)))
                 .andExpect(status().isUnauthorized());
 
@@ -98,7 +98,7 @@ class PasswordTokenIntegrationTest {
         LoginDTO afterLogin = new LoginDTO();
         afterLogin.setUsername(username);
         afterLogin.setPassword("AcceptedPass1!");
-        mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer").contentType(MediaType.APPLICATION_JSON)
                         .content(mapper.writeValueAsString(afterLogin)))
                 .andExpect(status().isOk());
 
@@ -184,7 +184,7 @@ class PasswordTokenIntegrationTest {
         LoginDTO login = new LoginDTO();
         login.setUsername(username);
         login.setPassword("PwdPassw0rd!");
-        mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer").contentType(MediaType.APPLICATION_JSON)
                         .content(mapper.writeValueAsString(login)))
                 .andExpect(status().isOk());
     }
@@ -228,7 +228,7 @@ class PasswordTokenIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(password);
-        var result = mockMvc.perform(post("/auth/login")
+        var result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(dto)))
                 .andExpect(status().isOk()).andReturn();
         return mapper.readValue(result.getResponse().getContentAsString(), AuthResponse.class).getToken();

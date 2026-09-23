@@ -97,7 +97,7 @@ public class RefreshTokenRacePgIT {
     private record LoginResult(String accessToken, String refreshToken) {}
 
     private LoginResult loginWithRefreshToken() throws Exception {
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

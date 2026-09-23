@@ -506,7 +506,7 @@ class SseRevocationIT {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(PASS);
-        MvcResult login = mockMvc.perform(post("/auth/login")
+        MvcResult login = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                 .content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk())
