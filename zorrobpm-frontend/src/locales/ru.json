@@ -380,7 +380,7 @@
   "ownerRole": "ВЛАДЕЛЕЦ",
   "designerRole": "ДИЗАЙНЕР",
   "revokeApiKeyDescription": "Это немедленно аннулирует ключ. Все интеграции, использующие его, перестанут работать.",
-  "jsonPlaceholder": "напр. [\"u1\",\"u2\"] или {\"key\":\"val\"}",
+  "jsonPlaceholder": "напр. [\"u1\",\"u2\"] или {'{'}\"key\":\"val\"{'}'}",
   "bpmnXml": "BPMN XML",
   "characters": "символов",
   "uploadProcess": "Загрузить процесс",
