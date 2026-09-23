@@ -252,10 +252,28 @@ public class AuthResource implements AuthContract {
         // WO-SEC-18 L6: use access token OR refresh token as identity source
         UUID userId = null;
 
-        // Try access token first
+        // Try access token first.
+        // WO-SEC-73 (N05): только LIVE-токен даёт право менять состояние.
+        // Logout-ветка JwtAuthFilter ставит authClaims по криптографической
+        // валидности БЕЗ live-проверки active/version/role (endpoint обязан
+        // остаться 200 + cookie-clear и для stale-токена — иначе разлогин
+        // stale-вкладки SPA сломается). Здесь сверяем claims с ТЕКУЩИМ
+        // security state — дословно то же условие живости, что фильтр
+        // применяет на обычных путях (active + version + role). Stale-токен
+        // даёт "нет identity из этого источника", а не текущего юзера:
+        // replay v1 после login v2 — безопасный no-op, версия не бампится,
+        // сессии v2 не отзываются. Refresh-fallback ниже уже live-gated сам
+        // по себе (только не-отозванная неистёкшая строка): запрос, несущий
+        // ЖИВОЙ refresh, — это предъявление живого credential, такой logout
+        // легитимен независимо от stale Bearer рядом с ним.
         TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
         if (claims != null) {
-            userId = claims.userId();
+            var state = userLookupService.securityState(claims.userId());
+            if (state.isPresent() && state.get().active()
+                && state.get().tokenVersion() == claims.tokenVersion()
+                && state.get().role().equals(claims.role())) {
+                userId = claims.userId();
+            }
         }
 
         // If access token expired/unavailable, derive identity from refresh token
