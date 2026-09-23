@@ -108,7 +108,7 @@ class Diff5MessageErrorApiIT {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(u);
         dto.setPassword(p);
-        MvcResult r = mockMvc.perform(post("/auth/login").content(mapper.writeValueAsString(dto))
+        MvcResult r = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer").content(mapper.writeValueAsString(dto))
                 .contentType(MediaType.APPLICATION_JSON)).andExpect(status().isOk()).andReturn();
         return mapper.readTree(r.getResponse().getContentAsString()).get("token").asText();
     }

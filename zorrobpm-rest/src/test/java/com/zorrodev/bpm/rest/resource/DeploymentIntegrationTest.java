@@ -266,7 +266,7 @@ class DeploymentIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(password);
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

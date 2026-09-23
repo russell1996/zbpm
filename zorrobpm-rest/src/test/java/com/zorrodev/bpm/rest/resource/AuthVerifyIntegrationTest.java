@@ -41,7 +41,7 @@ class AuthVerifyIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("admin");
         dto.setPassword("admin");
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -54,7 +54,7 @@ class AuthVerifyIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("admin");
         dto.setPassword("admin");
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
