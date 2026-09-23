@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_diff10" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-diff10-gateway-no-condition" name="test-diff10-gateway-no-condition" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="xor" />
+    <!-- WO-DIFF-10: оба исходящих БЕЗ conditionExpression, у гейтвея НЕТ default.
+         Реальный Zeebe такой деплой отклоняет ("Must have a condition or be default flow"),
+         Zorro деплоит и крашится в рантайме сырым NPE из FlowNavigator.processFlow. -->
+    <bpmn:exclusiveGateway id="xor" name="xor">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flowU1</bpmn:outgoing>
+      <bpmn:outgoing>flowU2</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="flowU1" name="flowU1" sourceRef="xor" targetRef="endU1" />
+    <bpmn:sequenceFlow id="flowU2" name="flowU2" sourceRef="xor" targetRef="endU2" />
+    <bpmn:endEvent id="endU1" name="endU1">
+      <bpmn:incoming>flowU1</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endU2" name="endU2">
+      <bpmn:incoming>flowU2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
