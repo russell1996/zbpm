@@ -29,13 +29,32 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
         return ((root, query, criteriaBuilder) ->  criteriaBuilder.equal(root.get("type"), type));
     }
 
+    /** WO-DB-2 (N02): filters on the real JPA attribute {@code textValue} —
+     *  the entity has no {@code value} attribute, so the old path failed to build. */
     static Specification<ProcessVariableEntity> byValue(String value) {
-        return ((root, query, criteriaBuilder) ->  criteriaBuilder.equal(root.get("value"), value));
+        return ((root, query, criteriaBuilder) ->  criteriaBuilder.equal(root.get("textValue"), value));
     }
 
-    /** WO-DIFF-3 (#5): excludes engine-internal bookkeeping names by prefix. */
+    /**
+     * WO-DIFF-3 (#5): excludes engine-internal bookkeeping names by prefix.
+     * WO-DB-2 (N15): the prefix is matched literally — {@code _}, {@code %}
+     * and the escape character itself are escaped, otherwise a user variable
+     * like {@code amiXbatchZvalue} matches the unescaped pattern
+     * {@code _mi_batch_%} via the {@code _} single-char wildcards and would be
+     * wrongly hidden as internal.
+     */
     static Specification<ProcessVariableEntity> byNamePrefix(String prefix) {
-        return ((root, query, criteriaBuilder) -> criteriaBuilder.like(root.get("name"), prefix + "%"));
+        return ((root, query, criteriaBuilder) ->
+            criteriaBuilder.like(root.get("name"), escapeLikePrefix(prefix) + "%", '\\'));
+    }
+
+    /**
+     * WO-DB-2 (N15): escapes LIKE wildcards for a literal prefix match with
+     * {@code ESCAPE '\'}. The backslash goes first so later insertions are not
+     * re-escaped.
+     */
+    static String escapeLikePrefix(String prefix) {
+        return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     /** WO-ENG-14: root scope only (process-instance variables, not activity-local ones). */
