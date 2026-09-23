@@ -64,6 +64,12 @@ class ScriptServicePoolSaturationTest {
         return (ThreadPoolExecutor) f.get(service);
     }
 
+    private static BpmMetrics readMetrics(ScriptServiceImpl service) throws Exception {
+        Field f = ScriptServiceImpl.class.getDeclaredField("bpmMetrics");
+        f.setAccessible(true);
+        return (BpmMetrics) f.get(service);
+    }
+
     private static ProcessVariable longVar(String name, String value) {
         ProcessVariable v = new ProcessVariable();
         v.setName(name);
@@ -155,15 +161,27 @@ class ScriptServicePoolSaturationTest {
         assertThat(registry.find("zbpm.script.pool.active").gauge().value())
             .as("zbpm.script.pool.active during saturation").isEqualTo(1.0);
 
-        // Освобождение: пул снова обслуживает, gauge возвращается в 0.
+        // Освобождение: пул снова обслуживает.
         releaseWorker.countDown();
         try {
             Object result = service.evaluateExpression("x + 1", List.of(longVar("x", "41")));
             assertThat(((Number) result).longValue()).as("pool serves after release").isEqualTo(42L);
+            // Gauge читает getActiveCount() (документированно approximate):
+            // внутренний decrement счётчика происходит чуть позже, чем
+            // FutureTask разблокирует Future.get(), поэтому прямой assert
+            // сразу после evaluate — гонка (реальный CI pipeline 171434
+            // поймал 1.0 вместо 0.0). Ждём фактического освобождения пула
+            // тем же Awaitility-паттерном, что выше для очереди. Refresh
+            // внутри поллинга обязателен: gauge обновляется только из
+            // finally eval'а, после shutdown его уже никто не перепишет —
+            // ждать замороженное значение без refresh было бы hang-until-timeout.
+            BpmMetrics metrics = readMetrics(service);
+            await().atMost(Duration.ofSeconds(5)).until(() -> {
+                metrics.updateScriptPoolMetrics(pool);
+                return registry.find("zbpm.script.pool.active").gauge().value() == 0.0;
+            });
         } finally {
             service.shutdown();
         }
-        assertThat(registry.find("zbpm.script.pool.active").gauge().value())
-            .as("zbpm.script.pool.active after recovery").isEqualTo(0.0);
     }
 }
