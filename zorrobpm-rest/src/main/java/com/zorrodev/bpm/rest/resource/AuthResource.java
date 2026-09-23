@@ -77,6 +77,30 @@ public class AuthResource implements AuthContract {
     public static final String SEC_FETCH_SITE_HEADER = "Sec-Fetch-Site";
     public static final String SEC_FETCH_SITE_SAME_ORIGIN = "same-origin";
 
+    /**
+     * WO-SEC-72 (N03): refresh-cookie отдаётся ДВУМЯ Set-Cookie с одним значением —
+     * backend-path {@code /auth/refresh} (deployment с API в корне, {@code VITE_API_URL=/},
+     * прямые вызовы к бэкенду) и external-path {@code /api/auth/refresh} (SPA за
+     * префиксом {@code /api}: nginx {@code location /api/} и vite dev-proxy режут
+     * префикс ПОСЛЕ того, как браузер уже выбрал cookie по своему запросному пути,
+     * RFC 6265 §5.1.4 — одиночный {@code Path=/auth/refresh} на запросе
+     * {@code /api/auth/refresh} браузер не присылает, сессия не обновлялась).
+     *
+     * <p>Почему не один из двух примеров WO: {@code proxy_cookie_path} в nginx чинит
+     * только прод-nginx (dev vite-proxy и внешний edge-proxy остались бы сломанными,
+     * у каждого свой конфиг вне этого репо), а «настройка external auth path» требует
+     * угадать топологию деплоя конфигом — неверное значение молча ломает refresh.
+     * Два Path работают в обоих режимах одновременно без единого конфига; сужение
+     * WO-SEC-64 сохранено (оба Path узкие, никакого {@code Path=/}), значения всегда
+     * одинаковые — расхождения быть не может, logout чистит оба.
+     *
+     * <p>Префикс {@code /api} захардкожен сознательно: он уже захардкожен в трёх местах
+     * (фронт {@code api.ts} дефолт {@code /api}, {@code vite.config.ts} proxy,
+     * {@code nginx.conf} {@code location /api/}) — четвёртое не вводит новой магии.
+     */
+    public static final String REFRESH_COOKIE_BACKEND_PATH = "/auth/refresh";
+    public static final String REFRESH_COOKIE_API_PREFIX_PATH = "/api/auth/refresh";
+
     @Override
     public AuthResponse login(@Valid @RequestBody LoginDTO dto) {
         AuthResponse authResponse = userService.login(dto)
@@ -100,16 +124,8 @@ public class AuthResource implements AuthContract {
             entity.setCreatedAt(Instant.now());
             refreshTokenRepository.save(entity);
 
-            // Set refresh token httpOnly cookie
-            // WO-SEC-64 (S-3): narrowed to Path=/auth/refresh — the only endpoint
-            // that reads it. A leaked XSS elsewhere no longer carries it ambiently.
-            Cookie refreshCookie = new Cookie("refresh_token", refreshToken);
-            refreshCookie.setHttpOnly(true);
-            refreshCookie.setSecure(cookieSecure);
-            refreshCookie.setPath("/auth/refresh");
-            refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
-            refreshCookie.setAttribute("SameSite", "Strict");
-            response.addCookie(refreshCookie);
+            // Set refresh token httpOnly cookie (WO-SEC-72: dual Path, see addRefreshCookie)
+            addRefreshCookie(refreshToken, (int) (refreshTtlDays * 24 * 60 * 60));
         }
 
         // WO-SEC-70 (раунд 3): стираем JSON-копию для same-origin браузерных
@@ -212,14 +228,8 @@ public class AuthResource implements AuthContract {
         newEntity.setCreatedAt(Instant.now());
         refreshTokenRepository.save(newEntity);
 
-        // Set new refresh cookie (WO-SEC-64: Path=/auth/refresh, see login())
-        Cookie refreshCookie = new Cookie("refresh_token", newRefreshToken);
-        refreshCookie.setHttpOnly(true);
-        refreshCookie.setSecure(cookieSecure);
-        refreshCookie.setPath("/auth/refresh");
-        refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
-        refreshCookie.setAttribute("SameSite", "Strict");
-        response.addCookie(refreshCookie);
+        // Set new refresh cookie (WO-SEC-72: dual Path, see addRefreshCookie)
+        addRefreshCookie(newRefreshToken, (int) (refreshTtlDays * 24 * 60 * 60));
 
         // WO-SEC-63 (F02): refresh MUST also set the access cookie, exactly like login. The SPA
         // never reads the JSON access-token (HttpOnly cookie is the only transport it uses), so
@@ -288,14 +298,46 @@ public class AuthResource implements AuthContract {
             response.addCookie(clearAccess);
         }
 
-        // Clear refresh cookie (WO-SEC-64: Path must match the narrowed set-path)
-        Cookie clearRefresh = new Cookie("refresh_token", "");
-        clearRefresh.setPath("/auth/refresh");
-        clearRefresh.setMaxAge(0);
-        clearRefresh.setHttpOnly(true);
-        clearRefresh.setSecure(cookieSecure);
-        clearRefresh.setAttribute("SameSite", "Strict");
-        response.addCookie(clearRefresh);
+        // Clear refresh cookie (WO-SEC-72: clear-paths must match BOTH set-paths,
+        // otherwise the browser keeps the surviving one)
+        clearRefreshCookies();
+    }
+
+    /**
+     * WO-SEC-72 (N03): ставит refresh-cookie двумя Set-Cookie с ОДИНАКОВЫМ значением —
+     * {@code Path=/auth/refresh} первым (порядок сохранён: существующие тесты читают
+     * первую куку по имени) и {@code Path=/api/auth/refresh} вторым.
+     *
+     * <p>Флаги побайтово те же, что были у одиночной куки WO-SEC-64
+     * (HttpOnly/Secure/SameSite=Strict/TTL) — меняется только Path-дубль.
+     * {@code __Host-}-cookie здесь НЕ трогается (запрет WO, п.2 задачи).
+     */
+    private void addRefreshCookie(String refreshToken, int maxAgeSeconds) {
+        for (String path : new String[]{REFRESH_COOKIE_BACKEND_PATH, REFRESH_COOKIE_API_PREFIX_PATH}) {
+            Cookie refreshCookie = new Cookie("refresh_token", refreshToken);
+            refreshCookie.setHttpOnly(true);
+            refreshCookie.setSecure(cookieSecure);
+            refreshCookie.setPath(path);
+            refreshCookie.setMaxAge(maxAgeSeconds);
+            refreshCookie.setAttribute("SameSite", "Strict");
+            response.addCookie(refreshCookie);
+        }
+    }
+
+    /**
+     * WO-SEC-72 (N03): гасит ОБА Path из {@link #addRefreshCookie} (Max-Age=0).
+     * Clear обязан совпадать с set по имени И Path — иначе браузер молча оставляет куку.
+     */
+    private void clearRefreshCookies() {
+        for (String path : new String[]{REFRESH_COOKIE_BACKEND_PATH, REFRESH_COOKIE_API_PREFIX_PATH}) {
+            Cookie clearRefresh = new Cookie("refresh_token", "");
+            clearRefresh.setPath(path);
+            clearRefresh.setMaxAge(0);
+            clearRefresh.setHttpOnly(true);
+            clearRefresh.setSecure(cookieSecure);
+            clearRefresh.setAttribute("SameSite", "Strict");
+            response.addCookie(clearRefresh);
+        }
     }
 
     private String extractCookie(String name) {
