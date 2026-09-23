@@ -16,6 +16,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -61,6 +63,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     /** Maximum bytes buffered from login request body (login JSON is ~100 bytes). */
     static final int MAX_LOGIN_BODY_BYTES = 16_384;
+
+    /** WO-SEC-71 (S-RL-2): real JSON decode for the login username — same parser
+     * family Jackson uses to bind {@code LoginDTO} downstream, so escaped /
+     * unicode-escape forms land in the SAME account bucket as the plain form.
+     * The body is already capped at {@link #MAX_LOGIN_BODY_BYTES} upstream. */
+    private static final ObjectMapper USERNAME_MAPPER = new ObjectMapper();
 
     private PgRateLimiter pgRateLimiter;
 
@@ -171,7 +179,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         // HOLD-fix (P-63/P-65 class): the bucket is keyed on the USER resolved from
         // the access JWT, NOT on client IP. This filter runs before JwtAuthFilter,
         // so identity comes from verifying the token directly (same sources as
-        // JwtAuthFilter: Bearer header, then zbpm_token cookie). Behind the shared
+        // JwtAuthFilter: Bearer header, then access cookie). Behind the shared
         // prod proxy every visitor presents the same address — an IP key here is ONE
         // bucket for the whole installation, and since this check runs BEFORE auth,
         // an anonymous flood would lock every user out of escaping
@@ -356,23 +364,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
     /**
      * WO-SEC-44: extract username from login request body.
      * Uses CachingRequestWrapper so the body can be read by the controller after this filter.
+     *
+     * <p>WO-SEC-71 (S-RL-2): real JSON decode via Jackson — the old hand-rolled
+     * {@code indexOf}/{@code substring} scan returned the RAW source slice, so an
+     * escaped form ({@code "al\"ice"}, {@code "\u0061lice"}) bucketed separately
+     * from the plain {@code "alice"} the backend actually authenticates, dodging
+     * the per-account bucket (the per-IP bucket still applied). Non-textual or
+     * absent {@code username} → null → only the IP bucket applies (fail-open is
+     * safe here: downstream Jackson rejects such bodies with 400 anyway).
      */
     private String extractUsername(CachingRequestWrapper request) {
         try {
             byte[] body = request.getBodyBytes();
             if (body == null || body.length == 0) return null;
-            String json = new String(body, StandardCharsets.UTF_8);
-            // Minimal JSON parsing — avoid pulling in ObjectMapper for a simple field
-            // Format: {"username":"...","password":"..."}
-            int idx = json.indexOf("\"username\"");
-            if (idx < 0) return null;
-            int colon = json.indexOf(':', idx + 10);
-            if (colon < 0) return null;
-            int openQuote = json.indexOf('"', colon + 1);
-            if (openQuote < 0) return null;
-            int closeQuote = json.indexOf('"', openQuote + 1);
-            if (closeQuote < 0) return null;
-            return json.substring(openQuote + 1, closeQuote);
+            JsonNode root = USERNAME_MAPPER.readTree(body);
+            JsonNode name = root.get("username");
+            return (name != null && name.isTextual()) ? name.asText() : null;
         } catch (Exception e) {
             log.debug("Failed to extract username from login body: {}", e.getMessage());
             return null;
@@ -401,25 +408,25 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     /**
      * WO-SEC-58 HOLD-fix: resolve the authenticated user for /me/password bucketing.
-     * Same token sources as JwtAuthFilter (Bearer header, then zbpm_token cookie);
+     * Same token sources as JwtAuthFilter (Bearer header, then access cookie);
      * signature is verified via TokenService, so a client cannot pick an arbitrary
      * userId key. API keys and invalid/absent tokens → null → caller falls back to
      * the per-IP key. Never throws into the chain.
+     *
+     * <p>WO-SEC-71 (N04): the cookie source is {@link JwtAuthFilter#extractTokenFromCookie}
+     * itself — the single resolver the auth path uses ({@code __Host-zbpm_token}
+     * first, legacy {@code zbpm_token} fallback). Reading only the legacy name
+     * here (as before) dropped every current-cookie user into the shared
+     * {@code me-password:anon} bucket, where one anonymous flood locked out all
+     * cookie-authenticated password changes. Rate-limit identity now equals auth
+     * identity by construction, not by duplicated name strings.
      */
     private String extractUserIdFromAccessJwt(HttpServletRequest request) {
         if (tokenService == null) return null;
         String header = request.getHeader("Authorization");
         String token = (header != null && header.startsWith("Bearer ")) ? header.substring(7) : null;
         if (token == null) {
-            Cookie[] cookies = request.getCookies();
-            if (cookies != null) {
-                for (Cookie cookie : cookies) {
-                    if ("zbpm_token".equals(cookie.getName())) {
-                        token = cookie.getValue();
-                        break;
-                    }
-                }
-            }
+            token = JwtAuthFilter.extractTokenFromCookie(request);
         }
         if (token == null || token.isBlank() || token.startsWith(JwtAuthFilter.API_KEY_PREFIX)) {
             return null;
