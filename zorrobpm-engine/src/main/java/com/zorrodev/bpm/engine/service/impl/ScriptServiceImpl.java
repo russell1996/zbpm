@@ -95,7 +95,25 @@ public class ScriptServiceImpl implements ScriptService {
 
     private Object evalWithTimeout(ScriptEngine engine, String code, List<ProcessVariable> variables) {
         ScriptContext ctx = buildContext(variables);
+        String ref = codeRef(code);
+        return awaitWithTimeout(submitToPool(() -> engine.eval(code, ctx), ref), ref);
+    }
 
+    /**
+     * WO-ENG-20: {@link com.zorrodev.bpm.engine.service.ScriptService#runWithBudget} —
+     * тот же пул/timeout/bulkhead/метрики, что у script task'ов, для задач, которые
+     * нельзя выразить через {@code evaluateScript}/{@code evaluateExpression}.
+     */
+    public Object runWithBudget(java.util.concurrent.Callable<Object> task, String codeRef) {
+        return awaitWithTimeout(submitToPool(task, codeRef), codeRef);
+    }
+
+    /**
+     * WO-ENG-20: сабмит в общий пул (выделено из {@code evalWithTimeout} без смены
+     * семантики — saturation-warn, AbortPolicy-маппинг и сообщения те же).
+     */
+    private java.util.concurrent.Future<Object> submitToPool(
+        java.util.concurrent.Callable<Object> task, String ref) {
         // WO-REL-46: ранний сигнал насыщения — все воркеры заняты, запрос сейчас
         // встанет в очередь. getActiveCount() приблизителен, для warn-уровня
         // достаточно; точная картина — в zbpm.script.pool.active/size.
@@ -106,20 +124,26 @@ public class ScriptServiceImpl implements ScriptService {
         // WO-A-02: bulkhead — bounded queue rejects if pool is full (AbortPolicy)
         java.util.concurrent.Future<Object> future;
         try {
-            future = executor.submit(() -> engine.eval(code, ctx));
+            future = executor.submit(task);
         } catch (RejectedExecutionException e) {
             // WO-A-02: pool full — fast rejection instead of infinite queuing
-            String codeRef = codeRef(code);
             bpmMetrics.scriptRejected();
             bpmMetrics.updateScriptPoolMetrics(executor);
             log.warn("Script rejected (bulkhead full): {} workers active, queue full", executor.getActiveCount());
-            throw new EngineException("Script execution rejected: pool full (" + codeRef + ")");
+            throw new EngineException("Script execution rejected: pool full (" + ref + ")");
         }
+        return future;
+    }
 
+    /**
+     * WO-ENG-20: ожидание с timeout (выделено из {@code evalWithTimeout} без смены
+     * семантики — сообщения, cancel, метрики те же).
+     */
+    private Object awaitWithTimeout(java.util.concurrent.Future<Object> future, String ref) {
         try {
             Object result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
             // A-09: log length/hash, not full code
-            log.debug("Eval result (len={}, hash={})", code.length(), code.hashCode());
+            log.debug("Eval result ({})", ref);
             return result;
         } catch (java.util.concurrent.TimeoutException e) {
             // WO-A-02: stuck-worker — точечный cancel; пул НЕ заменяется (F22:
@@ -128,13 +152,12 @@ public class ScriptServiceImpl implements ScriptService {
             future.cancel(true);
             bpmMetrics.scriptTimeout();
             // A-09: no code in exception, correlation via length/hash
-            throw new EngineException("Script execution timed out after " + (timeoutMs / 1000) + "s (" + codeRef(code) + ")");
+            throw new EngineException("Script execution timed out after " + (timeoutMs / 1000) + "s (" + ref + ")");
         } catch (java.util.concurrent.ExecutionException e) {
             Throwable cause = e.getCause();
-            String codeRef = codeRef(code);
             if (cause instanceof RuntimeException) throw (RuntimeException) cause;
             if (cause instanceof javax.script.ScriptException se) throw new RuntimeException(se);
-            throw new EngineException("Script execution failed (" + codeRef + "): " + cause.getMessage(), cause);
+            throw new EngineException("Script execution failed (" + ref + "): " + cause.getMessage(), cause);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new EngineException("Script execution interrupted");
