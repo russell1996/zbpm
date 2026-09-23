@@ -17,13 +17,22 @@ import java.util.concurrent.Executor;
 @Configuration
 public class TimerExecutorConfig {
 
+    /**
+     * WO-QW-2: queue capacity is configurable; invariant {@code queueCapacity >= 2 * batchSize}
+     * (one tick holds up to 100 timer jobs + up to 100 timer-start jobs — see
+     * {@code TimerBatchProcessor.batchSize}) so a full tick never overflows the queue.
+     * {@code CallerRunsPolicy} instead of the default {@code AbortPolicy}: on overflow
+     * the scheduler thread runs the batch itself (back-pressure, not rejection).
+     */
     @Bean(name = "timerExecutor")
-    public Executor timerExecutor() {
+    public Executor timerExecutor(
+            @org.springframework.beans.factory.annotation.Value("${zorrobpm.timer.queue-capacity:200}") int queueCapacity) {
         ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
         ex.setThreadNamePrefix("timer-batch-");
         ex.setCorePoolSize(4);
         ex.setMaxPoolSize(8);
-        ex.setQueueCapacity(200);
+        ex.setQueueCapacity(queueCapacity);
+        ex.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         ex.setWaitForTasksToCompleteOnShutdown(true);
         ex.setAwaitTerminationSeconds(10);
         ex.initialize();

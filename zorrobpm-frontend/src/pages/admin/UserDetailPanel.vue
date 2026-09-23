@@ -497,6 +497,8 @@ onUnmounted(() => {
     <div v-if="showKeyModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeKeyModal">
       <div class="bg-card rounded-lg shadow-lg w-full max-w-lg p-6 space-y-4">
         <h3 class="font-bold">{{ t('apiKeyCreated') }}</h3>
+        <!-- WO-QW-2: v-html is safe ONLY because apiKeyNotShown is a static i18n string.
+             If user-controlled input ever flows into this key — switch to {{ }} text. -->
         <p class="text-sm text-muted-foreground" v-html="t('apiKeyNotShown')"></p>
         <div class="bg-muted rounded p-3 font-mono text-sm break-all select-all border border-border">{{ displayedKey }}</div>
         <div class="flex justify-between">

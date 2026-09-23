@@ -16,6 +16,13 @@ public interface ElementArtifactBindingRepository extends JpaRepository<ElementA
 
     List<ElementArtifactBindingEntity> findByProcessDefinitionId(UUID processDefinitionId);
 
+    /**
+     * WO-QW-2: single-statement cleanup for repair/redeploy paths (replaces
+     * {@code findByProcessDefinitionId(id).forEach(repository::delete)} — N
+     * round-trips). Rare path (repair only), not a hot loop.
+     */
+    void deleteByProcessDefinitionId(UUID processDefinitionId);
+
     void deleteByProcessDefinitionIdAndElementId(UUID processDefinitionId, String elementId);
 
     /** WO-VM-9a: find bindings by old PD version to carry-forward to new version. */
