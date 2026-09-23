@@ -17,13 +17,14 @@ import static org.mockito.Mockito.*;
 class RetentionJobTest {
 
     @Mock private RetentionBatchProcessor batchProcessor;
+    @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
     private RetentionConfig config;
     private RetentionJob job;
 
     @BeforeEach
     void setUp() {
         config = new RetentionConfig();
-        job = new RetentionJob(config, batchProcessor);
+        job = new RetentionJob(config, batchProcessor, bpmMetrics);
     }
 
     @Test
@@ -133,5 +134,7 @@ class RetentionJobTest {
         verify(batchProcessor).deleteSubmission(id1);
         verify(batchProcessor).deleteSubmission(id2);
         verify(batchProcessor).deleteSubmission(id3);
+        // WO-REL-50: exactly one stuck row reported.
+        verify(bpmMetrics).setRetentionSubmissionsStuck(1);
     }
 }
