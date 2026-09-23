@@ -37,26 +37,26 @@ public class RetentionJob {
         log.info("Retention: looking for terminal instances completed before {} (TTL={}d)", cutoff, config.getTtlDays());
 
         int totalDeleted = 0;
+        // WO-REL-49: claim+delete в одной короткой транзакции на инстанс
+        // (RetentionBatchProcessor.claimAndDeleteOneInstance): SELECT ... FOR UPDATE
+        // SKIP LOCKED больше не коммитится раньше удаления — вторая реплика не может
+        // выбрать те же ID после release locks. Цикл до пустого claim'а; каждая итерация
+        // удаляет ровно один инстанс (прогресс гарантирован), транзакция — как в
+        // WO-PERF-8 короткая (один инстанс, не весь backlog).
+        int instancesDeleted = 0;
         while (true) {
             // WO-ENG-17: cutoff по каждому определению (собственный TTL или
             // глобальный как фолбэк); orphan/submission-пассы ниже — без изменений
             // (у orphan нет определения, у submission — свой TTL-скоуп).
-            List<UUID> eligible = batchProcessor.findEligibleInstances(
-                Instant.now(), config.getTtlDays(), config.getBatchSize());
-            if (eligible.isEmpty()) break;
+            java.util.Optional<RetentionBatchProcessor.ClaimedDelete> done =
+                batchProcessor.claimAndDeleteOneInstance(Instant.now(), config.getTtlDays());
+            if (done.isEmpty()) break; // last batch
 
-            // WO-PERF-8: one instance per transaction — deleteInstances is @Transactional
-            // (up to 12 DELETEs), so deleting the whole batch in one call held locks for
-            // up to batchSize instances at once. Per-id calls keep each transaction to a
-            // single instance's rows; loop/exit semantics and fail-fast are unchanged.
-            int deleted = 0;
-            for (UUID id : eligible) {
-                deleted += batchProcessor.deleteInstances(java.util.List.of(id));
-            }
-            totalDeleted += deleted;
-            log.info("Retention: deleted batch of {} instances ({} rows total so far)", eligible.size(), totalDeleted);
-
-            if (eligible.size() < config.getBatchSize()) break; // last batch
+            instancesDeleted++;
+            totalDeleted += done.get().rowsDeleted();
+        }
+        if (instancesDeleted > 0) {
+            log.info("Retention: deleted {} instances ({} rows total so far)", instancesDeleted, totalDeleted);
         }
 
         // WO-PERF-3: pre-fix boundary jobs carry NULL process_instance_id and are invisible to

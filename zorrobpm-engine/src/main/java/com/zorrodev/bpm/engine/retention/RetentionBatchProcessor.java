@@ -11,6 +11,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -74,6 +75,44 @@ public class RetentionBatchProcessor {
      */
     @Transactional
     public List<UUID> findEligibleInstances(Instant now, int fallbackDays, int batchSize) {
+        return selectEligiblePerDefinition(now, fallbackDays, batchSize);
+    }
+
+    /**
+     * WO-REL-49: claim+delete ОДНОГО инстанса в ОДНОЙ короткой транзакции.
+     *
+     * <p>Закрывает остаток §5.2 аудита: раньше {@code findEligibleInstances} (SELECT ...
+     * FOR UPDATE SKIP LOCKED) коммитился и отпускал row locks ДО {@code deleteInstances}
+     * из не-транзакционного job — две реплики могли выбрать те же ID после release locks
+     * (duplicate work + lock contention). Здесь SELECT ... LIMIT 1 FOR UPDATE SKIP LOCKED
+     * и все DELETEs идут в одной транзакции: пока удаление не закоммичено, вторая реплика
+     * пропускает строку по SKIP LOCKED; после коммита строки уже нет. Дублирующий выбор
+     * структурно невозможен, а не «обычно идемпотентен».
+     *
+     * <p>Транзакция короткая как в WO-PERF-8 (ровно один инстанс, LIMIT 1) — backlog
+     * целым в одну транзакцию не заворачивается: job дёргает метод в цикле до пустого
+     * claim'а. Каждый успешный вызов удаляет ≥1 инстанс (прогресс гарантирован —
+     * заclaimленное в той же транзакции и удаляется); исключение откатывает claim
+     * и пробрасывается наружу как раньше (следующий проход/запуск подберёт строку).
+     *
+     * @return заclaimленный и удалённый инстанс + число удалённых строк; empty — eligible нет
+     */
+    @Transactional
+    public Optional<ClaimedDelete> claimAndDeleteOneInstance(Instant now, int fallbackDays) {
+        List<UUID> picked = selectEligiblePerDefinition(now, fallbackDays, 1);
+        if (picked.isEmpty()) {
+            return Optional.empty();
+        }
+        UUID id = picked.get(0);
+        int rows = deleteRowsForInstances(List.of(id));
+        return Optional.of(new ClaimedDelete(id, rows));
+    }
+
+    /** Результат одного {@link #claimAndDeleteOneInstance}: кто заclaimлен и сколько строк ушло. */
+    public record ClaimedDelete(UUID instanceId, int rowsDeleted) {
+    }
+
+    private List<UUID> selectEligiblePerDefinition(Instant now, int fallbackDays, int limit) {
         // Belt-and-braces: мусор/0 rejected на деплое, но строка БД правится и руками —
         // неположительный TTL здесь никогда не чистится, а не «чистится сразу».
         List<Integer> distinctTtls = jdbc.queryForList(
@@ -84,7 +123,7 @@ public class RetentionBatchProcessor {
             "SELECT pi.id FROM process_instances pi " +
             "JOIN process_definitions pd ON pd.id = pi.process_definition_id " +
             "WHERE (pi.completed_at IS NOT NULL OR pi.cancelled = true) AND (");
-        MapSqlParameterSource params = new MapSqlParameterSource("limit", batchSize);
+        MapSqlParameterSource params = new MapSqlParameterSource("limit", limit);
         boolean hasBranch = false;
         int i = 0;
         for (int ttl : distinctTtls) {
@@ -123,6 +162,10 @@ public class RetentionBatchProcessor {
 
     @Transactional
     public int deleteInstances(List<UUID> instanceIds) {
+        return deleteRowsForInstances(instanceIds);
+    }
+
+    private int deleteRowsForInstances(List<UUID> instanceIds) {
         if (instanceIds.isEmpty()) return 0;
         MapSqlParameterSource params = new MapSqlParameterSource("ids", instanceIds);
 
