@@ -262,10 +262,10 @@ public class AuthResource implements AuthContract {
         // применяет на обычных путях (active + version + role). Stale-токен
         // даёт "нет identity из этого источника", а не текущего юзера:
         // replay v1 после login v2 — безопасный no-op, версия не бампится,
-        // сессии v2 не отзываются. Refresh-fallback ниже уже live-gated сам
-        // по себе (только не-отозванная неистёкшая строка): запрос, несущий
-        // ЖИВОЙ refresh, — это предъявление живого credential, такой logout
-        // легитимен независимо от stale Bearer рядом с ним.
+        // сессии v2 не отзываются. Refresh-fallback ниже gated сам по себе
+        // (только не-отозванная строка — предсуществующее поведение L6, без
+        // expiresAt/active-сверки, в этом WO не меняется): запрос с ЖИВЫМ
+        // refresh — живой credential, logout легитимен и при stale Bearer.
         TokenService.Claims claims = (TokenService.Claims) request.getAttribute("authClaims");
         if (claims != null) {
             var state = userLookupService.securityState(claims.userId());
