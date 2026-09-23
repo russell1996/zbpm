@@ -348,12 +348,18 @@ cve:npm:
   script:
     # Frontend CVE scan: npm audit (containerized — the zbpm runner has no npm on host,
     # same node:22-alpine base as zorrobpm-frontend/Dockerfile's builder stage)
+    # WO-QW-3 (N13): do NOT let the trailing echo mask npm audit's exit code —
+    # the old `... > npm-audit.json; echo "exit: $?"` always exited 0, so a
+    # failing audit looked green. Capture the status explicitly and re-exit
+    # with it (audit fix-example verbatim, adapted to the container sh -c
+    # quoting: \$ escapes for the outer runner shell). allow_failure: true
+    # (advisory policy) is unchanged — this task only makes the exit real.
     - >-
       docker run --rm
       --user "$(id -u):$(id -g)"
       -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
       node:22-alpine
-      sh -c "export HOME=/tmp NPM_CONFIG_CACHE=/tmp/npm-cache && mkdir -p /tmp/npm-cache && npm ci --ignore-scripts && npm audit --audit-level=high --omit=dev --json > npm-audit.json; echo \"npm audit exit: \$?\""
+      sh -c "export HOME=/tmp NPM_CONFIG_CACHE=/tmp/npm-cache && mkdir -p /tmp/npm-cache && npm ci --ignore-scripts || exit \$?; status=0; npm audit --audit-level=high --omit=dev --json > npm-audit.json || status=\$?; echo \"npm audit exit: \$status\"; exit \$status"
     - cat zorrobpm-frontend/npm-audit.json | head -c 2000; echo
   rules: *rules-code-changes
   artifacts:
