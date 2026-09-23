@@ -17,7 +17,6 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -387,7 +386,16 @@ public class FlowNavigator {
                 .filter(str -> !str.isEmpty())
                 .map(str -> str.substring(1))
                 .orElse(null);
-            if (!(Objects.isNull(expression) && defaultFlow)) {
+            if (expression == null) {
+                // WO-DIFF-10: поток без условия и не default просто не матчится
+                // (тот же исход, что «условие ложно») — evaluateScript(null) крашился
+                // сырой NPE из ScriptServiceImpl.codeRef, из-за чего становился
+                // недостижим чистый IllegalStateException в ExclusiveGatewayHandler.
+                // default-поток с пустым условием вёл себя так же (null = не взят
+                // здесь); сам default идёт отдельным вызовом с processExpression=false.
+                return null;
+            }
+            {
                 List<ProcessVariable> variables = cachedVariables != null ? cachedVariables : dbService.getVariables(processInstanceId);
                 Boolean test = (Boolean) scriptService.evaluateScript(expression, variables);
                 if (Boolean.TRUE.equals(test)) {
