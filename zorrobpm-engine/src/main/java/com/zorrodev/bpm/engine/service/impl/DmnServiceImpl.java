@@ -23,9 +23,9 @@ import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.xml.SecureXmlParser;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.zorrodev.bpm.engine.service.FeelBudget;
 import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
-import org.camunda.feel.api.FeelEngineApi;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -47,7 +47,12 @@ import java.util.UUID;
 @Service
 public class DmnServiceImpl implements DmnService {
 
-    private final FeelEngineApi feelEngineApi;
+    /**
+     * WO-ENG-20 (N09): прямое {@code FeelEngineApi}-поле заменено единой точкой входа
+     * с лимитами — input/output/unary-вычисления ниже идут через общий пул/timeout
+     * WO-REL-46, а не напрямую в caller/transaction thread без ограничения.
+     */
+    private final FeelBudget feelBudget;
     private final DmnDefinitionRepository dmnDefinitionRepository;
     private final ObjectMapper objectMapper;
     private final com.zorrodev.bpm.engine.service.AdvisoryDeployLock advisoryDeployLock;
@@ -60,13 +65,13 @@ public class DmnServiceImpl implements DmnService {
     private final Cache<UUID, DmnDefinitionsModel> parsedModelCache;
 
     public DmnServiceImpl(
-        FeelEngineApi feelEngineApi,
+        FeelBudget feelBudget,
         DmnDefinitionRepository dmnDefinitionRepository,
         ObjectMapper objectMapper,
         com.zorrodev.bpm.engine.service.AdvisoryDeployLock advisoryDeployLock,
         @org.springframework.beans.factory.annotation.Value("${zorrobpm.engine.dmn-cache-max-size:500}") int maxSize,
         @org.springframework.beans.factory.annotation.Value("${zorrobpm.engine.dmn-cache-ttl-minutes:60}") int ttlMinutes) {
-        this.feelEngineApi = feelEngineApi;
+        this.feelBudget = feelBudget;
         this.dmnDefinitionRepository = dmnDefinitionRepository;
         this.objectMapper = objectMapper;
         this.advisoryDeployLock = advisoryDeployLock;
@@ -513,7 +518,8 @@ public class DmnServiceImpl implements DmnService {
     }
 
     private Object evalExpression(String expression, Map<String, Object> vars) {
-        EvaluationResult result = feelEngineApi.evaluateExpression(expression, vars);
+        // WO-ENG-20: через общий бюджет (timeout/bulkhead); контракт неуспеха прежний.
+        EvaluationResult result = feelBudget.evaluateExpression(expression, vars);
         if (!result.isSuccess()) {
             throw new EngineException("DMN FEEL expression failed: '" + expression + "' -> " + result.failure());
         }
@@ -521,7 +527,8 @@ public class DmnServiceImpl implements DmnService {
     }
 
     private boolean evalUnaryTest(String test, Object input, Map<String, Object> vars) {
-        EvaluationResult result = feelEngineApi.evaluateUnaryTests(test, input, vars);
+        // WO-ENG-20: через общий бюджет (timeout/bulkhead); контракт неуспеха прежний.
+        EvaluationResult result = feelBudget.evaluateUnaryTests(test, input, vars);
         if (!result.isSuccess()) {
             throw new EngineException("DMN FEEL unary test failed: '" + test + "' -> " + result.failure());
         }
