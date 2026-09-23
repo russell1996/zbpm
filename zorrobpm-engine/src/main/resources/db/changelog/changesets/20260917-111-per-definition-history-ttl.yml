@@ -19,3 +19,8 @@ databaseChangeLog:
             dbms: h2
             sql: >-
               COMMENT ON COLUMN process_definitions.history_time_to_live_days IS 'TTL истории в днях на определении процесса (WO-ENG-17, Camunda-style historyTimeToLive): NULL — наследовать глобальный zorrobpm.engine.retention.ttl-days; значение — срок чистки завершённых инстансов этого определения';
+      rollback:
+        # WO-OPS-15: COMMENT dies with the dropped column.
+        - dropColumn:
+            tableName: process_definitions
+            columnName: history_time_to_live_days

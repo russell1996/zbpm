@@ -43,3 +43,8 @@ databaseChangeLog:
               COMMENT ON COLUMN rate_limit_bucket.window_start IS 'Начало текущего fixed-окна корзины';
               COMMENT ON COLUMN rate_limit_bucket.tokens IS 'Остаток токенов текущего окна';
               COMMENT ON COLUMN rate_limit_bucket.updated_at IS 'Последнее касание корзины (для TTL-чистки)';
+
+      rollback:
+        # WO-OPS-15: index + COMMENTs die with the table — no separate inverses needed.
+        - dropTable:
+            tableName: rate_limit_bucket

@@ -78,3 +78,7 @@ databaseChangeLog:
               COMMENT ON COLUMN variable_history.scope_id IS 'Скоуп переменной: NULL — корень инстанса, иначе id активности (как variables.scope_id)';
               COMMENT ON COLUMN variable_history.source IS 'Кто изменил: INIT (стартовые переменные), CREATE (первая запись), UPDATE (перезапись), APPEND (добавление JSON-элемента)';
               COMMENT ON COLUMN variable_history.changed_at IS 'Момент изменения (порядок истории — changed_at, затем id)';
+      rollback:
+        # WO-OPS-15: index + COMMENTs die with the table — no separate inverses needed.
+        - dropTable:
+            tableName: variable_history
