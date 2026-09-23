@@ -35,13 +35,14 @@ import static org.mockito.Mockito.when;
 class RetentionJobStuckPageTest {
 
     @Mock private RetentionBatchProcessor batchProcessor;
+    @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
     private RetentionConfig config;
     private RetentionJob job;
 
     @BeforeEach
     void setUp() {
         config = new RetentionConfig();
-        job = new RetentionJob(config, batchProcessor);
+        job = new RetentionJob(config, batchProcessor, bpmMetrics);
     }
 
     private void stubIdleProcessors(int batchSize) {
@@ -60,8 +61,10 @@ class RetentionJobStuckPageTest {
         UUID id1 = UUID.randomUUID();
         UUID id2 = UUID.randomUUID();
 
+        // WO-REL-50: all-bad first page no longer ends the pass — the second poll
+        // (excluding both bad ids via the skip-set) comes back empty and ends it.
         when(batchProcessor.findEligibleSubmissions(any(), eq(2), any()))
-            .thenReturn(List.of(id1, id2));
+            .thenReturn(List.of(id1, id2), List.of());
         when(batchProcessor.deleteSubmission(id1)).thenThrow(new RuntimeException("row locked"));
         when(batchProcessor.deleteSubmission(id2)).thenThrow(new RuntimeException("row locked"));
 
@@ -70,7 +73,9 @@ class RetentionJobStuckPageTest {
 
         verify(batchProcessor, times(1)).deleteSubmission(id1);
         verify(batchProcessor, times(1)).deleteSubmission(id2);
-        verify(batchProcessor, times(1)).findEligibleSubmissions(any(), eq(2), any());
+        verify(batchProcessor, times(2)).findEligibleSubmissions(any(), eq(2), any());
+        // WO-REL-50: stuck rows are reported, not silent.
+        verify(bpmMetrics).setRetentionSubmissionsStuck(2);
     }
 
     @Test
@@ -94,6 +99,8 @@ class RetentionJobStuckPageTest {
         order.verify(batchProcessor).deleteSubmission(bad);
         order.verify(batchProcessor).deleteSubmission(good);
         order.verify(batchProcessor).findEligibleSubmissions(any(), eq(2), eq(java.util.Set.of(bad)));
+        // WO-REL-50: one stuck row reported.
+        verify(bpmMetrics).setRetentionSubmissionsStuck(1);
     }
 
     @Test

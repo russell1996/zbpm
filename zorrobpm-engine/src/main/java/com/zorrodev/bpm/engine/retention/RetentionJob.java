@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.retention;
 
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -26,6 +27,8 @@ public class RetentionJob {
 
     private final RetentionConfig config;
     private final RetentionBatchProcessor batchProcessor;
+    // WO-REL-50: stuck-row visibility (gauge) — the loop owner reports per-pass failures.
+    private final BpmMetrics bpmMetrics;
 
     @Scheduled(fixedDelayString = "${zorrobpm.engine.retention.poll-interval-ms:3600000}")
     public void run() {
@@ -85,8 +88,15 @@ public class RetentionJob {
         // с исключением уже виденных неудаляемых id, так что прогресс есть всегда —
         // либо удаления, либо рост skip-set, либо пустая страница. Без skip-set один
         // вечно неудаляемый рядок останавливал бы всю очередь навсегда.
+        // WO-REL-50 (остаток F37 — starvation следующих страниц): pageDeleted == 0 больше
+        // НЕ прекращает проход. Прогресс теперь идёт по skip-курсору, а не по числу удалений:
+        // каждая итерация либо удаляет, либо приращивает skip-set, и опрос всегда исключает
+        // уже виденные плохие id — хвост обрабатывается на том же проходе, даже если вся
+        // первая страница неудаляема. Короткий опрос (< batchSize) по-прежнему значит
+        // «невиденных eligible-строк больше нет» — единственный выход, кроме пустого опроса.
         int submissionsDeleted = 0;
         java.util.Set<UUID> skippedSubmissionIds = new java.util.HashSet<>();
+        java.util.Set<UUID> stuckSubmissionIds = new java.util.LinkedHashSet<>();
         while (true) {
             // Снапшот skip-set на опрос: опрос видит фиксированное множество, мутации
             // этого прохода (новые плохие строки) влияют только на следующий опрос.
@@ -94,20 +104,25 @@ public class RetentionJob {
                 cutoff, config.getBatchSize(), java.util.Set.copyOf(skippedSubmissionIds));
             if (eligibleSubmissions.isEmpty()) break;
 
-            int pageDeleted = 0;
             for (UUID submissionId : eligibleSubmissions) {
                 try {
                     int gone = batchProcessor.deleteSubmission(submissionId);
-                    pageDeleted += gone;
                     submissionsDeleted += gone;
                 } catch (RuntimeException e) {
                     log.warn("Retention: failed to delete process submission {} — continuing with the rest", submissionId, e);
                     skippedSubmissionIds.add(submissionId);
+                    stuckSubmissionIds.add(submissionId);
                 }
             }
 
-            if (pageDeleted == 0) break; // полная страница без прогресса — выход, не вечный цикл
             if (eligibleSubmissions.size() < config.getBatchSize()) break; // last batch
+        }
+        // WO-REL-50: застрявшие строки видны оператору (gauge + warn выше), а не молча
+        // блокируют job. Gauge — состояние последнего прохода: чистый проход сбрасывает в 0.
+        bpmMetrics.setRetentionSubmissionsStuck(stuckSubmissionIds.size());
+        if (!stuckSubmissionIds.isEmpty()) {
+            log.warn("Retention: {} terminal process submission(s) stuck undeleted this pass: {}",
+                stuckSubmissionIds.size(), stuckSubmissionIds);
         }
         if (submissionsDeleted > 0) {
             log.info("Retention: deleted {} terminal process submissions", submissionsDeleted);
