@@ -356,7 +356,7 @@ public class MetricsWiringIntegrationTests {
             new com.zorrodev.bpm.engine.service.impl.ScriptServiceImpl(
                 new org.camunda.feel.impl.script.FeelUnaryTestsScriptEngineFactory().getScriptEngine(),
                 new org.camunda.feel.impl.script.FeelScriptEngineFactory().getScriptEngine(),
-                new tools.jackson.databind.ObjectMapper(), metrics, 1);
+                new tools.jackson.databind.ObjectMapper(), metrics, 1, 2);
         String slowExpr = "for i in 1..5000 return for j in 1..5000 return i * j";
 
         try {

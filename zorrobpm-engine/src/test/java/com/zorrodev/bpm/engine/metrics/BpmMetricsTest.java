@@ -180,7 +180,7 @@ class BpmMetricsTest {
     }
 
     @Test
-    void allSeventeenMeters_registered() {
+    void allEighteenMeters_registered() {
         Counter started = registry.find("zbpm.process.started").counter();
         Counter completed = registry.find("zbpm.process.completed").counter();
         Counter failed = registry.find("zbpm.process.failed").counter();
@@ -192,6 +192,7 @@ class BpmMetricsTest {
         Counter timeout = registry.find("zbpm.script.timeout").counter();
         Gauge poolActive = registry.find("zbpm.script.pool.active").gauge();
         Gauge poolQueue = registry.find("zbpm.script.pool.queue").gauge();
+        Gauge poolSize = registry.find("zbpm.script.pool.size").gauge();
         Counter published = registry.find("zbpm.outbox.published").counter();
         Counter outboxFailed = registry.find("zbpm.outbox.failed").counter();
         Gauge backlog = registry.find("zbpm.outbox.backlog").gauge();
@@ -199,17 +200,12 @@ class BpmMetricsTest {
         Counter rabbit = registry.find("zbpm.rabbit.publish.failures").counter();
         Timer lag = registry.find("zbpm.timer.lag").timer();
         assertThat(java.util.List.of(started, completed, failed, active, stuck, stuckService, usertaskAge, rejected, timeout,
-            poolActive, poolQueue, published, outboxFailed, backlog, quarantine, rabbit, lag))
+            poolActive, poolQueue, poolSize, published, outboxFailed, backlog, quarantine, rabbit, lag))
             .doesNotContainNull();
     }
 
     @Test
     void allFifteenMeters_registered() {
-        allSeventeenMeters_registered();
-    }
-
-    @Test
-    void allEighteenMeters_registered() {
-        allSeventeenMeters_registered();
+        allEighteenMeters_registered();
     }
 }
