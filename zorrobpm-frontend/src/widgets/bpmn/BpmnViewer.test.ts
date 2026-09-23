@@ -7,6 +7,18 @@
  *       canvas.zoom('fit-viewport') — re-invoked, not re-invented.
  * jsdom cannot prove the "reaches the bottom edge" part (P-53) — these tests
  * are the regression guard the WO asks for; the visual proof needs a browser.
+ *
+ * WO-UI-19 — bpmn-js base CSS (breadcrumb out of collapsed subprocess):
+ *  the NavigatedViewer renders `.bjs-breadcrumbs` into the container DOM on
+ *  drilldown; visibility/position come ENTIRELY from `bpmn-js.css`
+ *  (`display:none` → `flex` via `.bjs-breadcrumbs-shown`, `position:absolute`,
+ *  `top/left:30px`). Without the import the element exists but is unstyled.
+ *  jsdom cannot prove VISIBLE (P-53 — no layout), so these tests guard the
+ *  two things jsdom CAN see: (a) main.ts imports the CSS files (file-level
+ *  guard — the actual bug was a missing import), (b) the real (unmocked)
+ *  viewer creates the breadcrumb DOM on drilldown into the collapsed
+ *  subprocess fixture. Browser proof (visible + clickable back-navigation)
+ *  is in the report, not here.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -88,5 +100,35 @@ describe('BpmnViewer (WO-ACL-11 criteria 37, 39)', () => {
     await flushPromises()
     wrapper.unmount()
     expect(removeSpy).toHaveBeenCalledWith('resize', expect.any(Function))
+  })
+})
+
+/**
+ * WO-UI-19: the bug was a missing CSS import in main.ts (not viewer logic).
+ * Guard the import at file level — if someone drops the line, this goes red.
+ * (Vite/Vitest resolves the CSS import; existence of the package file is
+ * asserted via node_modules, not via DOM computed style — jsdom has no layout.)
+ */
+describe('BpmnViewer (WO-UI-19 base CSS)', () => {
+  it('main.ts imports bpmn-js.css, diagram-js.css and bpmn-embedded.css', () => {
+    const src = readFileSync(join(FRONTEND_ROOT, 'src/main.ts'), 'utf8')
+    for (const f of [
+      'bpmn-js/dist/assets/bpmn-js.css',
+      'bpmn-js/dist/assets/diagram-js.css',
+      'bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css',
+    ]) {
+      expect(src, `main.ts must import ${f}`).toContain(f)
+    }
+  })
+
+  it('packaged CSS files exist and carry the breadcrumb rules', () => {
+    const cssDir = join(FRONTEND_ROOT, 'node_modules/bpmn-js/dist/assets')
+    const bpmnCss = readFileSync(join(cssDir, 'bpmn-js.css'), 'utf8')
+    // the exact mechanism the bug report names: hidden by default ...
+    expect(bpmnCss).toMatch(/\.bjs-breadcrumbs\s*\{[^}]*display:\s*none/s)
+    // ... shown only through the parent toggle class ...
+    expect(bpmnCss).toMatch(/\.bjs-breadcrumbs-shown\s+\.bjs-breadcrumbs\s*\{[^}]*display:\s*flex/s)
+    // ... positioned over the canvas, not in flow
+    expect(bpmnCss).toMatch(/\.bjs-breadcrumbs\s*\{[^}]*position:\s*absolute/s)
   })
 })
