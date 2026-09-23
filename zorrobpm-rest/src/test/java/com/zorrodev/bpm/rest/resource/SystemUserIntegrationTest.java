@@ -121,7 +121,7 @@ class SystemUserIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("int4sys");
         dto.setPassword("ignore-me");
-        mockMvc.perform(post("/auth/login")
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isUnauthorized());
@@ -155,7 +155,7 @@ class SystemUserIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("int4sys");
         dto.setPassword("MyStr0ng!P@ssw0rd2");
-        mockMvc.perform(post("/auth/login")
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isUnauthorized());
@@ -458,7 +458,7 @@ class SystemUserIntegrationTest {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword(password);
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

@@ -46,7 +46,7 @@ class Api1StatusCodesIT {
         LoginDTO dto = new LoginDTO();
         dto.setUsername("admin");
         dto.setPassword("admin");
-        MvcResult r = mockMvc.perform(post("/auth/login")
+        MvcResult r = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(dto))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk()).andReturn();

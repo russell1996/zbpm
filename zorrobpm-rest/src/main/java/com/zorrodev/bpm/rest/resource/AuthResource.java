@@ -51,6 +51,20 @@ public class AuthResource implements AuthContract {
     @Value("${zorrobpm.security.jwt-ttl-minutes:30}")
     private long jwtTtlMinutes;
 
+    /**
+     * WO-SEC-70: explicit opt-in for the JSON copy of the access token.
+     * {@code POST /auth/login} and {@code POST /auth/refresh} always set the
+     * httpOnly access cookie; the {@code token} field in the JSON body is only
+     * echoed when the caller sends {@code X-Auth-Transport: bearer}. Browser
+     * SPA traffic never sends this header, so an XSS injection on the SPA has
+     * no JSON token to exfiltrate — the httpOnly cookie stays unreadable to JS.
+     * Non-browser (headless/external) clients that need the Bearer token opt in
+     * with one header, see {@code docs/guides/external-frontend-integration.md}.
+     * Value match is exact (not case-insensitive) — deterministic, trivially testable.
+     */
+    public static final String AUTH_TRANSPORT_HEADER = "X-Auth-Transport";
+    public static final String AUTH_TRANSPORT_BEARER = "bearer";
+
     @Override
     public AuthResponse login(@Valid @RequestBody LoginDTO dto) {
         AuthResponse authResponse = userService.login(dto)
@@ -84,6 +98,13 @@ public class AuthResource implements AuthContract {
             refreshCookie.setMaxAge((int) (refreshTtlDays * 24 * 60 * 60));
             refreshCookie.setAttribute("SameSite", "Strict");
             response.addCookie(refreshCookie);
+        }
+
+        // WO-SEC-70: strip the JSON copy unless the caller opted in. Everything
+        // above (access cookie, refresh issuance) already used the real token —
+        // only the JSON echo changes, never the cookie.
+        if (!jsonTokenRequested()) {
+            authResponse.setToken(null);
         }
 
         return authResponse;
@@ -195,7 +216,11 @@ public class AuthResource implements AuthContract {
         addAccessCookie(newAccessToken);
 
         AuthResponse authResponse = new AuthResponse();
-        authResponse.setToken(newAccessToken);
+        // WO-SEC-70: same opt-in as login() — the access cookie above is always
+        // set, the JSON copy only on explicit opt-in.
+        if (jsonTokenRequested()) {
+            authResponse.setToken(newAccessToken);
+        }
         return authResponse;
     }
 
@@ -269,6 +294,16 @@ public class AuthResource implements AuthContract {
             }
         }
         return null;
+    }
+
+    /**
+     * WO-SEC-70: whether the caller opted into the JSON copy of the access
+     * token. Reads the injected request — no contract-signature change.
+     *
+     * @return true only when {@code X-Auth-Transport: bearer} is present
+     */
+    private boolean jsonTokenRequested() {
+        return AUTH_TRANSPORT_BEARER.equals(request.getHeader(AUTH_TRANSPORT_HEADER));
     }
 
     /**

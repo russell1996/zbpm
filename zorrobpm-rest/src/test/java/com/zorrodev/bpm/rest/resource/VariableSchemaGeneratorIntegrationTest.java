@@ -38,7 +38,7 @@ class VariableSchemaGeneratorIntegrationTest {
         loginDTO.setUsername("admin");
         loginDTO.setPassword("admin");
 
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

@@ -74,7 +74,7 @@ class JwtAuthFilterIntegrationTest {
         loginDTO.setUsername("admin");
         loginDTO.setPassword("admin");
 
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -88,7 +88,7 @@ class JwtAuthFilterIntegrationTest {
         userLoginDTO.setUsername("regular-user");
         userLoginDTO.setPassword("user");
 
-        MvcResult userResult = mockMvc.perform(post("/auth/login")
+        MvcResult userResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(userLoginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -145,7 +145,7 @@ class JwtAuthFilterIntegrationTest {
         loginDTO.setUsername("admin");
         loginDTO.setPassword("admin");
 
-        mockMvc.perform(post("/auth/login")
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
@@ -247,7 +247,7 @@ class JwtAuthFilterIntegrationTest {
         LoginDTO loginDTO = new LoginDTO();
         loginDTO.setUsername("admin");
         loginDTO.setPassword("admin");
-        mockMvc.perform(post("/auth/login")
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(loginDTO))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());

@@ -55,7 +55,7 @@ class RefreshTokenIntegrationTest {
     }
 
     private LoginResult loginWithRefreshToken() throws Exception {
-        MvcResult loginResult = mockMvc.perform(post("/auth/login")
+        MvcResult loginResult = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -75,7 +75,7 @@ class RefreshTokenIntegrationTest {
 
     @Test
     void criterion1_login_setsRefreshCookie() throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
@@ -153,7 +153,7 @@ class RefreshTokenIntegrationTest {
 
     @Test
     void login_setsZbpmTokenAccessCookie() throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .content(mapper.writeValueAsString(validLogin()))
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

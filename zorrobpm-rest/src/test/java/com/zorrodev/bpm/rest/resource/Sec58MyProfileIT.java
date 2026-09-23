@@ -75,7 +75,7 @@ class Sec58MyProfileIT {
     /** Real login → JWT. Unique IP per call so login buckets never collide. */
     private String loginToken(String ip, String username, String password) throws Exception {
         String body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
-        MvcResult result = mockMvc.perform(post("/auth/login").with(r -> { r.setRemoteAddr(ip); return r; })
+        MvcResult result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer").with(r -> { r.setRemoteAddr(ip); return r; })
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk())
             .andReturn();
@@ -84,7 +84,7 @@ class Sec58MyProfileIT {
 
     private int loginStatus(String ip, String username, String password) throws Exception {
         String body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
-        return mockMvc.perform(post("/auth/login").with(r -> { r.setRemoteAddr(ip); return r; })
+        return mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer").with(r -> { r.setRemoteAddr(ip); return r; })
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andReturn().getResponse().getStatus();
     }

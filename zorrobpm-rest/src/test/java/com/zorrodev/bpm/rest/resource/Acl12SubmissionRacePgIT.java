@@ -308,7 +308,7 @@ public class Acl12SubmissionRacePgIT {
         LoginDTO dto = new LoginDTO();
         dto.setUsername(username);
         dto.setPassword("pass");
-        String result = mockMvc.perform(post("/auth/login")
+        String result = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(dto)))
             .andExpect(status().isOk())

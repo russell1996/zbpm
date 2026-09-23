@@ -47,7 +47,7 @@ class RegistrationAdminEndpointIntegrationTest {
 
     private String adminToken() throws Exception {
         String body = "{\"username\":\"admin\",\"password\":\"admin\"}";
-        MvcResult r = mockMvc.perform(post("/auth/login")
+        MvcResult r = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body.getBytes(StandardCharsets.UTF_8)))
                 .andExpect(status().isOk()).andReturn();
@@ -56,7 +56,7 @@ class RegistrationAdminEndpointIntegrationTest {
 
     private String userToken(String username, String password) throws Exception {
         String body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
-        MvcResult r = mockMvc.perform(post("/auth/login")
+        MvcResult r = mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body.getBytes(StandardCharsets.UTF_8)))
                 .andExpect(status().isOk()).andReturn();
@@ -146,7 +146,7 @@ class RegistrationAdminEndpointIntegrationTest {
 
         // login now works
         String loginBody = "{\"username\":\"" + approved.getUsername() + "\",\"password\":\"MyStr0ng!P@ssw0rd\"}";
-        mockMvc.perform(post("/auth/login")
+        mockMvc.perform(post("/auth/login").header("X-Auth-Transport", "bearer")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(loginBody.getBytes(StandardCharsets.UTF_8)))
                 .andExpect(status().isOk());
