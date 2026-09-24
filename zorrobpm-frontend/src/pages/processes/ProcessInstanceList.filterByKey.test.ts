@@ -5,7 +5,7 @@
  * - Filter sends processDefinitionKey, not processDefinitionId
  * - Placeholder says "key" not "definition ID"
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
@@ -53,6 +53,12 @@ describe('WO-FE-21: ProcessInstanceList filter by key', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.useFakeTimers()
+  })
+
+  // WO-UI-18: фильтр debounced (250ms) — часы подменяем, ассерты те же.
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   // ─────────────────────────────────────────────────────────────
@@ -71,6 +77,9 @@ describe('WO-FE-21: ProcessInstanceList filter by key', () => {
     // Type a key into the filter
     const input = wrapper.find('input')
     await input.setValue('incomingCorrespondenceProcess')
+    // WO-UI-18: watch debounced — продвигаем часы через окно debounce,
+    // затем сливаем промисы самого load().
+    vi.advanceTimersByTime(250)
     await flushPromises()
 
     // The store.fetchInstances should have been called with processDefinitionKey

@@ -6,6 +6,7 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
+import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -46,7 +47,9 @@ function exportData() {
 }
 
 onMounted(load)
-watch(filterKey, () => { resetPage(); load() })
+// WO-UI-18 часть B: debounce — текстовый фильтр шлёт запрос на каждую
+// клавишу, без него пачка летит наперегонки.
+watch(filterKey, debounce(() => { resetPage(); load() }))
 </script>
 
 <template>

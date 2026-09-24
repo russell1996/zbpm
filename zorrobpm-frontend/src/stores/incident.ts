@@ -15,15 +15,24 @@ export const useIncidentStore = defineStore('incident', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  // WO-UI-18 часть B (критерий 6): тот же паттерн, что в task.ts — отклик
+  // не от последнего запроса игнорируется, иначе IncidentList с быстрым
+  // переключением фильтра показывает устаревшие данные.
+  let incidentsRequest = 0
+
   async function fetchIncidents(query: IncidentQuery = {}) {
+    const myRequest = ++incidentsRequest
     loading.value = true
     error.value = null
     try {
-      incidents.value = await incidentService.getIncidents(query)
+      const result = await incidentService.getIncidents(query)
+      if (myRequest !== incidentsRequest) return
+      incidents.value = result
     } catch (e) {
+      if (myRequest !== incidentsRequest) return
       error.value = e instanceof Error ? e.message : 'Failed to load incidents'
     } finally {
-      loading.value = false
+      if (myRequest === incidentsRequest) loading.value = false
     }
   }
 

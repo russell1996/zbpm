@@ -70,6 +70,7 @@ vi.mock('@/services/instanceService', () => ({
     processName: 'Test Proc', processKey: 'test-proc', processVersion: 1,
   }),
   getProcessInstanceActivities: vi.fn().mockResolvedValue([]),
+  getProcessInstanceActivitiesPaged: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   getProcessInstances: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   startProcessInstance: vi.fn(),
 }))

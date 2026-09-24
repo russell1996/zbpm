@@ -14,6 +14,7 @@ vi.mock('@/services/instanceService', () => ({
   getProcessInstances: vi.fn().mockResolvedValue({ data: [], totalElements: 0 }),
   getProcessInstance: vi.fn().mockResolvedValue(null),
   getProcessInstanceActivities: vi.fn().mockResolvedValue([]),
+  getProcessInstanceActivitiesPaged: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   startProcessInstance: vi.fn().mockResolvedValue({ id: 'new-id' }),
 }))
 
