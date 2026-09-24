@@ -19,6 +19,7 @@ import com.zorrodev.bpm.engine.security.TokenService;
 import com.zorrodev.bpm.engine.service.UiUserService;
 import com.zorrodev.bpm.engine.service.query.QueryPaginationSupport;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -42,6 +43,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class UiUserServiceImpl implements UiUserService {
 
     private final UiUserRepository repository;
@@ -79,6 +81,28 @@ public class UiUserServiceImpl implements UiUserService {
         boolean valid = user != null && user.isActive() && passwordMatches;
 
         if (!valid) return Optional.empty();
+
+        // WO-SEC-76: silent cost upgrade — a valid login against a below-current
+        // hash re-stamps it at CURRENT_ITERATIONS. Best-effort, in its OWN
+        // REQUIRES_NEW write transaction (red-team H1): login itself runs
+        // @Transactional(readOnly=true) — a save there would be silently dropped
+        // (FlushMode.MANUAL, managed entity, save() is a no-op). A failed upgrade
+        // never fails the login — it retries next time. Concurrent double logins
+        // are safe: both values are valid hashes of the same password with fresh
+        // salts (last-writer-wins, no @Version on UiUserEntity to conflict).
+        if (passwordHasher.needsRehash(user.getPasswordHash())) {
+            String upgraded = passwordHasher.hash(dto.getPassword());
+            UUID userId = user.getId();
+            TransactionTemplate tpl = new TransactionTemplate(transactionManager);
+            tpl.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            try {
+                tpl.executeWithoutResult(st ->
+                    repository.findById(userId).ifPresent(fresh ->
+                        fresh.setPasswordHash(upgraded)));
+            } catch (RuntimeException e) {
+                log.debug("Password rehash upgrade skipped for user {}: {}", userId, e.toString());
+            }
+        }
 
         AuthResponse response = new AuthResponse();
         // WO-SEC-63: access token carries the CURRENT token_version; a later logout/password
