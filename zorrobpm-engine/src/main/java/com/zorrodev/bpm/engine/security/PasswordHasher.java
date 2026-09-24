@@ -11,11 +11,19 @@ import java.util.Base64;
 /**
  * Salted PBKDF2 password hashing using only the JDK (no extra dependencies).
  * Stored format: {@code pbkdf2$<iterations>$<saltB64>$<hashB64>}.
+ *
+ * <p>WO-SEC-76: cost versioned IN the string — {@link #matches} reads the stored
+ * count, {@link #hash} stamps {@link #CURRENT_ITERATIONS}. OWASP Password Storage
+ * Cheat Sheet target for PBKDF2-HMAC-SHA256: 600_000 (was 120_000). Old hashes
+ * keep verifying; rehash-on-login lives in {@code UiUserServiceImpl.login}.
  */
 @Component
 public class PasswordHasher {
 
-    private static final int ITERATIONS = 120_000;
+    /** WO-SEC-76: OWASP 2026 target for PBKDF2-HMAC-SHA256 (measured ~104ms/hash, see WO report). */
+    public static final int CURRENT_ITERATIONS = 600_000;
+    /** Pre-SEC-76 cost — recognized by {@link #needsRehash} for silent upgrade on login. */
+    static final int LEGACY_ITERATIONS = 120_000;
     private static final int KEY_LENGTH = 256;
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -32,15 +40,15 @@ public class PasswordHasher {
     private static String buildDummyHash() {
         byte[] salt = new byte[16];
         Arrays.fill(salt, (byte) 0x5A);
-        byte[] hash = pbkdf2("constant-time-login-dummy".toCharArray(), salt, ITERATIONS);
-        return "pbkdf2$" + ITERATIONS + "$" + b64(salt) + "$" + b64(hash);
+        byte[] hash = pbkdf2("constant-time-login-dummy".toCharArray(), salt, CURRENT_ITERATIONS);
+        return "pbkdf2$" + CURRENT_ITERATIONS + "$" + b64(salt) + "$" + b64(hash);
     }
 
     public String hash(String rawPassword) {
         byte[] salt = new byte[16];
         RANDOM.nextBytes(salt);
-        byte[] hash = pbkdf2(rawPassword.toCharArray(), salt, ITERATIONS);
-        return "pbkdf2$" + ITERATIONS + "$" + b64(salt) + "$" + b64(hash);
+        byte[] hash = pbkdf2(rawPassword.toCharArray(), salt, CURRENT_ITERATIONS);
+        return "pbkdf2$" + CURRENT_ITERATIONS + "$" + b64(salt) + "$" + b64(hash);
     }
 
     public boolean matches(String rawPassword, String stored) {
@@ -74,6 +82,21 @@ public class PasswordHasher {
         int len = Math.min(a.length, b.length);
         for (int i = 0; i < len; i++) diff |= a[i] ^ b[i];
         return diff == 0;
+    }
+
+    /**
+     * WO-SEC-76: true when a stored hash verified fine but was made with a
+     * below-current cost — the login path rehashes it silently. Malformed
+     * strings are NOT "needs rehash" (they never verified); they are rejected.
+     */
+    public boolean needsRehash(String stored) {
+        try {
+            String[] parts = stored.split("\\$");
+            if (parts.length != 4 || !"pbkdf2".equals(parts[0])) return false;
+            return Integer.parseInt(parts[1]) < CURRENT_ITERATIONS;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static String b64(byte[] data) {
