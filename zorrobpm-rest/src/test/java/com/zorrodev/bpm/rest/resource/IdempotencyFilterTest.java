@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -400,7 +401,11 @@ class IdempotencyFilterTest {
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isCreated())
             .andReturn();
-        Thread.sleep(1100);
+        // JWT меняется только по exp/сек: ждём смену секунды настенных часов —
+        // реальное условие вместо фиксированных 1100мс (WO-OPS-14).
+        long beforeSecond = Instant.now().getEpochSecond();
+        await().atMost(java.time.Duration.ofSeconds(5))
+            .until(() -> Instant.now().getEpochSecond() != beforeSecond);
         String rotatedToken = loginAndGetToken("admin", "admin");
         assertThat(rotatedToken)
             .as("предпосылка: токены реально разные (exp/сек)")

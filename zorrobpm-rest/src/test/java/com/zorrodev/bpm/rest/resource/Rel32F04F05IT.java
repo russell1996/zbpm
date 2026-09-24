@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -129,7 +130,10 @@ class Rel32F04F05IT {
                 .header("Idempotency-Key", key)
                 .content(body).contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isCreated()).andReturn();
-        Thread.sleep(1100);
+        // exp/сек: ждём смену секунды настенных часов вместо фикс-паузы (WO-OPS-14).
+        long beforeSecond = Instant.now().getEpochSecond();
+        await().atMost(java.time.Duration.ofSeconds(5))
+            .until(() -> Instant.now().getEpochSecond() != beforeSecond);
         String rotated = login("admin", "admin");
         assertThat(rotated).isNotEqualTo(adminToken);
         MvcResult second = mockMvc.perform(post("/process-instances")

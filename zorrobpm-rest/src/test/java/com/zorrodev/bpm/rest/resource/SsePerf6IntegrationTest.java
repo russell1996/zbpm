@@ -51,6 +51,9 @@ class SsePerf6IntegrationTest {
     static class SlowEmitter extends SseEmitter {
         final long delayMs;
         SlowEmitter(long delayMs) { super(0L); this.delayMs = delayMs; }
+        // WO-OPS-14: намеренно Thread.sleep, не Awaitility — это НЕ ожидание
+        // условия, а симуляция медленного клиента (часть тестируемого поведения:
+        // send() обязан занимать delayMs, иначе backpressure-тест бессмысленен).
         @Override public void send(SseEventBuilder builder) throws IOException {
             try { Thread.sleep(delayMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             super.send(builder);

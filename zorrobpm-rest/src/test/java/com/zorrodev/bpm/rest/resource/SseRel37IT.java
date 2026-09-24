@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-REL-37: сквозной IT (критерии 1–3) на реальном контексте + реальной БД.
@@ -203,14 +204,13 @@ class SseRel37IT {
 
             sseEventStreamService.drainBufferedClient(clientId, boundary);
 
-            // Drain шлёт через sseExecutor асинхронно — ждём доставку (не фиксированный sleep).
-            long deadline = System.currentTimeMillis() + 10_000;
-            List<Long> liveSeqs = positionsOf(live.envelopes);
-            while (!liveSeqs.contains(fresh.getFeedPosition()) && System.currentTimeMillis() < deadline) {
-                Thread.sleep(100);
-                liveSeqs = positionsOf(live.envelopes);
-            }
+            // Drain шлёт через sseExecutor асинхронно — ждём доставку условием
+            // (WO-OPS-14: ручной deadline-цикл со sleep(100) заменён на Awaitility
+            // с тем же условием и тем же дедлайном 10с).
+            await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(positionsOf(live.envelopes)).contains(fresh.getFeedPosition()));
             // Не потеряно (fresh доставлен), не задублировано (catchup-диапазон отброшен)
+            List<Long> liveSeqs = positionsOf(live.envelopes);
             assertThat(liveSeqs).contains(fresh.getFeedPosition());
             assertThat(liveSeqs).doesNotContainAnyElementsOf(mine);
             assertThat(live.envelopes).allMatch(e -> wanted.equals(e.get("type")));

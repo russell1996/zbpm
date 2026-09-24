@@ -16,10 +16,9 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.fail;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-REL-12 (R-02) — publisher confirms against a REAL RabbitMQ broker (not a mock).
@@ -78,19 +77,16 @@ class RabbitOutboxConfirmIT {
         return outboxRepository.save(entry);
     }
 
-    /** Polls a condition until it holds or the deadline expires (broker feedback is async). */
-    private void awaitUntil(String what, Supplier<Boolean> condition) {
-        long deadline = System.currentTimeMillis() + DEADLINE_MILLIS;
-        while (System.currentTimeMillis() < deadline) {
-            if (condition.get()) return;
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                fail("Interrupted while waiting for " + what, e);
-            }
-        }
-        fail("Timed out waiting for: " + what);
+    /**
+     * WO-OPS-14: ручной poll-цикл с {@code Thread.sleep(200)} заменён на
+     * Awaitility с тем же условием и тем же дедлайном (20с) — ждём реальное
+     * состояние (подтверждение брокера), а не фиксированную паузу.
+     */
+    private void awaitUntil(String what, java.util.function.BooleanSupplier condition) {
+        await().atMost(java.time.Duration.ofMillis(DEADLINE_MILLIS))
+            .untilAsserted(() -> assertThat(condition.getAsBoolean())
+                .as("Timed out waiting for: " + what)
+                .isTrue());
     }
 
     // ==================== Criterion 4: ACK → published=true only after broker confirmation ====================
