@@ -10,6 +10,9 @@
  *  - disconnect закрывает; неизвестный тип без слушателя никому не доходит.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'fs'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRealtimeEvents, REALTIME_EVENT_TYPES, buildStreamUrl } from './useRealtimeEvents'
 import type { EventEnvelope } from '@/types/api'
@@ -117,7 +120,20 @@ describe('useRealtimeEvents (WO-UI-18 A)', () => {
   })
 
   it('stream targets the same api base as the REST services (cookie auth)', () => {
-    expect(buildStreamUrl()).toBe('/api/events/stream')
+    // WO-QW-1 F34: VITE_API_URL resolves differently per build topology
+    // (Dockerfile ARG defaults to "/" for the external-proxy prod build,
+    // ".env" here is "/api" for local dev/standalone) — asserting one
+    // computed value against buildStreamUrl() is fragile to whichever
+    // happens to be active. Assert the MIRRORING instead (same source file
+    // pattern as apiBaseUrl.f34.test.ts): buildStreamUrl() must resolve its
+    // base from the exact same expression api.ts uses for baseURL, so the
+    // two can never drift apart regardless of which topology is built.
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'useRealtimeEvents.ts'),
+      'utf-8',
+    )
+    expect(source).toContain("import.meta.env.VITE_API_URL || '/api'")
+    expect(buildStreamUrl().endsWith('/events/stream')).toBe(true)
   })
 
   it('onerror keeps the channel open for native reconnect (criterion 3)', () => {
