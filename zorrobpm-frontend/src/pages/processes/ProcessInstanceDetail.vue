@@ -342,6 +342,13 @@ async function reloadAll() {
   await loadBpmnXml()
 }
 
+// WO-UI-18 часть C: догрузка следующей страницы activities.
+async function loadMoreActivities() {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await processStore.fetchMoreActivities(pi.id)
+}
+
 function downloadDiagnostic() {
   const pi = processStore.currentInstance
   if (!pi) return
@@ -714,6 +721,16 @@ watch(activeTab, onTabChange)
               </tr>
             </tbody>
           </table>
+          <!-- WO-UI-18 часть C: activities идут постранично (paged-эндпоинт),
+               остаток подгружается кнопкой, а не всем списком разом. -->
+          <div v-if="processStore.hasMoreActivities" class="px-4 py-3 border-t border-border bg-muted/30 text-center">
+            <button
+              class="px-4 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+              @click="loadMoreActivities"
+            >
+              {{ t('showMore') }} ({{ processStore.currentActivities.length }} / {{ processStore.currentActivitiesTotal }})
+            </button>
+          </div>
         </div>
 
         <div v-if="activeTab === 'subprocesses'" class="border border-border rounded-lg overflow-hidden">

@@ -29,15 +29,37 @@ export const useProcessStore = defineStore('process', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  // WO-UI-18 часть B (критерий 6): тот же request-id guard, что в task.ts —
+  // списки определений/инстансов тоже перезапрашиваются со сменой фильтров
+  // (ProcessDefinitionList/ProcessInstanceList), устаревший отклик игнорируется.
+  let definitionsRequest = 0
+  let instancesRequest = 0
+  let activitiesRequest = 0
+
+  // WO-UI-18 часть C: пагинация activities. Серверный лимит страницы —
+  // QueryPaginationSupport.MAX_PAGE_SIZE (200); 100 оставляет запас и совпадает
+  // с pageSize остальных списков детальной страницы.
+  const currentActivitiesTotal = ref(0)
+  const currentActivitiesPageSize = 100
+  const hasMoreActivities = ref(false)
+  // Сколько страниц уже загружено подряд с 0-й: индекс следующей = это число.
+  // Считаем явно, а не через длину (короткая страница сервера сломала бы
+  // арифметику floor/ceil и привела к повторной загрузке той же страницы).
+  let loadedActivityPages = 0
+
   async function fetchDefinitions(query: ProcessDefinitionsQuery = {}) {
+    const myRequest = ++definitionsRequest
     loading.value = true
     error.value = null
     try {
-      definitions.value = await processService.getProcessDefinitions(query)
+      const result = await processService.getProcessDefinitions(query)
+      if (myRequest !== definitionsRequest) return
+      definitions.value = result
     } catch (e) {
+      if (myRequest !== definitionsRequest) return
       error.value = e instanceof Error ? e.message : 'Failed to load definitions'
     } finally {
-      loading.value = false
+      if (myRequest === definitionsRequest) loading.value = false
     }
   }
 
@@ -70,14 +92,18 @@ export const useProcessStore = defineStore('process', () => {
   }
 
   async function fetchInstances(query: ProcessInstanceQuery = {}) {
+    const myRequest = ++instancesRequest
     loading.value = true
     error.value = null
     try {
-      instances.value = await instanceService.getProcessInstances(query)
+      const result = await instanceService.getProcessInstances(query)
+      if (myRequest !== instancesRequest) return
+      instances.value = result
     } catch (e) {
+      if (myRequest !== instancesRequest) return
       error.value = e instanceof Error ? e.message : 'Failed to load instances'
     } finally {
-      loading.value = false
+      if (myRequest === instancesRequest) loading.value = false
     }
   }
 
@@ -93,10 +119,42 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
+  // WO-UI-18 часть C (Finding #3): встроенный SPA идёт пагинированным путём
+  // GET .../activities/paged вместо голого List. Первая страница подгружается
+  // вместе с остальными табами, дальше — fetchMoreActivities() по кнопке.
+  // Непагинированный эндпоинт на сервере СОХРАНЁН для внешних клиентов
+  // (критерий 8 — см. отчёт; убирать его = ломать публичный контракт, G-C).
   async function fetchActivities(id: string) {
+    const myRequest = ++activitiesRequest
     try {
-      currentActivities.value = await instanceService.getProcessInstanceActivities(id)
+      const page = await instanceService.getProcessInstanceActivitiesPaged(
+        id, 0, currentActivitiesPageSize)
+      if (myRequest !== activitiesRequest) return
+      currentActivities.value = page.data
+      currentActivitiesTotal.value = page.totalElements
+      loadedActivityPages = 1
+      hasMoreActivities.value =
+        page.data.length < page.totalElements
     } catch (e) {
+      if (myRequest !== activitiesRequest) return
+      error.value = e instanceof Error ? e.message : 'Failed to load activities'
+    }
+  }
+
+  async function fetchMoreActivities(id: string) {
+    if (!hasMoreActivities.value) return
+    const myRequest = ++activitiesRequest
+    try {
+      const page = await instanceService.getProcessInstanceActivitiesPaged(
+        id, loadedActivityPages, currentActivitiesPageSize)
+      if (myRequest !== activitiesRequest) return
+      currentActivities.value = [...currentActivities.value, ...page.data]
+      currentActivitiesTotal.value = page.totalElements
+      loadedActivityPages += 1
+      hasMoreActivities.value =
+        currentActivities.value.length < page.totalElements
+    } catch (e) {
+      if (myRequest !== activitiesRequest) return
       error.value = e instanceof Error ? e.message : 'Failed to load activities'
     }
   }
@@ -139,6 +197,8 @@ export const useProcessStore = defineStore('process', () => {
     currentStructure.value = null
     currentVariables.value = []
     currentActivities.value = []
+    currentActivitiesTotal.value = 0
+    hasMoreActivities.value = false
     currentVersions.value = []
     currentSubprocesses.value = []
   }
@@ -161,6 +221,8 @@ export const useProcessStore = defineStore('process', () => {
     currentStructure,
     currentVariables,
     currentActivities,
+    currentActivitiesTotal,
+    hasMoreActivities,
     currentVersions,
     currentSubprocesses,
     loading,
@@ -172,6 +234,7 @@ export const useProcessStore = defineStore('process', () => {
     fetchInstances,
     fetchInstance,
     fetchActivities,
+    fetchMoreActivities,
     fetchSubprocesses,
     fetchVariables,
     startInstance,

@@ -9,6 +9,7 @@ import { getMyMemberships } from '@/services/adminService'
 import { archiveProcess, unarchiveProcess } from '@/services/processService'
 import { useToast } from '@/composables/useToast'
 import { exportToCsv } from '@/shared/lib/export'
+import { debounce } from '@/shared/lib/debounce'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import MySubmissions from '@/pages/processes/MySubmissions.vue'
 import AppDrawer from '@/widgets/shared/AppDrawer.vue'
@@ -106,7 +107,8 @@ const showSubmissions = ref(false)
 const showDeployDialog = ref(false)
 
 onMounted(load)
-watch([search, latestOnly, showArchived], () => { resetPage(); load() })
+// WO-UI-18 часть B: debounce (тот же паттерн, что ProcessInstanceList).
+watch([search, latestOnly, showArchived], debounce(() => { resetPage(); load() }))
 </script>
 
 <template>

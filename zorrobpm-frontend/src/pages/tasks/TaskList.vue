@@ -6,6 +6,7 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { usePagination } from '@/composables/usePagination'
 import { useToast } from '@/composables/useToast'
+import { debounce } from '@/shared/lib/debounce'
 import { exportToCsv } from '@/shared/lib/export'
 import { Download, CheckSquare, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
@@ -101,7 +102,9 @@ function exportData() {
 }
 
 onMounted(load)
-watch(filterCompleted, () => { resetPage(); load() })
+// WO-UI-18 часть B: debounce — быстрое клацанье чекбоксом шлёт один запрос,
+// а не пачку наперегонки (порядок страхует ещё и request-id guard в сторе).
+watch(filterCompleted, debounce(() => { resetPage(); load() }))
 </script>
 
 <template>

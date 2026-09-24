@@ -21,15 +21,27 @@ export const useTaskStore = defineStore('task', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  // WO-UI-18 часть B (Finding #5): монотонные id запросов. Быстрое двойное
+  // переключение фильтра + переупорядоченные ответы раньше показывали данные
+  // устаревшего фильтра поверх актуального — ответа не от последнего запроса
+  // теперь игнорируется целиком (включая error/loading, чтобы устаревший
+  // fulfilled не гасил спиннер актуального in-flight запроса).
+  let userTasksRequest = 0
+  let serviceTasksRequest = 0
+
   async function fetchUserTasks(query: UserTaskQuery = {}) {
+    const myRequest = ++userTasksRequest
     loading.value = true
     error.value = null
     try {
-      userTasks.value = await taskService.getUserTasks(query)
+      const result = await taskService.getUserTasks(query)
+      if (myRequest !== userTasksRequest) return
+      userTasks.value = result
     } catch (e) {
+      if (myRequest !== userTasksRequest) return
       error.value = e instanceof Error ? e.message : 'Failed to load user tasks'
     } finally {
-      loading.value = false
+      if (myRequest === userTasksRequest) loading.value = false
     }
   }
 
@@ -72,14 +84,18 @@ export const useTaskStore = defineStore('task', () => {
   }
 
   async function fetchServiceTasks(query: ServiceTaskQuery = {}) {
+    const myRequest = ++serviceTasksRequest
     loading.value = true
     error.value = null
     try {
-      serviceTasks.value = await taskService.getServiceTasks(query)
+      const result = await taskService.getServiceTasks(query)
+      if (myRequest !== serviceTasksRequest) return
+      serviceTasks.value = result
     } catch (e) {
+      if (myRequest !== serviceTasksRequest) return
       error.value = e instanceof Error ? e.message : 'Failed to load service tasks'
     } finally {
-      loading.value = false
+      if (myRequest === serviceTasksRequest) loading.value = false
     }
   }
 
