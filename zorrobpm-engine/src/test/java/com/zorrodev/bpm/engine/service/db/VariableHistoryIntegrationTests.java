@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-ENG-16 (WB-003): append-only история переменных — реальный прод-путь
@@ -57,6 +58,19 @@ class VariableHistoryIntegrationTests {
         return v;
     }
 
+    /**
+     * WO-OPS-14: гранулярность порядка — соседние записи обязаны различаться
+     * тиком настенных часов ({@code changed_at} ставится из
+     * {@code Instant.now()} прод-кодом). Ждём смену миллисекунды условием,
+     * а не фиксированным {@code Thread.sleep(10)}: на быстрой машине тик
+     * приходит раньше, на загруженном CI — ждём сколько нужно (до 5с).
+     */
+    private static void awaitNextMillis() {
+        long before = Instant.now().toEpochMilli();
+        await().atMost(java.time.Duration.ofSeconds(5))
+            .until(() -> Instant.now().toEpochMilli() != before);
+    }
+
     @Test
     void history_containsAllNValuesInOrder_currentUnchanged() throws Exception {
         UUID pi = newProcessInstance(List.of(pv("counter", "0")));
@@ -64,7 +78,7 @@ class VariableHistoryIntegrationTests {
         // changed_at имеет миллисекундное разрешение, соседние записи обязаны
         // различаться тиком, иначе порядок hielt бы только на случайном id.
         for (int i = 1; i <= 5; i++) {
-            Thread.sleep(10);
+            awaitNextMillis();
             dbService.setVariables(pi, List.of(pv("counter", String.valueOf(i))));
         }
 
@@ -85,7 +99,7 @@ class VariableHistoryIntegrationTests {
     void scopedHistory_keepsScopeSeparation() throws Exception {
         UUID pi = newProcessInstance(List.of(pv("k", "root0")));
         UUID activity = UUID.randomUUID();
-        Thread.sleep(10);
+        awaitNextMillis();
         dbService.setVariables(pi, activity, List.of(pv("k", "local1")));
 
         List<VariableHistoryEntry> all = dbService.getVariableHistory(pi);
@@ -105,7 +119,7 @@ class VariableHistoryIntegrationTests {
     void appendJsonElement_recordsResultingArray() throws Exception {
         UUID pi = newProcessInstance(List.of());
         dbService.appendJsonElement(pi, "items", "\"a\"");
-        Thread.sleep(10);
+        awaitNextMillis();
         dbService.appendJsonElement(pi, "items", "\"b\"");
 
         List<VariableHistoryEntry> history = dbService.getVariableHistory(pi, "items");

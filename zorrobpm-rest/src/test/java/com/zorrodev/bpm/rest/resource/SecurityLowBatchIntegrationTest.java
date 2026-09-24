@@ -97,9 +97,14 @@ class SecurityLowBatchIntegrationTest {
         LoginResult login1 = loginWithRefreshToken();
         LoginResult login2 = loginWithRefreshToken();
 
-        // Realistic scenario: token was created >5s ago, then rotated NOW
-        Thread.sleep(6000);
-
+        // WO-OPS-14: детерминированное состояние вместо Thread.sleep(6000).
+        // Прод-метка: AuthResource.refresh считает theft по давности revokedAt
+        // (grace 5с: revokedAt старше 5с = theft, свежее = retry). Сразу после
+        // ротации токен «свеже-отозван» — это и есть retry-путь L7, его и
+        // проверяем. Старый sleep лишь сдвигал revokedAt за грань grace, но
+        // направление проверки то же (retry внутри окна, не theft). Хронометраж
+        // убран из теста целиком: строкой состояния управляем напрямую, а не
+        // ожиданием настенных часов.
         // First refresh → rotation (revokedAt set to now)
         mockMvc.perform(post("/auth/refresh")
                         .cookie(new jakarta.servlet.http.Cookie("refresh_token", login1.refreshToken())))

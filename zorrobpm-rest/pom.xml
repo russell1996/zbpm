@@ -114,6 +114,16 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- WO-OPS-14: Awaitility для polling-ожиданий вместо Thread.sleep
+             (зеркало WO-OPS-11 п.2 из zorrobpm-engine: тот же артефакт 4.3.0,
+             тест-скоп, прод-код не затрагивает). -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <version>4.3.0</version>
+            <scope>test</scope>
+        </dependency>
+
         <!-- WO-OPS-1 was actuator test-scope for the /actuator/health test; WO-OBS-1
              promotes it to compile (prometheus scrape) + adds the prometheus registry -->
         <dependency>
