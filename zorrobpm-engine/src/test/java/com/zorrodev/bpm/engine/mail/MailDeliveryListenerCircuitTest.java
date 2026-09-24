@@ -99,9 +99,11 @@ class MailDeliveryListenerCircuitTest {
         ResolvedMailConfig cfg = new ResolvedMailConfig("smtp.test.com", 587, "user", "pass", "from@test.com", "");
         lenient().when(configResolver.getEffectiveConfig()).thenReturn(cfg);
         lenient().when(transportFactory.build("smtp.test.com", 587, "user", "pass")).thenReturn(javaMailSender);
+        // WO-OPS-14: breaker в отдельной переменной — окно 1с опрашиваем ниже
+        // условием (пустой execute как проба), а не фиксированным sleep(1100).
+        SmtpCircuitBreaker probeBreaker = new SmtpCircuitBreaker(1, 1, 1000, 30000);
         MailDeliveryListener shortWindow = new MailDeliveryListener(
-            configResolver, transportFactory, publisher, mailStatus,
-            new SmtpCircuitBreaker(1, 1, 1000, 30000));
+            configResolver, transportFactory, publisher, mailStatus, probeBreaker);
         doThrow(new MailSendException("down", new jakarta.mail.MessagingException("down")))
             .when(javaMailSender).send(any(MimeMessage.class));
         shortWindow.on(new MailSendRequested(request, "outbox-x"));
@@ -109,7 +111,25 @@ class MailDeliveryListenerCircuitTest {
         shortWindow.on(new MailSendRequested(request, "outbox-y"));
         verify(transportFactory, times(1)).build(any(), any(), any(), any());
 
-        Thread.sleep(1100);
+        // SMTP ожил: окно разомкнутой цепи — 1с (минимум конструктора тоже 1с).
+        // Ждём его истечения УСЛОВИЕМ: пустой execute() до конца окна бросает
+        // SmtpCircuitOpenException БЕЗ побочных эффектов (throw до пробы — ни
+        // транспорт, ни publisher не тронуты), после окна — проходит. Это опрос
+        // реального состояния breaker'а, а не пауза: на быстрой машине тест идёт
+        // дальше раньше, на загруженном CI ждёт сколько нужно (до 10с).
+        // Побочка прошедшей пробы (OPEN→HALF_OPEN→CLOSED, счётчик сброшен)
+        // финальным ассертам не мешает: outbox-z всё равно идёт через send,
+        // успешно — ack, счётчики publisher/transport не меняются (проба идёт
+        // мимо listener'а напрямую в breaker).
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10))
+            .until(() -> {
+                try {
+                    probeBreaker.execute(() -> null);
+                    return true;
+                } catch (SmtpCircuitOpenException e) {
+                    return false;
+                }
+            });
         org.mockito.Mockito.doNothing().when(javaMailSender).send(any(MimeMessage.class));
         when(javaMailSender.createMimeMessage()).thenReturn(mimeMessage);
         shortWindow.on(new MailSendRequested(request, "outbox-z"));

@@ -15,6 +15,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +23,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-TEST-10 scenario 2 (WB-002): обрыв сети к Postgres посреди работы — реальный инжект.
@@ -242,6 +244,9 @@ public class PostgresPartitionChaosIT extends PostgresIT {
 
             // 4. Контекст жив: JVM не упала, бин на месте.
             assertThat(jdbc).isNotNull();
+            // WO-OPS-14: намеренно sleep, не Awaitility — 5с это ДЛИТЕЛЬНОСТЬ
+            // инжекта (окно partition обязано физически существовать, иначе
+            // «обрыв» вырождается в мгновенный heal), а не ожидание условия.
             Thread.sleep(5000);
         } finally {
             healQuietly(TOXIC_A);
@@ -250,34 +255,22 @@ public class PostgresPartitionChaosIT extends PostgresIT {
         }
 
         // 6. Recovery без рестарта: свежие соединения проходят снова (дедлайн 90s —
-        // запас на eviction мёртвых сокетов и переподключение).
-        boolean recovered = false;
-        long deadline = System.currentTimeMillis() + 90_000;
-        while (System.currentTimeMillis() < deadline && !recovered) {
-            recovered = probeOnce();
-            if (!recovered) {
-                Thread.sleep(2000);
-            }
-        }
-        assertThat(recovered).as("recovery без рестарта после снятия partition").isTrue();
+        // запас на eviction мёртвых сокетов и переподключение). WO-OPS-14: ручной
+        // deadline-цикл со sleep(2000) заменён на Awaitility — то же условие
+        // (probeOnce), тот же дедлайн 90с и тот же poll-интервал 2с.
+        await().atMost(Duration.ofSeconds(90)).pollInterval(Duration.ofSeconds(2))
+            .untilAsserted(() -> assertThat(probeOnce())
+                .as("recovery без рестарта после снятия partition").isTrue());
 
         // 7. Confirmatory-read путём приложения (пул): после heal валидация Hikari
         // выселяет мёртвые коннекты bounded-сроком — тоже детерминированно.
-        boolean poolOk = false;
-        deadline = System.currentTimeMillis() + 60_000;
-        Exception last = null;
-        while (System.currentTimeMillis() < deadline && !poolOk) {
-            try {
-                Integer one = jdbc.queryForObject("SELECT 1", Integer.class);
-                poolOk = one != null && one == 1;
-            } catch (Exception e) {
-                last = e;
-                Thread.sleep(2000);
-            }
-        }
-        assertThat(poolOk)
-            .as("пул приложения тоже recovered" + (last == null ? "" : ": " + last))
-            .isTrue();
+        // WO-OPS-14: тот же перевод на Awaitility (дедлайн 60с, интервал 2с);
+        // ignoreExceptions — transient-ошибки пула в окне recovery не валят
+        // ожидание, как раньше `catch (Exception e)` в цикле.
+        await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofSeconds(2))
+            .ignoreExceptions()
+            .untilAsserted(() -> assertThat(jdbc.queryForObject("SELECT 1", Integer.class))
+                .as("пул приложения тоже recovered").isEqualTo(1));
 
         // 8. Данные согласованы: строка, записанная ДО partition, цела и на месте.
         Map<String, Object> after = jdbc.queryForMap("SELECT status, published FROM outbox WHERE id = ?", id);
@@ -300,6 +293,11 @@ public class PostgresPartitionChaosIT extends PostgresIT {
         toxiRaw("POST", "/proxies/chaos-pg/toxics",
             "{\"name\":\"" + TOXIC_PERM + "-down\",\"type\":\"timeout\",\"stream\":\"downstream\",\"toxicity\":1.0,\"attributes\":{\"timeout\":0}}");
         try {
+            // WO-OPS-14: намеренно НЕ Awaitility. Это негативное доказательство
+            // («recovery НЕ наступает за 30с»): `until(!probe)` вернулся бы
+            // мгновенно в первую же секунду и ничего не доказывал (фиктивная
+            // замена, запрещена критерием 2 WO). Цикл уже опрашивает реальное
+            // условие с дедлайном — sleep(2000) здесь poll-интервал, не фикс-пауза.
             boolean recovered = false;
             long deadline = System.currentTimeMillis() + 30_000;
             while (System.currentTimeMillis() < deadline && !recovered) {

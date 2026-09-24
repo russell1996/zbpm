@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -96,10 +97,13 @@ class SseBridgeStartupTest {
         service.registerClient(new SseEmitter(0L), admin(), null, null, null);
         assertThat(enteredDeclare.await(5, TimeUnit.SECONDS)).isTrue();
         // Second registration while the first start is still blocked inside
-        // declareQueue must NOT spawn a duplicate bridge start.
+        // declareQueue must NOT spawn a duplicate bridge start. WO-OPS-14:
+        // фиксированный sleep(300) + timeout-verify заменены на after-verify:
+        // ждём ПОЛНЫЕ 1500мс и только потом проверяем times(1) — окно детекции
+        // дубликата стало детерминированным (timeout возвращался досрочно при
+        // первом вызове, и дубликат, пришедший позже, не ловился).
         service.registerClient(new SseEmitter(0L), admin(), null, null, null);
-        Thread.sleep(300);
-        verify(rabbitAdmin, timeout(1000).times(1)).declareQueue(any(Queue.class));
+        verify(rabbitAdmin, after(1500).times(1)).declareQueue(any(Queue.class));
         releaseDeclare.countDown();
         assertThat(attemptFailed.await(5, TimeUnit.SECONDS)).isTrue();
     }
@@ -118,10 +122,12 @@ class SseBridgeStartupTest {
         // The loop keeps retrying while the client waits: at least 2 declares.
         verify(rabbitAdmin, timeout(5000).atLeast(2)).declareQueue(any(Queue.class));
         // Once the client leaves, the loop must stop: count goes flat.
+        // WO-OPS-14: фиксированный sleep(450) заменён детерминированным окном:
+        // after(1000) ждёт ПОЛНУЮ секунду и только потом проверяет отсутствие
+        // новых вызовов (timeout здесь не годится — он возвращается досрочно).
         service.removeClient(client);
         long countAfterLeave = declareCount();
-        Thread.sleep(450);
-        assertThat(declareCount()).isEqualTo(countAfterLeave);
+        verify(rabbitAdmin, after(1000).times((int) countAfterLeave)).declareQueue(any(Queue.class));
     }
 
     private long declareCount() {
