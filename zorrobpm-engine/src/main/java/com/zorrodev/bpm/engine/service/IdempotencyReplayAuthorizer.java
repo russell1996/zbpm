@@ -98,8 +98,11 @@ public class IdempotencyReplayAuthorizer {
         // (ProcessInstanceRuntimeOperationsImpl:58 — format/non-service/existence
         // before the START grant). A replay must not serve stale bytes when the
         // claimed user was deleted since: re-check existence against current state.
+        // Mapped to 403 (not the live 404 — verifier #5) deliberately: the replay
+        // denial must not become a user-existence oracle distinct from the live
+        // path's own codes, and every other recheck in this class is 403 too.
         // Format/non-service nuances stay live-path-only; this closes exactly the
-        // policy-narrowing gap (deleted user → replay denied, like live 404).
+        // policy-narrowing gap (deleted user → replay denied).
         if (onBehalfOf != null) {
             try {
                 runtimeSupportService.requireOnBehalfExists(onBehalfOf);
