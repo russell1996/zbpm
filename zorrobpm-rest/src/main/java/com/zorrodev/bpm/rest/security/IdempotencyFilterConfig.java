@@ -2,6 +2,7 @@ package com.zorrodev.bpm.rest.security;
 
 import com.zorrodev.bpm.engine.repository.IdempotencyRecordRepository;
 import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
+import com.zorrodev.bpm.engine.service.IdempotencyReplayAuthorizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,8 +26,9 @@ public class IdempotencyFilterConfig {
     @Bean
     public IdempotencyFilter idempotencyFilter(IdempotencyRecordRepository repository,
                                               AdvisoryDeployLock advisoryLock,
-                                              TransactionTemplate transactionTemplate) {
-        return new IdempotencyFilter(repository, advisoryLock, transactionTemplate);
+                                              TransactionTemplate transactionTemplate,
+                                              IdempotencyReplayAuthorizer replayAuthorizer) {
+        return new IdempotencyFilter(repository, advisoryLock, transactionTemplate, replayAuthorizer);
     }
 
     @Bean
