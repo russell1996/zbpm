@@ -30,6 +30,17 @@ export async function getProcessInstanceActivities(id: string): Promise<Activity
   return data
 }
 
+// WO-UI-18 часть C: пагинированный путь (WO-PERF-7, GET .../activities/paged).
+// Встроенный SPA использует только его; голый List выше оставлен внешним
+// клиентам (публичный контракт, G-C — убирать нельзя).
+export async function getProcessInstanceActivitiesPaged(
+  id: string, pageIndex = 0, pageSize = 100,
+): Promise<PagedData<ActivityInstance>> {
+  const qs = toQueryString({ pageIndex, pageSize })
+  const { data } = await api.get<PagedData<ActivityInstance>>(`/process-instances/${id}/activities/paged${qs}`)
+  return data
+}
+
 export async function startProcessInstance(dto: StartProcessInstanceDTO): Promise<IdDTO> {
   const { data } = await api.post<IdDTO>('/process-instances', dto)
   return data

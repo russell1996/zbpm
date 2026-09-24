@@ -41,6 +41,7 @@ vi.mock('@/services/incidentService', () => ({
 vi.mock('@/services/instanceService', () => ({
   getProcessInstance: vi.fn().mockResolvedValue({ id: 'pi-1', parentActivityId: null, processDefinitionId: 'pd-1', startedAt: '2026-01-01', completedAt: null, processName: 'Test', processKey: 'test', processVersion: 1 }),
   getProcessInstanceActivities: vi.fn().mockResolvedValue([]),
+  getProcessInstanceActivitiesPaged: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   getProcessInstances: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   startProcessInstance: vi.fn(),
 }))
