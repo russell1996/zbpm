@@ -20,12 +20,14 @@ class SseGracefulShutdownTest {
         field.setAccessible(true);
         @SuppressWarnings("unchecked")
         var map = (java.util.Map<String, Object>) field.get(svc);
-        // create SseClientInfo record via reflection (private record)
+        // create SseClientInfo via reflection (WO-REL-47: non-static inner
+        // class — the enclosing service instance goes first; 8 declared params
+        // after it, same identity order as before).
         // WO-SEC-67: +1 component (tokenVersion between principal and allowedPdIds).
         var recClass = Class.forName("com.zorrodev.bpm.rest.resource.SseEventStreamService$SseClientInfo");
         var ctor = recClass.getDeclaredConstructors()[0];
         ctor.setAccessible(true);
-        var info = ctor.newInstance("test-client", emitter, null, 0, null, null, null, null);
+        var info = ctor.newInstance(svc, "test-client", emitter, null, 0, null, null, null, null);
         map.put("test-client", info);
         assertThat(map).hasSize(1);
         var callbackRan = new java.util.concurrent.atomic.AtomicBoolean(false);

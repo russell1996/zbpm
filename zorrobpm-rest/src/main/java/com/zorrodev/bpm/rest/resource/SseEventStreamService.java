@@ -39,7 +39,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -49,6 +48,14 @@ import java.util.concurrent.TimeoutException;
  *
  * WO-PERF-6 (P-3): per-client executor, timeout+drop, maxClients→429,
  * cursor+limit catchup, UUID.fromString hoisted.
+ *
+ * WO-REL-47 (N07+N08): single writer protocol per client. One bounded queue
+ * and one serialized pump per client (mode + queue inside the client value,
+ * transitions under the client's own lock — no split flag/map that can
+ * diverge); two bounded pools (dispatch micro-tasks + blocking sends, the
+ * send wait is a non-blocking orTimeout callback, never a pooled thread);
+ * per-client queue cap with drop-newest overflow; lagging clients are closed
+ * on send timeout/failure with cursor catchup on reconnect.
  */
 @Slf4j
 @Service
@@ -85,19 +92,104 @@ public class SseEventStreamService implements SmartLifecycle {
     /** Connected SSE clients: emitterId → client info */
     private final Map<String, SseClientInfo> clients = new ConcurrentHashMap<>();
 
-    /** Per-client fan-out executor — not the RabbitMQ consumer thread (WO-PERF-6 head-of-line) */
-    private final ExecutorService sseExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r);
-        t.setName("sse-send-" + t.getId());
-        t.setDaemon(true);
-        return t;
-    });
+    /**
+     * WO-REL-47 (N07): BOUNDED pools — never a cached pool on this path.
+     *
+     * <p>Two lanes because slow clients block for real (socket write until
+     * timeout/close) while scheduling must stay cheap:
+     * <ul>
+     *   <li>{@code dispatchExecutor} — micro-tasks only (enqueue check, pump
+     *       poll + async-send submit, completion callbacks). Never blocks: the
+     *       send wait below is an {@code orTimeout} callback, not a pooled
+     *       thread. Small and fixed.</li>
+     *   <li>{@code sendExecutor} — the blocking {@code emitter.send()} calls,
+     *       at most one in flight per client (the per-client pump submits the
+     *       next send only after the previous completes). Caps the number of
+     *       threads a slow-client fleet can pin; excess submits reject and the
+     *       event stays queued for a later pump kick (preserved, not dropped).
+     *       </li>
+     * </ul>
+     * Both use a handoff (zero-capacity) queue + AbortPolicy: under overload
+     * submissions reject instead of queueing unboundedly (the pre-REL-47 shape
+     * — an outer task per event waiting on an inner future in the SAME cached
+     * pool — let threads grow as events × clients × send duration).
+     *
+     * <p>Lanes are (re)created lazily and never assumed live (fields below):
+     * Spring 7 pauses an idle test context on switch
+     * ({@code DefaultContextCache.pauseOnContextSwitchIfNecessary} →
+     * {@code SmartLifecycle.stop()}) and resumes it later via
+     * {@code start()} — a stop that kills the pools FOREVER leaves a
+     * resumed context deaf (events queue, pump rejects, silence). So
+     * {@link #start()} re-creates terminated lanes, and every submit path
+     * goes through these getters (self-heal even if {@code start()} was
+     * missed). Daemon threads + 60s keep-alive: a recreated-but-unused
+     * pool evaporates on its own.
+     */
+
+    private static ExecutorService boundedPool(String prefix, int maxThreads,
+            java.util.concurrent.BlockingQueue<Runnable> workQueue) {
+        java.util.concurrent.ThreadFactory factory = r -> {
+            Thread t = new Thread(r);
+            t.setName(prefix + t.getId());
+            t.setDaemon(true);
+            return t;
+        };
+        return new java.util.concurrent.ThreadPoolExecutor(
+            maxThreads, maxThreads, 60L, TimeUnit.SECONDS,
+            workQueue, factory,
+            new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    }
+
+    /**
+     * WO-REL-47: lanes are (re)created lazily and never assumed live.
+     * Spring 7 pauses an idle test context on switch
+     * ({@code DefaultContextCache.pauseOnContextSwitchIfNecessary} →
+     * {@code SmartLifecycle.stop()}) and resumes it later via
+     * {@code start()} — a stop that kills the pools FOREVER leaves a
+     * resumed context deaf (events queue, pump rejects, silence). So
+     * {@link #start()} re-creates terminated lanes, and every submit path
+     * goes through these getters (self-heal even if {@code start()} was
+     * missed). Daemon threads + 60s keep-alive: a recreated-but-unused
+     * pool evaporates on its own.
+     */
+    private volatile ExecutorService dispatchExecutor;
+    private volatile ExecutorService sendExecutor;
+
+    private synchronized ExecutorService dispatchLane() {
+        ExecutorService lane = dispatchExecutor;
+        if (lane == null || lane.isShutdown()) {
+            lane = boundedPool("sse-dispatch-", Math.max(8,
+                Runtime.getRuntime().availableProcessors()),
+                new java.util.concurrent.LinkedBlockingQueue<>(1024));
+            dispatchExecutor = lane;
+        }
+        return lane;
+    }
+
+    private synchronized ExecutorService sendLane() {
+        ExecutorService lane = sendExecutor;
+        if (lane == null || lane.isShutdown()) {
+            lane = boundedPool("sse-send-", 128,
+                new java.util.concurrent.SynchronousQueue<>());
+            sendExecutor = lane;
+        }
+        return lane;
+    }
 
     @Value("${zorrobpm.sse.max-clients:1000}")
     private int maxClients = 1000;
 
     @Value("${zorrobpm.sse.send-timeout-ms:5000}")
     private long sendTimeoutMs = 5000;
+
+    /**
+     * WO-REL-47 (N07): per-client bounded queue cap (events). The writer
+     * protocol drops the NEWEST event on overflow (survivors keep cursor
+     * order) and counts it — memory per client is capped no matter how slow
+     * the socket is or how fast the event flow runs.
+     */
+    @Value("${zorrobpm.sse.per-client-queue-events:1000}")
+    private int perClientQueueEvents = 1000;
 
     /**
      * WO-SEC-67 (F13): per-subject connection cap (FD-exhaustion guard against
@@ -176,6 +268,23 @@ public class SseEventStreamService implements SmartLifecycle {
      */
     public String registerClient(SseEmitter emitter, Principal principal, String typeFilter,
                                    String processInstanceIdFilter, String processDefinitionKeyFilter) {
+        String clientId = registerClientInternal(emitter, principal, typeFilter,
+            processInstanceIdFilter, processDefinitionKeyFilter);
+        // WO-REL-47: plain registration has no catchup window — the client
+        // goes LIVE immediately (boundary 0 drops nothing: real cursors
+        // are positive feed positions). Born BUFFERING + drained here
+        // (instead of born LIVE) so an event arriving between the map-put
+        // and this line stages in the queue and is picked up by the
+        // drain — never sent ahead of the subscription contract.
+        SseClientInfo live = clients.get(clientId);
+        if (live != null) {
+            live.drainToLive(0L);
+        }
+        return clientId;
+    }
+
+    private String registerClientInternal(SseEmitter emitter, Principal principal, String typeFilter,
+                                   String processInstanceIdFilter, String processDefinitionKeyFilter) {
         synchronized (clients) {
             if (clients.size() >= maxClients) {
                 throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many SSE clients");
@@ -237,15 +346,15 @@ public class SseEventStreamService implements SmartLifecycle {
     }
 
     /**
-     * WO-REL-37: единая точка снятия клиентского состояния — карта, буфер
-     * пересечения и флаг буферизации. Без этого disconnect до drain оставлял
-     * запись в bufferedEvents навсегда (утечка, поймана тестом WO-PERF-7:
-     * вторая Map в классе).
+     * WO-REL-37: единая точка снятия клиентского состояния. WO-REL-47: буфер
+     * пересечения и режим живут ВНУТРИ значения клиента (его writer), а не в
+     * отдельных мапах — снимать нечего, кроме самой записи (disconnect до
+     * drain больше не может оставить висячую queue: негде). Без этого
+     * disconnect до drain оставлял запись в bufferedEvents навсегда (утечка,
+     * поймана тестом WO-PERF-7: вторая Map в классе).
      */
     private void removeClientState(String clientId) {
         SseClientInfo removed = clients.remove(clientId);
-        bufferedEvents.remove(clientId);
-        bufferingClients.remove(clientId);
         // WO-SEC-67: release the per-subject slot (no-op when the client was
         // never registered — e.g. double completion callbacks).
         if (removed != null) {
@@ -296,18 +405,31 @@ public class SseEventStreamService implements SmartLifecycle {
 
     /**
      * WO-REL-37 (F14): регистрация live-подписки ДО чтения catchup.
-     * Клиент сразу виден live-рассылке, но его события буферизуются (не шлются),
-     * пока контроллер не вызовет {@link #drainBufferedClient} с границей catchup:
-     * события с sequence <= границы отбрасываются (дубль catchup), новее —
-     * доставляются. Окно потери между catchup-чтением и подпиской закрыто.
+     * WO-REL-47: клиент рождается в режиме BUFFERING — его события копятся в
+     * его собственной очереди (не шлются), пока контроллер не вызовет
+     * {@link #drainBufferedClient} с границей catchup: события с cursor <=
+     * границы отбрасываются (дубль catchup), новее — доставляются. Режим и
+     * очередь — одно значение под одним локом (см. writer-протокол в
+     * {@link SseClientInfo}): окно потери между catchup-чтением и подпиской
+     * закрыто конструктивно — событие, пришедшее до drain, физически негде
+     * потерять, кроме самой очереди клиента.
      *
      * @return clientId для {@link #drainBufferedClient}
      */
     public String registerBufferedClient(SseEmitter emitter, Principal principal, String typeFilter,
                                     String processInstanceIdFilter, String processDefinitionKeyFilter) {
-        String clientId = registerClient(emitter, principal, typeFilter,
+        // WO-REL-47: buffered registration does NOT drain — the client stays
+        // BUFFERING (born that way) until drainBufferedClient. A shared
+        // internal with registerClient would go LIVE here and the catchup
+        // window (WO-REL-37) would send ahead of the subscription contract.
+        String clientId = registerClientInternal(emitter, principal, typeFilter,
             processInstanceIdFilter, processDefinitionKeyFilter);
-        bufferingClients.add(clientId);
+        SseClientInfo client = clients.get(clientId);
+        if (client != null) {
+            // Режим уже BUFFERING с конструктора — вызов для явности
+            // протокола (idempotent: BUFFERING→BUFFERING — no-op).
+            client.setBuffering();
+        }
         return clientId;
     }
 
@@ -315,55 +437,27 @@ public class SseEventStreamService implements SmartLifecycle {
      * WO-REL-37 (F14): слить буфер пересечения: отбросить дубль (позиция <=
      * границы catchup), доставить новое (позиция > границы), перевести клиента
      * в обычный live-режим.
+     *
+     * WO-REL-47: переход BUFFERING→LIVE и решение «дубль/новое» — под локом
+     * клиента, одним шагом: producer, пришедший одновременно, либо видит
+     * BUFFERING и кладёт событие в очередь ДО перехода (тогда drain его видит
+     * и решает), либо видит LIVE и шлёт напрямую — третьего исхода нет, окно
+     * потери между «снять queue» и «снять флаг» закрыто (старого двухшагового
+     * снятия больше нет — флага нет вовсе).
      */
     public void drainBufferedClient(String clientId, long catchupBoundary) {
         SseClientInfo client = clients.get(clientId);
         if (client == null) {
-            bufferedEvents.remove(clientId);
-            bufferingClients.remove(clientId);
             return;
         }
-        List<Map<String, Object>> buffered = bufferedEvents.remove(clientId);
-        bufferingClients.remove(clientId);
-        if (buffered == null || buffered.isEmpty()) {
-            return;
-        }
-        for (Map<String, Object> envelope : buffered) {
-            // WO-REL-38: дедуп по позиции курсора (feedPosition; fallback —
-            // sequence для envelope без позиции, см. cursorOf).
-            long cursor = cursorOf(envelope, catchupBoundary);
-            if (cursor <= catchupBoundary) {
-                continue;
-            }
-            SseEmitter.SseEventBuilder event = SseEmitter.event()
-                .id(String.valueOf(cursor))
-                .name((String) envelope.get("type"))
-                .data(envelope)
-                .reconnectTime(3000);
-            sseExecutor.execute(() -> {
-                try {
-                    client.emitter().send(event);
-                } catch (IOException e) {
-                    log.warn("Failed to send drained event to client {}", clientId);
-                    // WO-SEC-67 red-team #3: full state removal (per-subject
-                    // slot), not a bare map drop — the slot would leak.
-                    removeClientState(clientId);
-                }
-            });
-        }
+        client.drainToLive(catchupBoundary);
     }
-
-    /** Буфер пересечения catchup→live: clientId → события, пришедшие до drain. */
-    private final Map<String, List<Map<String, Object>>> bufferedEvents = new ConcurrentHashMap<>();
-
-    /** Клиенты в режиме буферизации (зарегистрированы, но ещё не drained). */
-    private final Set<String> bufferingClients = ConcurrentHashMap.newKeySet();
 
     /**
      * Called when a domain event arrives from RabbitMQ.
      * Pushes to all connected clients that match the filter and AuthZ.
-     * Runs on RabbitMQ consumer thread — fan-out is offloaded to sseExecutor
-     * so one slow client never blocks the others (WO-PERF-6).
+     * Runs on RabbitMQ consumer thread — fan-out is offloaded to the bounded
+     * dispatch lane so one slow client never blocks the others (WO-PERF-6).
      */
     public void onDomainEvent(String messageBody) {
         onDomainEvent(messageBody, null);
@@ -511,6 +605,20 @@ public class SseEventStreamService implements SmartLifecycle {
         return fallback;
     }
 
+    /**
+     * WO-REL-38: SSE id — позиция курсора (параметр метода уже курсор).
+     * WO-REL-47: построение builder'а — чистая функция без I/O (builder
+     * отправляется writer'ом клиента позже, последовательно).
+     */
+    private static SseEmitter.SseEventBuilder buildLiveEvent(
+            long cursor, String eventType, Map<String, Object> envelope) {
+        return SseEmitter.event()
+            .id(String.valueOf(cursor))
+            .name(eventType)
+            .data(envelope)
+            .reconnectTime(3000);
+    }
+
     private void dispatchToClientsTraced(Map<String, Object> envelope, String eventType,
             String processInstanceId, UUID pdUuid, long cursor) {
 
@@ -564,78 +672,11 @@ public class SseEventStreamService implements SmartLifecycle {
                 }
             }
 
-            // WO-REL-37 (F14): клиент в режиме буферизации — событие в буфер
-            // пересечения, не на emitter (drain решит: дубль или новое).
-            if (bufferingClients.contains(client.clientId)) {
-                bufferedEvents.computeIfAbsent(client.clientId,
-                    k -> new CopyOnWriteArrayList<>()).add(envelope);
-                continue;
-            }
-
-            // Per-client async send — not on the RabbitMQ thread (WO-PERF-6 head-of-line)
-            // WO-REL-38: SSE id — позиция курсора (параметр метода уже курсор).
-            SseEmitter.SseEventBuilder event = SseEmitter.event()
-                .id(String.valueOf(cursor))
-                .name(eventType)
-                .data(envelope)
-                .reconnectTime(3000);
-
-            try {
-                sseExecutor.execute(() -> {
-                    // Notify listeners (test hook — one call per matching client)
-                    for (EventDispatchListener listener : eventListeners) {
-                        try {
-                            listener.onEventSent(client.clientId, envelope);
-                        } catch (Exception ex) {
-                            log.warn("Event listener error", ex);
-                        }
-                    }
-
-                    // Send with 5s timeout — slow client is dropped, not blocked.
-                    // WO-PERF-6: cancel(true) does NOT interrupt a blocking network write
-                    // (Java IO without InterruptibleChannel) — the thread frees only when
-                    // emitter.complete()/IOException fires, non-deterministically. We at
-                    // least isolate the block to sseExecutor (not ForkJoinPool.commonPool).
-                    CompletableFuture<Void> cf = CompletableFuture.runAsync(() -> {
-                        try {
-                            client.emitter.send(event);
-                        } catch (IOException e) {
-                            throw new java.util.concurrent.CompletionException(e);
-                        }
-                    }, sseExecutor);
-                    try {
-                        cf.get(sendTimeoutMs, TimeUnit.MILLISECONDS);
-                    } catch (TimeoutException te) {
-                        log.warn("Slow SSE client {} timed out ({}ms), dropping", client.clientId, sendTimeoutMs);
-                        cf.cancel(true);
-                        // WO-SEC-67 red-team #3: full state removal (slot back).
-                        removeClientState(client.clientId);
-                        try { client.emitter.complete(); } catch (Exception ignore) {}
-                    } catch (java.util.concurrent.ExecutionException ee) {
-                        Throwable cause = ee.getCause();
-                        if (cause != null && cause.getCause() instanceof IOException) {
-                            log.warn("Failed to send event to client {}: {}", client.clientId, cause.getCause().getMessage());
-                        } else {
-                            log.warn("Failed to send event to client {}: {}", client.clientId, cause != null ? cause.getMessage() : ee.getMessage());
-                        }
-                        // WO-SEC-67 red-team #3: full state removal (slot back).
-                        removeClientState(client.clientId);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    } catch (Exception e) {
-                        log.error("Error sending event to client {}", client.clientId, e);
-                    }
-                });
-            } catch (java.util.concurrent.RejectedExecutionException re) {
-                // After shutdown executor is terminated — fallback direct dispatch so tests still fire
-                for (EventDispatchListener listener : eventListeners) {
-                    try {
-                        listener.onEventSent(client.clientId, envelope);
-                    } catch (Exception ex) {
-                        log.warn("Event listener error", ex);
-                    }
-                }
-            }
+            // WO-REL-37 (F14) + WO-REL-47: событие — в writer клиента (в
+            // BUFFERING — в очередь, в LIVE — в очередь pump'а на отправку;
+            // решение под локом клиента, одним шагом — окно потери закрыто).
+            // AuthZ-гейты выше (credential/rights) уже пройдены.
+            client.enqueueLive(buildLiveEvent(cursor, eventType, envelope), envelope, cursor);
         }
     }
 
@@ -1155,6 +1196,12 @@ public class SseEventStreamService implements SmartLifecycle {
     @Override
     public void start() {
         running.set(true);
+        // WO-REL-47: re-create lanes stopped by a previous stop() — Spring 7
+        // pauses idle test contexts on switch (stop) and resumes them later
+        // (start); without this a resumed context stays deaf. Production
+        // shutdown never calls start() again, so this is resume-only.
+        dispatchLane();
+        sendLane();
     }
 
     @Override
@@ -1188,9 +1235,29 @@ public class SseEventStreamService implements SmartLifecycle {
             stopAndDestroy(doomed);
             log.info("SSE shutdown: listener stopped");
         }
-        // WO-PERF-6: do not kill in-flight emits — shutdown() would reject them (RejectedExecution)
-        sseExecutor.shutdown();
-        try { sseExecutor.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        // WO-PERF-6: do not kill in-flight emits — shutdown() would reject them (RejectedExecution).
+        // WO-REL-47: both lanes down (dispatch first so no new send-submit starts,
+        // then the send lane; in-flight sends get the same 5s grace as before).
+        // Lanes are re-created on demand by dispatchLane()/sendLane() (see
+        // start()) — a Spring-7 pause/resume cycle must not leave the service
+        // deaf, so stop() nulls the fields after shutdown (no dangling
+        // terminated pool for a submit path to grab).
+        ExecutorService dispatchDoomed;
+        ExecutorService sendDoomed;
+        synchronized (this) {
+            dispatchDoomed = dispatchExecutor;
+            sendDoomed = sendExecutor;
+            dispatchExecutor = null;
+            sendExecutor = null;
+        }
+        if (dispatchDoomed != null) {
+            dispatchDoomed.shutdown();
+        }
+        if (sendDoomed != null) {
+            sendDoomed.shutdown();
+        }
+        try { if (dispatchDoomed != null) dispatchDoomed.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { if (sendDoomed != null) sendDoomed.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         callback.run();
     }
 
@@ -1205,10 +1272,37 @@ public class SseEventStreamService implements SmartLifecycle {
         return Integer.MAX_VALUE - 100;
     }
 
-    private record SseClientInfo(
-        String clientId,
-        SseEmitter emitter,
-        Principal principal,
+    /**
+     * WO-REL-47 (N07+N08): per-client single-writer state machine.
+     *
+     * <p>One value, one lock, three modes:
+     * <ul>
+     *   <li>BUFFERING — events accumulate in {@code queue} (catchup window,
+     *       WO-REL-37); nothing is sent.</li>
+     *   <li>LIVE — the pump sends strictly head-first, at most one send in
+     *       flight per client (the pump submits the next send only after the
+     *       previous settles — no arbitrary async tasks, no order inversion).</li>
+     *   <li>CLOSED — terminal (overflow beyond repair / timeout / failure /
+     *       revoke / disconnect); enqueue/pump become no-ops.</li>
+     * </ul>
+     *
+     * <p>The mode switch and the queue live under the SAME
+     * {@code synchronized} protocol (never split flag+map like the pre-REL-47
+     * {@code bufferingClients}+{@code bufferedEvents}, which could diverge
+     * mid-drain and lose an event). Consequently a concurrent producer either
+     * observes BUFFERING (its event lands in the queue BEFORE the drain
+     * decision sees it) or LIVE (its event is queued for the pump) — the
+     * lost-event interleave has no third outcome.
+     *
+     * <p>Record components stay the identity (clientId … processDefinitionKey-
+     * Filter — untouched by this WO, read by the authz paths); the writer
+     * state (mode + queue + pump flag + counters) lives in private mutable
+     * fields guarded by the instance monitor.
+     */
+    private final class SseClientInfo {
+        private final String clientId;
+        private final SseEmitter emitter;
+        private final Principal principal;
         /**
          * WO-SEC-67: JWT token_version frozen at registration. The liveness
          * check compares the row's CURRENT version against this — logout bumps
@@ -1216,10 +1310,272 @@ public class SseEventStreamService implements SmartLifecycle {
          * "issued before the revoke". ServicePrincipal streams carry -1
          * (unused — their liveness is the key row, not a version).
          */
-        int tokenVersion,
-        Collection<UUID> allowedPdIds,
-        String typeFilter,
-        String processInstanceIdFilter,
-        String processDefinitionKeyFilter
-    ) {}
+        private final int tokenVersion;
+        private final Collection<UUID> allowedPdIds;
+        private final String typeFilter;
+        private final String processInstanceIdFilter;
+        private final String processDefinitionKeyFilter;
+
+        private enum Mode { BUFFERING, LIVE, CLOSED }
+
+        private Mode mode = Mode.BUFFERING;
+        /**
+         * WO-REL-47: the queued unit is builder + cursor + envelope TOGETHER.
+         * The envelope is already retained by the builder via
+         * {@code .data(envelope)} (wire payload) — the record only adds the
+         * cursor (drain dedup without re-parsing) and a direct envelope
+         * handle (post-send notify without re-extracting). No double
+         * retention worth mentioning: two references to the same map.
+         */
+        private record QueuedSend(SseEmitter.SseEventBuilder event, long cursor,
+                Map<String, Object> envelope) {}
+        private final java.util.ArrayDeque<QueuedSend> queue = new java.util.ArrayDeque<>();
+        /**
+         * True while a send is in flight OR a pump run is scheduled: exactly
+         * one pump continuation is ever outstanding per client (single
+         * writer), so sends never overlap and never reorder.
+         */
+        private boolean pumpActive;
+        /** WO-REL-47: overflow drops counted here (drop-newest, survivors ordered). */
+        private long droppedOverflow;
+
+        SseClientInfo(String clientId, SseEmitter emitter, Principal principal,
+                int tokenVersion, Collection<UUID> allowedPdIds,
+                String typeFilter, String processInstanceIdFilter,
+                String processDefinitionKeyFilter) {
+            this.clientId = clientId;
+            this.emitter = emitter;
+            this.principal = principal;
+            this.tokenVersion = tokenVersion;
+            this.allowedPdIds = allowedPdIds;
+            this.typeFilter = typeFilter;
+            this.processInstanceIdFilter = processInstanceIdFilter;
+            this.processDefinitionKeyFilter = processDefinitionKeyFilter;
+        }
+
+        // Identity accessors (same names as the pre-REL-47 record components).
+        String clientId() { return clientId; }
+        SseEmitter emitter() { return emitter; }
+        Principal principal() { return principal; }
+        int tokenVersion() { return tokenVersion; }
+        Collection<UUID> allowedPdIds() { return allowedPdIds; }
+        String typeFilter() { return typeFilter; }
+        String processInstanceIdFilter() { return processInstanceIdFilter; }
+        String processDefinitionKeyFilter() { return processDefinitionKeyFilter; }
+
+        /** BUFFERING→BUFFERING idempotent (explicit protocol step, see registerBufferedClient). */
+        synchronized void setBuffering() {
+            // Fresh clients are born BUFFERING; only BUFFERING accepts this.
+        }
+
+        /**
+         * WO-REL-47: live enqueue — single protocol step. BUFFERING: stage for
+         * the drain decision. LIVE: queue for the pump + kick. CLOSED: drop.
+         * Overflow (beyond {@code perClientQueueEvents}): drop NEWEST, count
+         * it, keep cursor order of survivors.
+         */
+        void enqueueLive(SseEmitter.SseEventBuilder event, Map<String, Object> envelope, long cursor) {
+            boolean kick = false;
+            synchronized (this) {
+                if (mode == Mode.CLOSED) {
+                    return;
+                }
+                if (queue.size() >= perClientQueueEvents) {
+                    droppedOverflow++;
+                    if (droppedOverflow == 1) {
+                        log.warn("SSE client {} queue full ({} events) — dropping newest, survivors stay ordered",
+                            clientId, perClientQueueEvents);
+                    }
+                    return;
+                }
+                queue.addLast(new QueuedSend(event, cursor, envelope));
+                if (mode == Mode.LIVE && !pumpActive) {
+                    pumpActive = true;
+                    kick = true;
+                }
+            }
+            if (kick) {
+                kickPump();
+            }
+        }
+
+        /**
+         * WO-REL-37 (F14) + WO-REL-47: BUFFERING→LIVE under the client lock.
+         * The dedup decision (cursor <= boundary → drop) runs on the drained
+         * snapshot in queue order (cursor 100 before 101 — criterion 4), then
+         * the survivors are re-queued head-first and the pump is kicked if
+         * anything remains. After this call returns, no producer can observe
+         * BUFFERING anymore: anything enqueued later takes the LIVE branch of
+         * {@link #enqueueLive} — the lost-event window is closed.
+         */
+        void drainToLive(long catchupBoundary) {
+            boolean kick = false;
+            synchronized (this) {
+                if (mode != Mode.BUFFERING) {
+                    return;
+                }
+                mode = Mode.LIVE;
+                if (!queue.isEmpty()) {
+                    java.util.ArrayDeque<QueuedSend> survivors = new java.util.ArrayDeque<>();
+                    for (QueuedSend queued : queue) {
+                        // WO-REL-38: дедуп по позиции курсора (feedPosition;
+                        // fallback — sequence, см. cursorOf выше).
+                        if (queued.cursor <= catchupBoundary) {
+                            continue;
+                        }
+                        survivors.addLast(queued);
+                    }
+                    queue.clear();
+                    queue.addAll(survivors);
+                }
+                if (!queue.isEmpty() && !pumpActive) {
+                    pumpActive = true;
+                    kick = true;
+                }
+            }
+            if (kick) {
+                kickPump();
+            }
+        }
+
+        /** Close the writer: terminal, idempotent; the pump drains to no-op. */
+        synchronized void closeWriter() {
+            mode = Mode.CLOSED;
+            queue.clear();
+        }
+
+        /**
+         * Single-writer pump: poll head, send it with timeout, repeat while
+         * the queue is non-empty — strictly head-first (order = enqueue
+         * order). At most one send in flight per client: the continuation
+         * (next poll) is scheduled only after the current send settles, via
+         * the orTimeout callback — no pooled thread ever waits on a send.
+         */
+        void pump() {
+            QueuedSend head;
+            synchronized (this) {
+                if (mode == Mode.CLOSED) {
+                    pumpActive = false;
+                    return;
+                }
+                head = queue.pollFirst();
+                if (head == null) {
+                    pumpActive = false;
+                    return;
+                }
+            }
+            sendOne(head);
+        }
+
+        /**
+         * One send on the send lane with a non-blocking timeout: the caller
+         * (dispatch lane) returns immediately after submit; settle/timeout
+         * handling runs as an orTimeout callback. Slow clients pin at most
+         * one send-lane thread each (bounded pool caps the total); the queue
+         * behind them stays bounded by {@code perClientQueueEvents}.
+         */
+        private void sendOne(QueuedSend queued) {
+            CompletableFuture<Void> send;
+            try {
+                send = CompletableFuture.runAsync(() -> {
+                    try {
+                        emitter.send(queued.event);
+                    } catch (IOException e) {
+                        throw new java.util.concurrent.CompletionException(e);
+                    }
+                }, sendLane());
+            } catch (java.util.concurrent.RejectedExecutionException re) {
+                // Send lane saturated (all threads pinned by slow clients):
+                // re-queue at HEAD (order preserved) and yield — the pump
+                // reactivates on the next enqueue/drain kick.
+                synchronized (this) {
+                    if (mode != Mode.CLOSED) {
+                        queue.addFirst(queued);
+                    }
+                    pumpActive = false;
+                }
+                return;
+            }
+            send.orTimeout(sendTimeoutMs, TimeUnit.MILLISECONDS).whenCompleteAsync((v, ex) -> {
+                if (ex == null) {
+                    notifySent(queued.envelope);
+                    pump();
+                    return;
+                }
+                Throwable cause = ex instanceof java.util.concurrent.CompletionException ce
+                    ? ce.getCause() : ex;
+                if (cause instanceof TimeoutException
+                        || ex instanceof java.util.concurrent.TimeoutException) {
+                    // WO-PERF-6: timeout — lagging client is dropped (its
+                    // cursor catchup on reconnect heals the gap, WO-REL-47
+                    // criterion 3 path), never blocking the rest.
+                    // WO-PERF-6: cancel(true) does NOT interrupt a blocking
+                    // network write (Java IO without InterruptibleChannel) —
+                    // the thread frees only when emitter.complete()/
+                    // IOException fires, non-deterministically. We at least
+                    // isolate the block to ONE send-lane slot per client.
+                    log.warn("Slow SSE client {} timed out ({}ms), dropping", clientId, sendTimeoutMs);
+                    send.cancel(true);
+                    failClient("send timeout");
+                } else if (isSendIoFailure(cause)) {
+                    log.warn("Failed to send event to client {}: {}", clientId, cause.getMessage());
+                    failClient("send failure");
+                } else if (cause instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                    failClient("send interrupted");
+                } else {
+                    log.error("Error sending event to client {}", clientId, cause != null ? cause : ex);
+                    failClient("send error");
+                }
+            }, dispatchLane());
+        }
+
+        /** Terminal failure path: full state removal (per-subject slot back) + complete. */
+        private void failClient(String reason) {
+            closeWriter();
+            // WO-SEC-67 red-team #3: full state removal (per-subject slot),
+            // not a bare map drop — the slot would leak.
+            removeClientState(clientId);
+            try {
+                emitter.complete();
+            } catch (Exception ignore) {
+            }
+            log.info("SSE client {} closed ({})", clientId, reason);
+        }
+
+        /** Test/observability hook — fires only after a REAL send (WO-REL-47, §7.2 audit). */
+        private void notifySent(Map<String, Object> envelope) {
+            for (EventDispatchListener listener : eventListeners) {
+                try {
+                    listener.onEventSent(clientId, envelope);
+                } catch (Exception listenerEx) {
+                    log.warn("Event listener error", listenerEx);
+                }
+            }
+        }
+
+        /** Kick the pump on the dispatch lane; a reject self-heals via the next kick. */
+        private void kickPump() {
+            try {
+                dispatchLane().execute(this::pump);
+            } catch (java.util.concurrent.RejectedExecutionException re) {
+                synchronized (this) {
+                    pumpActive = false;
+                }
+            }
+        }
+        /**
+         * WO-REL-47: unwraps CompletionException layers to the send's real
+         * cause (the pre-REL-47 code distinguished the IOException cause two
+         * levels down for the log line — same classification, kept).
+         */
+        private static boolean isSendIoFailure(Throwable cause) {
+            for (Throwable t = cause; t != null; t = t.getCause()) {
+                if (t instanceof IOException) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
 }
