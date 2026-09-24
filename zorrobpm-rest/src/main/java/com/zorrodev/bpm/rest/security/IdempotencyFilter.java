@@ -280,7 +280,13 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             if (isEqualHex(rec.getRequestHash(), hash) || isLegacyBodyHash(rec.getRequestHash(), body)) {
                 // WO-SEC-74: same re-authorization as the direct-hit path — the race
                 // winner's bytes are served only if the CURRENT policy still allows.
+                // Legacy hits are rebound to the new fingerprint (verifier #4 —
+                // same upgrade as the direct-hit legacy branch above).
                 replayAuthorizer.authorizeReplay(principal, endpoint, onBehalfOf, body);
+                if (isLegacyBodyHash(rec.getRequestHash(), body) && !isEqualHex(rec.getRequestHash(), hash)) {
+                    rec.setRequestHash(hash);
+                    repository.save(rec);
+                }
                 return new Replay(rec.getResponseStatus(), rec.getResponseBody(), rec.getResponseContentType());
             } else {
                 throw new ErrorSpec(HttpStatus.UNPROCESSABLE_ENTITY.value(),
