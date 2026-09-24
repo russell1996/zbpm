@@ -254,11 +254,11 @@ class SseRel47WriterProtocolTest {
         // must pick it up). The pre-REL-47 two-step drain lost the event in
         // the first order whenever the producer landed mid-transition; the
         // single-lock writer has no mid-transition — both orders deliver.
-        //
-        // WO-OPS-14 note: the small producer sleep below only WIDENS the
-        // racy overlap for the POF mutant (300ms detached window, see the
-        // POF section of the report) — on the fixed code ANY interleave is
-        // safe, so the delay cannot weaken the test, only aim it.
+        // No sleep on either side after the barrier: over N rounds both
+        // orders genuinely occur (drain is microseconds, so a producer sleep
+        // would structurally bias every round to the harmless drain-first
+        // order and never exercise the window — verifier HOLD on WO-REL-47,
+        // fixed by deleting the sleep, not by renumbering it).
         SseEventStreamService svc = service();
         int rounds = 30;
         for (int round = 0; round < rounds; round++) {
@@ -279,7 +279,6 @@ class SseRel47WriterProtocolTest {
             Thread producer = new Thread(() -> {
                 try {
                     go.await(10, TimeUnit.SECONDS);
-                    Thread.sleep(20);
                     svc.onDomainEvent(body(seq, "rel47.c3"));
                 } catch (Exception e) {
                     errors.incrementAndGet();
