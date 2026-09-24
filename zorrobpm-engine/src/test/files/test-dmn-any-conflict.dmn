@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_any_conflict" name="any-conflict-test" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="anyConflictDecision" name="Any Conflict Decision">
+    <decisionTable id="DecisionTable_any_conflict" hitPolicy="ANY">
+      <input id="Input_1" label="Score">
+        <inputExpression id="InputExpression_1" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Grade" name="grade" typeRef="string" />
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_1"><text>"A"</text></outputEntry>
+      </rule>
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_2"><text>"B"</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

@@ -256,8 +256,83 @@ public class DmnServiceImpl implements DmnService {
                 }
                 yield evaluateSingleRule(matchedRules.get(0), table, vars, decisionId);
             }
-            default -> evaluateSingleRule(matchedRules.get(0), table, vars, decisionId); // FIRST, ANY
+            case "FIRST" -> evaluateSingleRule(matchedRules.get(0), table, vars, decisionId);
+            case "ANY" -> evaluateAny(matchedRules, table, vars, decisionId);
+            default -> throw new EngineException("DMN decision '" + decisionId
+                + "' has unknown hit policy '" + hitPolicy + "' — expected one of UNIQUE, FIRST, ANY, PRIORITY, COLLECT, RULE ORDER, OUTPUT ORDER");
         };
+    }
+
+    /**
+     * WO-ENG-22 (N16): ANY is NOT FIRST. Per the DMN hit-policy semantics
+     * (Camunda 8.8 decision-table-hit-policy docs: "all satisfied rules must
+     * generate the same output ... If multiple rules are satisfied which
+     * generate different outputs, the hit policy is violated"), every matched
+     * rule is evaluated and its output compared by DMN value semantics; any
+     * disagreement is an explicit model error, never a silent first-wins.
+     */
+    private Object evaluateAny(List<DmnRuleModel> rules, DmnDecisionTableModel table,
+            Map<String, Object> vars, String decisionId) {
+        Object first = evaluateSingleRule(rules.get(0), table, vars, decisionId);
+        for (int i = 1; i < rules.size(); i++) {
+            Object other = evaluateSingleRule(rules.get(i), table, vars, decisionId);
+            if (!dmnValuesEqual(first, other)) {
+                throw new EngineException("DMN ANY hit policy violated in decision '" + decisionId
+                    + "': " + rules.size() + " rules matched with different outputs");
+            }
+        }
+        return first;
+    }
+
+    /**
+     * DMN value equality for ANY-comparison: numbers compare by numeric value
+     * (FEEL {@code 10} vs {@code 10.0} are the same DMN number despite
+     * different Java representations), composite maps/lists compare
+     * recursively element-wise, {@code null} equals only {@code null}. A
+     * value of one shape never equals a value of another (map vs scalar).
+     */
+    private boolean dmnValuesEqual(Object a, Object b) {
+        if (a == b) {
+            return true;
+        }
+        if (a == null || b == null) {
+            return false;
+        }
+        if (a instanceof Number && b instanceof Number) {
+            try {
+                return new java.math.BigDecimal(a.toString())
+                    .compareTo(new java.math.BigDecimal(b.toString())) == 0;
+            } catch (NumberFormatException e) {
+                return a.equals(b);
+            }
+        }
+        if (a instanceof Map && b instanceof Map) {
+            Map<?, ?> ma = (Map<?, ?>) a;
+            Map<?, ?> mb = (Map<?, ?>) b;
+            if (ma.size() != mb.size() || !ma.keySet().equals(mb.keySet())) {
+                return false;
+            }
+            for (Object key : ma.keySet()) {
+                if (!dmnValuesEqual(ma.get(key), mb.get(key))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof List && b instanceof List) {
+            List<?> la = (List<?>) a;
+            List<?> lb = (List<?>) b;
+            if (la.size() != lb.size()) {
+                return false;
+            }
+            for (int i = 0; i < la.size(); i++) {
+                if (!dmnValuesEqual(la.get(i), lb.get(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return a.equals(b);
     }
 
     private Map<String, Object> resolveRequiredDecisions(DmnDecisionModel decision,
