@@ -113,14 +113,19 @@ class MailDeliveryListenerCircuitTest {
 
         // SMTP ожил: окно разомкнутой цепи — 1с (минимум конструктора тоже 1с).
         // Ждём его истечения УСЛОВИЕМ: пустой execute() до конца окна бросает
-        // SmtpCircuitOpenException БЕЗ побочных эффектов (throw до пробы — ни
-        // транспорт, ни publisher не тронуты), после окна — проходит. Это опрос
-        // реального состояния breaker'а, а не пауза: на быстрой машине тест идёт
-        // дальше раньше, на загруженном CI ждёт сколько нужно (до 10с).
-        // Побочка прошедшей пробы (OPEN→HALF_OPEN→CLOSED, счётчик сброшен)
-        // финальным ассертам не мешает: outbox-z всё равно идёт через send,
-        // успешно — ack, счётчики publisher/transport не меняются (проба идёт
-        // мимо listener'а напрямую в breaker).
+        // SmtpCircuitOpenException (throw до пробы — ни транспорт, ни publisher
+        // не тронуты), после окна — проходит и переводит цепь OPEN→HALF_OPEN→
+        // CLOSED через onSuccess. Это опрос реального состояния breaker'а, а не
+        // пауза: на быстрой машине тест идёт дальше раньше, на загруженном CI
+        // ждёт сколько нужно (до 10с).
+        // Verifier HOLD #5 (честно): прошедшая проба МЕНЯЕТ состояние breaker'а
+        // (потребляет half-open переход), а не «без побочных эффектов». Это не
+        // мешает финальным ассертам — доказано чтением SmtpCircuitBreaker:
+        // onSuccess ставит CLOSED + failures=0, и outbox-z ниже идёт обычным
+        // путём listener.on → execute → build+send (мокнут успехом) → ack;
+        // счётчики transport/publisher проба не трогает (идёт мимо listener'а
+        // напрямую в breaker). Ассерт CLOSED ниже доказывает закрытие цепи
+        // напрямую, а не косвенно.
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10))
             .until(() -> {
                 try {
@@ -130,6 +135,9 @@ class MailDeliveryListenerCircuitTest {
                     return false;
                 }
             });
+        assertThat(probeBreaker.getState())
+            .as("цепь замкнулась обратно после восстановления (проба прошла)")
+            .isEqualTo(SmtpCircuitBreaker.State.CLOSED);
         org.mockito.Mockito.doNothing().when(javaMailSender).send(any(MimeMessage.class));
         when(javaMailSender.createMimeMessage()).thenReturn(mimeMessage);
         shortWindow.on(new MailSendRequested(request, "outbox-z"));
