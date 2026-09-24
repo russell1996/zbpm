@@ -6,6 +6,7 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
+import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -49,7 +50,8 @@ function exportData() {
 }
 
 onMounted(load)
-watch(filterCompleted, () => { resetPage(); load() })
+// WO-UI-18 часть B: debounce (тот же паттерн, что TaskList).
+watch(filterCompleted, debounce(() => { resetPage(); load() }))
 </script>
 
 <template>

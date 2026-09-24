@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useIsMobile } from '@/shared/lib/responsive'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import SidebarNavShadcn from '@/widgets/shared/SidebarNavShadcn.vue'
 import HeaderBar from '@/widgets/shared/HeaderBar.vue'
+import { useRealtimeEvents } from '@/composables/useRealtimeEvents'
 
 const isMobile = useIsMobile()
 const sidebarOpen = ref(!isMobile.value)
+
+// WO-UI-18 часть A: единая точка realtime-подписки. MainLayout монтируется
+// один раз для всех страниц, требующих auth (router.beforeEach), и переживает
+// навигацию между ними — соединение не пересоздаётся на каждый переход.
+const realtime = useRealtimeEvents()
+onMounted(() => realtime.connect())
+onUnmounted(() => realtime.disconnect())
 </script>
 
 <template>
