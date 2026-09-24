@@ -3,6 +3,9 @@ package com.zorrodev.bpm.rest.resource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
+import com.zorrodev.bpm.engine.entity.RefreshTokenEntity;
+import com.zorrodev.bpm.engine.repository.RefreshTokenRepository;
+import com.zorrodev.bpm.engine.security.TokenService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -42,6 +45,12 @@ class RefreshTokenRaceIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private RefreshTokenRepository refreshTokenRepository;
+
+    @Autowired
+    private TokenService tokenService;
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
@@ -167,8 +176,18 @@ class RefreshTokenRaceIntegrationTest {
                         .cookie(new Cookie("refresh_token", login1.refreshToken())))
                 .andExpect(status().isOk());
 
-        // Leave the 5s grace window so the replay is classified as genuine theft
-        Thread.sleep(6000);
+        // WO-OPS-14: детерминированное состояние вместо Thread.sleep(6000).
+        // Прод-метка: AuthResource.refresh считает theft по давности revokedAt
+        // (grace 5с от revokedAt: свежее = retry, старше = theft). Ждать 6с
+        // настенных часов не нужно — сдвигаем revokedAt отозванного токена
+        // на 10с в прошлое напрямую через репозиторий: повтор превращается в
+        // genuine theft детерминированно, без хронометража в тесте.
+        RefreshTokenEntity revoked = refreshTokenRepository
+            .findByTokenHash(tokenService.hashToken(login1.refreshToken()))
+            .orElseThrow(() -> new AssertionError("rotated token row must exist"));
+        assertThat(revoked.isRevoked()).as("ротация обязана отозвать токен").isTrue();
+        revoked.setRevokedAt(java.time.Instant.now().minusSeconds(10));
+        refreshTokenRepository.saveAndFlush(revoked);
 
         // Theft: replay the rotated token → 401 + revokeAll
         mockMvc.perform(post("/auth/refresh")

@@ -38,7 +38,6 @@ class RateBucketConcurrencyTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void tryConsume_atWindowBoundary_neverExceedsCapacity() throws Exception {
         int capacity = 5;
-        int preSleepMs = 150;
         int threads = 50;
 
         // Create the shared bucket row with one warm-up request (window is 1s,
@@ -61,8 +60,10 @@ class RateBucketConcurrencyTest {
         filter.setRateLimitEnabled(true);
         filter.doFilterInternal(createReq, createResp, chain);
 
-        // Short settle sleep (window is 1s — it does NOT expire here).
-        Thread.sleep(preSleepMs);
+        // WO-OPS-14: короткий settle-sleep(150мс) убран — warm-up выше
+        // синхронен (тот же поток, тот же in-memory бакет), «оседать» нечему;
+        // startLatch и так выравнивает старт всех 50 потоков. Окно 1с при
+        // суммарном времени <150мс не истекает — гонка остаётся burst-contention.
 
         // Now launch 50 threads simultaneously
         AtomicInteger allowedCount = new AtomicInteger(0);

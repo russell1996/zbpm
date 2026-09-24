@@ -40,6 +40,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -140,6 +141,42 @@ class SseRevocationIT {
             .findFirst().orElseThrow().getId().toString();
     }
 
+    /**
+     * WO-OPS-14: негативные тесты ниже («событие НЕ доставлено») ждут не
+     * фиксированным sleep, а детерминированным окном через tracked-listener:
+     * latch открывается на ЛЮБОЙ вызов listener'а после pushEvent(2), и тест
+     * ждёт его короткое окно (2с). Окно нужно, потому что dispatch асинхронен
+     * (sseExecutor): без ожидания ассерт проверял бы состояние ДО dispatch и
+     * проходил бы тривиально. Если latch открылся — событие доставлено, тест
+     * валится; если окно вышло тихо — событие действительно не доставлено.
+     * Это то же окно детекции, что раньше давал sleep(500), но привязанное к
+     * реальному событию dispatch, а не к настенным часам.
+     */
+    private java.util.concurrent.CountDownLatch trackDeliveriesAfterPush(
+            Map<String, List<String>> byClient) {
+        java.util.concurrent.CountDownLatch postPushDispatch =
+            new java.util.concurrent.CountDownLatch(1);
+        sseEventStreamService.addEventListener((cid, envelope) -> {
+            String got = (String) envelope.get("processDefinitionId");
+            if (got != null) {
+                byClient.computeIfAbsent(cid, k -> new CopyOnWriteArrayList<>()).add(got);
+            }
+            postPushDispatch.countDown();
+        });
+        return postPushDispatch;
+    }
+
+    private static void assertNoPostPushDelivery(
+            java.util.concurrent.CountDownLatch postPushDispatch) throws Exception {
+        // Детект-окно 2с: ложное срабатывание (dispatch успел) роняет тест,
+        // тишина full-window — доказательство недоставки (дизъюнкция закрыта).
+        boolean dispatched = postPushDispatch.await(2, TimeUnit.SECONDS);
+        assertThat(dispatched)
+            .as("в детект-окне не должно быть НИ ОДНОГО dispatch после push — "
+                + "иначе событие доставлено, и негативный ассерт ниже бессмысленен")
+            .isFalse();
+    }
+
     private void pushEvent(long sequence, String pdId) {
         // WO-REL-38: sequence обязан существовать в БД (мост резолвит позицию
         // по нему). Тестовые sequence 1/2 заменены настоящими рядами — сеем ряд
@@ -211,12 +248,11 @@ class SseRevocationIT {
 
             // Act 3: post-revoke event through the real dispatch.
             pushEvent(2, pdId);
-            // Async fan-out: give the dispatch a moment, then assert.
-            long deadline = System.currentTimeMillis() + 3000;
-            while (System.currentTimeMillis() < deadline
-                && byClient.getOrDefault(survivorClient, List.of()).size() < 2) {
-                Thread.sleep(50);
-            }
+            // Async fan-out: ждём условием прибытия второго события у survivor
+            // (WO-OPS-14: ручной deadline-цикл со sleep(50) заменён на Awaitility,
+            // тот же дедлайн 3с — условие реально проверяет доставку).
+            await().atMost(java.time.Duration.ofSeconds(3)).untilAsserted(() ->
+                assertThat(byClient.getOrDefault(survivorClient, List.of())).hasSize(2));
 
             // Assert: revoked stream got NOTHING new; survivor got the event.
             assertThat(byClient.getOrDefault(revokedClient, List.of()))
@@ -268,8 +304,15 @@ class SseRevocationIT {
                 (com.github.benmanes.caffeine.cache.Cache<?, ?>) cacheField.get(sseEventStreamService);
             cache.invalidateAll();
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push — dispatch асинхронен (sseExecutor), и регистрация после push
+            // открывала race: быстрый dispatch терялся, окно выходило тихо, тест
+            // проходил тривиально. Теперь окно ловит именно post-push dispatch.
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
-            Thread.sleep(500);
+            // WO-OPS-14: детект-окно вместо sleep(500) — тишина full-window
+            // доказывает недоставку, любой dispatch роняет тест (см. хелперы).
+            assertNoPostPushDelivery(postPushDispatch);
 
             // Assert: still exactly the pre-revoke event — the per-event
             // check closed the stream on the narrowed fresh view.
@@ -335,8 +378,12 @@ class SseRevocationIT {
                 new com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity.ApiKeyGrantId(keyId, processId));
             sseEventStreamService.invalidateStreams();
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push (race при регистрации после — см. первый негативный тест).
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
-            Thread.sleep(500);
+            // WO-OPS-14: детект-окно вместо sleep(500) (см. хелперы).
+            assertNoPostPushDelivery(postPushDispatch);
 
             // Assert: frozen snapshot would still contain pdId — the live view
             // must have closed the stream instead.
@@ -399,8 +446,12 @@ class SseRevocationIT {
             // the explicit per-key invalidation the rotate hook calls.
             sseEventStreamService.invalidateStreamsForKey(keyId);
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push (race при регистрации после — см. первый негативный тест).
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
-            Thread.sleep(500);
+            // WO-OPS-14: детект-окно вместо sleep(500) (см. хелперы).
+            assertNoPostPushDelivery(postPushDispatch);
 
             assertThat(byClient.getOrDefault(clientId, List.of()))
                 .as("rotated key stream must NOT receive post-rotate events")
@@ -445,11 +496,10 @@ class SseRevocationIT {
             sseEventStreamService.invalidateStreams();
 
             pushEvent(2, pdId);
-            long deadline = System.currentTimeMillis() + 3000;
-            while (System.currentTimeMillis() < deadline
-                && byClient.getOrDefault(clientId, List.of()).size() < 2) {
-                Thread.sleep(50);
-            }
+            // Async fan-out: ждём условием (WO-OPS-14: ручной deadline-цикл
+            // со sleep(50) заменён на Awaitility, тот же дедлайн 3с).
+            await().atMost(java.time.Duration.ofSeconds(3)).untilAsserted(() ->
+                assertThat(byClient.getOrDefault(clientId, List.of())).hasSize(2));
 
             // Assert: admin-поток жив и получает дальше.
             assertThat(byClient.getOrDefault(clientId, List.of()))
@@ -537,8 +587,12 @@ class SseRevocationIT {
             mockMvc.perform(post("/auth/logout").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push (race при регистрации после — см. первый негативный тест).
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
-            Thread.sleep(500);
+            // WO-OPS-14: детект-окно вместо sleep(500) (см. хелперы).
+            assertNoPostPushDelivery(postPushDispatch);
 
             // Assert: dead credential → nothing more delivered.
             assertThat(byClient.getOrDefault(clientId, List.of()))

@@ -23,6 +23,7 @@ import java.util.Collection;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -212,8 +213,12 @@ class AccessTokenRevocationIT {
         String refreshToken = extractCookie(loginHeaders, "refresh_token");
         assertThat(refreshToken).as("login must set refresh_token").isNotBlank();
 
-        // ensure the re-issued token differs (issue() embeds per-second exp)
-        Thread.sleep(1100);
+        // ensure the re-issued token differs (issue() embeds per-second exp):
+        // wait for the wall-clock second to tick over — the real condition
+        // the old fixed 1100ms sleep was approximating (WO-OPS-14).
+        long beforeSecond = Instant.now().getEpochSecond();
+        await().atMost(java.time.Duration.ofSeconds(5))
+            .until(() -> Instant.now().getEpochSecond() != beforeSecond);
 
         MvcResult refreshResult = mockMvc.perform(post("/auth/refresh")
                 // WO-SEC-70: this test asserts the JSON body carries the same token

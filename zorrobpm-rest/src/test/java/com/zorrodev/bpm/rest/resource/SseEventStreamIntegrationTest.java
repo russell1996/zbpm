@@ -35,6 +35,7 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -306,14 +307,12 @@ class SseEventStreamIntegrationTest {
 
         // Track event dispatches per client (after registration, before push)
         Map<String, List<String>> eventsByClient = new java.util.concurrent.ConcurrentHashMap<>();
-        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(4);
         sseEventStreamService.clearEventListeners();
         sseEventStreamService.addEventListener((clientId, envelope) -> {
             String pdId = (String) envelope.get("processDefinitionId");
             if (pdId != null) {
                 eventsByClient.computeIfAbsent(clientId, k -> new CopyOnWriteArrayList<>()).add(pdId);
             }
-            latch.countDown();
         });
 
         // Push events (now 4 dispatches: 2 clients × 2 events, but only 2 pass AuthZ).
@@ -335,8 +334,17 @@ class SseEventStreamIntegrationTest {
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
             + "\"data\":{}}");
 
-        latch.await(3, java.util.concurrent.TimeUnit.SECONDS);
-        Thread.sleep(200);
+        // WO-OPS-14: latch(4)+sleep(200) заменены ожиданием прямо утверждаемого
+        // состояния (по одному событию у каждого клиента): latch считал ВСЕ
+        // dispatch'и, включая чужих клиентов из shared-контекста, и открывался
+        // раньше реальной доставки (тот же механизм, что ронял adminSeesAll
+        // в полном прогоне после удаления sleep).
+        await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertThat(eventsByClient.getOrDefault(clientA, List.of()))
+                .containsExactly(pdIdA.toString());
+            assertThat(eventsByClient.getOrDefault(clientB, List.of()))
+                .containsExactly(pdIdB.toString());
+        });
 
         // Clean up
         sseEventStreamService.removeClient(clientA);
@@ -466,7 +474,6 @@ class SseEventStreamIntegrationTest {
         String clientId = sseEventStreamService.registerClient(emitter, adminPrincipal, null, null, null);
 
         Map<String, List<String>> eventsByClient = new java.util.concurrent.ConcurrentHashMap<>();
-        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         sseEventStreamService.clearEventListeners();
         sseEventStreamService.addEventListener((cid, envelope) -> {
             if (cid.equals(clientId)) {
@@ -475,7 +482,6 @@ class SseEventStreamIntegrationTest {
                     eventsByClient.computeIfAbsent(cid, k -> new CopyOnWriteArrayList<>()).add(pdId);
                 }
             }
-            latch.countDown();
         });
 
         String pdId = UUID.randomUUID().toString();
@@ -487,8 +493,13 @@ class SseEventStreamIntegrationTest {
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
             + "\"data\":{}}");
 
-        latch.await(3, java.util.concurrent.TimeUnit.SECONDS);
-        Thread.sleep(200);
+        // WO-OPS-14: ждём прямо утверждаемое состояние (событие в карте клиента),
+        // а не latch-прокси: countDown срабатывал на ЛЮБОЙ dispatch (в т.ч. чужим
+        // клиентам из shared-контекста и envelope без pdId), и старый sleep(200)
+        // лишь маскировал это, давая реальной доставке время добежать. Awaitility
+        // на реальном условии невосприимчива к ложным срабатываниям.
+        await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() ->
+            assertThat(eventsByClient.getOrDefault(clientId, List.of())).containsExactly(pdId));
         sseEventStreamService.removeClient(clientId);
 
         List<String> adminEvents = eventsByClient.getOrDefault(clientId, List.of());
