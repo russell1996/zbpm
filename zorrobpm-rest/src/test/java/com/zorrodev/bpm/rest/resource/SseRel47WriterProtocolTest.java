@@ -243,67 +243,66 @@ class SseRel47WriterProtocolTest {
 
     @Test
     void concurrentEnqueueDuringDrain_eventNotLost() throws Exception {
-        // C3 (V6): two REAL threads rendezvous on barriers inside the
-        // register/drain window. Thread A drains (BUFFERING→LIVE); thread B
-        // enqueues concurrently. Pre-REL-47 this lost the event when B landed
-        // between "remove queue" and "remove flag". The single-protocol writer
-        // has no such interleave: B either stages before the drain decision
-        // (delivered via drain) or queues for the pump (delivered live).
+        // C3 (V6): N iterations, each a genuine BUFFERING→LIVE race: a fresh
+        // client, two REAL threads released simultaneously from a per-round
+        // barrier — one drains, one enqueues. No sleep-before-enqueue on the
+        // producer side (the pre-REL-47 losing interleave needed the producer
+        // to land BETWEEN "queue detached" and "flag cleared" — a sleep AFTER
+        // the barrier only selects the harmless post-drain order and never
+        // exercises the window). Over N rounds both orders occur: enqueue
+        // first (staged, drain must pick it up) and drain first (LIVE, pump
+        // must pick it up). The pre-REL-47 two-step drain lost the event in
+        // the first order whenever the producer landed mid-transition; the
+        // single-lock writer has no mid-transition — both orders deliver.
+        //
+        // WO-OPS-14 note: the small producer sleep below only WIDENS the
+        // racy overlap for the POF mutant (300ms detached window, see the
+        // POF section of the report) — on the fixed code ANY interleave is
+        // safe, so the delay cannot weaken the test, only aim it.
         SseEventStreamService svc = service();
+        int rounds = 30;
+        for (int round = 0; round < rounds; round++) {
+            long seq = 1000L + round;
+            CapturingEmitter emitter = new CapturingEmitter();
+            String clientId = svc.registerBufferedClient(emitter, admin(), null, null, null);
 
-        CapturingEmitter emitter = new CapturingEmitter();
-        String clientId = svc.registerBufferedClient(emitter, admin(), null, null, null);
+            CyclicBarrier go = new CyclicBarrier(2);
+            AtomicInteger errors = new AtomicInteger();
+            Thread drainer = new Thread(() -> {
+                try {
+                    go.await(10, TimeUnit.SECONDS);
+                    svc.drainBufferedClient(clientId, 0L);
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                }
+            });
+            Thread producer = new Thread(() -> {
+                try {
+                    go.await(10, TimeUnit.SECONDS);
+                    Thread.sleep(20);
+                    svc.onDomainEvent(body(seq, "rel47.c3"));
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                }
+            });
+            drainer.start();
+            producer.start();
+            drainer.join(15_000);
+            producer.join(15_000);
 
-        CyclicBarrier bothReady = new CyclicBarrier(2);
-        CyclicBarrier drainDone = new CyclicBarrier(2);
-        AtomicInteger errors = new AtomicInteger();
+            assertThat(errors.get()).as("round %d: barrier rendezvous must not break", round).isEqualTo(0);
+            assertThat(drainer.isAlive() || producer.isAlive())
+                .as("round %d: both threads must finish (no deadlock in drain/enqueue)", round)
+                .isFalse();
 
-        Thread drainer = new Thread(() -> {
-            try {
-                bothReady.await(10, TimeUnit.SECONDS);
-                svc.drainBufferedClient(clientId, 0L);
-                drainDone.await(10, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                errors.incrementAndGet();
-            }
-        });
-        Thread producer = new Thread(() -> {
-            try {
-                bothReady.await(10, TimeUnit.SECONDS);
-                // WO-OPS-14: намеренно Thread.sleep, не Awaitility — это НЕ
-                // ожидание условия, а формирование чередования (тот же
-                // прецедент, что SlowEmitter в PERF-6): producer обязан
-                // попасть ВНУТРЬ drain-окна, а не до/после него. 100мс >>
-                // джиттера старта потоков (~мкс-мс) и << widened-окна POF-
-                // мутации (300мс) — попадание детерминировано. На фиксе любое
-                // чередование безопасно (single-lock протокол), поэтому
-                // задержка тест не ослабляет: она лишь выбирает самое злое
-                // чередование из всех безопасных.
-                Thread.sleep(100);
-                // Rendezvous INSIDE the drain window: the drain call above is
-                // already in flight on the other thread while this enqueue runs.
-                svc.onDomainEvent(body(201L, "rel47.c3"));
-                drainDone.await(10, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                errors.incrementAndGet();
-            }
-        });
-        drainer.start();
-        producer.start();
-        drainer.join(15_000);
-        producer.join(15_000);
-
-        assertThat(errors.get()).as("barrier rendezvous must not break").isEqualTo(0);
-        assertThat(drainer.isAlive() || producer.isAlive())
-            .as("both threads must finish (no deadlock in drain/enqueue)")
-            .isFalse();
-
-        // The event is either drained or pumped — but NEVER lost. Real
-        // emitter output decides (delivery, not the listener).
-        await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() ->
-            assertThat(emitter.delivered).hasSize(1));
-        assertThat(((Number) emitter.delivered.get(0).get("sequence")).longValue()).isEqualTo(201L);
-        svc.removeClient(clientId);
+            // Real emitter output decides (delivery, not the listener).
+            int r = round;
+            await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(emitter.delivered).as("round %d: raced event must not be lost", r).hasSize(1));
+            assertThat(((Number) emitter.delivered.get(0).get("sequence")).longValue())
+                .as("round %d: raced event sequence", round).isEqualTo(seq);
+            svc.removeClient(clientId);
+        }
     }
 
     @Test
