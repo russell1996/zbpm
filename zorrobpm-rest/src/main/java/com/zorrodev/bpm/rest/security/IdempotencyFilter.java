@@ -4,6 +4,7 @@ import com.zorrodev.bpm.engine.entity.IdempotencyRecord;
 import com.zorrodev.bpm.engine.repository.IdempotencyRecordRepository;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AdvisoryDeployLock;
+import com.zorrodev.bpm.engine.service.IdempotencyReplayAuthorizer;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -35,6 +36,14 @@ import java.util.regex.Pattern;
  * (F04 — revoked/expired → 401, not replay). Response is buffered inside the transaction
  * and written ONLY after {@code execute()} returns successfully (F06 — commit failure →
  * no 200 to client). AdvisoryDeployLock serializes same-key concurrents.
+ *
+ * <p>WO-SEC-74 (N06): the semantic fingerprint is (key, endpoint, actor, body,
+ * {@code X-On-Behalf-Of}) — a changed OBO value misses the old record (422), it
+ * does not silently inherit another attribution's response. And a cache hit is
+ * re-authorized against the CURRENT policy via {@link IdempotencyReplayAuthorizer}
+ * BEFORE the stored bytes are served: rights narrowed/revoked after the first
+ * request replay as 403/404, not as the stale success. Identity stays
+ * actor-based (stable userId/ownerUserId), never the raw credential (F05).
  */
 @RequiredArgsConstructor
 public class IdempotencyFilter extends OncePerRequestFilter {
@@ -67,6 +76,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private final IdempotencyRecordRepository repository;
     private final AdvisoryDeployLock advisoryLock;
     private final TransactionTemplate transactionTemplate;
+    private final IdempotencyReplayAuthorizer replayAuthorizer;
 
     static boolean isIdempotentPath(String normalized) {
         if (EXACT_PATHS.contains(normalized)) return true;
@@ -91,6 +101,17 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             return sp.ownerUserId().toString();
         }
         return "";
+    }
+
+    /**
+     * WO-SEC-74: the attribution claim is part of the semantic fingerprint. Trimmed
+     * (so padding whitespace cannot fork keys), null when absent — the hash binds
+     * (body, OBO) together so a changed claim misses instead of inheriting.
+     */
+    static String onBehalfOfOf(HttpServletRequest request) {
+        String val = request.getHeader("X-On-Behalf-Of");
+        if (val == null || val.isBlank()) return null;
+        return val.trim();
     }
 
     @Override
@@ -119,16 +140,19 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 "Request body exceeds idempotency limit");
             return;
         }
-        String hash = sha256Hex(body);
+        String hash = sha256Hex(fingerprintBytes(body, onBehalfOfOf(request)));
         HttpServletRequest replayableRequest = new CachedBodyRequest(request, body);
 
         String actorId = actorIdOf(request);
+        Object principalAttr = request.getAttribute("principal");
+        Principal principal = principalAttr instanceof Principal p ? p : null;
         String credentialHashLegacy = sha256Hex(actorId.getBytes(StandardCharsets.UTF_8));
 
         AtomicReference<Replay> replay = new AtomicReference<>();
         AtomicReference<String> mismatchMessage = new AtomicReference<>();
         AtomicReference<String> raceLost = new AtomicReference<>();
         AtomicReference<Buffered> buffered = new AtomicReference<>();
+        AtomicReference<ReplayDenied> replayDenied = new AtomicReference<>();
 
         try {
             transactionTemplate.execute(new TransactionCallbackWithoutResult() {
@@ -139,6 +163,34 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                     if (existing.isPresent()) {
                         IdempotencyRecord rec = existing.get();
                         if (isEqualHex(rec.getRequestHash(), hash)) {
+                            // WO-SEC-74: re-authorize against the CURRENT policy before
+                            // serving the cached bytes — rights may have narrowed since.
+                            try {
+                                replayAuthorizer.authorizeReplay(principal, endpoint,
+                                    onBehalfOfOf(request), body);
+                            } catch (org.springframework.web.server.ResponseStatusException denied) {
+                                replayDenied.set(new ReplayDenied(
+                                    denied.getStatusCode().value(), denied.getReason()));
+                                return;
+                            }
+                            replay.set(new Replay(rec.getResponseStatus(),
+                                rec.getResponseBody(), rec.getResponseContentType()));
+                            return;
+                        } else if (isLegacyBodyHash(rec.getRequestHash(), body)) {
+                            // Pre-SEC-74 record (hash of body alone, no OBO binding):
+                            // authorize against current policy, then serve AND rebind:
+                            // the stored hash is upgraded to the new fingerprint, so
+                            // the next replay with a DIFFERENT OBO misses (422) instead
+                            // of inheriting this attribution's bytes (red-team O1).
+                            try {
+                                replayAuthorizer.authorizeReplay(principal, endpoint,
+                                    onBehalfOfOf(request), body);
+                            } catch (org.springframework.web.server.ResponseStatusException denied) {
+                                replayDenied.set(new ReplayDenied(
+                                    denied.getStatusCode().value(), denied.getReason()));
+                                return;
+                            }
+                            rec.setRequestHash(hash);
                             replay.set(new Replay(rec.getResponseStatus(),
                                 rec.getResponseBody(), rec.getResponseContentType()));
                             return;
@@ -196,11 +248,20 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
         if (raceLost.get() != null) {
             try {
-                replay.set(readFresh(key, endpoint, actorId, hash));
+                replay.set(readFresh(key, endpoint, actorId, hash, principal, onBehalfOfOf(request), body));
             } catch (ErrorSpec e) {
                 writeError(response, e.status(), e.code(), e.getMessage());
                 return;
+            } catch (org.springframework.web.server.ResponseStatusException denied) {
+                writeError(response, denied.getStatusCode().value(), "IDEMPOTENCY_REPLAY_DENIED",
+                    denied.getReason() != null ? denied.getReason() : "Access denied");
+                return;
             }
+        }
+        if (replayDenied.get() != null) {
+            writeError(response, replayDenied.get().status(), "IDEMPOTENCY_REPLAY_DENIED",
+                replayDenied.get().message());
+            return;
         }
         if (replay.get() != null) {
             writeReplay(response, replay.get());
@@ -211,11 +272,21 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
     }
 
-    private Replay readFresh(String key, String endpoint, String actorId, String hash) {
+    private Replay readFresh(String key, String endpoint, String actorId, String hash,
+            Principal principal, String onBehalfOf, byte[] body) {
         var existing = repository.findByIdemKeyAndEndpointAndActorId(key, endpoint, actorId);
         if (existing.isPresent()) {
             IdempotencyRecord rec = existing.get();
-            if (isEqualHex(rec.getRequestHash(), hash)) {
+            if (isEqualHex(rec.getRequestHash(), hash) || isLegacyBodyHash(rec.getRequestHash(), body)) {
+                // WO-SEC-74: same re-authorization as the direct-hit path — the race
+                // winner's bytes are served only if the CURRENT policy still allows.
+                // Legacy hits are rebound to the new fingerprint (verifier #4 —
+                // same upgrade as the direct-hit legacy branch above).
+                replayAuthorizer.authorizeReplay(principal, endpoint, onBehalfOf, body);
+                if (isLegacyBodyHash(rec.getRequestHash(), body) && !isEqualHex(rec.getRequestHash(), hash)) {
+                    rec.setRequestHash(hash);
+                    repository.save(rec);
+                }
                 return new Replay(rec.getResponseStatus(), rec.getResponseBody(), rec.getResponseContentType());
             } else {
                 throw new ErrorSpec(HttpStatus.UNPROCESSABLE_ENTITY.value(),
@@ -277,6 +348,27 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     private record Replay(int status, String body, String contentType) {}
     private record Buffered(int status, String body, String contentType) {}
+    private record ReplayDenied(int status, String message) {}
+
+    /**
+     * WO-SEC-74: semantic fingerprint = sha256(body || 0x00 || obo-or-empty).
+     * The zero byte separates the domains so no (body, obo) pair collides with a
+     * bare body; absent OBO hashes identically to an empty claim, not to legacy
+     * bare-body records (those are recognized by {@link #isLegacyBodyHash}).
+     */
+    static byte[] fingerprintBytes(byte[] body, String onBehalfOf) {
+        byte[] obo = onBehalfOf != null
+            ? onBehalfOf.getBytes(StandardCharsets.UTF_8) : new byte[0];
+        byte[] out = new byte[body.length + 1 + obo.length];
+        System.arraycopy(body, 0, out, 0, body.length);
+        out[body.length] = 0x00;
+        System.arraycopy(obo, 0, out, body.length + 1, obo.length);
+        return out;
+    }
+
+    private static boolean isLegacyBodyHash(String stored, byte[] body) {
+        return isEqualHex(stored, sha256Hex(body));
+    }
 
     private static final class CachedBodyRequest extends jakarta.servlet.http.HttpServletRequestWrapper {
         private final byte[] body;
