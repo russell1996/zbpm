@@ -304,10 +304,15 @@ class SseRevocationIT {
                 (com.github.benmanes.caffeine.cache.Cache<?, ?>) cacheField.get(sseEventStreamService);
             cache.invalidateAll();
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push — dispatch асинхронен (sseExecutor), и регистрация после push
+            // открывала race: быстрый dispatch терялся, окно выходило тихо, тест
+            // проходил тривиально. Теперь окно ловит именно post-push dispatch.
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
             // WO-OPS-14: детект-окно вместо sleep(500) — тишина full-window
             // доказывает недоставку, любой dispatch роняет тест (см. хелперы).
-            assertNoPostPushDelivery(trackDeliveriesAfterPush(byClient));
+            assertNoPostPushDelivery(postPushDispatch);
 
             // Assert: still exactly the pre-revoke event — the per-event
             // check closed the stream on the narrowed fresh view.
@@ -373,9 +378,12 @@ class SseRevocationIT {
                 new com.zorrodev.bpm.engine.entity.ApiKeyGrantEntity.ApiKeyGrantId(keyId, processId));
             sseEventStreamService.invalidateStreams();
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push (race при регистрации после — см. первый негативный тест).
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
             // WO-OPS-14: детект-окно вместо sleep(500) (см. хелперы).
-            assertNoPostPushDelivery(trackDeliveriesAfterPush(byClient));
+            assertNoPostPushDelivery(postPushDispatch);
 
             // Assert: frozen snapshot would still contain pdId — the live view
             // must have closed the stream instead.
@@ -438,9 +446,12 @@ class SseRevocationIT {
             // the explicit per-key invalidation the rotate hook calls.
             sseEventStreamService.invalidateStreamsForKey(keyId);
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push (race при регистрации после — см. первый негативный тест).
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
             // WO-OPS-14: детект-окно вместо sleep(500) (см. хелперы).
-            assertNoPostPushDelivery(trackDeliveriesAfterPush(byClient));
+            assertNoPostPushDelivery(postPushDispatch);
 
             assertThat(byClient.getOrDefault(clientId, List.of()))
                 .as("rotated key stream must NOT receive post-rotate events")
@@ -576,9 +587,12 @@ class SseRevocationIT {
             mockMvc.perform(post("/auth/logout").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
 
+            // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО
+            // push (race при регистрации после — см. первый негативный тест).
+            java.util.concurrent.CountDownLatch postPushDispatch = trackDeliveriesAfterPush(byClient);
             pushEvent(2, pdId);
             // WO-OPS-14: детект-окно вместо sleep(500) (см. хелперы).
-            assertNoPostPushDelivery(trackDeliveriesAfterPush(byClient));
+            assertNoPostPushDelivery(postPushDispatch);
 
             // Assert: dead credential → nothing more delivered.
             assertThat(byClient.getOrDefault(clientId, List.of()))
