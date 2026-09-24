@@ -22,8 +22,6 @@ public class PasswordHasher {
 
     /** WO-SEC-76: OWASP 2026 target for PBKDF2-HMAC-SHA256 (measured ~104ms/hash, see WO report). */
     public static final int CURRENT_ITERATIONS = 600_000;
-    /** Pre-SEC-76 cost — recognized by {@link #needsRehash} for silent upgrade on login. */
-    static final int LEGACY_ITERATIONS = 120_000;
     private static final int KEY_LENGTH = 256;
     private static final SecureRandom RANDOM = new SecureRandom();
 
