@@ -68,9 +68,24 @@ public class HandlerAutoConfiguration {
             SimpleMessageListenerContainer container = connectionFactory.createListenerContainer();
             String queueName = "zorrobpm.jobs." + handler.getJob();
             if (amqpAdmin.getQueueInfo(queueName) == null) {
-                Queue queue = new Queue(queueName, true);
+                // WO-REL-45: mirror the engine-side JobQueueDeclarer — DLX/DLQ
+                // arguments identical, so whichever side declares first wins and
+                // the second declare is a no-op (same args, no 406). A worker
+                // that starts before any engine announcement still gets the DLQ.
+                String dlqName = "zorrobpm.jobs." + handler.getJob() + ".dlq";
+                amqpAdmin.declareExchange(
+                    new org.springframework.amqp.core.DirectExchange("zorrobpm.jobs.dlx", true, false));
+                amqpAdmin.declareQueue(
+                    org.springframework.amqp.core.QueueBuilder.durable(dlqName).build());
+                amqpAdmin.declareBinding(new org.springframework.amqp.core.Binding(
+                    dlqName, org.springframework.amqp.core.Binding.DestinationType.QUEUE,
+                    "zorrobpm.jobs.dlx", dlqName, null));
+                Queue queue = org.springframework.amqp.core.QueueBuilder.durable(queueName)
+                    .deadLetterExchange("zorrobpm.jobs.dlx")
+                    .deadLetterRoutingKey(dlqName)
+                    .build();
                 amqpAdmin.declareQueue(queue);
-                log.info("Queue {} created", queueName);
+                log.info("Queue {} created (DLQ {})", queueName, dlqName);
             }
             container.setQueueNames(queueName);
             log.info("Subscribing to {}", queueName);
