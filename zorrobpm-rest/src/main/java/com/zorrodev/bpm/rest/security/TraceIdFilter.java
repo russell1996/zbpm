@@ -31,6 +31,31 @@ public class TraceIdFilter extends OncePerRequestFilter {
     public static final String TRACE_ID = "traceId";
     public static final String HEADER = "X-Request-Id";
 
+    /**
+     * WO-SEC-77 (S-DOS-2): the external id is untrusted input — it lands in
+     * MDC (log lines), in the echoed response header and potentially in
+     * downstream propagation. Only printable ASCII without whitespace
+     * (visible chars {@code 0x21..0x7E}) up to {@value #MAX_TRACE_ID_LENGTH}
+     * chars is accepted as-is; anything else (CRLF/log injection,
+     * non-printable/unicode, overlong, blank) is replaced by a minted id.
+     * 128 keeps every realistic client correlation id (UUIDs are 36) while
+     * bounding log/header bloat.
+     */
+    static final int MAX_TRACE_ID_LENGTH = 128;
+
+    static boolean isAcceptableTraceId(String value) {
+        if (value == null || value.isBlank() || value.length() > MAX_TRACE_ID_LENGTH) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < 0x21 || c > 0x7E) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
@@ -38,7 +63,7 @@ public class TraceIdFilter extends OncePerRequestFilter {
         boolean owned = false;
         if (traceId == null || traceId.isBlank()) {
             traceId = request.getHeader(HEADER);
-            if (traceId == null || traceId.isBlank()) {
+            if (!isAcceptableTraceId(traceId)) {
                 traceId = UUID.randomUUID().toString();
             }
             MDC.put(TRACE_ID, traceId);
