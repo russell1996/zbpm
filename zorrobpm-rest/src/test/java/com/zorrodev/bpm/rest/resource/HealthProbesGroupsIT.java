@@ -29,14 +29,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * listening on {@code localhost:11002} during {@code mvn verify}, so the real
  * {@code RabbitHealthIndicator} reports DOWN through the real auto-configuration.
  *
- * Boot 4 semantic found live (diagnostic run 2026-09-24, not assumed): the aggregate
- * {@code /actuator/health} DOES reflect the dead broker (DOWN/503, names "rabbit"),
- * while {@code /actuator/health/readiness} answers 200 UP with body
- * {@code {"status":"UP"}} — a user-defined {@code management.endpoint.health.group
- * .readiness.*} is NOT merged into the probe paths (the "readiness" probes path keeps
- * only {@code readinessState}; the group definition steers the aggregate). So the
- * liveness/readiness SPLIT is proven as: liveness=UP (never Rabbit/DB) beside
- * aggregate=DOWN-naming-rabbit (stricter gate), not as "readiness path returns 503".
+ * Boot 4 semantic, proven by live probes (diagnostic runs 2026-09-24, not assumed):
+ * with the prod group include the readiness path answers 503 DOWN naming the dead
+ * broker, while liveness answers 200 UP — the split. The probes-only default (no
+ * group.* at all) answered `{"status":"UP"}` 200 on the same path despite the same
+ * dead broker, so the include is the behavioural delta criterion 2 needs.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
@@ -70,13 +67,17 @@ class HealthProbesGroupsIT {
 
     @Test
     void readiness_withoutToken_usesCustomGroupDefinition() throws Exception {
-        // pins the Boot 4 semantic (proven by live probe, not assumed): a user-defined
+        // pins the Boot 4 semantic: the user-defined
         // `management.endpoint.health.group.readiness.include=readinessState,db,rabbit,
         // diskSpace` (same as application-prod.yml) pulls the dead broker INTO the
-        // readiness path — 503 DOWN naming rabbit — while the probes-only default
-        // (no group.* at all) would answer 200 UP. Behavioural delta, not shape-only:
-        // delete the include from the prod yml and THIS test goes RED
+        // readiness path — 503 DOWN naming rabbit. POF on THIS behaviour (not just the
+        // file shape): temporarily narrowing the annotation include to
+        // `readinessState` alone flips this path to `{"status":"UP"}` 200 despite the
+        // same dead broker (verified 2026-09-24 — the include is the behavioural
+        // delta). Delete the include from the prod yml and THIS test goes RED
         // (prodYaml_carriesSameKeys pins the file side of the same invariant).
+        // (CLI `-D...include=readinessState` does NOT reproduce this: failsafe forks a
+        // JVM without that system property — tried live, the fork ignores it.)
         MvcResult result = mockMvc.perform(get("/actuator/health/readiness"))
                 .andExpect(status().isServiceUnavailable())
                 .andReturn();
