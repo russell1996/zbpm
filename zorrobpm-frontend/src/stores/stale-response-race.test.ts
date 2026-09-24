@@ -115,4 +115,40 @@ describe('stale-response race (WO-UI-18 B)', () => {
 
     expect(store.instances?.data.map((i) => i.id)).toEqual(['fresh'])
   })
+
+  it('service-task list: late first response does not overwrite the second filter data', async () => {
+    const first = deferred({ data: [{ id: 'stale' }], totalElements: 1 })
+    const second = deferred({ data: [{ id: 'fresh' }], totalElements: 1 })
+    vi.mocked(taskService.getServiceTasks)
+      .mockReturnValueOnce(first.promise as never)
+      .mockReturnValueOnce(second.promise as never)
+
+    const store = useTaskStore()
+    const p1 = store.fetchServiceTasks({})
+    const p2 = store.fetchServiceTasks({ completed: true })
+    second.resolve({ data: [{ id: 'fresh' }], totalElements: 1 } as never)
+    await p2
+    first.resolve({ data: [{ id: 'stale' }], totalElements: 1 } as never)
+    await p1
+
+    expect(store.serviceTasks?.data.map((t) => t.id)).toEqual(['fresh'])
+  })
+
+  it('definitions list: late first response does not overwrite the second filter data', async () => {
+    const first = deferred({ data: [{ id: 'stale' }], totalElements: 1 })
+    const second = deferred({ data: [{ id: 'fresh' }], totalElements: 1 })
+    vi.mocked(processService.getProcessDefinitions)
+      .mockReturnValueOnce(first.promise as never)
+      .mockReturnValueOnce(second.promise as never)
+
+    const store = useProcessStore()
+    const p1 = store.fetchDefinitions({})
+    const p2 = store.fetchDefinitions({ name: 'order' })
+    second.resolve({ data: [{ id: 'fresh' }], totalElements: 1 } as never)
+    await p2
+    first.resolve({ data: [{ id: 'stale' }], totalElements: 1 } as never)
+    await p1
+
+    expect(store.definitions?.data.map((d) => d.id)).toEqual(['fresh'])
+  })
 })

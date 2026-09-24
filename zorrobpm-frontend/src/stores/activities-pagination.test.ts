@@ -2,7 +2,7 @@
 /**
  * WO-UI-18 часть C (критерий 7, jsdom-уровень) — activities идут постранично.
  * Browser-часть (кнопка «Показать ещё», реальная подгрузка в таблице) —
- * в `activities-pagination.browser.test.ts`.
+ * в `stores/realtime-events.browser.test.ts` (describe «activities pagination»).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
