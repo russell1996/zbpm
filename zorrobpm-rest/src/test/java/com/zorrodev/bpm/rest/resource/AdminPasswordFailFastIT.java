@@ -52,6 +52,9 @@ class AdminPasswordFailFastIT {
         assertThatThrownBy(() -> {
             ConfigurableApplicationContext ctx = new SpringApplicationBuilder(TestMain.class)
                 .web(WebApplicationType.SERVLET)
+                // WO-QW-4 (NEW-15): random port — a fixed 8080 BindExceptions the
+                // whole reactor on any host with the port taken.
+                .properties("server.port=0")
                 .profiles("prod")
                 .initializers(isolatedDb("admintest-fail"))
                 .properties(
@@ -81,6 +84,9 @@ class AdminPasswordFailFastIT {
         assertThatThrownBy(() -> {
             ConfigurableApplicationContext ctx = new SpringApplicationBuilder(TestMain.class)
                 .web(WebApplicationType.SERVLET)
+                // WO-QW-4 (NEW-15): random port — a fixed 8080 BindExceptions the
+                // whole reactor on any host with the port taken.
+                .properties("server.port=0")
                 .initializers(isolatedDb("admintest-default-profile"))
                 .properties(
                     "spring.rabbitmq.host=localhost",
@@ -106,6 +112,8 @@ class AdminPasswordFailFastIT {
     void devProfile_withDefaultPassword_shouldStart() {
         ConfigurableApplicationContext ctx = new SpringApplicationBuilder(TestMain.class)
             .web(WebApplicationType.SERVLET)
+            // WO-QW-4 (NEW-15): random port, см. выше.
+            .properties("server.port=0")
             .profiles("dev")
             .initializers(isolatedDb("admintest-dev-profile"))
             .properties(
