@@ -140,8 +140,10 @@ export function useRealtimeEvents() {
   }
 
   function isClosed(source: EventSource): boolean {
-    // readyState может отсутствовать у моков — тогда это не CLOSED.
-    return (source as EventSource).readyState === (EventSource as unknown as { CLOSED: number }).CLOSED
+    // readyState может отсутствовать у моков — тогда это не CLOSED
+    // (строгое сравнение типов: undefined === undefined дало бы true).
+    return typeof source.readyState === 'number'
+      && source.readyState === (EventSource as unknown as { CLOSED: number }).CLOSED
   }
 
   function scheduleReconnect() {

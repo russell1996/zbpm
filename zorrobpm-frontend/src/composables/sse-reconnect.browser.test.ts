@@ -15,6 +15,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { defineComponent, h, onMounted } from 'vue'
 import TaskList from '@/pages/tasks/TaskList.vue'
+import MainLayout from '@/layouts/MainLayout.vue'
 import { useRealtimeEvents } from '@/composables/useRealtimeEvents'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
@@ -24,8 +25,9 @@ import '@/style.css'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: {}, path: '/' }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mockRouterPush }),
 }))
+const mockRouterPush = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ user: { id: 'u1', username: 'op' }, isSuperAdmin: true }),
 }))
@@ -203,6 +205,40 @@ describe('WO-UI-22 SSE reconnect in a real browser', () => {
     for (const row of rows) {
       expect(row.element.getBoundingClientRect().height).toBeGreaterThan(0)
     }
+    wrapper.unmount()
+    mounted = []
+  })
+
+  it('criterion 3 (UI): dead refresh shows the banner, Sign in routes to login', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401 } as Response)
+    const wrapper = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { teleport: true, RouterView: true, SidebarNavShadcn: true, HeaderBar: true },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    expect(FakeEventSource.instances).toHaveLength(1)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+
+    // Разрыв за разрывом: кап 5 попыток выматывается backoff-таймерами.
+    for (let i = 0; i < 6 && FakeEventSource.instances.length === 1; i++) {
+      const cur = FakeEventSource.instances[0]
+      cur.readyState = FakeEventSource.CLOSED
+      cur.onerror?.({} as Event)
+      await new Promise((r) => setTimeout(r, 1100))
+      await flushPromises()
+    }
+    await until(() => wrapper.find('[role="alert"]').exists(), 15000)
+    const alert = wrapper.find('[role="alert"]')
+    expect(alert.text()).toContain('Session expired')
+    const btn = alert.find('button')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    // Именованный роут — base '/ui/' подставит сам history, без дубля /ui/ui.
+    expect(mockRouterPush).toHaveBeenCalledWith({ name: 'login' })
     wrapper.unmount()
     mounted = []
   })

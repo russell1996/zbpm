@@ -51,7 +51,7 @@ onUnmounted(() => realtime.disconnect())
       >
         <LogIn class="h-4 w-4 shrink-0 text-amber-600" />
         <span>{{ t('realtimeSessionExpired') }}</span>
-        <button class="ml-auto underline font-medium" @click="router.push('/ui/login')">
+        <button class="ml-auto underline font-medium" @click="router.push({ name: 'login' })">
           {{ t('realtimeSignIn') }}
         </button>
       </div>
