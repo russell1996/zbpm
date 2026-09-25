@@ -203,13 +203,32 @@ public class RateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Refresh endpoint: per-user throttling
+        // Refresh endpoint: per-IP bucket FIRST (mirror of the login path),
+        // then the per-user bucket. WO-SEC-79 (NEW-10): the old code throttled
+        // ONLY a per-"user" bucket keyed on the first 16 chars of the
+        // UNVERIFIED cookie — a fresh random cookie per request meant a fresh
+        // bucket every time, so the limit never fired for anonymous floods
+        // (and each request INSERTed a new bucket row). The IP bucket below
+        // fires regardless of whether the token exists; the per-user bucket
+        // still contains a single heavy legitimate user behind a shared proxy
+        // address (P-63: one bucket for the whole installation would self-DoS
+        // every user the moment one of them refreshes in a loop). When the
+        // per-user bucket rejects after the IP bucket passed, the IP token is
+        // rolled back (same discipline as the login path) — the IP budget
+        // must not pay for another bucket's decision.
         if ("POST".equalsIgnoreCase(method) && "/auth/refresh".equals(path)) {
-            String userId = extractUserIdFromRefreshCookie(request);
-            if (userId != null) {
-                String refreshKey = "refresh:" + userId;
+            String ipKey = "refresh:ip:" + clientIp;
+            long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, capacity, windowSeconds);
+            if (ipRetryAfter > 0) {
+                send429(response, ipRetryAfter);
+                return;
+            }
+            String userHash = extractRefreshCookieHash(request);
+            if (userHash != null) {
+                String refreshKey = "refresh:" + userHash;
                 long retryAfter = pgRateLimiter.tryConsume(refreshKey, refreshCapacity, refreshWindowSeconds);
                 if (retryAfter > 0) {
+                    pgRateLimiter.rollback(ipKey, capacity);
                     send429(response, retryAfter);
                     return;
                 }
@@ -387,19 +406,23 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     /**
-     * WO-SEC-44: extract userId from refresh_token cookie for rate-limiting.
-     * The cookie contains the raw refresh token — we can't verify it here (no TokenService),
-     * so we use the token value itself as the rate-limit key. Different tokens = different buckets.
+     * WO-SEC-79 (NEW-10): SHA-256 hex of the FULL unverified refresh cookie.
+     * The old first-16-chars prefix keyed different tokens into one bucket
+     * (cross-user throttle) and — worse — let a rotating-cookie flood dodge
+     * the per-user bucket entirely (every request a fresh key). A full hash
+     * keeps distinct cookies in distinct buckets without putting the raw
+     * token into the bucket key (it would otherwise sit in PG + logs).
+     * The cookie is still unverified here — that is exactly why the IP bucket
+     * above runs first; this key only scopes the second bucket.
      */
-    private String extractUserIdFromRefreshCookie(HttpServletRequest request) {
+    private String extractRefreshCookieHash(HttpServletRequest request) {
         Cookie[] cookies = request.getCookies();
         if (cookies == null) return null;
         for (Cookie cookie : cookies) {
             if ("refresh_token".equals(cookie.getName())) {
                 String value = cookie.getValue();
                 if (value != null && !value.isBlank()) {
-                    // Use first 16 chars as key (sufficient for uniqueness, avoids full token in cache key)
-                    return value.substring(0, Math.min(16, value.length()));
+                    return KeyHasher.sha256(value);
                 }
             }
         }
