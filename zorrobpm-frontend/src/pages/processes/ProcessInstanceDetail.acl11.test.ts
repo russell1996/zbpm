@@ -36,7 +36,7 @@ vi.mock('@/services/incidentService', () => ({
 }))
 
 vi.mock('@/services/instanceService', () => ({
-  getProcessInstance: vi.fn().mockResolvedValue({ id: 'pi-1', parentActivityId: null, processDefinitionId: 'pd-1', startedAt: '2026-01-01', completedAt: null, processName: 'Test', processKey: 'test', processVersion: 1 }),
+  getProcessInstance: vi.fn().mockResolvedValue({ id: 'pi-1', parentActivityId: null, processDefinitionId: 'pd-1', startedAt: '2026-01-01', completedAt: null, cancelled: false, processName: 'Test', processKey: 'test', processVersion: 1 }),
   getProcessInstanceActivities: vi.fn().mockResolvedValue([]),
   getProcessInstanceActivitiesPaged: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   getProcessInstances: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
@@ -75,9 +75,10 @@ async function mountWithSubprocess(router: ReturnType<typeof makeRouter>) {
   ;(wrapper.vm as any).activeTab = 'subprocesses'
   const { useProcessStore } = await import('@/stores/process')
   const processStore = useProcessStore()
-  processStore.currentSubprocesses = [
-    { id: 'sub-1', parentActivityId: null, processDefinitionId: 'pd-2', processName: 'Child process', processKey: 'child', processVersion: 1, startedAt: '2026-01-01', completedAt: null },
-    { id: 'sub-2', parentActivityId: null, processDefinitionId: 'pd-3', processName: 'Done child', processKey: 'done', processVersion: 2, startedAt: '2026-01-02', completedAt: '2026-01-03' },
+    processStore.currentSubprocesses = [
+    // WO-UI-21 Раунд 2: cancelled — обязательное поле ProcessInstance.
+    { id: 'sub-1', parentActivityId: null, processDefinitionId: 'pd-2', processName: 'Child process', processKey: 'child', processVersion: 1, startedAt: '2026-01-01', completedAt: null, cancelled: false },
+    { id: 'sub-2', parentActivityId: null, processDefinitionId: 'pd-3', processName: 'Done child', processKey: 'done', processVersion: 2, startedAt: '2026-01-02', completedAt: '2026-01-03', cancelled: false },
   ]
   await wrapper.vm.$nextTick()
   await flushPromises()
