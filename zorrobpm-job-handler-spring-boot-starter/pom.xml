@@ -98,6 +98,26 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- WO-REL-45: Awaitility для polling-ожидания dead-letter-парковки
+             вместо Thread.sleep (прецедент — zorrobpm-engine, WO-OPS-11 п.2).
+             Тест-скоп, прод-код не затрагивает. -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <version>4.3.0</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- WO-REL-45: JobQueueDlqRabbitIT объявляет очередь через НАСТОЯЩИЙ
+             JobQueueDeclarer (G-N: тест гоняет прод-код, а не его копию).
+             Только test-scope — прод-зависимостей стартера не меняет. -->
+        <dependency>
+            <groupId>com.zorrodev.bpm</groupId>
+            <artifactId>zorrobpm-rabbitmq</artifactId>
+            <version>0.8.0-SNAPSHOT</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

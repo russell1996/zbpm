@@ -34,11 +34,37 @@ class JobQueueDeclarerTest {
     void announcementDeclaresDurableQueuePerJobType() {
         declarer.on(new JobQueuesRequested(new LinkedHashSet<>(Set.of("billing", "notify"))));
 
+        // WO-REL-45: each job type now declares TWO queues (its DLQ + the work
+        // queue itself) — 2 declareQueue calls per type.
+        ArgumentCaptor<Queue> captor = ArgumentCaptor.forClass(Queue.class);
+        verify(amqpAdmin, times(4)).declareQueue(captor.capture());
+        assertThat(captor.getAllValues()).extracting(Queue::getName)
+            .containsExactlyInAnyOrder(
+                "zorrobpm.jobs.billing", "zorrobpm.jobs.billing.dlq",
+                "zorrobpm.jobs.notify", "zorrobpm.jobs.notify.dlq");
+        assertThat(captor.getAllValues()).allMatch(Queue::isDurable);
+    }
+
+    /**
+     * WO-REL-45 criterion 2 (wiring half): the work queue carries the DLX args
+     * (shared DLX + own DLQ as routing key) — the broker half is proven by
+     * {@code JobQueueDlqRabbitIT} against a real broker. POF: revert
+     * {@code declare} to a bare durable queue and this goes RED.
+     */
+    @Test
+    void workQueueCarriesDlxArgsPointingAtOwnDlq() {
+        declarer.declare("billing");
+
         ArgumentCaptor<Queue> captor = ArgumentCaptor.forClass(Queue.class);
         verify(amqpAdmin, times(2)).declareQueue(captor.capture());
-        assertThat(captor.getAllValues()).extracting(Queue::getName)
-            .containsExactlyInAnyOrder("zorrobpm.jobs.billing", "zorrobpm.jobs.notify");
-        assertThat(captor.getAllValues()).allMatch(Queue::isDurable);
+        Queue work = captor.getAllValues().stream()
+            .filter(q -> q.getName().equals("zorrobpm.jobs.billing"))
+            .findFirst().orElseThrow();
+        assertThat(work.getArguments())
+            .containsEntry("x-dead-letter-exchange", JobQueueDeclarer.JOBS_DLX)
+            .containsEntry("x-dead-letter-routing-key", "zorrobpm.jobs.billing.dlq");
+        assertThat(JobQueueDeclarer.dlqNameFor("billing"))
+            .isEqualTo("zorrobpm.jobs.billing.dlq");
     }
 
     /**
@@ -51,7 +77,11 @@ class JobQueueDeclarerTest {
         declarer.declare("billing");
         declarer.declare("billing");
 
-        verify(amqpAdmin, times(1)).declareQueue(any(Queue.class));
+        // WO-REL-45: one declare() = DLQ + work queue (2 declareQueue calls);
+        // the cache still suppresses the 2nd/3rd declare() entirely.
+        verify(amqpAdmin, times(2)).declareQueue(any(Queue.class));
+        verify(amqpAdmin, times(1)).declareExchange(
+            any(org.springframework.amqp.core.Exchange.class));
     }
 
     /**
@@ -65,10 +95,11 @@ class JobQueueDeclarerTest {
         assertThatCode(() -> declarer.declare("billing")).doesNotThrowAnyException();
         verify(amqpAdmin, times(1)).declareQueue(any(Queue.class));
 
-        // broker recovers — the previously failed name must be attempted again, not cached as done
+        // broker recovers — the previously failed name must be attempted again, not cached as done.
+        // WO-REL-45: a full declare is DLQ + work queue (2 declareQueue calls).
         reset(amqpAdmin);
         declarer.declare("billing");
-        verify(amqpAdmin, times(1)).declareQueue(any(Queue.class));
+        verify(amqpAdmin, times(2)).declareQueue(any(Queue.class));
     }
 
     @Test
