@@ -30,9 +30,12 @@ import java.util.List;
  * защита {@code xmin::text::bigint >= 3} (frozenxid 2 у старых строк — всегда
  * допущены). Почему text-каст, а не «нативный xid»: в PG НЕТ оператора
  * {@code xid < xid} вообще (проверено живым psql: есть только {@code =}/
- * {@code <>}; {@code <} есть лишь у {@code xid8}, а {@code pg_snapshot_xmin}
- * возвращает {@code xid}) — text-epoch-сравнение корректно пока разница txid
- * меньше пол-эпохи (~2 млрд транзакций), см. эскалацию WO-REL-38 в канале.
+ * {@code <>}; {@code <} есть лишь у {@code xid8}). WO-QW-4 (NEW-16c):
+ * {@code pg_snapshot_xmin} возвращает {@code xid8} (64-бит, проверено живым
+ * {@code pg_typeof} на PG 16), а не {@code xid}, как утверждала прежняя
+ * редакция — text-epoch-сравнение корректно пока 32-битный {@code xmin} и
+ * 64-битный watermark в одной эпохе (разница txid меньше ~2 млрд транзакций),
+ * см. эскалацию WO-REL-38 в канале.
  * Watermark встроен в сам SELECT (STABLE-функция, один замер на стейтмент) —
  * в Java xid не приезжает и не биндится. Сортировка допущенного набора —
  * по PK {@code sequence}.
