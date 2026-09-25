@@ -300,8 +300,10 @@ class Perf7CriteriaTest {
         }
         Class<?> repo = Class.forName(
             "com.zorrodev.bpm.engine.repository.OutboxRepository");
+        // WO-QW-4 (NEW-16e): status — OutboxStatus enum, не String.
         repo.getMethod("findProjectedByStatusOrderByCreatedAtDesc",
-            String.class, org.springframework.data.domain.Pageable.class);
+            Class.forName("com.zorrodev.bpm.engine.entity.OutboxStatus"),
+            org.springframework.data.domain.Pageable.class);
         repo.getMethod("findProjectedAllOrderByCreatedAtDesc",
             org.springframework.data.domain.Pageable.class);
     }

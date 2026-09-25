@@ -132,6 +132,6 @@ class RabbitOutboxConfirmIT {
         assertThat(reloaded.isPublished())
             .as("unroutable entry must stay published=false (WO-REL-12 R-02)")
             .isFalse();
-        assertThat(reloaded.getStatus()).isEqualTo("PENDING");
+        assertThat(reloaded.getStatus()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxStatus.PENDING);
     }
 }

@@ -68,7 +68,7 @@ public class OutboxDeliveryResultListener {
             // WO-REL-22 (B3): emit only on the FIRST transition — a duplicate delivery
             // result landing after quarantine re-marks nothing and emits nothing.
             // Skip already-quarantined rows outright (no pointless update).
-            if (!"FAILED".equals(entry.getStatus())
+            if (entry.getStatus() != com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED
                 && outboxRepository.markFailed(outboxId) == 1) {
                 java.util.Map<String, Object> data = new java.util.HashMap<>();
                 data.put("outboxId", outboxId.toString());

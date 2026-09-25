@@ -32,6 +32,14 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- WO-QW-4 (NEW-16f): JSON-логи prod-профиля (LogstashEncoder).
+             Версия 8.1: Java 21 + Logback 1.5 (Boot 4), jackson — из BOM. -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>8.1</version>
+        </dependency>
+
         <!-- 3.1.0 (not 3.0.3): natively vendors swagger-ui 5.32.11, which is the exact version
              WO-SEC-39 previously force-overrode on top of 3.0.3 (which vendors 5.32.2) to patch
              the DOMPurify CVE. That override broke Swagger UI entirely: springdoc's resource

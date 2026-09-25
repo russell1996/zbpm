@@ -25,7 +25,11 @@ public class OutboxEntry {
     private int attempts;
     @Column(name = "last_error")
     private String lastError;
-    private String status = "PENDING";
+    /** WO-QW-4 (NEW-16e): enum по образцу {@link OutboxKind} (STRING-mapped —
+     * колонка остаётся varchar, существующие строки работают без миграции). */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private OutboxStatus status = OutboxStatus.PENDING;
     /** WO-REL-12 R-01: explicit entry type set by the producer; routing must not guess from payload. */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
