@@ -18,7 +18,11 @@ import org.springframework.mail.javamail.JavaMailSender;
         "zorrobpm.security.jwt-secret=startup-test-secret-0123456789abcdef0123456789abcdef",
         // WO-SEC-68: no-profile startup now also validates the admin password
         // (was prod-only) — production-like boot needs a strong one, same as the secret above.
-        "zorrobpm.security.default-admin-password=startup-test-strong-admin-password"
+        "zorrobpm.security.default-admin-password=startup-test-strong-admin-password",
+        // WO-SEC-80: no-profile startup also rejects default DB/Rabbit passwords —
+        // production-like boot needs strong ones, same discipline as above.
+        "spring.datasource.password=startup-test-strong-db-password",
+        "spring.rabbitmq.password=startup-test-strong-rabbit-password"
     })
 class MailNoTransportStartupTest {
 
