@@ -13,6 +13,7 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -23,6 +24,7 @@ import java.util.UUID;
  * WO-DEBT-1n: домен Activities — реализация.
  * Перенесено 1:1 из DBServiceImpl (12 методов).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ActivityDbOperationsImpl implements ActivityDbOperations {
@@ -74,8 +76,16 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
 
     @Override
     public void errorActivity(UUID activityId) {
-        // ERROR is a parked state, not a completion: leave completedAt unset
-        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.ERROR, null);
+        // WO-ENG-23: ERROR is a parked state, not a completion: leave completedAt unset.
+        // Conditional: only an ACTIVE row (CREATED/IN_PROGRESS) may be parked. Flipping a
+        // terminal row (COMPLETED/CANCELLED/ERROR) would corrupt history — e.g. a past loop
+        // visit's COMPLETED row on a heap-ordered mis-pick. 0 updated rows = refuse, loudly.
+        int updated = activityRepository.setStatusAndCompletedAtIfStatusIn(
+            activityId, ActivityStatus.ERROR, null,
+            List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));
+        if (updated == 0) {
+            log.warn("errorActivity({}): row is not active (already terminal?) — refusing to flip it to ERROR", activityId);
+        }
     }
 
     @Override

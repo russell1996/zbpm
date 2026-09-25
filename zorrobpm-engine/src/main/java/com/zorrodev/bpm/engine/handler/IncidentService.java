@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,18 +40,28 @@ public class IncidentService {
         String message = e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : "");
         log.error("{}/{}: Incident at {} {}: {}", processInstanceId, tokenId, element.getType(), element.getId(), message, e);
 
-        // the handler creates the element's activity before doing the risky work, so it is visible
-        // to this same-transaction query; pick the most recent one for this token + element
+        // WO-ENG-23: the handler creates the element's activity before doing the risky work,
+        // so it is visible to this same-transaction query — but the query
+        // (findByTokenAndBpmnElementId, a derived query WITHOUT ORDER BY) returns rows in
+        // PostgreSQL heap (TID) order, NOT creation order: after retention-like churn
+        // (DELETE + VACUUM) the live visit can sit physically BEFORE a past COMPLETED visit.
+        // So pick the ACTIVE activity (CREATED/IN_PROGRESS, newest createdAt on ties), never
+        // "the last row of the list". Terminal-only rows mean the live attempt has no parked
+        // row — fall through to the WO-REL-40 fallback instead of corrupting history by
+        // flipping a dead row to ERROR.
         List<Activity> activities = dbService.getActivitiesByTokenAndBpmnElementId(tokenId, element.getId());
-        UUID activityId;
-        if (activities.isEmpty()) {
-            // WO-REL-40 (B-6) fallback: no activity to park the incident on — create one
-            // so the failure stays visible instead of a log-only trace.
-            log.warn("{}/{}: No activity found for failed element {}, creating fallback activity to record the incident",
+        UUID activityId = activities.stream()
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED || a.getStatus() == ActivityStatus.IN_PROGRESS)
+            .max(Comparator.comparing(Activity::getCreatedAt))
+            .map(Activity::getId)
+            .orElse(null);
+        if (activityId == null) {
+            // WO-REL-40 (B-6) fallback, extended by WO-ENG-23 to terminal-only rows: no live
+            // activity to park the incident on — create one so the failure stays visible
+            // instead of a log-only trace (and instead of corrupting a dead row).
+            log.warn("{}/{}: No active activity found for failed element {}, creating fallback activity to record the incident",
                 processInstanceId, tokenId, element.getId());
             activityId = dbService.createActivity(processInstanceId, tokenId, element);
-        } else {
-            activityId = activities.get(activities.size() - 1).getId();
         }
         dbService.errorActivity(activityId);
         dbService.createIncident(activityId, message);
