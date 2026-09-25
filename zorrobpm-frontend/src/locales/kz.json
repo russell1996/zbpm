@@ -172,6 +172,8 @@
   "accessDeniedMessage": "Сіздің ZBPM жүйесіне кіру рұқсатыңыз жоқ. Ақ тізімге қосу үшін әкімшіге хабарласыңыз.",
   "completingAuth": "Авторизация аяқталуда...",
   "redirectingToLogin": "Кіру бетіне бағытталуда...",
+  "realtimeSessionExpired": "Сессия аяқталды, қайта кіріңіз",
+  "realtimeSignIn": "Кіру",
   "darkMode": "Қараңғы тақырып",
   "lightMode": "Жарық тақырып",
   "copied": "Көшірілді",
