@@ -39,7 +39,7 @@ vi.mock('@/services/incidentService', () => ({
 }))
 
 vi.mock('@/services/instanceService', () => ({
-  getProcessInstance: vi.fn().mockResolvedValue({ id: 'pi-1', parentActivityId: null, processDefinitionId: 'pd-1', startedAt: '2026-01-01', completedAt: null, processName: 'Test', processKey: 'test', processVersion: 1 }),
+  getProcessInstance: vi.fn().mockResolvedValue({ id: 'pi-1', parentActivityId: null, processDefinitionId: 'pd-1', startedAt: '2026-01-01', completedAt: null, cancelled: false, processName: 'Test', processKey: 'test', processVersion: 1 }),
   getProcessInstanceActivities: vi.fn().mockResolvedValue([]),
   getProcessInstanceActivitiesPaged: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   getProcessInstances: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
@@ -128,7 +128,7 @@ describe('ProcessInstanceDetail — element dialog (WO-FE-BPMN-1)', () => {
     // Also set process store with currentInstance and structure so the BPMN panel renders
     const { useProcessStore } = await import('@/stores/process')
     const processStore = useProcessStore()
-    processStore.currentInstance = { id: 'pi-1', parentActivityId: null, processDefinitionId: 'pd-1', startedAt: '2026-01-01', completedAt: null, processName: 'Test', processKey: 'test', processVersion: 1 }
+    processStore.currentInstance = { id: 'pi-1', parentActivityId: null, processDefinitionId: 'pd-1', startedAt: '2026-01-01', completedAt: null, cancelled: false, processName: 'Test', processKey: 'test', processVersion: 1 }
     processStore.currentStructure = { id: 'pd-1', key: 'test', version: 1, name: 'Test', documentation: null, nodes: [], flows: [] }
     await wrapper.vm.$nextTick()
 
@@ -259,6 +259,7 @@ describe('ProcessInstanceDetail — element dialog (WO-FE-BPMN-1)', () => {
       processDefinitionId: 'pd-1',
       startedAt: '2026-01-01T00:00:00Z',
       completedAt: null,
+      cancelled: false, // WO-UI-21 Раунд 2: обязательное поле ProcessInstance
       processName: 'Test',
       processKey: 'test',
       processVersion: 1,

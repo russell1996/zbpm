@@ -168,6 +168,8 @@ vi.mock('@/services/instanceService', () => ({
   getProcessInstanceActivitiesPaged: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   getProcessInstances: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   startProcessInstance: vi.fn(),
+  // WO-UI-21 Раунд 2: новый экспорт сервиса (browser = нативный ESM, без него — import error).
+  cancelProcessInstance: vi.fn(),
 }))
 vi.mock('@/services/variableService', () => ({
   getVariables: vi.fn().mockResolvedValue({ data: [] }),
