@@ -47,6 +47,14 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
+        <!-- WO-REL-51: Micrometer gauge zbpm.jobs.legacy_queue (version from Boot
+             BOM, same as zorrobpm-engine). RabbitMQ client comes transitively
+             with starter-amqp (ShutdownSignalException/AMQP for 406 detection). -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
