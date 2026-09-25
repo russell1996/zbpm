@@ -481,30 +481,51 @@ public class ElementSupport {
 
     // ─── Type conversion ────────────────────────────────────────────────
 
+    /**
+     * WO-ENG-25 (NEW-05): script-FEEL (JSR-223) отдаёт числа как
+     * {@code scala.math.BigDecimal} — точное значение, но чужой тип: без
+     * нормализации оно не узнаётся {@code java.math.BigDecimal}-спецветками
+     * ниже и уходит в double-детур с потерей точности. {@code .bigDecimal()} —
+     * точная конвертация без округления (scala держит те же unscaledValue и
+     * scale, что java). Прямая ссылка на scala-тип — принятый паттерн этого
+     * файла (см. {@code isStructuredResult} ниже).
+     */
+    static Object normalizeFeelNumber(Object result) {
+        if (result instanceof scala.math.BigDecimal sbd) {
+            return sbd.bigDecimal();
+        }
+        return result;
+    }
+
     public ProcessVariable toProcessVariable(String name, Object result) {
         ProcessVariable variable = new ProcessVariable();
         variable.setName(name);
-        if (result instanceof Boolean b) {
+        // WO-ENG-25 (NEW-05): нормализация ДО любых проверок — иначе
+        // scala.BigDecimal ≥2⁵³ с дробью идёт в isIntegral через double,
+        // ошибочно считается «целым», и longValueExact падает на дробном
+        // значении с ложным "outside LONG range".
+        Object normalized = normalizeFeelNumber(result);
+        if (normalized instanceof Boolean b) {
             variable.setType(ProcessVariableType.BOOLEAN);
             variable.setValue(b.toString());
-        } else if (result instanceof Number number && isIntegral(number)) {
+        } else if (normalized instanceof Number number && isIntegral(number)) {
             // WO-ENG-21 (N10): целое вне диапазона Long — явный EngineException,
             // а не молчаливое усечение longValue() (у BigDecimal теряются старшие
             // биты, у double — насыщение к Long.MAX_VALUE; оба тихо меняют
             // значение). Контракт: integral && withinLongRange → LONG точно.
             variable.setType(ProcessVariableType.LONG);
             variable.setValue(Long.toString(longValueExact(name, number)));
-        } else if (result instanceof Number number) {
+        } else if (normalized instanceof Number number) {
             java.math.BigDecimal bd = (number instanceof java.math.BigDecimal x)
                 ? x : java.math.BigDecimal.valueOf(number.doubleValue());
             variable.setType(ProcessVariableType.DOUBLE);
             variable.setValue(bd.toPlainString());
-        } else if (isStructuredResult(result)) {
+        } else if (isStructuredResult(normalized)) {
             variable.setType(ProcessVariableType.JSON);
-            variable.setValue(objectMapper.writeValueAsString(toJavaStructure(result)));
+            variable.setValue(objectMapper.writeValueAsString(toJavaStructure(normalized)));
         } else {
             variable.setType(ProcessVariableType.STRING);
-            variable.setValue(result == null ? "" : result.toString());
+            variable.setValue(normalized == null ? "" : normalized.toString());
         }
         return variable;
     }
@@ -552,13 +573,19 @@ public class ElementSupport {
     }
 
     public boolean isIntegral(Number number) {
-        if (number instanceof Long || number instanceof Integer || number instanceof Short || number instanceof Byte) {
+        // WO-ENG-25 (NEW-05): любой BigDecimal-подобный — через scale, не
+        // через double. Нормализация здесь же, чтобы прямые вызывающие (не
+        // только toProcessVariable) получали тот же контракт: scala.BigDecimal
+        // ≥2⁵³ с дробью через double теряет дробную часть (rint == d) и
+        // ложно считается целым.
+        Number normalized = number instanceof scala.math.BigDecimal sbd ? sbd.bigDecimal() : number;
+        if (normalized instanceof Long || normalized instanceof Integer || normalized instanceof Short || normalized instanceof Byte) {
             return true;
         }
-        if (number instanceof java.math.BigDecimal bd) {
+        if (normalized instanceof java.math.BigDecimal bd) {
             return bd.stripTrailingZeros().scale() <= 0;
         }
-        double d = number.doubleValue();
+        double d = normalized.doubleValue();
         return d == Math.rint(d) && !Double.isInfinite(d);
     }
 
