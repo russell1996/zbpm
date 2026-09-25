@@ -46,10 +46,9 @@ class RetentionJobStuckPageTest {
     }
 
     private void stubIdleProcessors(int batchSize) {
-        // WO-REL-49: instance pass is a claim loop — empty claim ends it immediately.
-        // eq(90) is ttlDays (fallbackDays): the claim carries no batch size.
-        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
-            .thenReturn(java.util.Optional.empty());
+        // WO-REL-54: instance pass is a batch-claim loop — empty batch ends it.
+        when(batchProcessor.claimAndDeleteBatch(any(), eq(90), eq(batchSize), any()))
+            .thenReturn(new RetentionBatchProcessor.ClaimedBatch(List.of(), 0));
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(batchSize))).thenReturn(0);
     }
 

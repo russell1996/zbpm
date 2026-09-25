@@ -40,23 +40,39 @@ public class RetentionJob {
         log.info("Retention: looking for terminal instances completed before {} (TTL={}d)", cutoff, config.getTtlDays());
 
         int totalDeleted = 0;
-        // WO-REL-49: claim+delete в одной короткой транзакции на инстанс
-        // (RetentionBatchProcessor.claimAndDeleteOneInstance): SELECT ... FOR UPDATE
-        // SKIP LOCKED больше не коммитится раньше удаления — вторая реплика не может
-        // выбрать те же ID после release locks. Цикл до пустого claim'а; каждая итерация
-        // удаляет ровно один инстанс (прогресс гарантирован), транзакция — как в
-        // WO-PERF-8 короткая (один инстанс, не весь backlog).
+        // WO-REL-54: claim+delete ПАЧКОЙ в одной транзакции
+        // (RetentionBatchProcessor.claimAndDeleteBatch): SELECT ... LIMIT batch
+        // FOR UPDATE SKIP LOCKED + все DELETEs пачки в той же транзакции —
+        // тот же механизм REL-49, шире окно: на пачку — один eligible-SELECT
+        // вместо batchSize штук, DELETEs — IN (:ids) вместо поштучных.
+        // TTL-DISTINCT — раз за прогон (loadDistinctTtls), не на каждую пачку.
+        // Дедлайн — между пачками: начатая пачка коммитится целиком.
+        long deadlineNanos = config.getPassBudgetMs() > 0
+            ? System.nanoTime() + config.getPassBudgetMs() * 1_000_000L
+            : Long.MAX_VALUE;
+        List<Integer> distinctTtls = batchProcessor.loadDistinctTtls();
+        Instant passNow = Instant.now();
         int instancesDeleted = 0;
         while (true) {
             // WO-ENG-17: cutoff по каждому определению (собственный TTL или
             // глобальный как фолбэк); orphan/submission-пассы ниже — без изменений
             // (у orphan нет определения, у submission — свой TTL-скоуп).
-            java.util.Optional<RetentionBatchProcessor.ClaimedDelete> done =
-                batchProcessor.claimAndDeleteOneInstance(Instant.now(), config.getTtlDays());
-            if (done.isEmpty()) break; // last batch
+            RetentionBatchProcessor.ClaimedBatch done =
+                batchProcessor.claimAndDeleteBatch(passNow, config.getTtlDays(),
+                    config.getBatchSize(), distinctTtls);
+            if (done.instanceIds().isEmpty()) break; // last batch
 
-            instancesDeleted++;
-            totalDeleted += done.get().rowsDeleted();
+            instancesDeleted += done.instanceIds().size();
+            totalDeleted += done.rowsDeleted();
+            // WO-REL-54: гонка pre-query/main-query на DISTINCT TTL (деплой с
+            // новым TTL между loadDistinctTtls и пачкой) безопасна — пропущенные
+            // строки доберутся следующим проходом; список НЕ перезапрашивается
+            // внутри прохода (иначе задача 2 не выполнена).
+            if (System.nanoTime() >= deadlineNanos) {
+                log.info("Retention: pass budget exhausted after {} instances — continuing next run",
+                    instancesDeleted);
+                break;
+            }
         }
         if (instancesDeleted > 0) {
             log.info("Retention: deleted {} instances ({} rows total so far)", instancesDeleted, totalDeleted);
