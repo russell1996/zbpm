@@ -17,9 +17,17 @@ vi.mock('@/stores/process', () => ({
       ],
       totalElements: 1,
     },
+    // WO-UI-21: компонент грузит definitions для дропдауна на mount.
+    definitions: {
+      data: [
+        { id: 'def-1', key: 'vacation', name: 'Vacation', version: 1, sha256: 'a', createdAt: '2026-01-01', startFormKey: null },
+      ],
+      totalElements: 1,
+    },
     loading: false,
     error: null,
     fetchInstances: vi.fn().mockResolvedValue(undefined),
+    fetchDefinitions: vi.fn().mockResolvedValue(undefined),
   }),
 }))
 vi.mock('@/composables/usePagination', () => ({
