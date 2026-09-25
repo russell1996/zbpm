@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
@@ -62,10 +63,29 @@ public class GraphRobustnessIntegrationTests {
             .filter(a -> a.getBpmnElementId().equals("s1"))
             .findFirst().orElseThrow();
 
+        // WO-ENG-23: s1 already COMPLETED before its outgoing navigation failed, so the
+        // incident parks on a fresh fallback activity for (token, s1) — not on s1's own
+        // COMPLETED row (flipping it to ERROR would corrupt history). The guarantee of
+        // this test is the informative message, not the binding row.
         List<IncidentEntity> incidents = incidentRepository.findAll().stream()
-            .filter(i -> i.getActivityId().equals(s1.getId()))
+            .filter(i -> {
+                ActivityEntity parked = activityRepository.findById(i.getActivityId()).orElseThrow();
+                return parked.getProcessInstanceId().equals(processInstanceId)
+                    && parked.getBpmnElementId().equals("s1")
+                    && parked.getToken().equals(s1.getToken());
+            })
             .toList();
         assertThat(incidents).hasSize(1);
         assertThat(incidents.get(0).getMessage()).contains("ghost").contains("not found");
+        assertThat(incidents.get(0).getActivityId())
+            .as("incident must park on a fresh fallback row, not on the completed s1 row")
+            .isNotEqualTo(s1.getId());
+        assertThat(s1.getStatus())
+            .as("the completed s1 row must stay COMPLETED (history preserved)")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        ActivityEntity parked = activityRepository.findById(incidents.get(0).getActivityId()).orElseThrow();
+        assertThat(parked.getStatus())
+            .as("the fallback row carries the parked failure")
+            .isEqualTo(ActivityStatus.ERROR);
     }
 }
