@@ -172,6 +172,8 @@
   "accessDeniedMessage": "You do not have access to ZBPM. Please contact your administrator to be added to the user white list.",
   "completingAuth": "Completing authentication...",
   "redirectingToLogin": "Redirecting to login...",
+  "realtimeSessionExpired": "Session expired, please sign in again",
+  "realtimeSignIn": "Sign in",
   "darkMode": "Dark mode",
   "lightMode": "Light mode",
   "copied": "Copied",

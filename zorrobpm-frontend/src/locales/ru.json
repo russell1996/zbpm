@@ -172,6 +172,8 @@
   "accessDeniedMessage": "У вас нет доступа к ZBPM. Обратитесь к администратору для добавления в белый список.",
   "completingAuth": "Завершение авторизации...",
   "redirectingToLogin": "Перенаправление на вход...",
+  "realtimeSessionExpired": "Сессия истекла, войдите снова",
+  "realtimeSignIn": "Войти",
   "darkMode": "Тёмная тема",
   "lightMode": "Светлая тема",
   "copied": "Скопировано",
