@@ -126,7 +126,17 @@ class SseRel52BridgePgIT {
             .findFirst().orElseThrow().getId().toString();
     }
 
-    private void pushEvent(String pdId) {
+    /**
+     * WO-REL-52 A1: штамп t0 ставится МЕЖДУ save ряда и fan-out (sequence
+     * известен сразу после save — до assign/onDomainEvent), иначе синхронный
+     * fan-out обгоняет штамп и семпл теряется (поймано: 43 семпла из 25000).
+     * t0 включает assignPendingPositions — честно, это часть пути доставки.
+     */
+    private long pushEvent(String pdId) {
+        return pushEventStamped(pdId, null);
+    }
+
+    private long pushEventStamped(String pdId, Map<Long, Long> sentAtNanos) {
         com.zorrodev.bpm.engine.entity.DomainEventEntity e =
             new com.zorrodev.bpm.engine.entity.DomainEventEntity();
         e.setId(UUID.randomUUID());
@@ -136,27 +146,34 @@ class SseRel52BridgePgIT {
         e.setData(Map.of());
         e.setProcessDefinitionId(UUID.fromString(pdId));
         com.zorrodev.bpm.engine.entity.DomainEventEntity saved = domainEventRepository.save(e);
+        long realSequence = saved.getSequence();
+        if (sentAtNanos != null) {
+            sentAtNanos.put(realSequence, System.nanoTime());
+        }
         feedPositionAssigner.assignPendingPositions();
-        long realSequence = domainEventRepository.findById(saved.getSequence())
-            .orElseThrow().getSequence();
         sseEventStreamService.onDomainEvent(
             "{\"sequence\":" + realSequence + ",\"id\":\"" + saved.getId() + "\","
                 + "\"type\":\"process-instance.started\",\"version\":1,"
                 + "\"occurredAt\":\"2026-09-25T00:00:00Z\","
                 + "\"processDefinitionId\":\"" + pdId + "\","
                 + "\"processInstanceId\":\"" + UUID.randomUUID() + "\",\"data\":{}}");
+        return realSequence;
     }
 
     /**
-     * A1+A2: 100 клиентов 10 пользователей (по 10 вкладок) × 50 событий —
-     * латентность p99 окна + SQL liveness на событие. Группировка: ≤2
-     * SQL/пользователь/событие (securityState + liveView-правa из кэша после
-     * первого события), итого окно ~10×(1–2) SQL, а не 100×2.
+     * A1+A2: 500 клиентов (50 пользователей × 10 вкладок — per-subject cap,
+     * SseEventStreamService.maxClientsPerSubject) × 50 событий — латентность
+     * p99 окна + SQL liveness на событие. Группировка: ≤2 SQL/пользователь/
+     * событие (securityState + liveView-права из кэша после первого события),
+     * итого окно ~50×(1–2) SQL, а не 500×2.
+     *
+     * <p>p99 — измерение, не порог: абсолютная латентность зависит от железа
+     * стенда, границей регрессии служит SQL-стоимость (детерминирована).
      * P-67: конкретные числа (prepareQueryCount дельта + p99 мс), не «быстро».
      */
     @org.junit.jupiter.api.Timeout(value = 300, unit = TimeUnit.SECONDS)
     @Test
-    void hundredClientsTenUsers_fiftyEvents_boundedLivenessQueries() throws Exception {
+    void fiveHundredClientsFiftyUsers_fiftyEvents_boundedLivenessQueries() throws Exception {
         statistics().setStatisticsEnabled(true);
 
         String key = "sseRel52_" + UUID.randomUUID();
@@ -177,13 +194,17 @@ class SseRel52BridgePgIT {
         processDefinitionRepository.save(pd);
         String pdId = pdIdOf(processId);
 
-        // 10 пользователей × 10 клиентов (вкладок) = 100 потоков.
-        int users = 10;
+        // 50 пользователей × 10 клиентов (вкладок) = 500 потоков (WO A1:
+        // 500 клиентов; per-subject cap = 10 — больше вкладок на юзера
+        // даст 429, см. registerClientInternal).
+        int users = 50;
         int perUser = 10;
         List<UUID> userIds = new ArrayList<>();
         List<String> clientIds = new ArrayList<>();
         List<CountDownLatch> delivered = new ArrayList<>();
-        Map<String, List<Long>> latencies = new ConcurrentHashMap<>();
+        Map<String, Integer> clientIndex = new ConcurrentHashMap<>();
+        Map<Long, Long> sentAtNanos = new ConcurrentHashMap<>();
+        List<Long> latenciesNanos = new CopyOnWriteArrayList<>();
         for (int u = 0; u < users; u++) {
             UUID userId = createUser("sse-rel52");
             userIds.add(userId);
@@ -199,6 +220,7 @@ class SseRel52BridgePgIT {
                 SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
                 String clientId = sseEventStreamService.registerClient(
                     emitter, principal, null, null, null);
+                clientIndex.put(clientId, clientIds.size());
                 clientIds.add(clientId);
                 delivered.add(new CountDownLatch(1));
             }
@@ -209,15 +231,16 @@ class SseRel52BridgePgIT {
         Thread.sleep(2000);
 
         sseEventStreamService.clearEventListeners();
-        Map<String, Long> sentAt = new ConcurrentHashMap<>();
         sseEventStreamService.addEventListener((cid, envelope) -> {
-            Long t0 = sentAt.get(cid + ":" + envelope.get("feedPosition"));
+            // Латентность доставки: listener вызывается ПОСЛЕ send в emitter
+            // (REL-47 §7.2) — это user-visible задержка события, не enqueue.
+            Object seqObj = envelope.get("sequence");
+            Long t0 = seqObj instanceof Number n ? sentAtNanos.get(n.longValue()) : null;
             if (t0 != null) {
-                latencies.computeIfAbsent(cid, k -> new CopyOnWriteArrayList<>())
-                    .add(System.nanoTime() - t0);
+                latenciesNanos.add(System.nanoTime() - t0);
             }
-            int idx = clientIds.indexOf(cid);
-            if (idx >= 0) {
+            Integer idx = clientIndex.get(cid);
+            if (idx != null) {
                 delivered.get(idx).countDown();
             }
         });
@@ -226,33 +249,41 @@ class SseRel52BridgePgIT {
         long queriesBefore = statistics().getPrepareStatementCount();
         int events = 50;
         for (int i = 0; i < events; i++) {
-            // Штампуем время отправки на все клиенты заранее (один fp на
-            // событие неизвестен до assign — метим по порядку: событие i
-            // увидят все клиенты; латентность считаем до первого notify).
-            pushEvent(pdId);
+            pushEventStamped(pdId, sentAtNanos);
         }
-        // Ждём доставки всем 100 клиентам (хотя бы по одному событию окна).
+        // Ждём доставки всем 500 клиентам (хотя бы по одному событию окна).
         for (CountDownLatch latch : delivered) {
-            assertThat(latch.await(60, TimeUnit.SECONDS)).isTrue();
+            assertThat(latch.await(120, TimeUnit.SECONDS)).isTrue();
         }
         long queriesAfter = statistics().getPrepareStatementCount();
         long windowQueries = queriesAfter - queriesBefore;
 
+        // A1: p99 латентности доставки по всем семплам окна (один семпл =
+        // одно событие одному клиенту; listener — после send).
+        List<Long> sorted = new ArrayList<>(latenciesNanos);
+        java.util.Collections.sort(sorted);
+        double p99ms = sorted.isEmpty() ? -1
+            : sorted.get((int) Math.ceil(0.99 * sorted.size()) - 1) / 1_000_000.0;
+
         // A2: liveness-SQL окна НЕ растёт как клиенты×события. Верхняя граница
         // щедрая (событийные записи + позиции + права), но ловит линейный
-        // рост по клиентам: 100 клиентов × 50 событий × 2 SQL = 10000 при
+        // рост по клиентам: 500 клиентов × 50 событий × 2 SQL = 50000 при
         // старом per-client lookup; группировка держит окно на ~порядки ниже.
         // Измерено на реальном PG (тот же тест, тот же стенд):
-        //   ДО (per-client lookup): 5152 SQL / 50 событий = 103 SQL/событие
-        //   ПОСЛЕ (группировка):     650 SQL / 50 событий =  13 SQL/событие
-        // Конкретное число — в лог (A1), ассерт — граница регрессии.
+        //   ДО, 100 клиентов (per-client lookup): 5152 SQL / 50 событий = 103/событие
+        //   ПОСЛЕ, 500 клиентов (группировка):     2602 SQL / 50 событий =  52/событие,
+        //     p99 доставки 29.4мс на 25000 семплах (listener после send).
+        // Конкретные числа — в лог (A1), ассерт — граница регрессии.
         long perEvent = windowQueries / events;
         org.slf4j.LoggerFactory.getLogger(SseRel52BridgePgIT.class).info(
-            "SSE REL-52 A1: {} clients ({} users) x {} events: {} SQL total, {} SQL/event",
-            clientIds.size(), users, events, windowQueries, perEvent);
+            "SSE REL-52 A1: {} clients ({} users) x {} events: {} SQL total, {} SQL/event, p99 delivery latency {} ms ({} samples)",
+            clientIds.size(), users, events, windowQueries, perEvent, String.format("%.1f", p99ms), sorted.size());
         assertThat(perEvent)
-            .as("liveness+delivery SQL per event must not scale with client count (100 clients, 10 users)")
+            .as("liveness+delivery SQL per event must not scale with client count (500 clients, 50 users)")
             .isLessThan(100);
+        assertThat(sorted)
+            .as("latency window measured (listener fired after send for window events)")
+            .isNotEmpty();
 
         for (String clientId : clientIds) {
             sseEventStreamService.removeClient(clientId);
