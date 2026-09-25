@@ -969,6 +969,10 @@ public class ActivityServiceImplTests {
         gatewayActivity.setToken(token);
         gatewayActivity.setProcessInstanceId(processInstanceId);
         gatewayActivity.setType(BpmnElementType.EXCLUSIVE_GATEWAY);
+        // WO-ENG-23: raiseIncident only parks on ACTIVE rows — the fixture is the live
+        // gateway activity created before the condition evaluation failed.
+        gatewayActivity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS);
+        gatewayActivity.setCreatedAt(Instant.now());
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
