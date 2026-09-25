@@ -213,7 +213,7 @@ public class MetricsWiringIntegrationTests {
         assertThat(counter("zbpm.rabbit.publish.failures") - rabbitBefore).isEqualTo(1.0);
         assertThat(counter("zbpm.outbox.failed") - failedBefore).isEqualTo(1.0);
         entityManager.clear(); // bulk UPDATE bypasses L1 — re-read
-        assertThat(outboxRepository.findById(dead.getId()).orElseThrow().getStatus()).isEqualTo("FAILED");
+        assertThat(outboxRepository.findById(dead.getId()).orElseThrow().getStatus()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED);
     }
 
     @Transactional
@@ -236,7 +236,7 @@ public class MetricsWiringIntegrationTests {
         quarantined.setPayload("{\"type\":\"x\"}");
         quarantined.setCreatedAt(Instant.now());
         quarantined.setPublished(false);
-        quarantined.setStatus("FAILED");
+        quarantined.setStatus(com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED);
         outboxRepository.save(quarantined);
 
         // Real processor + real repo + real metrics; only the event bus is mocked
