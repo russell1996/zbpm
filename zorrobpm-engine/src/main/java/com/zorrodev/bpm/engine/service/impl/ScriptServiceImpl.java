@@ -32,6 +32,14 @@ public class ScriptServiceImpl implements ScriptService {
     private final BpmMetrics bpmMetrics;
     private final long timeoutMs;
     /**
+     * WO-ENG-24: admission control — сколько ждать освобождения пула/очереди,
+     * прежде чем сбросить нагрузку вместо отката всей операции. Короткий
+     * всплеск впитывается ожиданием, sustained-перегрузка по-прежнему
+     * сбрасывается быстро (fail-fast), но уже как 503/retry-later, не 422.
+     */
+    private final long queueWaitMs;
+    private final long queueWaitSeconds;
+    /**
      * WO-REL-33 F22: пул ОДИН на все времена (final — никогда не заменяется).
      * Старой болезни «каждый timeout = новый executor + выжившие поколения»
      * больше нет: поколений нет вообще, суммарные потоки ≤ poolSize константно.
@@ -51,11 +59,13 @@ public class ScriptServiceImpl implements ScriptService {
     private final AtomicLong lastSaturationWarnMs = new AtomicLong(0);
 
     public ScriptServiceImpl(@Qualifier("feelScriptEngine") ScriptEngine scriptEngine,
-                             @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine,
-                             ObjectMapper objectMapper,
-                             BpmMetrics bpmMetrics,
-                             @Value("${zorrobpm.engine.script-timeout-seconds:10}") long timeoutSeconds,
-                             @Value("${zorrobpm.engine.script-pool-size:8}") int poolSize) {
+                              @Qualifier("feelExpressionScriptEngine") ScriptEngine feelExpressionScriptEngine,
+                              ObjectMapper objectMapper,
+                              BpmMetrics bpmMetrics,
+                              @Value("${zorrobpm.engine.script-timeout-seconds:10}") long timeoutSeconds,
+                              @Value("${zorrobpm.engine.script-pool-size:8}") int poolSize,
+                              @Value("${zorrobpm.engine.script-queue-capacity:10}") int queueCapacity,
+                              @Value("${zorrobpm.engine.script-queue-wait-seconds:5}") long queueWaitSeconds) {
         this.scriptEngine = scriptEngine;
         this.feelExpressionScriptEngine = feelExpressionScriptEngine;
         this.objectMapper = objectMapper;
@@ -65,11 +75,25 @@ public class ScriptServiceImpl implements ScriptService {
             throw new IllegalArgumentException(
                 "zorrobpm.engine.script-pool-size must be >= 1, got " + poolSize);
         }
+        if (queueCapacity < 1) {
+            // WO-ENG-24: та же fail-fast валидация, что у script-pool-size рядом
+            // (P-41) — новая ручка проходит ту же проверку, а не обходит её.
+            throw new IllegalArgumentException(
+                "zorrobpm.engine.script-queue-capacity must be >= 1, got " + queueCapacity);
+        }
+        if (queueWaitSeconds < 0) {
+            throw new IllegalArgumentException(
+                "zorrobpm.engine.script-queue-wait-seconds must be >= 0, got " + queueWaitSeconds);
+        }
+        this.queueWaitMs = queueWaitSeconds * 1000;
+        this.queueWaitSeconds = queueWaitSeconds;
         // WO-A-02: bounded bulkhead — bounded pool + bounded queue + abort policy.
         // WO-REL-46: размер конфигурируется (дефолт 8 — порог одновременных
         // зависших non-cooperative скриптов, нужный для полного outage, выше,
         // чем был при хардкоде 2).
-        int queueCapacity = 10; // small buffer for queued expressions
+        // WO-ENG-24: ёмкость очереди тоже конфигурируется (дефолт 10 — тот же
+        // хардкод, что был; итоговая вместимость pool + queue обоснована ниже
+        // в submitToPool относительно реальных вызывающих).
         this.executor = new ThreadPoolExecutor(
             poolSize, poolSize, 0L, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(queueCapacity),
@@ -111,6 +135,18 @@ public class ScriptServiceImpl implements ScriptService {
     /**
      * WO-ENG-20: сабмит в общий пул (выделено из {@code evalWithTimeout} без смены
      * семантики — saturation-warn, AbortPolicy-маппинг и сообщения те же).
+     *
+     * <p>WO-ENG-24: admission control вместо мгновенного AbortPolicy. Пул 8 +
+     * очередь 10 = 18 мест: порог отказов в замере аудита — как раз число
+     * одновременных вызывающих сверх pool+queue (timer-executor до 8, Rabbit
+     * 3–5, Tomcat до 200 — перевалить за 18 в пике реально даже на дешёвых
+     * выражениях). Поэтому мгновенный отказ при полном пуле сбрасывал целые
+     * операции на переходном всплеске. Теперь при отказе {@code execute} задача
+     * ждёт освобождения ограниченное время ({@code script-queue-wait-seconds},
+     * дефолт 5с): короткий всплеск впитывается, sustained-перегрузка
+     * по-прежнему сбрасывается — но уже как временная
+     * ({@link com.zorrodev.bpm.engine.service.ScriptOverloadException} →
+     * HTTP 503 + Retry-After), а не как неверный запрос (422).
      */
     private java.util.concurrent.Future<Object> submitToPool(
         java.util.concurrent.Callable<Object> task, String ref) {
@@ -122,17 +158,35 @@ public class ScriptServiceImpl implements ScriptService {
         }
 
         // WO-A-02: bulkhead — bounded queue rejects if pool is full (AbortPolicy)
-        java.util.concurrent.Future<Object> future;
+        java.util.concurrent.FutureTask<Object> future = new java.util.concurrent.FutureTask<>(task);
         try {
-            future = executor.submit(task);
-        } catch (RejectedExecutionException e) {
-            // WO-A-02: pool full — fast rejection instead of infinite queuing
+            executor.execute(future);
+            return future;
+        } catch (RejectedExecutionException budgetFull) {
+            // WO-ENG-24: пул+очередь полны прямо сейчас — ждём освобождения
+            // ограниченное время вместо мгновенного отката операции. На уже
+            // останавливающемся пуле ждать нечего — очередь примет, но никто
+            // не выполнит (раньше здесь был мгновенный отказ, не timeout).
+            boolean admitted = false;
+            if (!executor.isShutdown()) {
+                try {
+                    admitted = executor.getQueue().offer(future, queueWaitMs, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (admitted) {
+                return future;
+            }
             bpmMetrics.scriptRejected();
             bpmMetrics.updateScriptPoolMetrics(executor);
-            log.warn("Script rejected (bulkhead full): {} workers active, queue full", executor.getActiveCount());
-            throw new EngineException("Script execution rejected: pool full (" + ref + ")");
+            log.warn("Script rejected (bulkhead overloaded after {}ms admission wait): "
+                    + "{} workers active, queue full", queueWaitMs, executor.getActiveCount());
+            throw new com.zorrodev.bpm.engine.service.ScriptOverloadException(
+                "Script execution rejected: pool overloaded (" + ref + "), retry later",
+                budgetFull,
+                (int) Math.max(1, queueWaitSeconds));
         }
-        return future;
     }
 
     /**

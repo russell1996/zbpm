@@ -46,6 +46,11 @@ public class FeelBudgetImpl implements FeelBudget {
             return (EvaluationResult) scriptService.runWithBudget(
                 () -> feelEngineApi.evaluateExpression(expression, variables),
                 "feel-expression(len=" + (expression == null ? "null" : expression.length()) + ")");
+        } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
+            // WO-ENG-24: временная перегрузка — не ошибка выражения. Проброс
+            // без "(feel-budget: …)"-обёртки: 503-хендлер матчит по ТИПУ,
+            // обёртка спрятала бы его обратно в 422.
+            throw e;
         } catch (EngineException e) {
             throw new EngineException("(feel-budget: " + e.getMessage() + ")", e);
         }
@@ -57,6 +62,9 @@ public class FeelBudgetImpl implements FeelBudget {
             return (EvaluationResult) scriptService.runWithBudget(
                 () -> feelEngineApi.evaluateUnaryTests(test, input, variables),
                 "feel-unary-test(len=" + (test == null ? "null" : test.length()) + ")");
+        } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
+            // WO-ENG-24: см. выше — перегрузка идёт дальше без обёртки.
+            throw e;
         } catch (EngineException e) {
             throw new EngineException("(feel-budget: " + e.getMessage() + ")", e);
         }

@@ -348,7 +348,8 @@ public class MetricsWiringIntegrationTests {
     @Test
     void scriptTimeoutAndRejection_incrementThroughRealBulkhead() throws Exception {
         // Real ScriptServiceImpl bulkhead (no Spring): slow expressions trip the timeout
-        // counter, a flooded pool trips the rejection counter. ~3s of realFEEL work.
+        // counter; a deterministically saturated pool trips the rejection counter.
+        // ~1s of real FEEL work + instant overload (queueWait=0).
         io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
         BpmMetrics metrics = new BpmMetrics(registry);
@@ -356,7 +357,7 @@ public class MetricsWiringIntegrationTests {
             new com.zorrodev.bpm.engine.service.impl.ScriptServiceImpl(
                 new org.camunda.feel.impl.script.FeelUnaryTestsScriptEngineFactory().getScriptEngine(),
                 new org.camunda.feel.impl.script.FeelScriptEngineFactory().getScriptEngine(),
-                new tools.jackson.databind.ObjectMapper(), metrics, 1, 2);
+                new tools.jackson.databind.ObjectMapper(), metrics, 1, 2, 10, 5);
         String slowExpr = "for i in 1..5000 return for j in 1..5000 return i * j";
 
         try {
@@ -366,20 +367,84 @@ public class MetricsWiringIntegrationTests {
         }
         assertThat(registry.find("zbpm.script.timeout").counter().count()).isEqualTo(1.0);
 
-        Thread[] flood = new Thread[20];
-        for (int i = 0; i < flood.length; i++) {
-            flood[i] = new Thread(() -> {
+        // WO-ENG-24: детерминированное насыщение вместо flood из 20 потоков.
+        // Flood полагался на мгновенный AbortPolicy-отказ; с admission-wait
+        // воркеры могли освободить слоты за время ожидания и rejected флапал
+        // (0 вместо ≥1). Теперь: занимаем оба воркера + всю очередь
+        // latch-задачами (факт — размер очереди, не сон) и шлём один overflow
+        // на сервис с queueWait=0 (мгновенный сброс — та же ветка кода, что
+        // flood ловил раньше, но без гонки). Тип — ScriptOverloadException
+        // (наследник EngineException), счётчик rejected растёт через реальный
+        // прод-путь submitToPool.
+        BpmMetrics metrics2 = new BpmMetrics(registry);
+        com.zorrodev.bpm.engine.service.impl.ScriptServiceImpl saturated =
+            new com.zorrodev.bpm.engine.service.impl.ScriptServiceImpl(
+                new org.camunda.feel.impl.script.FeelUnaryTestsScriptEngineFactory().getScriptEngine(),
+                new org.camunda.feel.impl.script.FeelScriptEngineFactory().getScriptEngine(),
+                new tools.jackson.databind.ObjectMapper(), metrics2, 10, 2, 1, 0);
+        java.util.concurrent.CountDownLatch workersBusy =
+            new java.util.concurrent.CountDownLatch(2); // оба воркера на латче
+        java.util.concurrent.CountDownLatch release =
+            new java.util.concurrent.CountDownLatch(1);
+        Thread[] workers = new Thread[2];
+        for (int i = 0; i < workers.length; i++) {
+            workers[i] = new Thread(() -> {
                 try {
-                    service.evaluateExpression(slowExpr, List.of());
+                    saturated.runWithBudget(() -> {
+                        workersBusy.countDown();
+                        release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                        return null;
+                    }, "metric-wiring-holder");
                 } catch (RuntimeException e) {
-                    // timeouts and rejections both expected here
+                    // timeout/interrupt on teardown — not the asserted path
                 }
             });
-            flood[i].setDaemon(true);
-            flood[i].start();
+            workers[i].setDaemon(true);
+            workers[i].start();
         }
-        for (Thread t : flood) {
-            t.join(15000);
+        Thread filler = null;
+        try {
+            assertThat(workersBusy.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                .as("pool (2) occupied").isTrue();
+            java.lang.reflect.Field poolField =
+                com.zorrodev.bpm.engine.service.impl.ScriptServiceImpl.class.getDeclaredField("executor");
+            poolField.setAccessible(true);
+            java.util.concurrent.ThreadPoolExecutor pool =
+                (java.util.concurrent.ThreadPoolExecutor) poolField.get(saturated);
+            // Filler — строго после barrier (иначе крадёт слот воркера);
+            // в очереди (факт — размер, не сон: его тело не выполнится,
+            // пока воркеры на латче).
+            filler = new Thread(() -> {
+                try {
+                    saturated.runWithBudget(() -> {
+                        release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                        return null;
+                    }, "metric-wiring-filler");
+                } catch (RuntimeException e) {
+                    // teardown — not the asserted path
+                }
+            });
+            filler.setDaemon(true);
+            filler.start();
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> pool.getQueue().size() == 1);
+            try {
+                saturated.evaluateExpression("x + 1", List.of());
+                assertThat(false).as("saturated pool must shed load").isTrue();
+            } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
+                // expected overload — the asserted path
+            }
+        } finally {
+            release.countDown();
+            for (Thread t : workers) {
+                t.join(15_000);
+            }
+            if (filler != null) {
+                filler.join(15_000);
+            }
+            // Без shutdown(): потоки пула daemon ("script-eval"), JVM выходит
+            // сама — как в старом flood-варианте этого же теста. shutdown()
+            // здесь недоступен (package-private в service.impl).
         }
         assertThat(registry.find("zbpm.script.rejected").counter().count()).isGreaterThanOrEqualTo(1.0);
     }
