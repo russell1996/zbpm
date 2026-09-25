@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.entity.FormEntity;
 import com.zorrodev.bpm.engine.repository.ElementArtifactBindingRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
@@ -39,6 +40,7 @@ import java.util.stream.Collectors;
  */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class FormDeploymentService {
 
     private final FormRepository formRepository;
@@ -97,6 +99,18 @@ public class FormDeploymentService {
             objectMapper.readValue(dto.getSchema(), Object.class);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid JSON");
+        }
+
+        // WO-SEC-78 (NEW-08): ReDoS shape check as a deploy-time WARNING for
+        // the form author, never a rejection — the static check false-positives
+        // on everyday email/phone/FIO formats, so blocking on it would make
+        // legitimate forms undeployable. Runtime safety is the interruptible
+        // fuse in FormValidator.matchesPattern; deploy proceeds regardless.
+        List<String> riskyPatterns = FormValidator.findRiskyPatterns(dto.getSchema(), objectMapper);
+        if (!riskyPatterns.isEmpty()) {
+            log.warn("Form '{}' declares {} pattern(s) with ReDoS-dangerous shapes; "
+                    + "runtime matching is time-boxed, but consider simplifying: {}",
+                dto.getKey(), riskyPatterns.size(), riskyPatterns);
         }
 
         // WO-VM-5: validate JSON Schema structure for VARIABLE_SCHEMA
