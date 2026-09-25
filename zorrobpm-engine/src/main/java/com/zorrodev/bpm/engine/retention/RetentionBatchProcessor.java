@@ -112,13 +112,65 @@ public class RetentionBatchProcessor {
     public record ClaimedDelete(UUID instanceId, int rowsDeleted) {
     }
 
+    /**
+     * WO-REL-54: DISTINCT TTL раз за прогон, не на каждый инстанс/пачку.
+     * Гонка pre-query/main-query (деплой с новым TTL между ними) безопасна —
+     * пропущенные строки доберутся следующим проходом (та же идемпотентность,
+     * что у SKIP LOCKED-пропусков; см. findEligibleInstances-javadoc).
+     */
+    @Transactional
+    public List<Integer> loadDistinctTtls() {
+        return jdbc.queryForList(
+            "SELECT DISTINCT history_time_to_live_days FROM process_definitions " +
+            "WHERE history_time_to_live_days IS NOT NULL AND history_time_to_live_days > 0",
+            new MapSqlParameterSource(), Integer.class);
+    }
+
+    /**
+     * WO-REL-54 (NEW-12): claim+delete ПАЧКОЙ в ОДНОЙ транзакции — тот же
+     * SKIP LOCKED-механизм, что {@link #claimAndDeleteOneInstance}, шире окно:
+     * SELECT ... LIMIT :batch FOR UPDATE SKIP LOCKED + все DELETEs в той же
+     * транзакции. Пока удаление не закоммичено, вторая реплика пропускает
+     * строки по SKIP LOCKED; после коммита строк уже нет — дублирующий выбор
+     * структурно невозможен, как в REL-49 (доказано тем же двухпоточным
+     * race-тестом на пачечной версии). Пустая пачка — eligible нет.
+     *
+     * @return заclaimленные и удалённые инстансы + число удалённых строк
+     */
+    @Transactional
+    public ClaimedBatch claimAndDeleteBatch(Instant now, int fallbackDays, int batchSize,
+            List<Integer> distinctTtls) {
+        List<UUID> picked = selectEligiblePerDefinition(now, fallbackDays, batchSize, distinctTtls);
+        if (picked.isEmpty()) {
+            return new ClaimedBatch(List.of(), 0);
+        }
+        int rows = deleteRowsForInstances(picked);
+        return new ClaimedBatch(List.copyOf(picked), rows);
+    }
+
+    /** Результат одного {@link #claimAndDeleteBatch}: кто заclaimлен и сколько строк ушло. */
+    public record ClaimedBatch(List<UUID> instanceIds, int rowsDeleted) {
+    }
+
     private List<UUID> selectEligiblePerDefinition(Instant now, int fallbackDays, int limit) {
-        // Belt-and-braces: мусор/0 rejected на деплое, но строка БД правится и руками —
-        // неположительный TTL здесь никогда не чистится, а не «чистится сразу».
         List<Integer> distinctTtls = jdbc.queryForList(
             "SELECT DISTINCT history_time_to_live_days FROM process_definitions " +
             "WHERE history_time_to_live_days IS NOT NULL AND history_time_to_live_days > 0",
             new MapSqlParameterSource(), Integer.class);
+        return selectEligiblePerDefinition(now, fallbackDays, limit, distinctTtls);
+    }
+
+    /**
+     * WO-REL-54 (NEW-12): та же eligible-выборка, но TTL-список приходит
+     * снаружи — job вычисляет `DISTINCT ttl` раз за прогон, а не на каждый
+     * инстанс/пачку. Старый путь (без параметра) делегирует сюда же, семантика
+     * выборки байт-идентична.
+     */
+    List<UUID> selectEligiblePerDefinition(Instant now, int fallbackDays, int limit,
+            List<Integer> distinctTtls) {
+        // Belt-and-braces: мусор/0 rejected на деплое, но строка БД правится и руками —
+        // неположительный TTL здесь никогда не чистится, а не «чистится сразу».
+        // (DISTINCT-запрос — у вызывающего: раз за прогон, не на каждую пачку.)
         StringBuilder sql = new StringBuilder(
             "SELECT pi.id FROM process_instances pi " +
             "JOIN process_definitions pd ON pd.id = pi.process_definition_id " +
