@@ -50,6 +50,16 @@ COPY . .
 # report keeps being produced in CI; local builds default to no instrumentation.
 ARG MAVEN_PROFILES
 RUN mvn -B -ntp clean verify $MAVEN_PROFILES
+# WO-QW-4 (NEW-13): GitLab `coverage:` парсит ЛОГ job'а, а JaCoCo пишет только
+# файлы (target/site/jacoco) — поле coverage вечно None. Печатаем итог из
+# jacoco.csv в лог build'а (он — часть лога job'а) строкой вида
+# "Total instruction: 72%" — её матчит coverage-regex из .gitlab-ci.yml.
+# awk вместо python: в maven-образе python нет. Без jacoco.csv (профиль
+# coverage выключен) — молча пропускаем, не роняем build.
+RUN for csv in zorrobpm-*/target/site/jacoco/jacoco.csv; do \
+      [ -f "$csv" ] || continue; \
+      awk -F, 'NR>1 {im+=$4; ic+=$5; bm+=$6; bc+=$7} END {if (ic+im>0) printf "Total instruction: %d%% (branch %d%%) [%s]\n", 100*ic/(ic+im), (bc+bm>0?100*bc/(bc+bm):100), FILENAME}' "$csv"; \
+    done
 
 
 # --- Runtime stage ---

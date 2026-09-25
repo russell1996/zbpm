@@ -131,7 +131,7 @@ class OutboxDeliveryResultListenerTest {
         // WO-REL-22 (B3): exactly-once per row — a duplicate delivery result landing
         // after quarantine re-marks nothing and emits nothing.
         OutboxEntry e = entry(5);
-        e.setStatus("FAILED");
+        e.setStatus(com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED);
         when(outboxRepository.findById(e.getId())).thenReturn(Optional.of(e));
 
         listener.on(new OutboxDeliveryResult(e.getId().toString(), false, "unroutable"));

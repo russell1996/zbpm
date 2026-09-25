@@ -57,7 +57,6 @@ class ProcessDefinitionServiceAtomicityIntegrationTests {
         String key = uniq("pdx");
         String msg = "msg-" + UUID.randomUUID().toString().substring(0, 8);
         String bpmn = messageStartBpmn(key, msg);
-        long filesBefore = bpmnRepository.count();
         // Fail in the MIDDLE of the artifact set (after version save + file save)
         doThrow(new RuntimeException("forced mid-artifacts failure"))
             .when(dbService).createMessageStartSubscription(anyString(), any(), anyString(), anyString());
@@ -70,7 +69,13 @@ class ProcessDefinitionServiceAtomicityIntegrationTests {
         long rows = processDefinitionRepository.findAll().stream()
             .filter(e -> key.equals(e.getKey())).count();
         assertThat(rows).as("no half-deployed version row").isZero();
-        assertThat(bpmnRepository.count()).as("no orphaned BPMN file row").isEqualTo(filesBefore);
+        // WO-QW-4 (NEW-14): собственный признак вместо глобального count():
+        // глобальный count() в общем контексте флейкал в CI (pipeline 171975),
+        // а чужие строки других тестов здесь ни при чём. Наш BPMN несёт key
+        // в XML — считаем только свои строки.
+        long ownFiles = bpmnRepository.findAll().stream()
+            .filter(e -> e.getBpmn() != null && e.getBpmn().contains(key)).count();
+        assertThat(ownFiles).as("no orphaned BPMN file row for this deploy").isZero();
         // ...and the model cache was never filled (afterCommit never fired on rollback)
         verify(bpmnService, never()).addProcessDefinition(any(), any());
     }

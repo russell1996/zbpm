@@ -361,6 +361,17 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
      * unique {@code definition_key} converts a concurrent first-deploy race into a
      * {@code DataIntegrityViolationException} — in that case the winner's row is
      * re-read, so two racers never leave two rows (and never 500).
+     *
+     * <p>WO-QW-4 (NEW-16b) — честная граница этого guard'а: catch срабатывает,
+     * только если нарушение уникальности всплывает ЗДЕСЬ (flush до catch).
+     * Внутри deploy-транзакции (`addProcessDefinition`, под key-lock) `save`
+     * без flush откладывает нарушение на commit вызывающей транзакции — catch
+     * не срабатывает, деплой откатывается целиком (REL-15, это и есть
+     * «never 500»: откат, не raw-500). Живой случай catch'а — вне-lock вызов
+     * из submission-approve, где чужой approve вставил строку между нашим
+     * pre-check и save. REQUIRES_NEW + saveAndFlush сознательно НЕ введены:
+     * они вынесли бы строку из deploy-транзакции и нарушили REL-15-инвариант
+     * «откат деплоя не оставляет orphan-row».
      */
     @Override
     public ProcessEntity ensureProcessRow(String definitionKey, String name) {
