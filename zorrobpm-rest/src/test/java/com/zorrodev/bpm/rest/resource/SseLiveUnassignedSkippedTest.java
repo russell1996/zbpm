@@ -83,7 +83,11 @@ class SseLiveUnassignedSkippedTest {
             .thenReturn(Optional.empty());
         lenient().when(eventQueryService.eventSequenceExists(anyLong())).thenReturn(true);
 
-        // 30 попыток × 100ms ≈ 3s ожидания тика, затем пропуск.
+        // WO-REL-52 (A3): ожидание тика переехало из consumer-потока в
+        // retry-lane — onDomainEvent возвращается СРАЗУ (не ~3s), событие
+        // откладывается и пропускается позже тем же warn-путём. Недоставка
+        // доказывается тишиной full-window (6с > 30×100мс бюджета defer),
+        // возврат без сна — прямым замером.
         long start = System.nanoTime();
         service.onDomainEvent(body(4242L));
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
@@ -92,7 +96,8 @@ class SseLiveUnassignedSkippedTest {
             .as("событие без позиции не должно рассылаться (молча пропущено)").isFalse();
         assertThat(delivered).isEmpty();
         assertThat(elapsedMs)
-            .as("мост ждал тик джоба (~3s), а не отбросил сразу").isGreaterThanOrEqualTo(2500);
+            .as("мост НЕ ждёт тик джоба в consumer-потоке (WO-REL-52: ожидание в retry-lane)")
+            .isLessThan(2500);
         service.removeClient(clientId);
     }
 
