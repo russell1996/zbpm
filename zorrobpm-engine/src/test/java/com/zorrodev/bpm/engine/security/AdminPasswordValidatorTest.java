@@ -40,6 +40,19 @@ class AdminPasswordValidatorTest {
 
     @Test
     void isWeak_exactly12chars_returnsFalse() {
-        assertThat(AdminPasswordValidator.isWeak("123456789012")).isFalse();
+        assertThat(AdminPasswordValidator.isWeak("xK9#mN2$pL4v")).isFalse();
+    }
+
+    /**
+     * WO-QW-4 (NEW-16a): длинные шаблонные пароли (≥12, проходят length-check)
+     * отклоняются blocklist'ом. RED: до фикса — false (проходили).
+     */
+    @Test
+    void isWeak_longPatternedPasswords_returnsTrue() {
+        assertThat(AdminPasswordValidator.isWeak("passwordpassword")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("qwertyqwerty")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("welcome123456")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("PASSWORDPASSWORD")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("MyStr0ng!P@ssw0rd")).isFalse();
     }
 }

@@ -47,7 +47,14 @@ public class AdminPasswordValidator implements BeanFactoryPostProcessor {
         "admin", "password", "zorrodev", "123456",
         "qwerty", "letmein", "welcome", "monkey", "dragon",
         "master", "abc123", "passw0rd", "changeme", "default",
-        "root", "toor", "test", "demo", "sample"
+        "root", "toor", "test", "demo", "sample",
+        // WO-QW-4 (NEW-16a): короткие слова выше недостижимы (MIN_LENGTH=12
+        // отсекает раньше) — но blocklist обязан ловить и ДЛИННЫЕ шаблонные
+        // пароли, проходящие length-check: удвоения/серии/раскладки ≥12.
+        "passwordpassword", "qwertyqwerty", "letmeinletmein",
+        "welcome123456", "adminadmin123", "password123456",
+        "qwerty12345678", "123456789012", "abcdefghijkl",
+        "qwertyuiopasdf", "1q2w3e4r5t6y", "password1234!"
     );
 
     @Override
