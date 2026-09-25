@@ -20,6 +20,18 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
     @Query("UPDATE ActivityEntity e SET e.status = :status, e.completedAt = :completedAt WHERE e.id = :id")
     void setStatusAndCompletedAt(UUID id, ActivityStatus status, Instant completedAt);
 
+    /**
+     * WO-ENG-23: conditional ERROR-parking — flips the row only if it is still active
+     * (CREATED/IN_PROGRESS). Returns the number of updated rows (0 = the row was already
+     * terminal: flipping it to ERROR would corrupt history, e.g. a past loop visit's
+     * COMPLETED row). Same JPQL on H2 and PostgreSQL.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE ActivityEntity e SET e.status = :status, e.completedAt = :completedAt "
+        + "WHERE e.id = :id AND e.status IN :allowed")
+    int setStatusAndCompletedAtIfStatusIn(UUID id, ActivityStatus status, Instant completedAt,
+        Collection<ActivityStatus> allowed);
+
     List<ActivityEntity> findByTokenAndBpmnElementId(UUID token, String bpmnElementId);
 
     /**
