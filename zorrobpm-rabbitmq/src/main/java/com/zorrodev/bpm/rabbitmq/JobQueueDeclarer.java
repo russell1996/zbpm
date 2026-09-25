@@ -1,10 +1,16 @@
 package com.zorrodev.bpm.rabbitmq;
 
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Method;
+import com.rabbitmq.client.ShutdownSignalException;
 import com.zorrodev.bpm.exchange.JobQueuesRequested;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.AmqpAdmin;
 import org.springframework.amqp.core.QueueBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
@@ -43,12 +49,59 @@ public class JobQueueDeclarer {
         return JOB_QUEUE_PREFIX + jobType + ".dlq";
     }
 
+    /** Micrometer gauge: how many job-type queues are currently pinned in legacy
+     *  (pre-REL-45, no-DLX) mode — operator visibility that this job type runs
+     *  WITHOUT a working DLQ. Zero when everything is migrated. */
+    public static final String LEGACY_QUEUE_METRIC = "zbpm.jobs.legacy_queue";
+
     private final AmqpAdmin amqpAdmin;
 
     private final Set<String> declared = ConcurrentHashMap.newKeySet();
 
+    /**
+     * WO-REL-51: queue names whose broker definition predates REL-45 (declared
+     * WITHOUT the DLX arguments). The broker answers every redeclare-with-args
+     * with {@code 406 PRECONDITION_FAILED} and closes the channel — retrying
+     * that on every message is a permanent 4-RPC + error-stack storm that can
+     * never succeed (only an operator migration changes the broker-side
+     * definition). Terminal for this JVM: the name stays in {@link #declared}
+     * (no more attempts), the fact is recorded here + warn-logged ONCE.
+     * Cleared only by restart (fresh instance) — the migration runbook ends
+     * with an app restart for exactly this reason.
+     */
+    private final Set<String> legacyDeclared = ConcurrentHashMap.newKeySet();
+
+    private volatile MeterRegistry meterRegistry;
+
     public static String queueNameFor(String jobType) {
         return JOB_QUEUE_PREFIX + jobType;
+    }
+
+    /**
+     * WO-REL-51: optional operator visibility — how many job types currently
+     * run without a DLQ (see {@link #LEGACY_QUEUE_METRIC}). {@code required=false}:
+     * contexts without a Micrometer registry (plain unit tests, minimal starters)
+     * work exactly as before, just without the gauge.
+     */
+    @Autowired(required = false)
+    public void setMeterRegistry(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+        if (meterRegistry != null && meterRegistry.find(LEGACY_QUEUE_METRIC).gauge() == null) {
+            Gauge.builder(LEGACY_QUEUE_METRIC, legacyDeclared, Set::size)
+                .description("Job-type queues pinned in legacy (pre-REL-45, no DLX) mode — DLQ inactive")
+                .register(meterRegistry);
+        }
+    }
+
+    /** WO-REL-51: has this job type's queue been pinned as legacy (406 path)? */
+    public boolean isLegacyDeclared(String jobType) {
+        if (jobType == null || jobType.isBlank()) return false;
+        return legacyDeclared.contains(queueNameFor(jobType));
+    }
+
+    /** WO-REL-51: snapshot of the queue names currently pinned as legacy. */
+    public Set<String> legacyDeclaredQueueNames() {
+        return Set.copyOf(legacyDeclared);
     }
 
     @EventListener
@@ -73,8 +126,12 @@ public class JobQueueDeclarer {
      *
      * <p>Compatibility note: a queue first declared WITHOUT the DLX arguments
      * (pre-REL-45 broker state) keeps the old definition until an operator
-     * deletes it — RabbitMQ 406s on redeclare-with-different-arguments, which
-     * lands in the catch below (declare retried later, deployment never fails).
+     * deletes it — RabbitMQ 406s on redeclare-with-different-arguments.
+     * WO-REL-51: that 406 is TERMINAL for this JVM (see {@link #legacyDeclared}):
+     * the name stays cached, exactly one {@code warn} is logged, the failure is
+     * NOT retried on every subsequent message, and the queue is counted in
+     * {@link #LEGACY_QUEUE_METRIC}. Migration procedure:
+     * {@code docs/runbooks/rabbitmq-legacy-queue-dlx-migration.md}.
      * Documented in «Сервис-задачи: написание воркера» of
      * docs/guides/integration-quickstart.md (criterion 1, second half).
      */
@@ -96,9 +153,70 @@ public class JobQueueDeclarer {
                 .build());
             log.info("Job queue {} declared (DLQ {})", queueName, dlqName);
         } catch (Exception e) {
-            declared.remove(queueName);
-            log.error("Failed to declare job queue {} — will retry on next announcement or send",
-                queueName, e);
+            if (isPreconditionFailed(e)) {
+                // WO-REL-51: the queue exists with the OLD (pre-REL-45, no-DLX)
+                // definition. Retrying this on every message = 4 wasted broker
+                // RPCs + an error-with-stack per message, forever, with zero
+                // chance of success — only an operator migration (delete +
+                // redeclare, see the runbook) changes the broker-side definition.
+                // So: terminal for this JVM. The name STAYS in `declared` (the
+                // send path becomes a no-op again), warn EXACTLY once.
+                legacyDeclared.add(queueName);
+                log.warn("Job queue {} exists with legacy arguments (no DLX — DLQ inactive "
+                        + "for this job type); skipping further declares until migration. "
+                        + "Migrate per docs/runbooks/rabbitmq-legacy-queue-dlx-migration.md",
+                    queueName);
+            } else {
+                declared.remove(queueName);
+                log.error("Failed to declare job queue {} — will retry on next announcement or send",
+                    queueName, e);
+            }
         }
+    }
+
+    /**
+     * WO-REL-51: is this failure a broker {@code 406 PRECONDITION_FAILED} on
+     * inequivalent redeclare (queue exists with different arguments)?
+     *
+     * <p>Two independent signals, either is enough:
+     * <ul>
+     *   <li>structured: a {@link ShutdownSignalException} in the cause chain
+     *   whose method reason is a channel/connection close with reply-code 406
+     *   (this is what the broker actually sends; message text is NOT trusted —
+     *   its spelling varies by client version, cf. WO-REL-45's 406 guard test);</li>
+     *   <li>textual fallback: {@code PRECONDITION_FAILED}, or {@code 406} together
+     *   with {@code inequivalent}, anywhere in the chained messages (covers client
+     *   wrappers that don't expose the AMQP method, e.g. Spring's
+     *   {@code AmqpIOException} built from a bare message).</li>
+     * </ul>
+     * A bare {@code 406} WITHOUT either keyword is NOT enough (could be a
+     * different precondition failure that a retry might heal) — such failures
+     * keep the old retry-on-next-message behaviour.
+     */
+    static boolean isPreconditionFailed(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof ShutdownSignalException sse) {
+                Method reason = sse.getReason();
+                if (reason instanceof AMQP.Channel.Close channelClose
+                    && channelClose.getReplyCode() == 406) {
+                    return true;
+                }
+                if (reason instanceof AMQP.Connection.Close connectionClose
+                    && connectionClose.getReplyCode() == 406) {
+                    return true;
+                }
+            }
+            String message = c.getMessage();
+            if (message != null) {
+                String upper = message.toUpperCase(java.util.Locale.ROOT);
+                if (upper.contains("PRECONDITION_FAILED")) {
+                    return true;
+                }
+                if (upper.contains("406") && upper.contains("INEQUIVALENT")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }
