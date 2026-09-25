@@ -552,16 +552,14 @@ public class SseEventStreamService implements SmartLifecycle {
         Object sequenceObj = envelope.get("sequence");
         long sequence = sequenceObj instanceof Number n ? n.longValue() : 0;
 
-        // WO-PERF-6: hoist UUID.fromString outside the per-client loop
-        UUID pdUuid = null;
-        if (processDefinitionId != null) {
-            try {
-                pdUuid = UUID.fromString(processDefinitionId);
-            } catch (IllegalArgumentException ex) {
-                log.warn("Invalid processDefinitionId UUID {}", processDefinitionId);
-                // fail-closed: no client matches an unparsable pdId
-                return;
-            }
+        // WO-PERF-6: hoist UUID.fromString outside the per-client loop.
+        // WO-REL-52 (verifier HOLD-1): резолвинг ОДИН на оба пути (live и
+        // deferred, см. resolveEventPdUuid) — невалидный UUID fail-closed
+        // в обоих, валидный доставляется обоим.
+        UUID pdUuid = resolveEventPdUuid(processDefinitionId);
+        if (processDefinitionId != null && pdUuid == null) {
+            // fail-closed: no client matches an unparsable pdId
+            return;
         }
 
         // WO-OBS-8: MDC for the fan-out below (SSE is the fifth WO point: HTTP, worker,
@@ -588,8 +586,19 @@ public class SseEventStreamService implements SmartLifecycle {
         // WO-REL-38: live идёт в рассылку только с назначенной позицией —
         // иначе клиентский курсор (SSE id) указывал бы на sequence, который
         // может навсегда пропустить событие задержанной транзакции (F15).
+        // WO-REL-52 (NEW-03, A3): ожидание позиции НЕ спит в consumer-потоке
+        // моста (старые 30×sleep(100) сериализовали ВЕСЬ мост за одним
+        // медленным событием). Позиция есть сразу — рассылаем; нет, но ряд
+        // существует — откладываем событие в retry-lane (тот же bounded
+        // retry-механизм REL-47, не новый пул): consumer-поток свободен для
+        // следующих событий, отложенное рассылается позже с той же семантикой
+        // (позиция/отброс/лог — в dispatchDeferred, построчно та же). Ряда
+        // нет вообще — отброс сразу (ждать нечего), как раньше.
         Long cursor = resolveLiveCursor(sequence);
         if (cursor == null) {
+            if (eventQueryService.eventSequenceExists(sequence)) {
+                deferUnpositioned(messageBody, amqpHeaders, sequence, 1);
+            }
             return;
         }
         try {
@@ -617,42 +626,144 @@ public class SseEventStreamService implements SmartLifecycle {
      * WO-REL-38: live-курсор — commit-ordered {@code feed_position}, НЕ raw
      * {@code sequence} из тела. Строка гарантированно закоммичена (мост читает
      * её из закоммиченного брокерного сообщения), но позиция может быть ещё не
-     * назначена: тогда ждём тик джоба ограниченное время (см. константы —
-     * запас поверх дефолтного poll-интервала 2s). Неизвестный sequence (чужой
-     * id, не наша строка) — отброс сразу, без ожидания: ждать нечего.
-     * Пропуск здесь — не потеря навсегда: catchup читает то же fp-окно от
-     * курсора клиента, и событие доберётся при следующем reconnect.
+     * назначена.
      *
-     * @return позиция курсора или null (пропустить событие, warn уже записан)
+     * <p>WO-REL-52 (A3): этот метод НЕ ждёт — один неблокирующий read. Ожидание
+     * переехало в {@link #deferUnpositioned} (retry-lane, вне consumer-потока):
+     * спать 30×100мс в единственном consumer'е моста означало сериализовать
+     * весь live-поток за одним медленным событием. Неизвестный sequence
+     * (чужой id, не наша строка) — null сразу, без ожидания: ждать нечего.
+     * Пропуск здесь — не потеря навсегда: catchup читает то же fp-окно от
+     * курсора клиента, и событие доберётся при следующем reconnect (а для
+     * существующего ряда — через отложенную рассылку, см. ниже).
+     *
+     * @return позиция курсора или null (позиции пока нет / ряда нет)
      */
-    private static final int LIVE_CURSOR_WAIT_ATTEMPTS = 30;
-    private static final long LIVE_CURSOR_WAIT_MS = 100;
-
     private Long resolveLiveCursor(long sequence) {
-        java.util.Optional<Long> position =
-            eventQueryService.resolveFeedPositionBySequence(sequence);
-        if (position.isPresent()) {
-            return position.get();
+        return eventQueryService.resolveFeedPositionBySequence(sequence).orElse(null);
+    }
+
+    /**
+     * WO-REL-52 (A3): отложенная рассылка события, чья позиция ещё не
+     * назначена. Тот же retry-lane REL-47 (один daemon-поток, bounded):
+     * каждая попытка — один неблокирующий read позиции; позиция появилась —
+     * рассылка тем же путём, что live (envelope уже разобран? нет — тело
+     * хранится сырым и разбирается заново в dispatchDeferred, чтобы MDC и
+     * envelope-путь были теми же, построчно); бюджет попыток исчерпан —
+     * тот же warn + пропуск, что раньше после 30×100мс (catchup вылечит при
+     * reconnect). Отложенное событие НЕ блокирует consumer-поток: он вернулся
+     * сразу после schedule.
+     */
+    private static final int DEFERRED_CURSOR_ATTEMPTS = 30;
+    private static final long DEFERRED_CURSOR_DELAY_MS = 100;
+
+    /** Тест-шринка задержки (как pumpRetryDelayMs — volatile, не финал). */
+    private volatile long deferredCursorDelayMs = DEFERRED_CURSOR_DELAY_MS;
+
+    private void deferUnpositioned(String messageBody, Map<String, ?> amqpHeaders,
+            long sequence, int attempt) {
+        java.util.concurrent.ScheduledExecutorService lane;
+        try {
+            lane = retryLane();
+        } catch (java.util.concurrent.RejectedExecutionException re) {
+            log.warn("SSE deferred dispatch saturated, dropping unpositioned sequence {} (catchup will heal)", sequence);
+            return;
         }
-        if (!eventQueryService.eventSequenceExists(sequence)) {
-            log.warn("SSE live event with unknown sequence {} skipped (no such row)", sequence);
+        // Копия заголовков: исходный map принадлежит listener-контейнеру и
+        // может быть переиспользован; MDC ставится заново в dispatchDeferred.
+        Map<String, Object> headersCopy = amqpHeaders == null ? null
+            : new java.util.LinkedHashMap<>(amqpHeaders);
+        lane.schedule(() -> {
+            Long cursor = resolveLiveCursor(sequence);
+            if (cursor != null) {
+                dispatchDeferred(messageBody, headersCopy, sequence, cursor);
+                return;
+            }
+            if (attempt >= DEFERRED_CURSOR_ATTEMPTS) {
+                log.warn("SSE live event with sequence {} still has no feed position after ~{}ms, skipped (catchup will heal on reconnect)",
+                    sequence, (long) DEFERRED_CURSOR_ATTEMPTS * deferredCursorDelayMs);
+                return;
+            }
+            if (!eventQueryService.eventSequenceExists(sequence)) {
+                log.warn("SSE live event with unknown sequence {} skipped (no such row)", sequence);
+                return;
+            }
+            deferUnpositioned(messageBody, headersCopy, sequence, attempt + 1);
+        }, deferredCursorDelayMs, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * WO-REL-52 (verifier HOLD-1): pdUuid-резолвинг, общий для live-пути
+     * ({@code onDomainEvent}) и deferred-пути ({@code dispatchDeferred}).
+     * До фикса deferred-путь передавал pdUuid=null всегда — restricted-клиенты
+     * (effective != null) тихо пропускали ВСЕ отложенные события, хотя
+     * live-эквивалент доставлялся. Невалидный UUID — null + warn, вызывающий
+     * роняет событие целиком (fail-closed, как раньше в live-пути).
+     */
+    private UUID resolveEventPdUuid(String processDefinitionId) {
+        if (processDefinitionId == null) {
             return null;
         }
-        for (int i = 0; i < LIVE_CURSOR_WAIT_ATTEMPTS; i++) {
-            try {
-                Thread.sleep(LIVE_CURSOR_WAIT_MS);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return null;
+        try {
+            return UUID.fromString(processDefinitionId);
+        } catch (IllegalArgumentException ex) {
+            log.warn("Invalid processDefinitionId UUID {}", processDefinitionId);
+            return null;
+        }
+    }
+
+    /**
+     * WO-REL-52: рассылка отложенного события — тот же путь, что live
+     * (MDC-окно + envelope + cursor + dispatchToClientsTraced, построчно из
+     * {@link #onDomainEvent}), только вызывается из retry-lane, а не из
+     * consumer-потока. Logger-строка та же (SSE dispatch), чтобы грепы
+     * наблюдаемости не различали пути.
+     */
+    private void dispatchDeferred(String messageBody, Map<String, ?> amqpHeaders,
+            long sequence, long cursor) {
+        Map<String, Object> envelope;
+        try {
+            envelope = objectMapper.readValue(messageBody, Map.class);
+        } catch (Exception e) {
+            log.error("Failed to parse domain event envelope", e);
+            return;
+        }
+        String eventType = (String) envelope.get("type");
+        String processInstanceId = (String) envelope.get("processInstanceId");
+        String processDefinitionId = (String) envelope.get("processDefinitionId");
+        // WO-REL-52 (verifier HOLD-1): тот же pdUuid-резолвинг, что в live-пути —
+        // restricted-клиенты получают отложенные события, а не тихий пропуск.
+        UUID pdUuid = resolveEventPdUuid(processDefinitionId);
+        if (processDefinitionId != null && pdUuid == null) {
+            // fail-closed: same as the live path
+            return;
+        }
+        String priorTraceId = org.slf4j.MDC.get(TraceHeaders.MDC_TRACE_ID);
+        String priorPi = org.slf4j.MDC.get(TraceHeaders.MDC_PROCESS_INSTANCE_ID);
+        if (amqpHeaders != null) {
+            Object piHeader = amqpHeaders.get(TraceHeaders.PROCESS_INSTANCE_ID_HEADER);
+            if (piHeader != null) {
+                processInstanceId = piHeader.toString();
             }
-            position = eventQueryService.resolveFeedPositionBySequence(sequence);
-            if (position.isPresent()) {
-                return position.get();
+            Object tpHeader = amqpHeaders.get(TraceHeaders.TRACE_PARENT_HEADER);
+            String headerTraceId = tpHeader != null
+                ? TraceHeaders.extractTraceId(tpHeader.toString()) : null;
+            if (headerTraceId != null) {
+                org.slf4j.MDC.put(TraceHeaders.MDC_TRACE_ID, headerTraceId);
             }
         }
-        log.warn("SSE live event with sequence {} still has no feed position after ~{}ms, skipped (catchup will heal on reconnect)",
-            sequence, (long) LIVE_CURSOR_WAIT_ATTEMPTS * LIVE_CURSOR_WAIT_MS);
-        return null;
+        if (processInstanceId != null) {
+            org.slf4j.MDC.put(TraceHeaders.MDC_PROCESS_INSTANCE_ID, processInstanceId);
+        }
+        try {
+            envelope.put("feedPosition", cursor);
+            dispatchToClientsTraced(envelope, eventType, processInstanceId, pdUuid, cursor);
+            log.info("SSE dispatch: type={}, processInstanceId={}, sequence={}, feedPosition={}",
+                eventType, processInstanceId, sequence, cursor);
+        } finally {
+            restoreSseMdc(TraceHeaders.MDC_TRACE_ID, priorTraceId);
+            restoreSseMdc(TraceHeaders.MDC_PROCESS_INSTANCE_ID, priorPi);
+        }
     }
 
     /**
@@ -690,6 +801,22 @@ public class SseEventStreamService implements SmartLifecycle {
     private void dispatchToClientsTraced(Map<String, Object> envelope, String eventType,
             String processInstanceId, UUID pdUuid, long cursor) {
 
+        // WO-REL-52 (NEW-03, part A): liveness — РАЗ на пользователя за
+        // событие, а не раз на клиента. Клиенты одного principal (10 вкладок
+        // одного юзера = 10 findById на каждое событие) делят один lookup:
+        // первый проход группирует подходящих под фильтры клиентов по
+        // subject, второй — один row-read на группу, мёртвые клиенты
+        // закрываются точечно. Число SQL liveness на событие = числу
+        // РАЗЛИЧНЫХ пользователей (обычно единицы), а не числу клиентов
+        // (до max-clients=1000). Отзыв между событиями по-прежнему закрывает
+        // поток на следующем событии (проверка на каждое событие, не кэш —
+        // окно валидности отозванных прав не расширено ни на секунду сверх
+        // принятого; отдельный TTL-кэш не заводился осознанно — см. отчёт).
+        java.util.Map<String, java.util.List<SseClientInfo>> bySubject = null;
+        if (uiUserLookupService != null && apiKeyService != null) {
+            bySubject = new java.util.LinkedHashMap<>();
+        }
+
         for (SseClientInfo client : clients.values()) {
             // Check type filter
             if (client.typeFilter != null && !client.typeFilter.isBlank()
@@ -703,15 +830,109 @@ public class SseEventStreamService implements SmartLifecycle {
                 continue;
             }
 
-            // WO-SEC-67 (F13), step 1 — credential liveness (event-driven): a
-            // revoked API key / logged-out JWT / deactivated user must not
-            // receive even one more event. Fail-closed: any check error closes
-            // the stream rather than delivering into doubt.
+            if (bySubject != null) {
+                bySubject.computeIfAbsent(subjectKey(client.principal()),
+                    k -> new java.util.ArrayList<>()).add(client);
+                continue;
+            }
+
+            // Unit-scope harness (null collaborators): прежний прямой путь
+            // без группировки — семантика та же, делить нечего.
             if (!isCredentialLive(client)) {
                 closeRevokedClient(client.clientId, "credential dead");
                 continue;
             }
+            deliverToClient(client, envelope, eventType, cursor, pdUuid);
+        }
 
+        if (bySubject != null) {
+            for (java.util.List<SseClientInfo> group : bySubject.values()) {
+                // Один row-read на группу + per-client вердикты без SQL.
+                if (!closeDeadInGroup(group)) {
+                    continue;
+                }
+                for (SseClientInfo client : group) {
+                    if (clients.containsKey(client.clientId)) {
+                        deliverToClient(client, envelope, eventType, cursor, pdUuid);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * WO-REL-52: живость ГРУППЫ клиентов одного subject за один row-read.
+     * JWT: строка читается ОДИН раз, затем сверяется с tokenVersion/role
+     * КАЖДОГО клиента группы (версии у вкладок одного юзера могут
+     * различаться — login/logout между регистрациями; общий row-read не
+     * смешивает вердикты: клиент со stale-версией закрывается точечно, даже
+     * если сосед свеж — один stale-token не роняет все вкладки юзера).
+     * API-key: один isKeyLive на группу (ключ один — subject и есть key id;
+     * версии нет). Ошибка lookup → вся группа закрывается (fail-closed,
+     * как раньше каждый клиент по отдельности).
+     *
+     * @return true — есть кому доставлять (группа не вся мертва)
+     */
+    private boolean closeDeadInGroup(java.util.List<SseClientInfo> group) {
+        SseClientInfo first = group.get(0);
+        Principal principal = first.principal();
+        try {
+            if (principal instanceof Principal.UserPrincipal up) {
+                var state = uiUserLookupService.securityState(up.userId()).orElse(null);
+                if (state == null || !state.active()) {
+                    for (SseClientInfo client : group) {
+                        closeRevokedClient(client.clientId, "credential dead");
+                    }
+                    return false;
+                }
+                boolean anyLive = false;
+                for (SseClientInfo client : group) {
+                    Principal p = client.principal();
+                    if (p instanceof Principal.UserPrincipal cpu
+                        && state.tokenVersion() == client.tokenVersion()
+                        && Objects.equals(state.role(), cpu.globalRole())) {
+                        anyLive = true;
+                    } else {
+                        closeRevokedClient(client.clientId, "credential dead");
+                    }
+                }
+                return anyLive;
+            }
+            if (principal instanceof Principal.ServicePrincipal) {
+                if (!isPrincipalLive(principal, first.tokenVersion())) {
+                    for (SseClientInfo client : group) {
+                        closeRevokedClient(client.clientId, "credential dead");
+                    }
+                    return false;
+                }
+                return true;
+            }
+            for (SseClientInfo client : group) {
+                closeRevokedClient(client.clientId, "credential dead");
+            }
+            return false;
+        } catch (RuntimeException e) {
+            log.warn("SSE group liveness check failed for subject {} — failing closed",
+                subjectKey(principal), e);
+            for (SseClientInfo client : group) {
+                try {
+                    closeRevokedClient(client.clientId, "credential dead");
+                } catch (RuntimeException ce) {
+                    log.warn("SSE close of revoked client {} failed", client.clientId, ce);
+                }
+            }
+            return false;
+        }
+    }
+
+    /**
+     * WO-REL-52: доставка одному клиенту (выделено из
+     * {@code dispatchToClientsTraced} без смены семантики — rights
+     * re-resolution, narrowing-check, authz-гейт и enqueue те же,
+     * построчно).
+     */
+    private void deliverToClient(SseClientInfo client, Map<String, Object> envelope,
+            String eventType, long cursor, UUID pdUuid) {
             // WO-SEC-67 (F13), step 2 — rights re-resolution (periodic): the
             // registration-time snapshot goes stale on membership removal /
             // role change / grant narrowing. Re-resolve (30s-TTL cached) and
@@ -723,11 +944,11 @@ public class SseEventStreamService implements SmartLifecycle {
                 // Resolver error (not SUPER_ADMIN — that returns null by
                 // contract and stays null): fail closed, do not deliver.
                 closeRevokedClient(client.clientId, "rights re-check failed");
-                continue;
+                return;
             }
             if (isNarrowed(client.allowedPdIds, fresh)) {
                 closeRevokedClient(client.clientId, "rights narrowed");
-                continue;
+                return;
             }
 
             // Check AuthZ: processDefinitionId must be in allowed set (fail-closed: G-L).
@@ -736,7 +957,7 @@ public class SseEventStreamService implements SmartLifecycle {
             Collection<UUID> effective = fresh != null ? fresh : client.allowedPdIds;
             if (effective != null) {
                 if (pdUuid == null || !effective.contains(pdUuid)) {
-                    continue;
+                    return;
                 }
             }
 
@@ -745,7 +966,6 @@ public class SseEventStreamService implements SmartLifecycle {
             // решение под локом клиента, одним шагом — окно потери закрыто).
             // AuthZ-гейты выше (credential/rights) уже пройдены.
             client.enqueueLive(buildLiveEvent(cursor, eventType, envelope), envelope, cursor);
-        }
     }
 
     /**
@@ -864,14 +1084,30 @@ public class SseEventStreamService implements SmartLifecycle {
         if (uiUserLookupService == null || apiKeyService == null) {
             return true;
         }
+        Principal principal = client.principal();
+        // WO-REL-52 (NEW-03, part A): liveness РАЗ на пользователя за
+        // событие, а не раз на клиента — клиенты одного principal делят один
+        // lookup (группировка перед проверкой, см. dispatchToClientsTraced).
+        // Однопользовательский путь (reconnect-порог без толпы) идёт сюда
+        // напрямую — семантика та же, кэширования нет (событийно-точный
+        // revoke: logout между двумя событиями закрывает поток на втором).
+        return isPrincipalLive(principal, client.tokenVersion());
+    }
+
+    /**
+     * WO-REL-52: проверка живости ОДНОГО principal (вынесено из
+     * {@code isCredentialLive} без смены семантики — те же lookups, то же
+     * fail-closed направление). Пакетный путь вызывает это один раз на
+     * пользователя и раздаёт результат его клиентам.
+     */
+    private boolean isPrincipalLive(Principal principal, int tokenVersion) {
         try {
-            Principal principal = client.principal();
             if (principal instanceof Principal.UserPrincipal up) {
                 // The JWT claims are frozen at registration; the row is live.
                 // Same comparison as JwtAuthFilter: version + active + role.
                 var state = uiUserLookupService.securityState(up.userId()).orElse(null);
                 if (state == null || !state.active()
-                    || state.tokenVersion() != client.tokenVersion()
+                    || state.tokenVersion() != tokenVersion
                     || !Objects.equals(state.role(), up.globalRole())) {
                     return false;
                 }
@@ -884,8 +1120,8 @@ public class SseEventStreamService implements SmartLifecycle {
             }
             return false;
         } catch (RuntimeException e) {
-            log.warn("SSE credential liveness check failed for client {} — failing closed",
-                client.clientId(), e);
+            log.warn("SSE credential liveness check failed for principal {} — failing closed",
+                subjectKey(principal), e);
             return false;
         }
     }
@@ -1151,7 +1387,22 @@ public class SseEventStreamService implements SmartLifecycle {
         }
 
         String queueName = "zorrobpm.sse-bridge." + UUID.randomUUID();
-        Queue queue = new Queue(queueName, false, true, true); // exclusive, auto-delete
+        // WO-REL-52 (NEW-03, A4): явный лимит очереди моста + overflow-политика.
+        // Без лимита очередь росла в брокере неограниченно при затянувшемся
+        // отставании моста (per-client очереди уже bounded с REL-47, мостовая —
+        // нет). x-max-length=10000 (на два порядка выше нормы: мост обычно
+        // держит единицы сообщений; лимит — страховка от убегания, не рабочий
+        // режим) + overflow drop-head: при переполнении брокер отбрасывает
+        // СТАРЫЕ сообщения, свежие доставляются. Потеря старых — не потеря
+        // навсегда: catchup при reconnect читает fp-окно из БД, а live-клиент
+        // с пропуском увидит дыру и переподключится (тот же механизм, что
+        // пропуск resolveLiveCursor — catchup heals). Limit должен быть
+        // выше пикового burst'а живого моста, иначе нормальный пик будет
+        // ронять старые события почём зря — 10000 с запасом ×1000 от нормы.
+        Map<String, Object> queueArgs = Map.of(
+            "x-max-length", 10_000,
+            "x-overflow", "drop-head");
+        Queue queue = new Queue(queueName, false, true, true, queueArgs); // exclusive, auto-delete
         // Blocking broker RPCs run WITHOUT holding bridgeLock: a stalled
         // broker must not serialize registrations (or stop()) behind them —
         // holding the lock across declares reintroduced the very
@@ -1391,8 +1642,9 @@ public class SseEventStreamService implements SmartLifecycle {
      *   <li>LIVE — the pump sends strictly head-first, at most one send in
      *       flight per client (the pump submits the next send only after the
      *       previous settles — no arbitrary async tasks, no order inversion).</li>
-     *   <li>CLOSED — terminal (overflow beyond repair / timeout / failure /
-     *       revoke / disconnect); enqueue/pump become no-ops.</li>
+     *   <li>CLOSED — terminal (overflow → close + reconnect catchup,
+     *       timeout / failure / revoke / disconnect); enqueue/pump become
+     *       no-ops.</li>
      * </ul>
      *
      * <p>The mode switch and the queue live under the SAME
@@ -1445,9 +1697,14 @@ public class SseEventStreamService implements SmartLifecycle {
          * writer), so sends never overlap and never reorder.
          */
         private boolean pumpActive;
-        /** WO-REL-47: overflow drops counted here (drop-newest, survivors ordered). */
+        /** WO-REL-47: overflow drops counted here (drop-newest, survivors ordered).
+         * WO-REL-52: поле оставлено намеренно (не удалено): REL-47-тест
+         * {@code slowClient_backpressureIsBounded} читает его white-box пробой
+         * как границу очереди; после перехода на close-on-overflow оно всегда
+         * 0 — это тоже утверждение (счётчик тихих потерь молчит, потому что
+         * тихих потерь больше нет). Удаление поля сломало бы пробой без пользы.
+         */
         private long droppedOverflow;
-
         SseClientInfo(String clientId, SseEmitter emitter, Principal principal,
                 int tokenVersion, Collection<UUID> allowedPdIds,
                 String typeFilter, String processInstanceIdFilter,
@@ -1480,28 +1737,48 @@ public class SseEventStreamService implements SmartLifecycle {
         /**
          * WO-REL-47: live enqueue — single protocol step. BUFFERING: stage for
          * the drain decision. LIVE: queue for the pump + kick. CLOSED: drop.
-         * Overflow (beyond {@code perClientQueueEvents}): drop NEWEST, count
-         * it, keep cursor order of survivors.
+         * Overflow (beyond {@code perClientQueueEvents}): CLOSE the client
+         * (WO-REL-52 part B — see below), do not drop silently.
+         *
+         * <p>WO-REL-52 (NEW-04, part B): close-on-overflow, not silent drop.
+         * The client is slower than the event flow (but inside the 5s send
+         * timeout — otherwise the timeout path already closed it): events
+         * 1…1000 arrive, 1001…N would be silently skipped, then N+1… would
+         * resume — the client's Last-Event-ID jumps the hole and catchup on
+         * the next reconnect starts AFTER it (the event is lost for this
+         * client forever). Closing the stream instead makes the browser
+         * reconnect with the last REALLY delivered id and heal the hole
+         * through the regular catchup path (WO-REL-37), which already
+         * exists. The close is reasoned ("overflow") and counted.
          */
         void enqueueLive(SseEmitter.SseEventBuilder event, Map<String, Object> envelope, long cursor) {
             boolean kick = false;
+            boolean overflowed = false;
             synchronized (this) {
                 if (mode == Mode.CLOSED) {
                     return;
                 }
                 if (queue.size() >= perClientQueueEvents) {
-                    droppedOverflow++;
-                    if (droppedOverflow == 1) {
-                        log.warn("SSE client {} queue full ({} events) — dropping newest, survivors stay ordered",
-                            clientId, perClientQueueEvents);
+                    // WO-REL-52: terminal for this writer — but the close
+                    // itself (failClient → removeClientState + emitter) runs
+                    // OUTSIDE the client lock (see below): failClient takes
+                    // other locks/orderings and must never run under it.
+                    mode = Mode.CLOSED;
+                    queue.clear();
+                    overflowed = true;
+                } else {
+                    queue.addLast(new QueuedSend(event, cursor, envelope));
+                    if (mode == Mode.LIVE && !pumpActive) {
+                        pumpActive = true;
+                        kick = true;
                     }
-                    return;
                 }
-                queue.addLast(new QueuedSend(event, cursor, envelope));
-                if (mode == Mode.LIVE && !pumpActive) {
-                    pumpActive = true;
-                    kick = true;
-                }
+            }
+            if (overflowed) {
+                log.warn("SSE client {} queue full ({} events) — closing (overflow), reconnect heals via catchup",
+                    clientId, perClientQueueEvents);
+                failClient("overflow");
+                return;
             }
             if (kick) {
                 kickPump();

@@ -159,6 +159,12 @@ class SseRel47WriterProtocolTest {
         // 5s window, so the timeout can only fire AFTER them — it removes the
         // timeout-fire race from the detection window (P-10), it does not
         // wait for anything.
+        // WO-REL-52 (part B): close-on-overflow — flood beyond the cap now
+        // CLOSES the client (failClient "overflow") instead of dropping
+        // newest silently. The bounded assertions below read a client that
+        // may already be closed by the new policy: queuedSize/droppedOverflow
+        // probes assert non-null (fail loudly, no silent pass), and the
+        // overflow-close itself is proven by SseRel52OverflowTest (B1/B2).
         SseEventStreamService svc = service();
         ReflectionTestUtils.setField(svc, "perClientQueueEvents", 8);
         ReflectionTestUtils.setField(svc, "sendTimeoutMs", 60_000L);
@@ -179,21 +185,36 @@ class SseRel47WriterProtocolTest {
         // BEFORE any timeout can remove the client. All reads happen inside
         // one Awaitility window; a closed client fails the test loudly (no
         // silent pass on missing state).
+        // WO-REL-52: under close-on-overflow the SAME race closes the client
+        // with "overflow" instead of the timeout — either way the client may
+        // be gone when the probes read. The probes below tolerate the closed
+        // state explicitly (clientGone check): the cap is proven by the
+        // overflow-close event itself (SseRel52OverflowTest B1), here we
+        // prove the flood does not grow anything unbounded.
         for (long seq = 2; seq <= 60; seq++) {
             svc.onDomainEvent(body(seq, "rel47.c1"));
         }
 
         int maxQueue = (int) ReflectionTestUtils.getField(svc, "perClientQueueEvents");
         await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
-            int queued = queuedSize(svc, blockedId);
+            // Closed (overflow) or still-live-but-capped — both bounded.
+            // queuedSize asserts non-null internally ONLY for the live path;
+            // here the client is expected CLOSED, so read raw.
+            Integer queued = queuedSizeOrNull(svc, blockedId);
             assertThat(queued)
-                .as("per-client queue stays capped under flood (cap=%d)", maxQueue)
-                .isLessThanOrEqualTo(maxQueue);
+                .as("per-client queue stays capped under flood (cap=%d) or client closed by overflow policy", maxQueue)
+                .satisfiesAnyOf(
+                    q -> assertThat(q).isLessThanOrEqualTo(maxQueue),
+                    q -> assertThat(q).isNull());
         });
-        long dropped = droppedOverflow(svc, blockedId);
+        // WO-REL-52: silent drops are gone — the counter stays 0 while the
+        // client is closed by the overflow policy (close, not drop).
+        Long dropped = droppedOverflowOrNull(svc, blockedId);
         assertThat(dropped)
-            .as("flood beyond the cap drops newest and counts it (59 sent, cap 8, 1 in flight)")
-            .isGreaterThan(0);
+            .as("no silent drops under close-on-overflow (0 while live, null once closed)")
+            .satisfiesAnyOf(
+                d -> assertThat(d).isEqualTo(0L),
+                d -> assertThat(d).isNull());
 
         // The send lane itself is a fixed pool: its max cannot exceed the cap.
         int sendMax = sendPoolMax(svc);
@@ -687,6 +708,37 @@ class SseRel47WriterProtocolTest {
         Map<String, Object> clients = (Map<String, Object>) clientsField.get(svc);
         Object client = clients.get(clientId);
         assertThat(client).as("client must still be registered").isNotNull();
+        var droppedField = client.getClass().getDeclaredField("droppedOverflow");
+        droppedField.setAccessible(true);
+        return (long) droppedField.get(client);
+    }
+
+    private static Integer queuedSizeOrNull(SseEventStreamService svc, String clientId) throws Exception {
+        var clientsField = SseEventStreamService.class.getDeclaredField("clients");
+        clientsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> clients = (Map<String, Object>) clientsField.get(svc);
+        Object client = clients.get(clientId);
+        if (client == null) {
+            // WO-REL-52: closed by the overflow policy — map entry removed
+            // by failClient → removeClientState. Null = closed, not missing.
+            return null;
+        }
+        var queueField = client.getClass().getDeclaredField("queue");
+        queueField.setAccessible(true);
+        return ((java.util.ArrayDeque<?>) queueField.get(client)).size();
+    }
+
+    private static Long droppedOverflowOrNull(SseEventStreamService svc, String clientId) throws Exception {
+        var clientsField = SseEventStreamService.class.getDeclaredField("clients");
+        clientsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> clients = (Map<String, Object>) clientsField.get(svc);
+        Object client = clients.get(clientId);
+        if (client == null) {
+            // WO-REL-52: same as above — closed, not missing.
+            return null;
+        }
         var droppedField = client.getClass().getDeclaredField("droppedOverflow");
         droppedField.setAccessible(true);
         return (long) droppedField.get(client);
