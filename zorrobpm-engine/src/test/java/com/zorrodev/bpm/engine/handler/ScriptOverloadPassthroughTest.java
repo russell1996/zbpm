@@ -55,13 +55,15 @@ class ScriptOverloadPassthroughTest {
     void miCardinality_overload_propagates_noIncident() {
         ScriptService scriptService = mock(ScriptService.class);
         when(scriptService.evaluateExpression(any(), any())).thenThrow(OVERLOAD);
+        // Verifier раунд 2: проверяемый мок инжектится в executor (раньше
+        // verify шёл по отдельному моку — строка была vacuous).
+        DBService dbService = mock(DBService.class);
         MultiInstanceExecutor executor = new MultiInstanceExecutor(
-            mock(DBService.class), scriptService, mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
+            dbService, scriptService, mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
             new tools.jackson.databind.ObjectMapper(), mock(com.zorrodev.bpm.engine.service.BpmnService.class),
             mock(ElementSupport.class), mock(BoundaryScheduler.class), mock(FlowNavigator.class));
 
         BpmnElementModel element = miElement("=input");
-        DBService dbService = mock(DBService.class);
 
         assertThatThrownBy(() -> executor.enter(UUID.randomUUID(), UUID.randomUUID(), element, mock(TokenExecutor.class)))
             .as("pool overload propagates past the cardinality incident-catch")
