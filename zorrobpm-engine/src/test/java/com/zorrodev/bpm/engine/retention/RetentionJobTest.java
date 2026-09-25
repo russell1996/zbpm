@@ -40,11 +40,11 @@ class RetentionJobTest {
         config.setBatchSize(10);
         // WO-REL-49: instance pass is a claim loop now — first call empty ends it.
         // eq(90) is ttlDays (fallbackDays), not batchSize: the claim carries no batch size.
-        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
-            .thenReturn(java.util.Optional.empty());
+        when(batchProcessor.claimAndDeleteBatch(any(), eq(90), eq(10), any()))
+            .thenReturn(new RetentionBatchProcessor.ClaimedBatch(java.util.List.of(), 0));
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(0);
         job.run();
-        verify(batchProcessor).claimAndDeleteOneInstance(any(), eq(90));
+        verify(batchProcessor).claimAndDeleteBatch(any(), eq(90), eq(10), any());
         verify(batchProcessor).deleteOrphanedBoundaryTimers(any(), eq(10));
         // The old split path (select commits before delete) must not be used anymore:
         // it let two replicas select the same IDs after lock release (audit §5.2).
@@ -56,8 +56,8 @@ class RetentionJobTest {
     void enabled_cleansOrphanedBoundaryTimersInBatches() {
         config.setTtlDays(90);
         config.setBatchSize(10);
-        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
-            .thenReturn(java.util.Optional.empty());
+        when(batchProcessor.claimAndDeleteBatch(any(), eq(90), eq(10), any()))
+            .thenReturn(new RetentionBatchProcessor.ClaimedBatch(java.util.List.of(), 0));
         // two full batches then a short one → loop must stop after the short batch
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(10, 10, 4);
         job.run();
@@ -68,8 +68,8 @@ class RetentionJobTest {
     void enabled_batchSizeZero_doesNotLoopForever() {
         config.setTtlDays(90);
         config.setBatchSize(0);
-        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
-            .thenReturn(java.util.Optional.empty());
+        when(batchProcessor.claimAndDeleteBatch(any(), eq(90), eq(0), any()))
+            .thenReturn(new RetentionBatchProcessor.ClaimedBatch(java.util.List.of(), 0));
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(0))).thenReturn(0);
         // Preemptive timeout: with the pre-fix guard "deleted < batchSize" the loop never exits
         // (0 < 0 is false) and run() spins forever issuing DELETE LIMIT 0 — the timeout kills it.
@@ -98,15 +98,15 @@ class RetentionJobTest {
         UUID id1 = UUID.randomUUID();
         UUID id2 = UUID.randomUUID();
         // Two claimed instances, then an empty claim ends the loop.
-        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
-            .thenReturn(java.util.Optional.of(new RetentionBatchProcessor.ClaimedDelete(id1, 5)),
-                java.util.Optional.of(new RetentionBatchProcessor.ClaimedDelete(id2, 7)),
-                java.util.Optional.empty());
+        when(batchProcessor.claimAndDeleteBatch(any(), eq(90), eq(10), any()))
+            .thenReturn(new RetentionBatchProcessor.ClaimedBatch(java.util.List.of(id1), 5),
+                new RetentionBatchProcessor.ClaimedBatch(java.util.List.of(id2), 7),
+                new RetentionBatchProcessor.ClaimedBatch(java.util.List.of(), 0));
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(10))).thenReturn(0);
 
         job.run();
 
-        verify(batchProcessor, times(3)).claimAndDeleteOneInstance(any(), eq(90));
+        verify(batchProcessor, times(3)).claimAndDeleteBatch(any(), eq(90), eq(10), any());
         // The old split path must stay unused (see enabled_delegatesToBatchProcessor).
         verify(batchProcessor, never()).findEligibleInstances(any(), anyInt(), anyInt());
         verify(batchProcessor, never()).deleteInstances(any());
@@ -125,8 +125,8 @@ class RetentionJobTest {
         UUID id2 = UUID.randomUUID();
         UUID id3 = UUID.randomUUID();
 
-        when(batchProcessor.claimAndDeleteOneInstance(any(), eq(90)))
-            .thenReturn(java.util.Optional.empty());
+        when(batchProcessor.claimAndDeleteBatch(any(), eq(90), eq(2), any()))
+            .thenReturn(new RetentionBatchProcessor.ClaimedBatch(java.util.List.of(), 0));
         when(batchProcessor.deleteOrphanedBoundaryTimers(any(), eq(2))).thenReturn(0);
         // one full batch (2) + one partial (1), then an empty poll ends the loop
         when(batchProcessor.findEligibleSubmissions(any(), eq(2), any()))

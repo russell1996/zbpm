@@ -26,6 +26,20 @@ public class RetentionConfig {
      * transaction per batch, so 100 instances held row locks far longer than needed.
      * Smaller chunks = shorter transactions at the same throughput (the job loops
      * until no eligible rows remain).
+     *
+     * <p>WO-REL-54: тот же размер — окно claim+delete-пачки
+     * ({@code claimAndDeleteBatch}): claim SELECT и все DELETEs одной пачки идут
+     * в одной транзакции, так что пачка обязана оставаться короткой.
      */
     private int batchSize = 25;
+
+    /**
+     * WO-REL-54 (NEW-12): временной бюджет одного прохода job'а в миллисекундах.
+     * 0 = без бюджета (как раньше — до пустого claim'а). Положительный — job
+     * проверяет дедлайн МЕЖДУ пачками и останавливается, оставив прогресс
+     * (закоммиченные пачки) для следующего запуска планировщика. Проверка
+     * только между пачками: начатая пачка всегда коммитится целиком —
+     * частично закоммиченной пачки не бывает.
+     */
+    private long passBudgetMs = 0;
 }
