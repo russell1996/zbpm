@@ -350,8 +350,7 @@ class SseRel47WriterProtocolTest {
     }
 
     @Test
-    void listenerFiresOnlyAfterRealSend() throws Exception {
-        // Audit §7.2 pin: the hook must not fire when nothing was sent.
+    void listenerFiresOnlyAfterRealSend() throws Exception {        // Audit §7.2 pin: the hook must not fire when nothing was sent.
         // A CLOSED writer (failed client) drops enqueues silently — no send,
         // no notification.
         SseEventStreamService svc = service();
@@ -383,6 +382,289 @@ class SseRel47WriterProtocolTest {
         assertThat(emitter.delivered).as("failed send delivers nothing").isEmpty();
         svc.removeClient(clientId);
     }
+
+    // ---- WO-REL-47 HOLD (CTO review 2026-09-25): 5 findings ----
+
+    /**
+     * Finding 1: a rejected pump kick / send submit must not strand the
+     * client. The dispatch lane is pre-saturated with pinned workers (every
+     * kick rejects with the REAL AbortPolicy RejectedExecutionException —
+     * the production trigger; no sleeps, no racing the scheduler). The event
+     * is staged while BUFFERING and drained; the drain's kick rejects and
+     * must arm the bounded retry lane. Draining the saturation lets the
+     * armed retry deliver with NO further enqueue. Asserts on the REAL
+     * emitter output.
+     *
+     * <p>P-67 naming: the failing mutation is "rejection only clears
+     * pumpActive" (the pre-HOLD shape) — with it, this test REDs (delivery
+     * stays empty: nothing ever re-kicks a narrow-filter client).
+     */
+    @Test
+    void rejectedKick_retriesAndDeliversWithoutNewEnqueue() throws Exception {
+        SseEventStreamService svc = service();
+        ReflectionTestUtils.setField(svc, "pumpRetryDelayMs", 20L);
+
+        // Saturation stand-in WITHOUT touching the lazy getters: a fresh
+        // service whose dispatch pool is pre-saturated with LONG-RUNNING
+        // tasks. dispatchLane() still returns the same live pool object
+        // (never shutdown → no lazy re-creation), but its queue is full and
+        // all workers are pinned, so every pump kick rejects with the REAL
+        // AbortPolicy RejectedExecutionException — the production trigger.
+        // REAL saturation: pin every dispatch worker AND fill the 1024-deep
+        // queue behind them. Pinning workers alone is NOT saturation — the
+        // LinkedBlockingQueue(1024) still accepts kicks (they just wait), so
+        // the drain's kick would queue instead of rejecting. Queue-fill makes
+        // the AbortPolicy reject deterministically — the production trigger.
+        java.util.concurrent.ExecutorService dispatchLane = invokeLaneExecutor(svc, "dispatchLane");
+        int dispatchMax = ((java.util.concurrent.ThreadPoolExecutor) dispatchLane).getMaximumPoolSize();
+        CountDownLatch saturate = new CountDownLatch(1);
+        Runnable pin = () -> {
+            try {
+                saturate.await(20, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        for (int i = 0; i < dispatchMax; i++) {
+            dispatchLane.execute(pin);
+        }
+        await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            java.util.concurrent.ThreadPoolExecutor p =
+                (java.util.concurrent.ThreadPoolExecutor) invokeLane(svc, "dispatchLane");
+            assertThat(p.getActiveCount()).isEqualTo(dispatchMax);
+        });
+        for (int i = 0; i < 1100; i++) {
+            try {
+                dispatchLane.execute(pin);
+            } catch (java.util.concurrent.RejectedExecutionException expectedWhenFull) {
+                break;
+            }
+        }
+
+        CapturingEmitter emitter = new CapturingEmitter();
+        String clientId = svc.registerBufferedClient(emitter, admin(), null, null, null);
+        // BUFFERING + one staged event, then drain: the drain's kick MUST
+        // reject on the saturated lane and arm the bounded retry.
+        svc.onDomainEvent(body(501L, "rel47.hold1"));
+        svc.drainBufferedClient(clientId, 0L);
+        assertThat(emitter.delivered)
+            .as("saturated lane delivers nothing before the drain").isEmpty();
+
+        // Drain: the saturated workers free up, the armed retry fires and
+        // delivers with NO further enqueue (no new event is ever sent).
+        saturate.countDown();
+        try {
+            await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(emitter.delivered).hasSize(1));
+            assertThat(((Number) emitter.delivered.get(0).get("sequence")).longValue())
+                .isEqualTo(501L);
+            svc.removeClient(clientId);
+        } finally {
+            saturate.countDown();
+        }
+    }
+
+    /**
+     * Finding 2: stop() racing a lane getter must not leak a pool.
+     * N racer threads hammer dispatchLane()/sendLane()/retryLane() while the
+     * main thread calls stop(); afterwards every pool EITHER is shut down
+     * (grabbed pre-stop) OR is the live current field (re-created post-stop
+     * and re-armed by start()). No pool may be non-current AND un-shutdown
+     * (that shape is the leak: nobody holds it, nobody shuts it).
+     */
+    @Test
+    void stopRacingLaneGetters_leaksNoPool() throws Exception {
+        SseEventStreamService svc = service();
+        svc.start();
+
+        java.util.Set<Object> seen = java.util.Collections.newSetFromMap(
+            new ConcurrentHashMap<>());
+        CountDownLatch go = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(3);
+        for (int i = 0; i < 3; i++) {
+            Thread t = new Thread(() -> {
+                try {
+                    go.await(10, TimeUnit.SECONDS);
+                    for (int j = 0; j < 200; j++) {
+                        seen.add(invokeLane(svc, "dispatchLane"));
+                        seen.add(invokeLane(svc, "sendLane"));
+                        seen.add(invokeLane(svc, "retryLane"));
+                    }
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                } finally {
+                    done.countDown();
+                }
+            });
+            t.setDaemon(true);
+            t.start();
+        }
+        go.countDown();
+        // Let the racers grab pools, then stop mid-race.
+        Thread.sleep(50);
+        svc.stop(() -> {});
+
+        assertThat(done.await(20, TimeUnit.SECONDS)).isTrue();
+
+        Object curDispatch = currentField(svc, "dispatchExecutor");
+        Object curSend = currentField(svc, "sendExecutor");
+        Object curRetry = currentField(svc, "retryScheduler");
+        assertThat(curDispatch).as("stop() nulls the dispatch field").isNull();
+        assertThat(curSend).as("stop() nulls the send field").isNull();
+        assertThat(curRetry).as("stop() nulls the retry field").isNull();
+        for (Object pool : seen) {
+            assertThat(pool).isInstanceOf(java.util.concurrent.ExecutorService.class);
+            assertThat(((java.util.concurrent.ExecutorService) pool).isShutdown())
+                .as("every raced pool is shut down (no orphaned live pool)").isTrue();
+        }
+
+        // Post-stop the service heals (start re-arms) and still delivers.
+        svc.start();
+        CapturingEmitter emitter = new CapturingEmitter();
+        String clientId = svc.registerBufferedClient(emitter, admin(), null, null, null);
+        svc.drainBufferedClient(clientId, 0L);
+        svc.onDomainEvent(body(503L, "rel47.hold2"));
+        await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() ->
+            assertThat(emitter.delivered).hasSize(1));
+        svc.removeClient(clientId);
+        svc.stop(() -> {});
+    }
+
+    /**
+     * Finding 3: keepAlive is structural, not decorative — both bounded pools
+     * must evict idle core threads (the pre-HOLD shape never could:
+     * core == max without allowCoreThreadTimeOut).
+     */
+    @Test
+    void boundedPools_evictIdleCoreThreads() throws Exception {
+        SseEventStreamService svc = service();
+        for (String name : List.of("dispatchLane", "sendLane", "retryLane")) {
+            Object pool = invokeLane(svc, name);
+            assertThat(pool).isInstanceOf(java.util.concurrent.ThreadPoolExecutor.class);
+            java.util.concurrent.ThreadPoolExecutor tpe =
+                (java.util.concurrent.ThreadPoolExecutor) pool;
+            assertThat(tpe.allowsCoreThreadTimeOut())
+                .as(name + " must evict idle core threads (HOLD finding 3)").isTrue();
+        }
+        svc.stop(() -> {});
+    }
+
+    /**
+     * Finding 4: teardown outside failClient() must close the writer.
+     * Direct white-box proof on the writer protocol: register a client,
+     * grab its writer object, remove the client through the REAL
+     * removeClient() path (the same removeClientState() the emitter
+     * completion/timeout/error callbacks call), then attempt enqueue + pump
+     * on the detached writer. With the writer closed, both are silent
+     * no-ops: the queue stays empty and NO emitter.send() happens. Under the
+     * pre-HOLD shape (writer left open) the pump sends into the completed
+     * emitter → IllegalStateException, i.e. this test REDs.
+     */
+    @Test
+    void revokeDuringInflightSend_neverSendsAfterComplete() throws Exception {
+        SseEventStreamService svc = service();
+
+        java.util.concurrent.atomic.AtomicInteger postTeardownSends =
+            new java.util.concurrent.atomic.AtomicInteger();
+        SseEmitter emitter = new SseEmitter(60_000L) {
+            @Override
+            public void send(SseEventBuilder builder) {
+                postTeardownSends.incrementAndGet();
+            }
+        };
+        String clientId = svc.registerBufferedClient(emitter, admin(), null, null, null);
+        svc.drainBufferedClient(clientId, 0L);
+
+        Object writer = clientObject(svc, clientId);
+        assertThat(writer).as("writer present before teardown").isNotNull();
+
+        // REAL teardown path (removeClient → removeClientState).
+        svc.removeClient(clientId);
+
+        // Late live event for a detached writer: enqueue must drop (CLOSED),
+        // and a pump racing the teardown must observe CLOSED, never send.
+        enqueueOnWriter(svc, writer, 504L, "rel47.hold4");
+        pumpOnWriter(writer);
+        Thread.sleep(300);
+
+        assertThat(postTeardownSends.get())
+            .as("no emitter.send() after teardown (closed writer is a no-op)")
+            .isEqualTo(0);
+        assertThat(queueSizeOfWriter(writer))
+            .as("closed writer drops late enqueues").isEqualTo(0);
+    }
+
+    // ---- HOLD-test harness ----
+
+    private static Object clientObject(SseEventStreamService svc, String clientId) throws Exception {
+        var f = SseEventStreamService.class.getDeclaredField("clients");
+        f.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> clients = (Map<String, Object>) f.get(svc);
+        return clients.get(clientId);
+    }
+
+    /** Reflective enqueue on a detached writer (builds a real SseEventBuilder like the service does). */
+    private static void enqueueOnWriter(SseEventStreamService svc, Object writer,
+            long sequence, String type) throws Exception {
+        SseEmitter.SseEventBuilder builder = SseEmitter.event()
+            .id(String.valueOf(sequence))
+            .name(type)
+            .data(Map.of("sequence", sequence, "type", type))
+            .reconnectTime(3000);
+        var m = writer.getClass().getDeclaredMethod("enqueueLive",
+            SseEmitter.SseEventBuilder.class, Map.class, long.class);
+        m.setAccessible(true);
+        m.invoke(writer, builder, Map.of("sequence", sequence, "type", type), sequence);
+    }
+
+    private static void pumpOnWriter(Object writer) throws Exception {
+        var m = writer.getClass().getDeclaredMethod("pump");
+        m.setAccessible(true);
+        m.invoke(writer);
+    }
+
+    private static int queueSizeOfWriter(Object writer) throws Exception {
+        var f = writer.getClass().getDeclaredField("queue");
+        f.setAccessible(true);
+        return ((java.util.ArrayDeque<?>) f.get(writer)).size();
+    }
+
+    /** Shutdown the lane pools WITHOUT touching client state (test-only saturation stand-in). */
+    private static void shutdownLanesOnly(SseEventStreamService svc) throws Exception {
+        for (String field : List.of("dispatchExecutor", "sendExecutor")) {
+            var f = SseEventStreamService.class.getDeclaredField(field);
+            f.setAccessible(true);
+            ExecutorServiceShim.shutdownNow((java.util.concurrent.ExecutorService) f.get(svc));
+        }
+    }
+
+    private static final class ExecutorServiceShim {
+        static void shutdownNow(java.util.concurrent.ExecutorService pool) {
+            if (pool != null) {
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    private static Object invokeLane(SseEventStreamService svc, String name) throws Exception {
+        var m = SseEventStreamService.class.getDeclaredMethod(name);
+        m.setAccessible(true);
+        return m.invoke(svc);
+    }
+
+    private static java.util.concurrent.ExecutorService invokeLaneExecutor(
+            SseEventStreamService svc, String name) throws Exception {
+        return (java.util.concurrent.ExecutorService) invokeLane(svc, name);
+    }
+
+    private static Object currentField(SseEventStreamService svc, String name) throws Exception {
+        var f = SseEventStreamService.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(svc);
+    }
+
+
 
     // ---- white-box probes (queue/pool internals for the boundedness asserts) ----
 

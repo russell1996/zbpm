@@ -114,6 +114,15 @@ public class SseEventStreamService implements SmartLifecycle {
      * — an outer task per event waiting on an inner future in the SAME cached
      * pool — let threads grow as events × clients × send duration).
      *
+     * <p>A rejected pump kick / send submit never strands a client silently
+     * (WO-REL-47 HOLD finding 1): both rejection sites re-arm through a single
+     * bounded retry lane — a shared daemon {@code ScheduledExecutorService}
+     * (one thread, 60s idle eviction like the lanes) that retries the pump at
+     * fixed 100ms intervals, at most {@value #PUMP_RETRY_MAX_ATTEMPTS} times
+     * per arming. Bounded retries (not an unbounded timer per rejection) keep
+     * the retry state at O(live clients), and the retry is a no-op for a
+     * client whose queue already drained or whose writer closed.
+     *
      * <p>Lanes are (re)created lazily and never assumed live (fields below):
      * Spring 7 pauses an idle test context on switch
      * ({@code DefaultContextCache.pauseOnContextSwitchIfNecessary} →
@@ -123,7 +132,8 @@ public class SseEventStreamService implements SmartLifecycle {
      * {@link #start()} re-creates terminated lanes, and every submit path
      * goes through these getters (self-heal even if {@code start()} was
      * missed). Daemon threads + 60s keep-alive: a recreated-but-unused
-     * pool evaporates on its own.
+     * pool evaporates on its own (core threads included — see
+     * {@link #boundedPool}, which enables core-thread timeout).
      */
 
     private static ExecutorService boundedPool(String prefix, int maxThreads,
@@ -134,10 +144,17 @@ public class SseEventStreamService implements SmartLifecycle {
             t.setDaemon(true);
             return t;
         };
-        return new java.util.concurrent.ThreadPoolExecutor(
-            maxThreads, maxThreads, 60L, TimeUnit.SECONDS,
-            workQueue, factory,
-            new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+        java.util.concurrent.ThreadPoolExecutor pool =
+            new java.util.concurrent.ThreadPoolExecutor(
+                maxThreads, maxThreads, 60L, TimeUnit.SECONDS,
+                workQueue, factory,
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+        // WO-REL-47 HOLD finding 3: core == max makes the 60s keepAlive dead
+        // by construction (it only reaps threads ABOVE core) — without this
+        // call the javadoc's "evaporates on its own" is false and a leaked
+        // pool (finding 2 race) pins up to 128 threads for the JVM lifetime.
+        pool.allowCoreThreadTimeOut(true);
+        return pool;
     }
 
     /**
@@ -150,10 +167,51 @@ public class SseEventStreamService implements SmartLifecycle {
      * {@link #start()} re-creates terminated lanes, and every submit path
      * goes through these getters (self-heal even if {@code start()} was
      * missed). Daemon threads + 60s keep-alive: a recreated-but-unused
-     * pool evaporates on its own.
+     * pool evaporates on its own (core threads included — see
+     * {@link #boundedPool}, which enables core-thread timeout).
      */
     private volatile ExecutorService dispatchExecutor;
     private volatile ExecutorService sendExecutor;
+
+    /**
+     * WO-REL-47 HOLD finding 1: bounded retry lane for rejected pump kicks.
+     * One shared daemon scheduler (single thread) retries {@link SseClientInfo#pump}
+     * at fixed 100ms intervals, at most {@value #PUMP_RETRY_MAX_ATTEMPTS}
+     * attempts per arming. Bounded per-arming retries keep retry state at
+     * O(live clients) even under sustained saturation; each attempt re-checks
+     * mode/queue under the client lock, so a drained or closed client costs
+     * one no-op. Created lazily under the same lifecycle protocol as the
+     * lanes (see {@link #retryLane}); shut down under the same lock by
+     * {@link #stop}.
+     */
+    private volatile java.util.concurrent.ScheduledExecutorService retryScheduler;
+
+    /** Fixed delay between pump-retry attempts (test-shrinkable). */
+    private volatile long pumpRetryDelayMs = 100L;
+
+    /** Max retry attempts per arming (100ms × 50 = ~5s, one send-timeout window). */
+    private static final int PUMP_RETRY_MAX_ATTEMPTS = 50;
+
+    private synchronized java.util.concurrent.ScheduledExecutorService retryLane() {
+        java.util.concurrent.ScheduledExecutorService lane = retryScheduler;
+        if (lane == null || lane.isShutdown()) {
+            java.util.concurrent.ThreadFactory factory = r -> {
+                Thread t = new Thread(r);
+                t.setName("sse-retry-" + t.getId());
+                t.setDaemon(true);
+                return t;
+            };
+            java.util.concurrent.ScheduledThreadPoolExecutor fresh =
+                new java.util.concurrent.ScheduledThreadPoolExecutor(1, factory);
+            fresh.setRemoveOnCancelPolicy(true);
+            fresh.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+            fresh.allowCoreThreadTimeOut(true);
+            fresh.setKeepAliveTime(60L, TimeUnit.SECONDS);
+            retryScheduler = fresh;
+            lane = fresh;
+        }
+        return lane;
+    }
 
     private synchronized ExecutorService dispatchLane() {
         ExecutorService lane = dispatchExecutor;
@@ -352,9 +410,19 @@ public class SseEventStreamService implements SmartLifecycle {
      * drain больше не может оставить висячую queue: негде). Без этого
      * disconnect до drain оставлял запись в bufferedEvents навсегда (утечка,
      * поймана тестом WO-PERF-7: вторая Map в классе).
+     *
+     * <p>WO-REL-47 HOLD finding 4: снятие состояния обязано закрывать и сам
+     * writer ({@code closeWriter()} → {@code Mode.CLOSED}): иначе уже
+     * запущенный pump/send для отозванного или отключившегося клиента позже
+     * зовёт {@code emitter.send()} на уже complete()-нутом emitter →
+     * {@code IllegalStateException} в misleading-ветке «send error» вместо
+     * тихого no-op.
      */
     private void removeClientState(String clientId) {
         SseClientInfo removed = clients.remove(clientId);
+        if (removed != null) {
+            removed.closeWriter();
+        }
         // WO-SEC-67: release the per-subject slot (no-op when the client was
         // never registered — e.g. double completion callbacks).
         if (removed != null) {
@@ -870,6 +938,11 @@ public class SseEventStreamService implements SmartLifecycle {
      * Removes state (releases the per-subject slot) and completes the
      * emitter; also evicts the client's rights-cache entry so a later
      * stream starts from a cold read.
+     *
+     * <p>WO-REL-47 HOLD finding 4: {@code removeClientState} already closes
+     * the writer (see above) — the {@code complete()} below therefore races
+     * only against a pump/send that now observes {@code Mode.CLOSED} and
+     * becomes a no-op (never {@code emitter.send()} on a completed emitter).
      */
     private void closeRevokedClient(String clientId, String reason) {
         SseClientInfo client = clients.get(clientId);
@@ -1202,6 +1275,7 @@ public class SseEventStreamService implements SmartLifecycle {
         // shutdown never calls start() again, so this is resume-only.
         dispatchLane();
         sendLane();
+        retryLane();
     }
 
     @Override
@@ -1216,10 +1290,15 @@ public class SseEventStreamService implements SmartLifecycle {
             return;
         }
         log.info("SSE shutdown: completing {} active emitters", clients.size());
-        // Snapshot to avoid concurrent modification; complete outside lock where possible
+        // WO-REL-47 HOLD finding 4: the writer of every live client closes
+        // here (not just the map entry) — an already-scheduled pump/send
+        // observes Mode.CLOSED and stops instead of sending into a completed
+        // emitter. Snapshot to avoid concurrent modification; complete outside
+        // lock where possible.
         var snapshot = new java.util.ArrayList<>(clients.values());
         clients.clear();
         for (var c : snapshot) {
+            c.closeWriter();
             try {
                 c.emitter().complete();
             } catch (Exception e) {
@@ -1236,28 +1315,58 @@ public class SseEventStreamService implements SmartLifecycle {
             log.info("SSE shutdown: listener stopped");
         }
         // WO-PERF-6: do not kill in-flight emits — shutdown() would reject them (RejectedExecution).
-        // WO-REL-47: both lanes down (dispatch first so no new send-submit starts,
-        // then the send lane; in-flight sends get the same 5s grace as before).
-        // Lanes are re-created on demand by dispatchLane()/sendLane() (see
+        // WO-REL-47: all lanes down (dispatch first so no new send-submit starts,
+        // then the send lane, then the retry lane; in-flight sends get the same
+        // 5s grace as before).
+        // Lanes are re-created on demand by dispatchLane()/sendLane()/retryLane() (see
         // start()) — a Spring-7 pause/resume cycle must not leave the service
         // deaf, so stop() nulls the fields after shutdown (no dangling
         // terminated pool for a submit path to grab).
-        ExecutorService dispatchDoomed;
-        ExecutorService sendDoomed;
+        //
+        // WO-REL-47 HOLD finding 2: the null-out AND the shutdown run under
+        // ONE monitor (this), atomically — a concurrent dispatchLane()/
+        // sendLane()/retryLane() racing stop() either grabs the pre-stop pool
+        // (then stop() shuts it down: no leak) or blocks until stop() is done
+        // (then it re-creates a fresh pool, owned by start()/submit path —
+        // and start() re-arms it on resume). The pre-HOLD shape (null-out
+        // inside the lock, shutdown() outside it) let a racer create a new
+        // pool AFTER the null-out that stop() never saw → leaked threads on
+        // every Spring pause/resume race. shutdown() under this lock cannot
+        // deadlock: none of the pool threads ever synchronizes on the service
+        // monitor (pump/send synchronize on the CLIENT monitor), and
+        // awaitTermination below runs OUTSIDE the lock. shutdown() itself
+        // never blocks on pool threads (it only flips the state; the wait is
+        // awaitTermination, outside the lock), so holding the monitor across
+        // it cannot stall a racing lane getter beyond a fast state flip.
+        // Latched outside the lock request: the awaitTermination targets are
+        // published through these locals (stop() runs once — compareAndSet
+        // above — so no publication race).
+        ExecutorService stopLatchDispatch = null;
+        ExecutorService stopLatchSend = null;
+        java.util.concurrent.ScheduledExecutorService stopLatchRetry = null;
         synchronized (this) {
-            dispatchDoomed = dispatchExecutor;
-            sendDoomed = sendExecutor;
+            ExecutorService dispatchDoomed = dispatchExecutor;
+            ExecutorService sendDoomed = sendExecutor;
+            java.util.concurrent.ScheduledExecutorService retryDoomed = retryScheduler;
             dispatchExecutor = null;
             sendExecutor = null;
+            retryScheduler = null;
+            if (dispatchDoomed != null) {
+                dispatchDoomed.shutdown();
+            }
+            if (sendDoomed != null) {
+                sendDoomed.shutdown();
+            }
+            if (retryDoomed != null) {
+                retryDoomed.shutdown();
+            }
+            stopLatchDispatch = dispatchDoomed;
+            stopLatchSend = sendDoomed;
+            stopLatchRetry = retryDoomed;
         }
-        if (dispatchDoomed != null) {
-            dispatchDoomed.shutdown();
-        }
-        if (sendDoomed != null) {
-            sendDoomed.shutdown();
-        }
-        try { if (dispatchDoomed != null) dispatchDoomed.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        try { if (sendDoomed != null) sendDoomed.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { if (stopLatchDispatch != null) stopLatchDispatch.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { if (stopLatchSend != null) stopLatchSend.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { if (stopLatchRetry != null) stopLatchRetry.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         callback.run();
     }
 
@@ -1479,21 +1588,36 @@ public class SseEventStreamService implements SmartLifecycle {
             try {
                 send = CompletableFuture.runAsync(() -> {
                     try {
+                        // WO-REL-47 HOLD finding 4: the writer may have closed
+                        // while this send was queued (revoke / disconnect /
+                        // stop) — the emitter below may already be completed.
+                        // Never send into a closed writer: drop silently
+                        // instead of emitting into IllegalStateException and a
+                        // misleading "send error" log line.
+                        synchronized (SseClientInfo.this) {
+                            if (mode == Mode.CLOSED) {
+                                return;
+                            }
+                        }
                         emitter.send(queued.event);
                     } catch (IOException e) {
                         throw new java.util.concurrent.CompletionException(e);
                     }
                 }, sendLane());
             } catch (java.util.concurrent.RejectedExecutionException re) {
-                // Send lane saturated (all threads pinned by slow clients):
-                // re-queue at HEAD (order preserved) and yield — the pump
-                // reactivates on the next enqueue/drain kick.
+                // WO-REL-47 HOLD finding 1: send lane saturated (all threads
+                // pinned by slow clients). Re-queue at HEAD (order preserved)
+                // and re-arm the pump through the bounded retry lane — the
+                // pre-HOLD shape only cleared pumpActive ("reactivates on the
+                // next kick"), which stranded narrow-filter clients whose
+                // next matching event might never come.
                 synchronized (this) {
                     if (mode != Mode.CLOSED) {
                         queue.addFirst(queued);
                     }
                     pumpActive = false;
                 }
+                schedulePumpRetry("send-lane saturated");
                 return;
             }
             send.orTimeout(sendTimeoutMs, TimeUnit.MILLISECONDS).whenCompleteAsync((v, ex) -> {
@@ -1530,7 +1654,83 @@ public class SseEventStreamService implements SmartLifecycle {
             }, dispatchLane());
         }
 
-        /** Terminal failure path: full state removal (per-subject slot back) + complete. */
+        /**
+         * WO-REL-47 HOLD finding 1: bounded re-arm of the pump after a lane
+         * rejection. Schedules up to {@value #PUMP_RETRY_MAX_ATTEMPTS}
+         * attempts at {@code pumpRetryDelayMs} intervals; each attempt takes
+         * the pump slot (pumpActive) under the client lock and runs
+         * {@link #pump} on the dispatch lane. Attempts stop early when the
+         * queue drains, the writer closes, or the budget runs out — whichever
+         * comes first. A later enqueue/drain kick re-arms independently, so a
+         * retry budget exhausted under SUSTAINED saturation resumes as soon as
+         * new work arrives or the lanes free up.
+         *
+         * @param reason log context (which lane rejected)
+         */
+        private void schedulePumpRetry(String reason) {
+            java.util.concurrent.ScheduledExecutorService lane;
+            try {
+                lane = retryLane();
+            } catch (java.util.concurrent.RejectedExecutionException re) {
+                log.warn("SSE client {} pump stalled ({}; retry lane saturated)", clientId, reason);
+                return;
+            }
+            final java.util.concurrent.atomic.AtomicInteger attemptsLeft =
+                new java.util.concurrent.atomic.AtomicInteger(PUMP_RETRY_MAX_ATTEMPTS);
+            final java.util.concurrent.ScheduledFuture<?>[] holder =
+                new java.util.concurrent.ScheduledFuture<?>[1];
+            holder[0] = lane.scheduleWithFixedDelay(() -> {
+                // WO-REL-47 HOLD finding 4: never pump a closed writer —
+                // the retry is a no-op (and self-cancels) once CLOSED.
+                boolean run = false;
+                synchronized (SseClientInfo.this) {
+                    if (mode == Mode.CLOSED) {
+                        run = false;
+                    } else if (!queue.isEmpty() && !pumpActive) {
+                        pumpActive = true;
+                        run = true;
+                    } else if (queue.isEmpty()) {
+                        run = false;
+                    } else {
+                        // Pump already active (a kick got through meanwhile):
+                        // this arming is redundant — cancel it.
+                        run = false;
+                    }
+                }
+                if (run) {
+                    try {
+                        dispatchLane().execute(this::pump);
+                    } catch (java.util.concurrent.RejectedExecutionException re) {
+                        synchronized (SseClientInfo.this) {
+                            pumpActive = false;
+                        }
+                        // Stay armed: the next tick retries again (budget
+                        // still applies below).
+                    }
+                    if (attemptsLeft.decrementAndGet() <= 0) {
+                        holder[0].cancel(false);
+                        log.warn("SSE client {} pump retry budget exhausted ({}); "
+                            + "next enqueue/drain kick re-arms", clientId, reason);
+                    }
+                    return;
+                }
+                // Terminal states for this arming: closed, drained, or
+                // superseded by a live pump — cancel, do not spin.
+                if (mode == Mode.CLOSED || queue.isEmpty() || attemptsLeft.get() <= 0) {
+                    holder[0].cancel(false);
+                } else if (pumpActive) {
+                    holder[0].cancel(false);
+                }
+            }, pumpRetryDelayMs, pumpRetryDelayMs, TimeUnit.MILLISECONDS);
+        }
+
+        /**
+         * WO-REL-47 HOLD finding 4: the writer also closes HERE (mode=CLOSED,
+         * queue dropped): removeClientState() already closes it — this is the
+         * second, belt-and-braces close for the one path that never goes
+         * through removeClientState (failClient is the terminal path; the
+         * emitter is completed below and no pump/send may touch it after).
+         */
         private void failClient(String reason) {
             closeWriter();
             // WO-SEC-67 red-team #3: full state removal (per-subject slot),
@@ -1554,14 +1754,19 @@ public class SseEventStreamService implements SmartLifecycle {
             }
         }
 
-        /** Kick the pump on the dispatch lane; a reject self-heals via the next kick. */
+        /** Kick the pump on the dispatch lane; a reject re-arms via the bounded retry lane. */
         private void kickPump() {
             try {
                 dispatchLane().execute(this::pump);
             } catch (java.util.concurrent.RejectedExecutionException re) {
+                // WO-REL-47 HOLD finding 1: dispatch lane saturated. The
+                // pre-HOLD shape only cleared pumpActive ("self-heals via the
+                // next kick") — a client with a narrow filter might never get
+                // that kick. Bounded retry lane re-arms the pump instead.
                 synchronized (this) {
                     pumpActive = false;
                 }
+                schedulePumpRetry("dispatch-lane saturated");
             }
         }
         /**
