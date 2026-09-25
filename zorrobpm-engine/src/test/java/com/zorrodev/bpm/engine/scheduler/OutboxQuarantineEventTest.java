@@ -52,7 +52,7 @@ class OutboxQuarantineEventTest {
         e.setCreatedAt(Instant.now());
         e.setPublished(false);
         e.setAttempts(attempts);
-        e.setStatus("PENDING");
+        e.setStatus(com.zorrodev.bpm.engine.entity.OutboxStatus.PENDING);
         outboxRepository.saveAndFlush(e);
         return id;
     }
@@ -79,7 +79,7 @@ class OutboxQuarantineEventTest {
         processor.processBatch();
 
         assertThat(outboxRepository.findById(id)).isPresent();
-        assertThat(outboxRepository.findById(id).get().getStatus()).isEqualTo("FAILED");
+        assertThat(outboxRepository.findById(id).get().getStatus()).isEqualTo(com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED);
         assertThat(quarantinedEvents()).as("one outbox.quarantined domain event").hasSize(1);
         assertThat(quarantinedOutboxRows()).as("one DOMAIN_EVENT outbox row for the exchange").hasSize(1);
         assertThat(quarantinedEvents().get(0).getData().toString()).contains(id.toString());

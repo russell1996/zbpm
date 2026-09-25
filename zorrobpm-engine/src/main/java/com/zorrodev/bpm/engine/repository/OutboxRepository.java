@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.repository;
 
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
+import com.zorrodev.bpm.engine.entity.OutboxStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -41,7 +42,7 @@ public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
      * as FAILED). Same precedent as {@code ProcessInstanceRepository} bulk updates.
      */
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE OutboxEntry o SET o.status = 'FAILED' WHERE o.id = :id AND o.status != 'FAILED'")
+    @Query("UPDATE OutboxEntry o SET o.status = com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED WHERE o.id = :id AND o.status != com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED")
     int markFailed(@Param("id") UUID id);
 
     /**
@@ -52,23 +53,23 @@ public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
      * resource re-reads the row right after this bulk update in one request.
      */
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE OutboxEntry o SET o.status = 'PENDING', o.attempts = 0, o.lastError = NULL "
-        + "WHERE o.id = :id AND o.status = 'FAILED'")
+    @Query("UPDATE OutboxEntry o SET o.status = com.zorrodev.bpm.engine.entity.OutboxStatus.PENDING, o.attempts = 0, o.lastError = NULL "
+        + "WHERE o.id = :id AND o.status = com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED")
     int redrive(@Param("id") UUID id);
 
     /** WO-REL-22 (B1): quarantine list for the admin endpoint. */
-    List<OutboxEntry> findByStatusOrderByCreatedAtDesc(String status);
+    List<OutboxEntry> findByStatusOrderByCreatedAtDesc(OutboxStatus status);
 
     @Query("SELECT o.id as id, o.kind as kind, o.status as status, o.published as published, o.attempts as attempts, o.lastError as lastError, o.createdAt as createdAt FROM OutboxEntry o WHERE o.status = :status ORDER BY o.createdAt DESC")
-    List<OutboxEntryView> findProjectedByStatusOrderByCreatedAtDesc(@Param("status") String status, org.springframework.data.domain.Pageable pageable);
+    List<OutboxEntryView> findProjectedByStatusOrderByCreatedAtDesc(@Param("status") OutboxStatus status, org.springframework.data.domain.Pageable pageable);
 
     @Query("SELECT o.id as id, o.kind as kind, o.status as status, o.published as published, o.attempts as attempts, o.lastError as lastError, o.createdAt as createdAt FROM OutboxEntry o ORDER BY o.createdAt DESC")
     List<OutboxEntryView> findProjectedAllOrderByCreatedAtDesc(org.springframework.data.domain.Pageable pageable);
 
     // WO-OBS-1: gauge sampling queries (read-only, additive — no behavior change).
-    @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.published = false AND o.status != 'FAILED'")
+    @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.published = false AND o.status != com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED")
     long countPending();
 
-    @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.status = 'FAILED'")
+    @Query("SELECT COUNT(o) FROM OutboxEntry o WHERE o.status = com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED")
     long countQuarantined();
 }

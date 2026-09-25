@@ -19,7 +19,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OutboxAdminResource implements OutboxAdminContract {
 
-    private static final List<String> KNOWN_STATUSES = List.of("PENDING", "FAILED");
+    private static final List<String> KNOWN_STATUSES = java.util.Arrays.stream(
+        com.zorrodev.bpm.engine.entity.OutboxStatus.values())
+        .map(Enum::name).toList();
 
     private final OutboxRepository outboxRepository;
     private final HttpServletRequest request;
@@ -34,7 +36,8 @@ public class OutboxAdminResource implements OutboxAdminContract {
         } else if (!KNOWN_STATUSES.contains(status)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown status: " + status);
         } else {
-            views = outboxRepository.findProjectedByStatusOrderByCreatedAtDesc(status, page);
+            views = outboxRepository.findProjectedByStatusOrderByCreatedAtDesc(
+                com.zorrodev.bpm.engine.entity.OutboxStatus.valueOf(status), page);
         }
         return views.stream().map(OutboxAdminResource::toDTOView).toList();
     }
@@ -63,7 +66,7 @@ public class OutboxAdminResource implements OutboxAdminContract {
         OutboxEntryDTO dto = new OutboxEntryDTO();
         dto.setId(e.getId());
         dto.setKind(e.getKind() != null ? e.getKind().name() : null);
-        dto.setStatus(e.getStatus());
+        dto.setStatus(e.getStatus() != null ? e.getStatus().name() : null);
         dto.setPublished(e.isPublished());
         dto.setAttempts(e.getAttempts());
         dto.setLastError(e.getLastError());
@@ -74,8 +77,8 @@ public class OutboxAdminResource implements OutboxAdminContract {
     private static OutboxEntryDTO toDTOView(com.zorrodev.bpm.engine.repository.OutboxEntryView v) {
         OutboxEntryDTO dto = new OutboxEntryDTO();
         dto.setId(v.getId());
-        dto.setKind(v.getKind() != null ? v.getKind().toString() : null);
-        dto.setStatus(v.getStatus());
+        dto.setKind(v.getKind() != null ? v.getKind().name() : null);
+        dto.setStatus(v.getStatus() != null ? v.getStatus().name() : null);
         dto.setPublished(v.isPublished());
         dto.setAttempts(v.getAttempts());
         dto.setLastError(v.getLastError());

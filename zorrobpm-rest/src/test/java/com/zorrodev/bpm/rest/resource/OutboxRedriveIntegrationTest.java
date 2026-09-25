@@ -101,7 +101,7 @@ class OutboxRedriveIntegrationTest {
         e.setCreatedAt(Instant.now());
         e.setPublished(false);
         e.setAttempts(5);
-        e.setStatus("FAILED");
+        e.setStatus(com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED);
         e.setLastError("boom");
         outboxRepository.saveAndFlush(e);
         return id;
@@ -166,7 +166,7 @@ class OutboxRedriveIntegrationTest {
         assertEquals(0, body.get("attempts").asInt());
 
         OutboxEntry row = outboxRepository.findById(id).orElseThrow();
-        assertEquals("PENDING", row.getStatus());
+        assertEquals(com.zorrodev.bpm.engine.entity.OutboxStatus.PENDING, row.getStatus());
         assertEquals(0, row.getAttempts());
 
         // The batch processor picks the redriven row up again (Spring event = delivered
@@ -187,7 +187,7 @@ class OutboxRedriveIntegrationTest {
     void criterionB2_redrive_nonFailed_409() throws Exception {
         UUID id = seedFailedEmail();
         outboxRepository.findById(id).ifPresent(e -> {
-            e.setStatus("PENDING");
+            e.setStatus(com.zorrodev.bpm.engine.entity.OutboxStatus.PENDING);
             outboxRepository.save(e);
         });
 
