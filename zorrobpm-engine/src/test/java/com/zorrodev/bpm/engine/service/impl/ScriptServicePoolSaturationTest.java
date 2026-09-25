@@ -55,7 +55,7 @@ class ScriptServicePoolSaturationTest {
         ScriptEngine unary = new FeelUnaryTestsScriptEngineFactory().getScriptEngine();
         ScriptEngine expression = new FeelScriptEngineFactory().getScriptEngine();
         return new ScriptServiceImpl(unary, expression, new ObjectMapper(),
-            new BpmMetrics(registry), timeoutSeconds, poolSize);
+            new BpmMetrics(registry), timeoutSeconds, poolSize, 10, 5);
     }
 
     private static ThreadPoolExecutor readPool(ScriptServiceImpl service) throws Exception {

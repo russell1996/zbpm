@@ -156,6 +156,10 @@ services:
       # WO-REL-46: FEEL/script pool size (default 8 in application.properties).
       # Listed here so a host .env value reaches the container (WO-INT-6 class).
       SCRIPT_POOL_SIZE: ${SCRIPT_POOL_SIZE:-8}
+      # WO-ENG-24: admission control для того же пула (дефолты 10/5 в
+      # application.properties; пусто = дефолт свойства).
+      SCRIPT_QUEUE_CAPACITY: ${SCRIPT_QUEUE_CAPACITY:-}
+      SCRIPT_QUEUE_WAIT_SECONDS: ${SCRIPT_QUEUE_WAIT_SECONDS:-}
       # WO-PERF-8: retention chunk + outbox chunk/gauge-sampling cadence (see
       # application.properties; empty = property default applies).
       RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-}

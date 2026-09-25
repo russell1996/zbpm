@@ -115,6 +115,11 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         final int resolvedPriority;
         try {
             resolvedPriority = elementSupport.resolveUserTaskPriorityOrThrow(processInstanceId, bpmnElement);
+        } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
+            // WO-ENG-24: временная перегрузка пула — не битый priority.
+            // Проброс до 503-хендлера (как главный путь ActivityService),
+            // битый priorityDefinition по-прежнему идёт в инцидент ниже.
+            throw e;
         } catch (com.zorrodev.bpm.contract.exception.EngineException e) {
             log.warn("{}/{}: {}", processInstanceId, activityId, e.getMessage());
             dbService.errorActivity(activityId);

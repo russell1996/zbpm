@@ -68,7 +68,7 @@ class FeelBudgetTimeoutTest {
         return new ScriptServiceImpl(unary, expression,
             new tools.jackson.databind.ObjectMapper(),
             new BpmMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
-            1, 2);
+            1, 2, 10, 5);
     }
 
     private FeelBudget budget() {

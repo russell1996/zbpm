@@ -168,6 +168,12 @@ public class MultiInstanceExecutor {
                 collection = scriptService.evaluateExpression(mi.getInputCollection(), variables);
             }
             count = resolveCardinality(bpmnElement, variables, collection);
+        } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
+            // WO-ENG-24: временная перегрузка пула — не ошибка модели.
+            // Проброс до 503-хендлера (как главный путь ActivityService),
+            // а не инцидент: неверные выражения по-прежнему идут в инцидент
+            // ниже, семантика WO-REL-31 F23 для них не меняется ни на бит.
+            throw e;
         } catch (EngineException e) {
             // WO-REL-31 F23: a failed cardinality resolution (fractional/out-of-int-range value,
             // missing characteristics) is an element failure — raise a visible incident on the
@@ -295,6 +301,10 @@ public class MultiInstanceExecutor {
             final int resolvedPriority;
             try {
                 resolvedPriority = elementSupport.resolveUserTaskPriorityOrThrow(processInstanceId, element);
+            } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
+                // WO-ENG-24: см. cardinality-catch выше — перегрузка идёт до
+                // 503-хендлера, битый priorityDefinition — в инцидент ниже.
+                throw e;
             } catch (EngineException e) {
                 log.warn("{}/{}: {}", processInstanceId, activityId, e.getMessage());
                 dbService.errorActivity(activityId);

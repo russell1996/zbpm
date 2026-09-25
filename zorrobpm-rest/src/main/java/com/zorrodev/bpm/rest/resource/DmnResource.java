@@ -156,6 +156,11 @@ public class DmnResource implements DmnContract {
         Object result;
         try {
             result = dmnService.evaluate(decisionId, dto.getVariables());
+        } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
+            // WO-ENG-24: временная перегрузка пула — не ошибка решения.
+            // Проброс до 503-хендлера, а не 400-маппинг ниже («Decision
+            // evaluation failed» вводил бы в заблуждение «не повторять»).
+            throw e;
         } catch (EngineException e) {
             log.warn("DMN evaluation error: {}", e.getMessage());
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Decision evaluation failed");
