@@ -12,6 +12,30 @@ export function isTaskActive(status: string | null | undefined, completedAt: str
 }
 
 /**
+ * WO-UI-21 Раунд 2: дериватор статуса process instance. `cancelled=true`
+ * имеет приоритет над обычным completedAt-разбором: отменённый процесс —
+ * CANCELLED, а не Completed. Используется в списке, детальной шапке и
+ * таблице сабпроцессов (было три расходящихся тернария по completedAt).
+ */
+export type ProcessInstanceStatus = 'CANCELLED' | 'COMPLETED' | 'RUNNING'
+
+export function processInstanceStatus(pi: {
+  cancelled?: boolean | null
+  completedAt: string | null
+}): ProcessInstanceStatus {
+  if (pi.cancelled) return 'CANCELLED'
+  return pi.completedAt ? 'COMPLETED' : 'RUNNING'
+}
+
+/** Instance actionable (cancellable) only while neither completed nor cancelled. */
+export function isProcessInstanceActive(pi: {
+  cancelled?: boolean | null
+  completedAt: string | null
+}): boolean {
+  return !pi.completedAt && !pi.cancelled
+}
+
+/**
  * Extract a human-readable error message (WO-ACL-6 criterion 7): backend
  * validation rejections arrive as {code, message} (GlobalExceptionHandler),
  * e.g. "Process with key 'x' already exists — update the model from inside

@@ -29,6 +29,10 @@ export interface ProcessInstance {
   processVersion: number | null
   startedAt: string
   completedAt: string | null
+  // WO-UI-21 Раунд 2: бэкенд реально шлёт это поле
+  // (zorrobpm-contract .../model/ProcessInstance.java:12, `boolean cancelled`),
+  // фронт до этого раунда его игнорировал.
+  cancelled: boolean
 }
 
 export type ActivityLifecycleStatus = 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'ERROR'
