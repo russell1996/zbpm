@@ -7,6 +7,7 @@ import { useProcessStore } from '@/stores/process'
 import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
+import { processInstanceStatus } from '@/shared/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
@@ -67,7 +68,8 @@ function exportData() {
   if (!store.instances?.data) return
   exportToCsv(store.instances.data.map((i) => ({
     id: i.id,
-    status: i.completedAt ? 'Completed' : 'Running',
+    // WO-UI-21 Раунд 2: отменённый — 'Cancelled', а не Completed.
+    status: processInstanceStatus(i) === 'CANCELLED' ? 'Cancelled' : i.completedAt ? 'Completed' : 'Running',
     startedAt: i.startedAt,
     completedAt: i.completedAt || '',
   })), 'process-instances.csv')
@@ -158,7 +160,8 @@ watch(filterKey, debounce(() => { resetPage(); load() }))
               <span v-if="pi.processVersion" class="ml-1 text-xs text-muted-foreground">v{{ pi.processVersion }}</span>
             </td>
             <td class="px-4 py-3">
-              <StatusBadge :status="pi.completedAt ? 'COMPLETED' : 'RUNNING'" />
+              <!-- WO-UI-21 Раунд 2: cancelled=true → CANCELLED, не Completed -->
+              <StatusBadge :status="processInstanceStatus(pi)" />
             </td>
             <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(pi.startedAt) }}</td>
             <td class="px-4 py-3 text-muted-foreground">{{ pi.completedAt ? formatDateTime(pi.completedAt) : '—' }}</td>

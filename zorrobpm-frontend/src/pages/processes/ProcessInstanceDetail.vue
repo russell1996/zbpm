@@ -11,8 +11,9 @@ import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
 import * as variableService from '@/services/variableService'
+import { cancelProcessInstance } from '@/services/instanceService'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
-import { isTaskActive } from '@/shared/lib/utils'
+import { isTaskActive, processInstanceStatus, isProcessInstanceActive, errorMessage } from '@/shared/lib/utils'
 import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
@@ -288,6 +289,64 @@ async function confirmComplete() {
   }
 }
 
+// WO-UI-21 Раунд 2: ручная отмена instance. Кнопка видна только пока
+// instance активен (тот же паттерн, что isTaskActive для тасков рядом).
+// Прав НЕ проверяем заранее — паттерн проекта для action-кнопок
+// (archive в ProcessDefinitionList): кнопка видна всем, 403 от бэкенда
+// превращается в понятный тост в confirmCancel ниже (критерий 5).
+const isInstanceCancellable = computed(() => {
+  const pi = processStore.currentInstance
+  return !!pi && isProcessInstanceActive(pi)
+})
+
+// WO-UI-21 Раунд 2: ключ подписи статуса шапки — computed в script, а не
+// тернарий с литералом 'CANCELLED' в шаблоне (сканер непереведённых строк
+// WO-ACL-11 criterion 11 флагит строковые литералы внутри {{ }}).
+const headerStatusLabelKey = computed(() => {
+  const pi = processStore.currentInstance
+  if (!pi) return 'running'
+  if (processInstanceStatus(pi) === 'CANCELLED') return 'statusCancelled'
+  return pi.completedAt ? 'completed' : 'running'
+})
+
+const showCancelDialog = ref(false)
+const cancelInFlight = ref(false)
+
+function openCancelDialog() {
+  showCancelDialog.value = true
+}
+
+async function confirmCancel() {
+  const pi = processStore.currentInstance
+  if (!pi || cancelInFlight.value) return
+  cancelInFlight.value = true
+  try {
+    await cancelProcessInstance(pi.id)
+    toast.success(t('processCancelled'))
+    showCancelDialog.value = false
+    // Статус CANCELLED без ручного refresh: перечитываем instance —
+    // fetchInstance подтянет cancelled=true, бейдж переключится сам.
+    await reloadAll()
+  } catch (e: unknown) {
+    const status = (e as { response?: { status?: number } })?.response?.status
+    if (status === 409) {
+      // Race: кто-то другой уже завершил/отменил — понятная ошибка +
+      // перезагрузка, чтобы показать актуальный (терминальный) статус
+      // вместо протухшего активного вида с кнопкой отмены.
+      toast.error(t('instanceAlreadyFinished'))
+      showCancelDialog.value = false
+      await reloadAll()
+    } else if (status === 403) {
+      toast.error(t('cancelNotAllowed'))
+    } else {
+      // Тот же паттерн, что toggleArchive: текст бэкенда, иначе generic.
+      toast.error(errorMessage(e, t('loadError')))
+    }
+  } finally {
+    cancelInFlight.value = false
+  }
+}
+
 async function loadTabData() {
   const pi = processStore.currentInstance
   if (!pi) return
@@ -419,6 +478,17 @@ watch(activeTab, onTabChange)
               <Download class="h-4 w-4" />
               {{ t('downloadDiagnostic') }}
             </Button>
+            <!-- WO-UI-21 Раунд 2: ручная отмена — только для активного instance -->
+            <Button
+              v-if="isInstanceCancellable"
+              variant="destructive"
+              size="sm"
+              class="h-8 px-3 text-xs"
+              data-testid="cancel-instance-btn"
+              @click="openCancelDialog"
+            >
+              {{ t('cancelProcess') }}
+            </Button>
             <Button variant="outline" size="sm" class="h-8 px-3 text-xs" :disabled="processStore.loading || tabLoading" @click="reloadAll">
               <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading || tabLoading }" />
               {{ t('refresh') }}
@@ -434,11 +504,14 @@ watch(activeTab, onTabChange)
             <Badge
               variant="secondary"
               class="shrink-0 text-[11px] px-1.5 py-px rounded-full"
-              :class="processStore.currentInstance.completedAt
-                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'"
+              data-testid="instance-status-badge"
+              :class="processInstanceStatus(processStore.currentInstance) === 'CANCELLED'
+                ? 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                : processStore.currentInstance.completedAt
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                  : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'"
             >
-              {{ processStore.currentInstance.completedAt ? t('completed') : t('running') }}
+              {{ t(headerStatusLabelKey) }}
             </Badge>
             <span class="text-foreground/80 text-xs shrink-0">·</span>
             <span class="inline-flex items-center text-[11px] px-1 py-px rounded-full bg-secondary text-muted-foreground shrink-0">
@@ -752,7 +825,8 @@ watch(activeTab, onTabChange)
                   <span v-if="sp.processVersion" class="ml-1 text-xs text-muted-foreground">v{{ sp.processVersion }}</span>
                 </td>
                 <td class="px-4 py-3">
-                  <StatusBadge :status="sp.completedAt ? 'COMPLETED' : 'RUNNING'" />
+                  <!-- WO-UI-21 Раунд 2: тот же дериватор, что в списке и шапке -->
+                  <StatusBadge :status="processInstanceStatus(sp)" />
                 </td>
                 <td class="px-4 py-3 text-muted-foreground">{{ formatDateTime(sp.startedAt) }}</td>
                 <td class="px-4 py-3 text-muted-foreground">{{ sp.completedAt ? formatDateTime(sp.completedAt) : '—' }}</td>
@@ -807,6 +881,41 @@ watch(activeTab, onTabChange)
           <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="confirmComplete">
             {{ completingTaskType === 'resolve' ? t('resolveAction') : t('confirm') }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- WO-UI-21 Раунд 2: confirm-диалог отмены (необратимое действие).
+         Тот же page-local overlay-паттерн, что showCompleteModal выше
+         (AlertDialog-примитива в components/ui нет). Поля причины нет:
+         бэкенд-эндпоинт POST .../cancel причины не принимает, причина —
+         follow-up с изменением контракта (см. отчёт). -->
+    <div
+      v-if="showCancelDialog"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      data-testid="cancel-dialog"
+      @click.self="showCancelDialog = false"
+    >
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
+        <h2 class="text-lg font-bold">{{ t('cancelProcessTitle') }}</h2>
+        <p class="text-sm text-muted-foreground">{{ t('cancelProcessConfirm') }}</p>
+        <div class="flex justify-end gap-2 pt-2">
+          <button
+            class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted"
+            data-testid="cancel-dialog-back"
+            @click="showCancelDialog = false"
+          >
+            {{ t('cancelAction') }}
+          </button>
+          <Button
+            variant="destructive"
+            class="px-4 py-2 text-sm"
+            data-testid="cancel-dialog-confirm"
+            :disabled="cancelInFlight"
+            @click="confirmCancel"
+          >
+            {{ t('cancelProcess') }}
+          </Button>
         </div>
       </div>
     </div>

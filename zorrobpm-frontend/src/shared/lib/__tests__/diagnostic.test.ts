@@ -22,6 +22,7 @@ function makeInstance(overrides: Partial<ProcessInstance> = {}): ProcessInstance
     processVersion: 1,
     startedAt: '2026-01-01T00:00:00Z',
     completedAt: null,
+    cancelled: false, // WO-UI-21 Раунд 2: обязательное поле ProcessInstance
     ...overrides,
   }
 }

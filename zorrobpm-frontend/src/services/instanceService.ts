@@ -45,3 +45,14 @@ export async function startProcessInstance(dto: StartProcessInstanceDTO): Promis
   const { data } = await api.post<IdDTO>('/process-instances', dto)
   return data
 }
+
+// WO-UI-21 Раунд 2: ручная отмена instance. Реальный эндпоинт бэкенда —
+// POST /process-instances/{id}/cancel (RuntimeContract.java:68,
+// RuntimeResource.cancelProcessInstance → 202 Accepted; 409 если уже
+// завершён/отменён, 403 без права DELETE_PROCESS). Параметра reason у
+// эндпоинта нет — confirm-диалог без поля причины, причина — follow-up
+// с изменением контракта (СТОП-список, см. отчёт).
+export async function cancelProcessInstance(id: string): Promise<IdDTO> {
+  const { data } = await api.post<IdDTO>(`/process-instances/${id}/cancel`)
+  return data
+}
