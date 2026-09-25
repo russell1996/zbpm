@@ -21,8 +21,16 @@ import { useIncidentStore } from '@/stores/incident'
  * событию, поэтому браузер переподключается сам; при переподключении браузер
  * автоматически шлёт `Last-Event-ID` = id последнего полученного события, а
  * сервер докачивает пропущенное (catchup WO-REL-37, курсор уже на бэкенде).
- * Задача клиента — не мешать: не закрывать EventSource на `onerror` и хранить
- * последний id для видимости состояния.
+ * Задача клиента — не мешать: не закрывать EventSource на transient-`onerror`
+ * и хранить последний id для видимости состояния.
+ *
+ * WO-UI-22 (NEW-09): исключение — CLOSED после 401 с истёкшей JWT-кукой.
+ * Нативный EventSource переподключается только после сетевых ошибок; не-200
+ * переводит его в CLOSED навсегда, и сервер (закрывающий поток через 30 мин =
+ * JWT TTL) рассчитывал на несуществующий браузерный reconnect. Поэтому
+ * `onerror` при `readyState === CLOSED` идёт по пути refresh+пересоздание
+ * (с backoff, кап попыток), а при мёртвом refresh — в честный
+ * `sessionExpired` вместо вечного «retrying…».
  */
 
 // Источник истины — case-ветки handleEvent трёх сторов. Если в стор добавится
@@ -47,12 +55,38 @@ export function buildStreamUrl(): string {
   return `${base}/events/stream`
 }
 
+// WO-UI-22: refresh идёт на тот же base (кука __Host-zbpm_token — тот же
+// origin, credentials:include обязателен — иначе браузер не приложит куки).
+export function buildRefreshUrl(): string {
+  const base = import.meta.env.VITE_API_URL || '/api'
+  return `${base}/auth/refresh`
+}
+
+/**
+ * WO-UI-22 (NEW-09): параметры восстановления после CLOSED. Нативный
+ * EventSource переподключается только после сетевых ошибок; 401 с истёкшей
+ * JWT-кукой переводит его в CLOSED навсегда. Экспортированы для тестов.
+ */
+export const SSE_RECONNECT_MAX_ATTEMPTS = 5
+export const SSE_RECONNECT_BASE_DELAY_MS = 1000
+export const SSE_RECONNECT_MAX_DELAY_MS = 30000
+
+export function reconnectDelayMs(attempt: number): number {
+  return Math.min(SSE_RECONNECT_BASE_DELAY_MS * 2 ** attempt, SSE_RECONNECT_MAX_DELAY_MS)
+}
+
 export function useRealtimeEvents() {
   const isConnected = ref(false)
   const lastEventId = ref<string | null>(null)
   const error = ref<string | null>(null)
+  // WO-UI-22: сессия истекла целиком (refresh тоже не удался) — realtime
+  // восстановить нельзя, нужен вход. Отличается от transient-обрыва, после
+  // которого нативный автореконнект жив.
+  const sessionExpired = ref(false)
 
   let eventSource: EventSource | null = null
+  let reconnectAttempts = 0
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   function dispatch(envelope: EventEnvelope) {
     // Каждый стор сам фильтрует по типу в своём handleEvent — дублирования
@@ -77,13 +111,7 @@ export function useRealtimeEvents() {
     }
   }
 
-  function connect() {
-    if (eventSource) return
-    if (typeof EventSource === 'undefined') {
-      // jsdom и подобные среды без SSE: сторам просто не прилетают
-      // live-события, страница работает на явных fetch как раньше.
-      return
-    }
+  function openSource() {
     const source = new EventSource(buildStreamUrl(), { withCredentials: true })
     for (const type of REALTIME_EVENT_TYPES) {
       source.addEventListener(type, onNamedEvent)
@@ -91,18 +119,92 @@ export function useRealtimeEvents() {
     source.onopen = () => {
       isConnected.value = true
       error.value = null
+      sessionExpired.value = false
+      reconnectAttempts = 0
     }
-    // Намеренно НЕ закрываем source здесь: нативный SSE-автореконнект
-    // (reconnectTime(3000) от сервера) сам поднимет соединение и докачает
-    // пропущенное по Last-Event-ID. Закрытие убило бы критерий 3.
+    // WO-UI-18: намеренно НЕ закрываем source на transient-ошибке — нативный
+    // SSE-автореконнект (reconnectTime(3000) от сервера) сам поднимет
+    // соединение и докачает пропущенное по Last-Event-ID.
+    // WO-UI-22: но CLOSED — это НЕ transient: браузер сам больше не попробует
+    // (401 с истёкшей кукой). Тогда пробуем refresh + пересоздание с backoff;
+    // если refresh мёртв — честный sessionExpired вместо вечного «retrying».
     source.onerror = () => {
       isConnected.value = false
-      error.value = 'Realtime connection lost, retrying…'
+      if (isClosed(source)) {
+        scheduleReconnect()
+      } else {
+        error.value = 'Realtime connection lost, retrying…'
+      }
     }
     eventSource = source
   }
 
+  function isClosed(source: EventSource): boolean {
+    // readyState может отсутствовать у моков — тогда это не CLOSED
+    // (строгое сравнение типов: undefined === undefined дало бы true).
+    return typeof source.readyState === 'number'
+      && source.readyState === (EventSource as unknown as { CLOSED: number }).CLOSED
+  }
+
+  function scheduleReconnect() {
+    if (reconnectAttempts >= SSE_RECONNECT_MAX_ATTEMPTS) {
+      markSessionExpired()
+      return
+    }
+    const delay = reconnectDelayMs(reconnectAttempts)
+    reconnectAttempts += 1
+    error.value = 'Realtime connection lost, retrying…'
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      void refreshAndReconnect()
+    }, delay)
+  }
+
+  async function refreshAndReconnect() {
+    // Прямой fetch, не axios-инстанс: refreshInterceptor исключает
+    // /auth/refresh из ретраев (там это конец цепочки — logout), а здесь
+    // refresh и есть сама задача.
+    let ok = false
+    try {
+      const res = await fetch(buildRefreshUrl(), { method: 'POST', credentials: 'include' })
+      ok = res.ok
+    } catch {
+      ok = false
+    }
+    if (ok) {
+      error.value = null
+      if (eventSource) {
+        eventSource.close()
+        eventSource = null
+      }
+      openSource()
+    } else {
+      scheduleReconnect()
+    }
+  }
+
+  function markSessionExpired() {
+    sessionExpired.value = true
+    error.value = 'Session expired, please sign in again'
+  }
+
+  function connect() {
+    if (eventSource) return
+    if (typeof EventSource === 'undefined') {
+      // jsdom и подобные среды без SSE: сторам просто не прилетают
+      // live-события, страница работает на явных fetch как раньше.
+      return
+    }
+    openSource()
+  }
+
   function disconnect() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    reconnectAttempts = 0
+    sessionExpired.value = false
     if (eventSource) {
       eventSource.close()
       eventSource = null
@@ -114,5 +216,5 @@ export function useRealtimeEvents() {
     disconnect()
   })
 
-  return { isConnected, lastEventId, error, connect, disconnect }
+  return { isConnected, lastEventId, error, sessionExpired, connect, disconnect }
 }
