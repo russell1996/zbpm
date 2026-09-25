@@ -165,6 +165,9 @@ describe('WO-UI-21 Round 2: ProcessInstanceDetail manual cancel', () => {
 
     expect(mockToastError).toHaveBeenCalledWith('instanceAlreadyFinished')
     expect(mockToastSuccess).not.toHaveBeenCalled()
+    // 409-ветка перезагружает instance, чтобы показать актуальный статус —
+    // перезагрузка реально произошла (больше одного чтения).
+    expect(mockGetInstance.mock.calls.length).toBeGreaterThan(1)
   })
 
   it('CRIT-5: 403 (no DELETE_PROCESS) shows an explicit error; button is NOT pre-hidden by rights', async () => {
