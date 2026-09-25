@@ -116,6 +116,27 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    /**
+     * WO-ENG-24: перегрузка FEEL-пула — временное состояние, клиент должен
+     * повторить (503 + Retry-After), а не считать запрос неверным (422).
+     * Хендлер точнее {@code handleEngineError} по типу, Spring выбирает его
+     * для {@code ScriptOverloadException} независимо от порядка объявления.
+     */
+    @ExceptionHandler(com.zorrodev.bpm.engine.service.ScriptOverloadException.class)
+    public ResponseEntity<Map<String, String>> handleScriptOverload(
+            com.zorrodev.bpm.engine.service.ScriptOverloadException ex) {
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.warn("[{}] Script pool overloaded, shedding load (retry after {}s): {}",
+            correlationId, ex.getRetryAfterSeconds(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .header("Retry-After", String.valueOf(ex.getRetryAfterSeconds()))
+            .body(Map.of(
+                "code", "POOL_OVERLOADED",
+                "message", "Engine overloaded, retry later",
+                "correlationId", correlationId
+            ));
+    }
+
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<Map<String, String>> handleNotFound(NoSuchElementException ex) {
         log.warn("NoSuchElementException (returning 404): {}", ex.getMessage());

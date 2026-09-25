@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_eng24" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-eng24-bulkhead" name="test-eng24-bulkhead" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="greet" />
+
+    <!-- WO-ENG-24: user task с дешёвым io-mapping (=orderId, тривиальное FEEL).
+         Каждый старт гоняет это выражение через общий FEEL-пул — 50
+         параллельных стартов доказывают, что штатные параметры пула всплеск
+         впитывают (0 отказов), а не сбрасывают операции. -->
+    <bpmn:userTask id="greet" name="greet">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=orderId" target="taskOrder" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="greet" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
