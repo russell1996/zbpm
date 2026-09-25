@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -7,9 +7,11 @@ import { useProcessStore } from '@/stores/process'
 import { usePagination } from '@/composables/usePagination'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import type { ProcessDefinition } from '@/types/api'
 
 const router = useRouter()
 const store = useProcessStore()
@@ -17,9 +19,34 @@ const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
 const filterKey = ref('')
+// WO-UI-21: sentinel для "Все процессы" — reka SelectItem требует непустое
+// value, поэтому пустая строка (сброс фильтра) кодируется как 'ALL'.
+const ALL_PROCESSES = 'ALL'
 const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
   () => store.instances?.totalElements,
 )
+
+// WO-UI-21: опции дропдауна — реальные задеплоенные процессы (имя + код),
+// дедуп по коду. Показывать только последнюю версию достаточно: бэкенд-фильтр
+// matches ЛЮБУЮ версию ключа (ProcessInstanceRepository.byProcessDefinitionKey —
+// subquery по key без предиката версии, проверено чтением, не гаданием).
+const definitionOptions = computed<ProcessDefinition[]>(() => {
+  const data = store.definitions?.data || []
+  const byKey = new Map<string, ProcessDefinition>()
+  for (const d of data) {
+    const cur = byKey.get(d.key)
+    if (!cur || d.version > cur.version) byKey.set(d.key, d)
+  }
+  return [...byKey.values()].sort((a, b) => (a.name || a.key).localeCompare(b.name || b.key))
+})
+
+function optionLabel(d: ProcessDefinition): string {
+  return d.name ? `${d.name} (${d.key})` : d.key
+}
+
+function onSelectDefinition(v: unknown) {
+  filterKey.value = (v as string) === ALL_PROCESSES ? '' : (v as string)
+}
 
 async function load() {
   await store.fetchInstances({
@@ -47,6 +74,13 @@ function exportData() {
 }
 
 onMounted(load)
+// WO-UI-21: список процессов для дропдауна — один раз при монтировании,
+// latest-версии (по одной строке на код), лимит 200 = серверный максимум
+// страницы (QueryPaginationSupport.MAX_PAGE_SIZE). Отдельно от load():
+// пагинация/смена фильтра перезапрашивают только instances, не definitions.
+onMounted(() => {
+  void store.fetchDefinitions({ pageIndex: 0, pageSize: 200, latestVersionOnly: true })
+})
 // WO-UI-18 часть B: debounce — текстовый фильтр шлёт запрос на каждую
 // клавишу, без него пачка летит наперегонки.
 watch(filterKey, debounce(() => { resetPage(); load() }))
@@ -77,12 +111,22 @@ watch(filterKey, debounce(() => { resetPage(); load() }))
     </div>
 
     <div class="flex items-center gap-4">
-      <input
-        v-model="filterKey"
-        type="text"
-        :placeholder="t('filterByKey')"
-        class="px-3 py-2 border border-input rounded-md text-sm w-72 focus:outline-none focus:ring-2 focus:ring-ring"
-      />
+      <Select :model-value="filterKey || ALL_PROCESSES" @update:model-value="onSelectDefinition">
+        <SelectTrigger data-testid="definition-filter" class="w-72">
+          <SelectValue :placeholder="t('filterByProcess')" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem :value="ALL_PROCESSES" data-testid="definition-filter-ALL">{{ t('all') }}</SelectItem>
+          <SelectItem
+            v-for="d in definitionOptions"
+            :key="d.key"
+            :value="d.key"
+            :data-testid="`definition-filter-${d.key}`"
+          >
+            {{ optionLabel(d) }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
     </div>
 
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
