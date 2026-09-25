@@ -552,16 +552,14 @@ public class SseEventStreamService implements SmartLifecycle {
         Object sequenceObj = envelope.get("sequence");
         long sequence = sequenceObj instanceof Number n ? n.longValue() : 0;
 
-        // WO-PERF-6: hoist UUID.fromString outside the per-client loop
-        UUID pdUuid = null;
-        if (processDefinitionId != null) {
-            try {
-                pdUuid = UUID.fromString(processDefinitionId);
-            } catch (IllegalArgumentException ex) {
-                log.warn("Invalid processDefinitionId UUID {}", processDefinitionId);
-                // fail-closed: no client matches an unparsable pdId
-                return;
-            }
+        // WO-PERF-6: hoist UUID.fromString outside the per-client loop.
+        // WO-REL-52 (verifier HOLD-1): резолвинг ОДИН на оба пути (live и
+        // deferred, см. resolveEventPdUuid) — невалидный UUID fail-closed
+        // в обоих, валидный доставляется обоим.
+        UUID pdUuid = resolveEventPdUuid(processDefinitionId);
+        if (processDefinitionId != null && pdUuid == null) {
+            // fail-closed: no client matches an unparsable pdId
+            return;
         }
 
         // WO-OBS-8: MDC for the fan-out below (SSE is the fifth WO point: HTTP, worker,
@@ -675,9 +673,7 @@ public class SseEventStreamService implements SmartLifecycle {
         // может быть переиспользован; MDC ставится заново в dispatchDeferred.
         Map<String, Object> headersCopy = amqpHeaders == null ? null
             : new java.util.LinkedHashMap<>(amqpHeaders);
-        final java.util.concurrent.ScheduledFuture<?>[] holder =
-            new java.util.concurrent.ScheduledFuture<?>[1];
-        holder[0] = lane.schedule(() -> {
+        lane.schedule(() -> {
             Long cursor = resolveLiveCursor(sequence);
             if (cursor != null) {
                 dispatchDeferred(messageBody, headersCopy, sequence, cursor);
@@ -694,6 +690,26 @@ public class SseEventStreamService implements SmartLifecycle {
             }
             deferUnpositioned(messageBody, headersCopy, sequence, attempt + 1);
         }, deferredCursorDelayMs, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * WO-REL-52 (verifier HOLD-1): pdUuid-резолвинг, общий для live-пути
+     * ({@code onDomainEvent}) и deferred-пути ({@code dispatchDeferred}).
+     * До фикса deferred-путь передавал pdUuid=null всегда — restricted-клиенты
+     * (effective != null) тихо пропускали ВСЕ отложенные события, хотя
+     * live-эквивалент доставлялся. Невалидный UUID — null + warn, вызывающий
+     * роняет событие целиком (fail-closed, как раньше в live-пути).
+     */
+    private UUID resolveEventPdUuid(String processDefinitionId) {
+        if (processDefinitionId == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(processDefinitionId);
+        } catch (IllegalArgumentException ex) {
+            log.warn("Invalid processDefinitionId UUID {}", processDefinitionId);
+            return null;
+        }
     }
 
     /**
@@ -714,6 +730,14 @@ public class SseEventStreamService implements SmartLifecycle {
         }
         String eventType = (String) envelope.get("type");
         String processInstanceId = (String) envelope.get("processInstanceId");
+        String processDefinitionId = (String) envelope.get("processDefinitionId");
+        // WO-REL-52 (verifier HOLD-1): тот же pdUuid-резолвинг, что в live-пути —
+        // restricted-клиенты получают отложенные события, а не тихий пропуск.
+        UUID pdUuid = resolveEventPdUuid(processDefinitionId);
+        if (processDefinitionId != null && pdUuid == null) {
+            // fail-closed: same as the live path
+            return;
+        }
         String priorTraceId = org.slf4j.MDC.get(TraceHeaders.MDC_TRACE_ID);
         String priorPi = org.slf4j.MDC.get(TraceHeaders.MDC_PROCESS_INSTANCE_ID);
         if (amqpHeaders != null) {
@@ -733,7 +757,7 @@ public class SseEventStreamService implements SmartLifecycle {
         }
         try {
             envelope.put("feedPosition", cursor);
-            dispatchToClientsTraced(envelope, eventType, processInstanceId, null, cursor);
+            dispatchToClientsTraced(envelope, eventType, processInstanceId, pdUuid, cursor);
             log.info("SSE dispatch: type={}, processInstanceId={}, sequence={}, feedPosition={}",
                 eventType, processInstanceId, sequence, cursor);
         } finally {

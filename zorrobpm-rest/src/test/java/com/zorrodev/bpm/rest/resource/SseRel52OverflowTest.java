@@ -184,18 +184,20 @@ class SseRel52OverflowTest {
 
     /**
      * B2: после reconnect того же клиента полученные id образуют непрерывный
-     * диапазон. Эмуляция reconnect без брокера: второй клиент того же
-     * principal стартует catchup от lastDeliveredCursor первого (ровно то,
-     * что браузер пришлёт как Last-Event-ID), catchup читает окно из
-     * EventQueryService-стаба — дыры нет, потому что первый клиент был ЗАКРЫТ
-     * на границе реально доставленного, а не продолжен с пропуском.
-     *
-     * <p>Инвариант непрерывности: max(lastDelivered_1) + 1 == min(delivered_2)
-     * при том, что catchup-окно покрывает границу. Стаб catchup возвращает
-     * события строго подряд (курсоры lastDelivered+1 … lastDelivered+5) —
-     * тест доказывает, что граница reconnect'а непрерывна (нет дыры между
-     * «последнее доставленное» и «первое после reconnect»), а не содержимое
-     * окна (его покрывают REL-37-тесты).
+     * диапазон. Verifier HOLD-2: первая версия доказывала непрерывность
+     * синтетического окна, сгенерированного самим тестом (тавтология —
+     * зелёная и без фикса). Эта версия привязана к деливераблу тремя
+     * реальными фактами:
+     * (1) первый поток РЕАЛЬНО доставил gapless-префикс 1…5 (живой pump,
+     *     не стаб — курсоры доставленного в точности [1,2,3,4,5]);
+     * (2) флуд 6…2000 закрыл поток по политике переполнения (complete —
+     *     под мутацией POF-3 «старый тихий drop» тест КРАСНЫЙ ровно здесь,
+     *     проверено: 60с тишины вместо закрытия);
+     * (3) reconnect от lastDelivered=5 продолжает строго с 6 — события 6…10
+     *     лежат ВНУТРИ дыры флуда (6…2000 оборваны политикой), т.е. тест
+     *     моделирует заживление реальных пропущенных позиций, а не хвост
+     *     за концом потока. Живой catchup читает то же fp-окно от курсора
+     *     клиента (REL-37) — здесь его эмулирует прямой enqueue тех же seq.
      */
     @Test
     @Timeout(value = 120, unit = TimeUnit.SECONDS)
@@ -206,27 +208,34 @@ class SseRel52OverflowTest {
         svc.drainBufferedClient(clientId, 0L);
 
         String type = "rel52.b2." + UUID.randomUUID();
-        for (long seq = 1; seq <= 2000; seq++) {
+        // Фаза 1: ровно 5 событий при cap 8 — переполнения нет, pump обязан
+        // доставить все (живое доказательство рабочего тракта + границы).
+        for (long seq = 1; seq <= 5; seq++) {
+            svc.onDomainEvent(body(seq, type));
+        }
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+            assertThat(slow.delivered).hasSize(5));
+        List<Long> prefix = slow.delivered.stream()
+            .map(e -> ((Number) e.get("feedPosition")).longValue())
+            .toList();
+        assertThat(prefix)
+            .as("first stream really delivered a gapless prefix before the flood")
+            .containsExactly(1L, 2L, 3L, 4L, 5L);
+        long lastDelivered = slow.lastDeliveredCursor.get();
+        assertThat(lastDelivered).isEqualTo(5L);
+
+        // Фаза 2: флуд 6…2000 — переполнение обязано ЗАКРЫТЬ поток
+        // (мутант POF-3 «тихий drop» краснеет ровно здесь).
+        for (long seq = 6; seq <= 2000; seq++) {
             svc.onDomainEvent(body(seq, type));
         }
         assertThat(slow.completed.await(60, TimeUnit.SECONDS))
-            .as("first stream must close by overflow policy").isTrue();
-        // Доставленное может быть ещё в пути (pump шлёт асинхронно через
-        // send-lane; закрытие по переполнению приходит раньше, чем все
-        // send'ы завершены — P-10: ждём доставку, не читаем сразу).
-        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
-            assertThat(slow.delivered).isNotEmpty());
-        long lastDelivered = slow.lastDeliveredCursor.get();
-        assertThat(lastDelivered).as("something was really delivered before close").isGreaterThanOrEqualTo(0);
-        int firstStreamCount = slow.delivered.size();
+            .as("flood must close the first stream by overflow policy").isTrue();
 
-        // Reconnect: новый клиент того же principal, catchup от lastDelivered.
-        // Последний реально доставленный id — граница catchup (Last-Event-ID).
+        // Фаза 3: reconnect от lastDelivered — продолжение строго с +1.
+        // P-67: конкретное значение курсора, не «непусто».
         SlowEmitter resumed = new SlowEmitter();
         String resumedId = svc.registerBufferedClient(resumed, admin(), null, null, null);
-        // drain с границей = lastDelivered: catchup отдаёт всё строго после.
-        // Эмуляция catchup-окна: напрямую enqueue событий lastDelivered+1…
-        // (живой catchup читает то же fp-окно от курсора клиента — REL-37).
         svc.drainBufferedClient(resumedId, lastDelivered);
         for (long seq = lastDelivered + 1; seq <= lastDelivered + 5; seq++) {
             svc.onDomainEvent(body(seq, type));
@@ -234,20 +243,10 @@ class SseRel52OverflowTest {
         await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
             assertThat(resumed.delivered).hasSize(5));
 
-        // Непрерывность границы: первое после reconnect = lastDelivered + 1.
-        // P-67: конкретное значение курсора, не «непусто».
         long firstResumed = ((Number) resumed.delivered.get(0).get("feedPosition")).longValue();
         assertThat(firstResumed)
             .as("reconnect continues exactly after the last delivered cursor (no hole)")
             .isEqualTo(lastDelivered + 1);
-        // А вся история первого клиента + окно — без дыр внутри первого
-        // клиента тоже: курсоры доставленного строго возрастают на 1
-        // (pump — строго head-first, порядок REL-47).
-        List<Long> cursors = slow.delivered.stream()
-            .map(e -> ((Number) e.get("feedPosition")).longValue())
-            .toList();
-        assertThat(cursors).as("first stream delivered in cursor order").isSorted();
-        assertThat(firstStreamCount).as("first stream cut before the end").isLessThan(2000);
 
         svc.removeClient(clientId);
         svc.removeClient(resumedId);

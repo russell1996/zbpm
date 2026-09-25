@@ -81,6 +81,13 @@ class SseRel52BridgeTest {
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\",\"data\":{}}";
     }
 
+    private static String bodyWithPd(long sequence, String type, UUID pdId) {
+        return "{\"sequence\":" + sequence + ",\"id\":\"" + UUID.randomUUID() + "\","
+            + "\"type\":\"" + type + "\",\"version\":1,\"occurredAt\":\"2026-09-25T00:00:00Z\","
+            + "\"processDefinitionId\":\"" + pdId + "\","
+            + "\"processInstanceId\":\"" + UUID.randomUUID() + "\",\"data\":{}}";
+    }
+
     static class CapturingEmitter extends SseEmitter {
         final List<Map<String, Object>> delivered = new CopyOnWriteArrayList<>();
 
@@ -159,6 +166,58 @@ class SseRel52BridgeTest {
         verify(lookup, times(1)).securityState(userA);
         verify(lookup, times(1)).securityState(userB);
         verify(lookup, times(2)).securityState(org.mockito.ArgumentMatchers.any());
+    }
+
+    /**
+     * Verifier HOLD-1 (WO-REL-52): deferred-путь обязан доставлять
+     * restricted-клиенту так же, как live-путь. Restricted-принципал
+     * (allowedPdIds={P}, не SUPER_ADMIN) + событие с processDefinitionId=P,
+     * чья позиция появляется поздно → рассылка идёт через retry-lane.
+     * Live-эквивалент (позиция сразу) доставляется; deferred обязан тоже.
+     *
+     * <p>POF-мутация: pdUuid=null в dispatchDeferred — этот тест КРАСНЫЙ
+     * (отложенное событие тихо пропускается: effective={P} не содержит null).
+     */
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void deferredDispatch_restrictedClient_receivesLikeLive() {
+        UUID pdId = UUID.randomUUID();
+        lenient().when(eventAuthzResolver.readableRuntimePdIds(any(), any()))
+            .thenReturn(java.util.List.of(pdId));
+        lenient().when(eventQueryService.eventSequenceExists(anyLong())).thenReturn(true);
+        AtomicInteger reads = new AtomicInteger(0);
+        lenient().when(eventQueryService.resolveFeedPositionBySequence(9L))
+            .thenAnswer(inv -> {
+                if (reads.incrementAndGet() >= 6) {
+                    return java.util.Optional.of(9L);
+                }
+                return java.util.Optional.empty();
+            });
+        SseEventStreamService svc = new SseEventStreamService(eventQueryService,
+            eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper(), null, null);
+        services.add(svc);
+        ReflectionTestUtils.setField(svc, "deferredCursorDelayMs", 50L);
+
+        Principal restricted = new Principal.UserPrincipal(UUID.randomUUID(), "op", "USER");
+        CapturingEmitter emitter = new CapturingEmitter();
+        String clientId = svc.registerBufferedClient(emitter, restricted, null, null, null);
+        svc.drainBufferedClient(clientId, 0L);
+
+        String type = "rel52.hold1." + UUID.randomUUID();
+        svc.onDomainEvent(bodyWithPd(9L, type, pdId)); // позиции нет — уходит в defer
+
+        // Отложенная доставка restricted-клиенту (позиция разрешается на
+        // ~6-й попытке ≈ 300мс; окно 10с — без запаса на флейки, P-10).
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+            assertThat(emitter.delivered).hasSize(1));
+        assertThat(((Number) emitter.delivered.get(0).get("feedPosition")).longValue())
+            .as("deferred event delivered with its resolved cursor")
+            .isEqualTo(9L);
+        assertThat(reads.get())
+            .as("delivery really went through the defer cycle, not the first read")
+            .isGreaterThanOrEqualTo(6);
+
+        svc.removeClient(clientId);
     }
 
     /**
