@@ -398,15 +398,69 @@ public class DmnServiceImpl implements DmnService {
         return results;
     }
 
+    /**
+     * WO-ENG-25 (NEW-06): агрегация в {@code BigDecimal}, не в {@code double} —
+     * денежная сумма COLLECT SUM ['0.1','0.2'] даёт 0.3, а не
+     * 0.30000000000000004. Конвертация каждого элемента — через его точное
+     * десятичное представление ({@code Double(0.1).toString() == "0.1"} —
+     * исходный FEEL-литерал), а не binary value. Null-выходы правил
+     * пропускаются: агрегат пустого множества — null (DMN-семантика), а не 0
+     * (старый практически недостижимый {@code orElse(0)} маскировал реальный
+     * null-кейс). COUNT — число всех строк (прежняя семантика, целочисленно —
+     * хранится LONG тем же путём, что раньше через double). Неизвестная
+     * aggregation — {@code EngineException} (паттерн WO-ENG-22 для hitPolicy),
+     * не молчаливый список. Non-Number в агрегате — {@code EngineException},
+     * не {@code ClassCastException}.
+     */
     private Object aggregate(List<Object> results, String aggregation, String decisionId) {
-        if (results.isEmpty()) return null;
-        return switch (aggregation) {
-            case "SUM" -> results.stream().mapToDouble(r -> ((Number) r).doubleValue()).sum();
-            case "MIN" -> results.stream().mapToDouble(r -> ((Number) r).doubleValue()).min().orElse(0);
-            case "MAX" -> results.stream().mapToDouble(r -> ((Number) r).doubleValue()).max().orElse(0);
-            case "COUNT" -> (double) results.size();
-            default -> results; // unknown aggregation → return list
-        };
+        if (results.isEmpty()) {
+            return null;
+        }
+        switch (aggregation) {
+            case "SUM", "MIN", "MAX" -> {
+                List<java.math.BigDecimal> numbers = nonNullNumbers(results, aggregation, decisionId);
+                if (numbers.isEmpty()) {
+                    return null;
+                }
+                return switch (aggregation) {
+                    case "SUM" -> numbers.stream().reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
+                    case "MIN" -> numbers.stream().min(java.math.BigDecimal::compareTo).orElseThrow();
+                    default -> numbers.stream().max(java.math.BigDecimal::compareTo).orElseThrow();
+                };
+            }
+            case "COUNT" -> {
+                return (long) results.size();
+            }
+            default -> throw new EngineException("DMN decision '" + decisionId
+                + "' has unknown aggregation '" + aggregation + "' — expected one of SUM, MIN, MAX, COUNT");
+        }
+    }
+
+    private List<java.math.BigDecimal> nonNullNumbers(List<Object> results, String aggregation, String decisionId) {
+        List<java.math.BigDecimal> numbers = new ArrayList<>(results.size());
+        for (Object r : results) {
+            if (r == null) {
+                continue;
+            }
+            numbers.add(toBigDecimal(r, aggregation, decisionId));
+        }
+        return numbers;
+    }
+
+    private java.math.BigDecimal toBigDecimal(Object r, String aggregation, String decisionId) {
+        if (r instanceof java.math.BigDecimal bd) {
+            return bd;
+        }
+        if (r instanceof Number n) {
+            try {
+                return new java.math.BigDecimal(n.toString());
+            } catch (NumberFormatException e) {
+                throw new EngineException("DMN decision '" + decisionId + "' aggregation " + aggregation
+                    + ": value " + n + " is not a finite decimal number", e);
+            }
+        }
+        throw new EngineException("DMN decision '" + decisionId + "' aggregation " + aggregation
+            + ": expected a number but got " + r.getClass().getName());
     }
 
     private Object evaluateRuleOrder(List<DmnRuleModel> rules, DmnDecisionTableModel table, Map<String, Object> vars, String decisionId) {
