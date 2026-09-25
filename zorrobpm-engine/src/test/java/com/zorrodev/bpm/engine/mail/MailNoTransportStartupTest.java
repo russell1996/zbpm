@@ -21,6 +21,11 @@ import org.springframework.mail.javamail.JavaMailSender;
         "zorrobpm.security.default-admin-password=startup-test-strong-admin-password",
         // WO-SEC-80: no-profile startup also rejects default DB/Rabbit passwords —
         // production-like boot needs strong ones, same discipline as above.
+        // Isolated H2 (NOT the shared `mem:test`): the password below is only
+        // accepted by H2 on a fresh database — on the shared one it fails with
+        // "Wrong user name or password" (sa/empty is that DB's credential).
+        "spring.datasource.url=jdbc:h2:mem:mail-no-transport",
+        "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.password=startup-test-strong-db-password",
         "spring.rabbitmq.password=startup-test-strong-rabbit-password"
     })
