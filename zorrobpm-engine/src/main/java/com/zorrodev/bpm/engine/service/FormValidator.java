@@ -38,15 +38,25 @@ public class FormValidator {
      * WO-SEC-75 (N11): wall-clock fuse for a single pattern match. Length caps
      * alone do not stop ReDoS: short patterns with nested ambiguous
      * quantifiers (e.g. {@code ^((a+)*)+$} — 10 chars) fit the caps freely and
-     * backtrack exponentially on the calling thread. The static
-     * {@link #isDangerousPattern} reject below stops the known shapes without
-     * running the engine at all; this fuse is the second layer for shapes the
-     * static check does not know yet. 500ms is orders of magnitude above a
-     * legitimate form-js format match (microseconds — the formats are short
-     * anchored expressions over values of a few KB at most) and far below a
-     * request-hang. The match runs on a bounded worker pool (daemon threads,
-     * never the request thread), so a pathological pattern burns one pooled
-     * slot for half a second instead of hanging the caller forever.
+     * backtrack exponentially on the calling thread.
+     *
+     * <p>WO-SEC-78 (NEW-08): the fuse worker is genuinely interruptible. The
+     * previous design ({@code future.cancel(true)}) never stopped the match:
+     * {@code java.util.regex} does not honour the interrupt flag, so the pooled
+     * thread kept burning 100% CPU indefinitely after the caller had already
+     * received "timeout" — 32 such requests pinned 32 cores until JVM restart.
+     * Now the matcher runs over a {@link DeadlineCharSequence} whose
+     * {@code charAt} throws once the deadline passes, which unwinds the
+     * backtracking engine from the inside within milliseconds of the fuse.
+     * The static {@link #isDangerousPattern} shape check is NOT consulted here
+     * anymore (it produced false positives on everyday email/phone/FIO formats
+     * and silently rejected legitimate values); it survives only as a
+     * deploy-time advisory (see {@link #findRiskyPatterns}).
+     *
+     * <p>500ms is orders of magnitude above a legitimate form-js format match
+     * (microseconds — the formats are short anchored expressions over values
+     * of a few KB at most) and far below a request-hang. The match runs on a
+     * bounded worker pool (daemon threads, never the request thread).
      */
     static final long PATTERN_MATCH_TIMEOUT_MS = 500;
     /**
@@ -72,21 +82,13 @@ public class FormValidator {
             new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
 
     /**
-     * WO-SEC-75 (N11): static reject of regex shapes known to backtrack
-     * catastrophically — checked BEFORE the engine ever runs, so these
-     * patterns cost microseconds, not a fuse timeout. Rejects:
-     * <ul>
-     *   <li>nested ambiguous quantifiers — a quantified group
-     *   ({@code (...)}, {@code [...]}) whose body contains an inner
-     *   quantifier AND which is itself quantified from the outside
-     *   ({@code (a+)+}, {@code (a*)*}, {@code ([a-z]+)+});</li>
-     *   <li>backreferences ({@code \1}) — force re-matching of captured
-     *   groups and defeat the engine's linear fast paths.</li>
-     * </ul>
-     * Legitimate form-js formats (email/phone/zip/code, alternations like
-     * {@code ^(red|green|blue)$}, bounded repetitions like {@code \d{5}})
-     * contain neither shape and pass through untouched. Fail-closed like the
-     * rest of this class: a rejected pattern means "value does not match".
+     * WO-SEC-75 (N11): static shape check, kept in WO-SEC-78 ONLY as a
+     * deploy-time advisory (see {@link #findRiskyPatterns}) — it is no longer
+     * consulted on the submit path (see the fuse javadoc above for why).
+     * Detects nested ambiguous quantifiers and backreferences, as before.
+     * Known limitation, accepted by WO-SEC-78: flags some everyday formats
+     * (email/phone/FIO shapes) — harmless as a warning the form author reads
+     * at deploy time, unacceptable as a silent runtime rejection.
      */
     static boolean isDangerousPattern(String pattern) {
         return hasBackreference(pattern) || hasNestedQuantifier(pattern);
@@ -221,6 +223,108 @@ public class FormValidator {
             return after.isEmpty() || Integer.parseInt(after) > 1;
         }
         return false;
+    }
+
+    /**
+     * WO-SEC-78 (NEW-08): unchecked abort thrown by
+     * {@link DeadlineCharSequence} past the match deadline. Unchecked because
+     * {@link CharSequence#charAt} cannot throw checked exceptions; caught
+     * inside the fuse worker and converted to fail-closed {@code false}.
+     */
+    static final class RegexTimeoutException extends RuntimeException {
+        RegexTimeoutException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * WO-SEC-78 (NEW-08): a {@link CharSequence} view that aborts regex
+     * backtracking from the inside. {@code java.util.regex} never checks the
+     * thread interrupt flag, so {@code Future.cancel(true)} cannot stop a
+     * pathological match — but the engine reads every input character through
+     * {@code charAt}, and throwing there unwinds the matcher promptly. The
+     * deadline is compared against {@link System#nanoTime} (monotonic,
+     * immune to wall-clock steps).
+     */
+    static final class DeadlineCharSequence implements CharSequence {
+        private final String delegate;
+        private final long deadlineNanos;
+
+        DeadlineCharSequence(String delegate, long deadlineNanos) {
+            this.delegate = delegate;
+            this.deadlineNanos = deadlineNanos;
+        }
+
+        private void checkDeadline() {
+            if (System.nanoTime() > deadlineNanos) {
+                throw new RegexTimeoutException(
+                    "form pattern match exceeded its time budget");
+            }
+        }
+
+        @Override
+        public int length() {
+            return delegate.length();
+        }
+
+        @Override
+        public char charAt(int index) {
+            checkDeadline();
+            return delegate.charAt(index);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            checkDeadline();
+            return new DeadlineCharSequence(delegate.substring(start, end), deadlineNanos);
+        }
+
+        @Override
+        public String toString() {
+            return delegate;
+        }
+    }
+
+    /**
+     * WO-SEC-78 (NEW-08): deploy-time advisory over a form-js schema — collects
+     * the {@code validate.pattern} strings that {@link #isDangerousPattern}
+     * flags, so the deploy path can warn the form author. Advisory ONLY: the
+     * caller deploys regardless; runtime safety is the interruptible fuse in
+     * {@link #matchesPattern}, not this list. Unparseable schemas yield an
+     * empty list (deploy validates JSON separately and must never break on
+     * an advisory scan).
+     */
+    static List<String> findRiskyPatterns(String schemaJson, ObjectMapper mapper) {
+        List<String> risky = new ArrayList<>();
+        if (schemaJson == null || schemaJson.isBlank()) return risky;
+        try {
+            Object parsed = mapper.readValue(schemaJson, Object.class);
+            collectRiskyPatterns(parsed, risky);
+        } catch (Exception e) {
+            log.debug("ReDoS advisory scan skipped, schema not parseable: {}", e.getMessage());
+        }
+        return risky;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void collectRiskyPatterns(Object node, List<String> risky) {
+        if (node instanceof Map<?, ?> map) {
+            Object components = map.get("components");
+            if (components instanceof List<?> list) {
+                for (Object child : list) collectRiskyPatterns(child, risky);
+            }
+            Object validate = map.get("validate");
+            if (validate instanceof Map<?, ?> validateMap) {
+                Object pattern = validateMap.get("pattern");
+                if (pattern instanceof String patternStr
+                        && !patternStr.isBlank()
+                        && isDangerousPattern(patternStr)) {
+                    risky.add(patternStr);
+                }
+            }
+        } else if (node instanceof List<?> list) {
+            for (Object child : list) collectRiskyPatterns(child, risky);
+        }
     }
 
     private final ObjectMapper objectMapper;
@@ -358,6 +462,12 @@ public class FormValidator {
      * catastrophic backtracking невозможен конструктивно (движок не запускается).
      * Легитимные form-js patterns (email/phone/zip/code) — десятки символов;
      * значения — единицы KB максимум.
+     *
+     * <p>WO-SEC-78 (NEW-08): матч исполняется поверх {@link DeadlineCharSequence}
+     * с дедлайном {@link #PATTERN_MATCH_TIMEOUT_MS} — патологический backtracking
+     * абортится изнутри движка за миллисекунды после дедлайна, pooled-поток
+     * освобождается (CPU возвращается к 0) вместо вечного прожига ядра после
+     * {@code future.cancel(true)}, который {@code java.util.regex} игнорирует.
      */
     private boolean matchesPattern(String pattern, String value) {
         if (pattern.length() > MAX_PATTERN_LENGTH || value.length() > MAX_PATTERN_VALUE_LENGTH) {
@@ -365,18 +475,23 @@ public class FormValidator {
                 pattern.length(), value.length());
             return false;
         }
-        // WO-SEC-75 (N11) layer 1: known catastrophic shapes never reach the
-        // engine — microseconds, fail-closed, no thread burned at all.
-        if (isDangerousPattern(pattern)) {
-            log.warn("Form pattern rejected as ReDoS-dangerous without execution: patternLen={}",
-                pattern.length());
-            return false;
-        }
-        // WO-SEC-75 (N11) layer 2: wall-clock fuse for shapes the static check
-        // does not know yet. The match runs on a bounded worker pool, never on
-        // the calling (request) thread; on timeout the value is invalid.
+        // WO-SEC-78 (NEW-08): no static isDangerousPattern gate here anymore —
+        // it false-positived on everyday email/phone/FIO formats. Every shape,
+        // known or unknown, takes the same interruptible path below.
+        long deadlineNanos = System.nanoTime()
+            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(PATTERN_MATCH_TIMEOUT_MS);
         java.util.concurrent.Future<Boolean> future =
-            PATTERN_MATCH_POOL.submit(() -> Pattern.compile(pattern).matcher(value).find());
+            PATTERN_MATCH_POOL.submit(() -> {
+                try {
+                    return Pattern.compile(pattern)
+                        .matcher(new DeadlineCharSequence(value, deadlineNanos))
+                        .find();
+                } catch (RegexTimeoutException e) {
+                    log.warn("Form pattern match exceeded {}ms, rejected: patternLen={}, valueLen={}",
+                        PATTERN_MATCH_TIMEOUT_MS, pattern.length(), value.length());
+                    return false;
+                }
+            });
         try {
             return future.get(PATTERN_MATCH_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.TimeoutException e) {

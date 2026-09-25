@@ -450,4 +450,35 @@ class FormResourceIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isNotFound());
     }
+
+    // --- WO-SEC-78: ReDoS shape check is a deploy-time WARNING, not a gate ---
+
+    @Test
+    void sec78_deployFormWithRiskyPattern_warnsButSucceeds() throws Exception {
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                com.zorrodev.bpm.engine.service.FormDeploymentService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            String key = "sec78-form-" + UUID.randomUUID().toString().substring(0, 8);
+            String schema = "{\"type\":\"form\",\"components\":["
+                + "{\"type\":\"textfield\",\"key\":\"code\","
+                + "\"validate\":{\"pattern\":\"^((a+)*)+$\"}}]}";
+            // The catastrophic shape deploys fine (warning, not rejection)...
+            mockMvc.perform(post("/forms")
+                            .header("Authorization", "Bearer " + adminToken)
+                            .content(mapper.writeValueAsString(deployForm(key, schema)))
+                            .contentType(MediaType.APPLICATION_JSON))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.key").value(key));
+            // ...but the form author is warned in the log.
+            assertThat(appender.list)
+                .anyMatch(e -> e.getFormattedMessage().contains("ReDoS-dangerous"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
 }
