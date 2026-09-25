@@ -162,7 +162,7 @@
   "noServiceTasksInInstance": "Қызметтік тапсырмалар жоқ",
   "noInstancesFound": "Үлгілер табылмады",
   "filterByDefId": "Схема ID бойынша сүзу...",
-  "filterByKey": "Процесс кілті бойынша іздеу...",
+  "filterByProcess": "Процесс бойынша сүзу...",
   "elementDetails": "Элемент мәліметтері",
   "startProcessInstance": "Процес үлгісін бастау",
   "processContext": "Процес контексті",

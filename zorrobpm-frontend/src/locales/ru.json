@@ -162,7 +162,7 @@
   "noServiceTasksInInstance": "Нет сервисных задач",
   "noInstancesFound": "Экземпляры не найдены",
   "filterByDefId": "Фильтр по ID схемы...",
-  "filterByKey": "Поиск по ключу процесса...",
+  "filterByProcess": "Фильтр по процессу...",
   "elementDetails": "Детали элемента",
   "startProcessInstance": "Запуск процесса",
   "processContext": "Контекст процесса",
