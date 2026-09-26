@@ -44,6 +44,19 @@ class AdminPasswordValidatorTest {
     }
 
     /**
+     * WO-QW-4 (NEW-16a): длинные шаблонные пароли (≥12, проходят length-check)
+     * отклоняются blocklist'ом. RED: до фикса — false (проходили).
+     */
+    @Test
+    void isWeak_longPatternedPasswords_returnsTrue() {
+        assertThat(AdminPasswordValidator.isWeak("passwordpassword")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("qwertyqwerty")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("welcome123456")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("PASSWORDPASSWORD")).isTrue();
+        assertThat(AdminPasswordValidator.isWeak("MyStr0ng!P@ssw0rd")).isFalse();
+    }
+
+    /**
      * WO-QW-5 (NEW-16a): `Password123!` и leetspeak-варианты отклоняются —
      * нормализация (регистр + substitutions + strip шума) сводит их к
      * блоклист-шаблонам. POF-мутация: прямая `contains(lower)` без
