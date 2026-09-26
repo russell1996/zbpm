@@ -183,6 +183,7 @@ onMounted(async () => {
 
       <div v-if="!store.currentTask.completedAt" class="flex justify-end">
         <button
+          data-testid="task-complete-btn"
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
           @click="complete"
         >
