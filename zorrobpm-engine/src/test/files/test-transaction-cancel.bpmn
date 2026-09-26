@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_tx" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-transaction-cancel" name="test-transaction-cancel" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="tx" />
+
+    <bpmn:transaction id="tx" name="tx">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="txStart" name="txStart">
+        <bpmn:outgoing>tf1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="tf1" name="tf1" sourceRef="txStart" targetRef="txTask" />
+      <bpmn:scriptTask id="txTask" name="txTask" scriptFormat="feel" resultVariable="log">
+        <bpmn:incoming>tf1</bpmn:incoming>
+        <bpmn:outgoing>tf2</bpmn:outgoing>
+        <bpmn:script>log + 1</bpmn:script>
+      </bpmn:scriptTask>
+      <bpmn:sequenceFlow id="tf2" name="tf2" sourceRef="txTask" targetRef="cancelEnd" />
+      <bpmn:endEvent id="cancelEnd" name="cancelEnd">
+        <bpmn:incoming>tf2</bpmn:incoming>
+        <bpmn:cancelEventDefinition id="cad1" />
+      </bpmn:endEvent>
+    </bpmn:transaction>
+
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="tx" targetRef="normalEnd" />
+    <bpmn:endEvent id="normalEnd" name="normalEnd">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:boundaryEvent id="bTx" name="bTx" attachedToRef="txTask">
+      <bpmn:compensateEventDefinition id="ced1" />
+    </bpmn:boundaryEvent>
+    <bpmn:association id="assocTx" sourceRef="bTx" targetRef="txHandler" />
+    <bpmn:scriptTask id="txHandler" name="txHandler" scriptFormat="feel" resultVariable="log" isForCompensation="true">
+      <bpmn:script>log + 100</bpmn:script>
+    </bpmn:scriptTask>
+
+    <bpmn:boundaryEvent id="cb" name="cb" attachedToRef="tx">
+      <bpmn:outgoing>fc1</bpmn:outgoing>
+      <bpmn:cancelEventDefinition id="cad2" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fc1" name="fc1" sourceRef="cb" targetRef="afterCancel" />
+    <bpmn:scriptTask id="afterCancel" name="afterCancel" scriptFormat="feel" resultVariable="log">
+      <bpmn:incoming>fc1</bpmn:incoming>
+      <bpmn:outgoing>fc2</bpmn:outgoing>
+      <bpmn:script>log + 1000</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="fc2" name="fc2" sourceRef="afterCancel" targetRef="endCancel" />
+    <bpmn:endEvent id="endCancel" name="endCancel">
+      <bpmn:incoming>fc2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

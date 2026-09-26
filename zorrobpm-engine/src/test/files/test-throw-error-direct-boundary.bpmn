@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_throw_direct" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-DIFF-5: S-046-style topology — an error boundary attached DIRECTLY to the throwing
+       service task (guarded), in parallel with a sibling (work) via an implicit fork.
+       Without the ErrorEscalationThrower self-check the boundary on the throwing task is
+       never examined (the task reuses its incoming token, the walk starts at the parent
+       scope) and the throw escapes unhandled. -->
+  <bpmn:error id="throwErr" name="Throw Error" errorCode="E-THROW" />
+  <bpmn:process id="test-throw-error-direct-boundary" name="test-throw-error-direct-boundary" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>fStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="fStart" name="fStart" sourceRef="startEvent" targetRef="forkTask" />
+    <bpmn:serviceTask id="forkTask" name="forkTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="forkTask" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fStart</bpmn:incoming>
+      <bpmn:outgoing>fToWork</bpmn:outgoing>
+      <bpmn:outgoing>fToGuarded</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fToWork" name="fToWork" sourceRef="forkTask" targetRef="work" />
+    <bpmn:sequenceFlow id="fToGuarded" name="fToGuarded" sourceRef="forkTask" targetRef="guarded" />
+    <bpmn:serviceTask id="work" name="work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="work" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fToWork</bpmn:incoming>
+      <bpmn:outgoing>fWorkEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fWorkEnd" name="fWorkEnd" sourceRef="work" targetRef="endWork" />
+    <bpmn:endEvent id="endWork" name="endWork">
+      <bpmn:incoming>fWorkEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="guarded" name="guarded">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="guarded" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fToGuarded</bpmn:incoming>
+      <bpmn:outgoing>fGuardedEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fGuardedEnd" name="fGuardedEnd" sourceRef="guarded" targetRef="endGuarded" />
+    <bpmn:endEvent id="endGuarded" name="endGuarded">
+      <bpmn:incoming>fGuardedEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:boundaryEvent id="errBoundary" name="errBoundary" attachedToRef="guarded" cancelActivity="true">
+      <bpmn:outgoing>fEscape</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ed1" errorRef="throwErr" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fEscape" name="fEscape" sourceRef="errBoundary" targetRef="escapeEnd" />
+    <bpmn:endEvent id="escapeEnd" name="escapeEnd">
+      <bpmn:incoming>fEscape</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

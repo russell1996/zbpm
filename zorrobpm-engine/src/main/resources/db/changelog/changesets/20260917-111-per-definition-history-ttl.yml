@@ -1,0 +1,26 @@
+databaseChangeLog:
+  - logicalFilePath: 20260917-111
+  - changeSet:
+      id: 20260917-111
+      author: zorrodev
+      comment: "WO-ENG-17: Camunda-style historyTimeToLive на определении процесса — nullable INTEGER на process_definitions (NULL = наследовать глобальный TTL). Чистый additive-expand: существующие строки получают NULL, старый код колонку не читает — окна несовместимости нет."
+      changes:
+        - addColumn:
+            tableName: process_definitions
+            columns:
+              - column:
+                  name: history_time_to_live_days
+                  type: int
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON COLUMN process_definitions.history_time_to_live_days IS 'TTL истории в днях на определении процесса (WO-ENG-17, Camunda-style historyTimeToLive): NULL — наследовать глобальный zorrobpm.engine.retention.ttl-days; значение — срок чистки завершённых инстансов этого определения';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON COLUMN process_definitions.history_time_to_live_days IS 'TTL истории в днях на определении процесса (WO-ENG-17, Camunda-style historyTimeToLive): NULL — наследовать глобальный zorrobpm.engine.retention.ttl-days; значение — срок чистки завершённых инстансов этого определения';
+      rollback:
+        # WO-OPS-15: COMMENT dies with the dropped column.
+        - dropColumn:
+            tableName: process_definitions
+            columnName: history_time_to_live_days

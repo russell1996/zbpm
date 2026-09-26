@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-090
+  - changeSet:
+      id: 20260905-090
+      author: zorrodev
+      changes:
+        # WO-C8-22: zeebe:formDefinition/@formId — ключ адресации связанных (linked) форм.
+        # Nullable: форма резолвится по form_id, только если он известен при выкладке ресурса;
+        # старые строки и формы без id резолвятся по formKey как раньше.
+        - addColumn:
+            tableName: form
+            columns:
+              - column:
+                  name: form_id
+                  type: varchar(255)
+                  remarks: 'ID связанной формы Modeler (WO-C8-22); null — резолв по formKey'

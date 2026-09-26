@@ -1,0 +1,58 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/zorrobpm-db}
+    username: ${DB_USERNAME:zorrodev}
+    password: ${DB_PASSWORD:zorrodev}
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    username: ${RABBITMQ_USERNAME:zorrodev}
+    password: ${RABBITMQ_PASSWORD:zorrodev}
+    port: ${RABBITMQ_PORT:5672}
+
+zorrobpm:
+  security:
+    jwt-secret: ${ZORROBPM_JWT_SECRET:change-me-dev-secret-please-override-in-production}
+    # WO-SEC-57: CSV of previously active JWT secrets, accepted for VERIFICATION ONLY (key rotation).
+    # Empty by default = single-key mode, exactly as before. Format: comma-separated secrets.
+    jwt-legacy-secrets: ${ZORROBPM_JWT_LEGACY_SECRETS:}
+    default-admin-password: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:admin}
+    force-password-enforce: true
+    rate-limit:
+      enabled: ${ZORROBPM_RATE_LIMIT_ENABLED:true}
+      capacity: ${ZORROBPM_RATE_LIMIT_CAPACITY:5}
+      window-seconds: ${ZORROBPM_RATE_LIMIT_WINDOW:60}
+  cors:
+    allowed-origins: ${ZORROBPM_CORS_ORIGINS:http://localhost:5173}
+
+app:
+  filesDir: ${APP_FILES_DIR:/var/lib/zorrobpm/files}
+
+# WO-OBS-1 (G-C approved): mirror of application.properties — authenticated scrape only.
+# WO-OPS-18 (G-C approved 2026-09-24): split liveness vs readiness. liveness = "process
+# alive, not wedged" (only the livenessState indicator — never Rabbit/DB). readiness =
+# "ready to take traffic" (readinessState + db/rabbit/diskSpace, named EXPLICITLY:
+# on Boot 4 the readiness group contains ONLY readinessState by default — without this
+# include a dead broker leaves readiness UP and the split is a fiction; verified live
+# in HealthProbesGroupsIT).
+# JwtAuthFilter.isPublicPath (startsWith "/actuator/health") already covers the new
+# sub-paths — no filter change. The aggregate /actuator/health stays (deploy health-gate
+# in .gitlab-ci.yml greps '"status":"UP"' there); its status only gets stricter
+# (UP = all groups UP), which is the desired gate behaviour, not a break.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,rabbit,diskSpace
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true

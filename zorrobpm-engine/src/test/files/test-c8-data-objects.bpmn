@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8data" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-data-objects" name="c8-data-objects" isExecutable="true">
+    <bpmn:dataObjectReference id="dor1" name="order" dataObjectRef="do1" />
+    <bpmn:dataObject id="do1" name="order" />
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="double" />
+    <bpmn:scriptTask id="double" name="double" scriptFormat="feel" resultVariable="doubled">
+      <bpmn:script>amount * 2</bpmn:script>
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+      <bpmn:dataInputAssociation id="dia1">
+        <bpmn:sourceRef>dor1</bpmn:sourceRef>
+        <bpmn:targetRef>double</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="double" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

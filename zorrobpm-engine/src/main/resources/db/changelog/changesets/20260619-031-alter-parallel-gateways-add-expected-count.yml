@@ -1,0 +1,15 @@
+databaseChangeLog:
+  - logicalFilePath: 20260619-031
+  - changeSet:
+      id: 20260619-031
+      author: zorrodev
+      changes:
+        # Reused for inclusive-gateway joins: an inclusive split records, on a marker row
+        # (entered_flow_id NULL), how many branches it activated so the join knows how many
+        # arrivals to wait for.
+        - addColumn:
+            tableName: parallel_gateways
+            columns:
+              - column:
+                  name: expected_count
+                  type: int

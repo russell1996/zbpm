@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_c8drgc" name="c8drg-cycle" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="cycA" name="A">
+    <informationRequirement id="InfoReq_c1">
+      <requiredDecision href="#cycB" />
+    </informationRequirement>
+    <decisionTable id="DecisionTable_cycA" hitPolicy="FIRST">
+      <input id="Input_cycA" label="X">
+        <inputExpression id="InputExpression_cycA" typeRef="number" expressionLanguage="feel">
+          <text>x</text>
+        </inputExpression>
+      </input>
+      <output id="Output_cycA" label="A" name="a" typeRef="number" />
+      <rule id="Rule_cycA_any">
+        <inputEntry id="In_cycA_any"><text>-</text></inputEntry>
+        <outputEntry id="Out_cycA_any"><text>1</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <decision id="cycB" name="B">
+    <informationRequirement id="InfoReq_c2">
+      <requiredDecision href="#cycA" />
+    </informationRequirement>
+    <decisionTable id="DecisionTable_cycB" hitPolicy="FIRST">
+      <input id="Input_cycB" label="X">
+        <inputExpression id="InputExpression_cycB" typeRef="number" expressionLanguage="feel">
+          <text>x</text>
+        </inputExpression>
+      </input>
+      <output id="Output_cycB" label="B" name="b" typeRef="number" />
+      <rule id="Rule_cycB_any">
+        <inputEntry id="In_cycB_any"><text>-</text></inputEntry>
+        <outputEntry id="Out_cycB_any"><text>2</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

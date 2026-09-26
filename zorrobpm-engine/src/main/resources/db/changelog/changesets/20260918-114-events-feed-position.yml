@@ -1,0 +1,75 @@
+databaseChangeLog:
+  - logicalFilePath: 20260918-114
+  - changeSet:
+      id: 20260918-114
+      author: zorrodev
+      comment: >-
+        WO-REL-38 (F15): commit-ordered позиция ленты событий. IDENTITY-sequence
+        назначается при INSERT, а не в порядке коммитов: клиент с курсором мог
+        навсегда пропустить событие задержанной транзакции. Новая nullable
+        колонка feed_position — её присваивает одиночный джоб только уже
+        закоммиченным строкам (watermark через pg_snapshot_xmin), consumer
+        читает ЭТУ позицию, а не raw identity. Чистый additive-expand:
+        nullable, старый код колонку не читает — окна несовместимости при
+        rolling-deploy нет, HALT-precondition не нужен.
+      changes:
+        - addColumn:
+            tableName: events
+            columns:
+              - column:
+                  name: feed_position
+                  type: bigint
+                  remarks: 'Commit-ordered позиция события в ленте (WO-REL-38): присваивает FeedPositionAssigner только завершённым транзакциям; NULL — позиция ещё не назначена (строка невидима consumer-курсору)'
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON COLUMN events.feed_position IS 'Commit-ordered позиция события в ленте (WO-REL-38): присваивает FeedPositionAssigner только завершённым транзакциям; NULL — позиция ещё не назначена (строка невидима consumer-курсору)';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON COLUMN events.feed_position IS 'Commit-ordered позиция события в ленте (WO-REL-38): присваивает FeedPositionAssigner только завершённым транзакциям; NULL — позиция ещё не назначена (строка невидима consumer-курсору)';
+      rollback:
+        - dropColumn:
+            tableName: events
+            columnName: feed_position
+
+  - changeSet:
+      id: 20260918-114-feed-position-unique-pg
+      author: zorrodev
+      dbms: postgresql
+      comment: >-
+        WO-REL-38: частичный уникальный индекс — feed_position уникальна там,
+        где назначена; NULL-строки (ожидающие джоба) под индекс не попадают.
+        PostgreSQL-only: H2 не умеет WHERE в CREATE INDEX (тот же сплит, что
+        20260819-074).
+      changes:
+        - sql:
+            sql: >-
+              CREATE UNIQUE INDEX uq_events__feed_position
+              ON events (feed_position)
+              WHERE feed_position IS NOT NULL
+      rollback:
+        - sql:
+            sql: DROP INDEX IF EXISTS uq_events__feed_position
+
+  - changeSet:
+      id: 20260918-114-feed-position-unique-h2
+      author: zorrodev
+      dbms: h2
+      comment: >-
+        WO-REL-38: тестовый профиль. H2 не выражает частичный предикат, но
+        обычный unique-индекс даёт ту же семантику (H2 считает NULL различными,
+        дубли NULL разрешены); настоящая гарантия проверяется на PostgreSQL
+        (FeedPositionReversedCommitPgIT, job test:pg).
+      changes:
+        - createIndex:
+            tableName: events
+            indexName: uq_events__feed_position
+            unique: true
+            columns:
+              - column:
+                  name: feed_position
+      rollback:
+        - dropIndex:
+            tableName: events
+            indexName: uq_events__feed_position

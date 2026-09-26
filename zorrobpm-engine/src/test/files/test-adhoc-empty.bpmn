@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_adhoc_empty" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-adhoc-empty" name="test-adhoc-empty" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="adhoc" />
+
+    <bpmn:adHocSubProcess id="adhoc" name="adhoc">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:adHoc activeElementsCollection="=[]" />
+      </bpmn:extensionElements>
+      <bpmn:userTask id="taskF1" name="taskF1" />
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="f4" name="f4" sourceRef="adhoc" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f4</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

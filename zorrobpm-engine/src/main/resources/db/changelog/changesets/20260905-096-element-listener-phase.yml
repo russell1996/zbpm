@@ -1,0 +1,57 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-096
+  - changeSet:
+      id: 20260905-096
+      author: zorrodev
+      changes:
+        # WO-C8-25: фаза start-listener'ов шлюзов/событий — СВОЯ таблица (строку активности
+        # заранее создавать нельзя: это повторило бы дефект раунда 1 C8-21). id строки
+        # служит serviceTaskId listener-job'ов (маршрутизация завершений без активности).
+        - createTable:
+            tableName: element_listener_phase
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  remarks: 'PK = carrier id listener-job (WO-C8-25)'
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: process_instance_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: token_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: bpmn_element_id
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: phase
+                  type: varchar(32)
+                  constraints:
+                    nullable: false
+                  remarks: 'Вид фазы (WO-C8-25: только start)'
+              - column:
+                  name: listener_index
+                  type: integer
+                  remarks: 'Индекс летящего listener (WO-C8-25); null — фазы нет'
+              - column:
+                  name: retries_remaining
+                  type: integer
+                  remarks: 'Остаток ретраев текущего listener-job (WO-C8-25)'
+              - column:
+                  name: created_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            tableName: element_listener_phase
+            columnNames: process_instance_id, token_id, bpmn_element_id
+            constraintName: uq_element_listener_phase_token_element

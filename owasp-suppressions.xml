@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <!--
+        WO-SEC-36: spring-core CVE suppressions removed.
+        Spring Framework upgraded to 7.0.8 which patches CVE-2026-41855 (CVSS 9.8)
+        and companion CVEs (CVE-2026-41838/41842/41848/41850/41851).
+        See pom.xml <spring-framework.version>7.0.8</spring-framework.version>.
+        Re-opened suppressions are intentional — no GA fix yet as of 2026-07.
+    -->
+    <suppress>
+        <!--
+            WO-SEC-42: CVE-2026-66299 (CVSS 7.5) — Uncontrolled Resource Consumption in Apache
+            Tomcat's bundled WebSocket CHAT EXAMPLE webapp (webapps/examples/websocket/chat),
+            not in the servlet/websocket engine itself. Per the NVD advisory: "Users who have
+            followed the security guidance to remove the examples web application are not
+            affected by this issue." Spring Boot's embedded Tomcat (tomcat-embed-core /
+            tomcat-embed-websocket) never deploys the examples webapp — that only exists in a
+            standalone Tomcat distribution. Verified: no reference to tomcat-embed-examples,
+            ChatServlet, or examples.war anywhere in this codebase.
+            No upstream fix yet: 11.0.24 is the latest 11.0.x tomcat-embed-core on Maven Central
+            as of 2026-08-06 (11.0.25 "when released" per the advisory). Re-open and upgrade the
+            moment 11.0.25+ is published.
+        -->
+        <notes>Not applicable — vulnerable component (bundled WebSocket example webapp) is never
+        deployed by Spring Boot's embedded Tomcat; no fixed version exists yet.</notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.tomcat\.embed/tomcat\-embed.*@.*$</packageUrl>
+        <cve>CVE-2026-66299</cve>
+    </suppress>
+</suppressions>

@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260914-107
+  - changeSet:
+      id: 20260914-107
+      author: zorrodev
+      comment: 'WO-SEC-63: версия JWT access-токена на ui_users. Инкрементируется при logout/смене пароля; JwtAuthFilter сверяет claim токена с текущим значением: расхождение = невалиден. Новые пользователи получают версию 0; дефолт 0 в Java + DB DEFAULT совпадают: существующие аккаунты остаются работоспособными, старт приложения без миграции (H2) тоже.'
+      changes:
+        - addColumn:
+            tableName: ui_users
+            columns:
+              - column:
+                  name: token_version
+                  type: int
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+                  remarks: 'Версия JWT access-токена; инкрементируется при logout и смене пароля для немедленной инвалидации старых токенов'

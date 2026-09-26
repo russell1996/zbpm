@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.45.0" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.8.0">
+  <bpmn:process id="controlProcess" name="Процесс контроля поручений" isExecutable="true">
+    <bpmn:startEvent id="startControlProcess" name="Начало">
+      <bpmn:outgoing>flowCreateTaskProcess</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="srvCreateTask" name="Создание поручения">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvCreateTaskProcess" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowCreateTaskProcess</bpmn:incoming>
+      <bpmn:incoming>flowAddExecutors</bpmn:incoming>
+      <bpmn:outgoing>flowCreateTask</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="gwCreateTask">
+      <bpmn:incoming>flowCreateTask</bpmn:incoming>
+      <bpmn:outgoing>flowSendForExecution</bpmn:outgoing>
+      <bpmn:outgoing>flowSendNotificationTask</bpmn:outgoing>
+      <bpmn:outgoing>flowCreateWorkTask</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:userTask id="utExecute" name="Форма поручения">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition externalReference="utExecuteTaskProcess" />
+        <zeebe:assignmentDefinition assignee="executorId" />
+        <zeebe:taskSchedule dueDate="=dueDate" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowSendForExecution</bpmn:incoming>
+      <bpmn:incoming>flowReturnToExecuteTaskProcess</bpmn:incoming>
+      <bpmn:outgoing>flowExecutionDecision</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=currentExecutors" inputElement="executorId" />
+        </bpmn:extensionElements>
+        <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">=completedInstances = totalInstances</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="tmrCheck" cancelActivity="false" attachedToRef="utExecute">
+      <bpmn:outgoing>flowSendNotifyOverdue</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerDef_1">
+        <bpmn:timeDate xsi:type="bpmn:tFormalExpression">=dueDate</bpmn:timeDate>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:exclusiveGateway id="gwDecision">
+      <bpmn:incoming>flowExecutionDecision</bpmn:incoming>
+      <bpmn:outgoing>flowAddExecutors</bpmn:outgoing>
+      <bpmn:outgoing>flowSendForClose</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="gwParent" default="flowProcessCompleted">
+      <bpmn:incoming>flowToCloseDecision</bpmn:incoming>
+      <bpmn:outgoing>flowProcessCompleted</bpmn:outgoing>
+      <bpmn:outgoing>flowReturnToExecuteTaskProcess</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="endControlProcess" name="Конец">
+      <bpmn:incoming>flowProcessCompleted</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="srvNotifyOverdue" name="Уведомление о просрочке">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvSendNotifyOverdue" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowSendNotifyOverdue</bpmn:incoming>
+      <bpmn:outgoing>flowNotifyOverdueComleted</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="endNotifyOverdue" name="Просрочка зафиксирована">
+      <bpmn:incoming>flowNotifyOverdueComleted</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="srvNotification" name="Рассылка уведомлений">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvSendNotificationTask" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowSendNotificationTask</bpmn:incoming>
+      <bpmn:outgoing>flowSendNotificationCompleted</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="endSendNotification" name="Уведомление выслано">
+      <bpmn:incoming>flowSendNotificationCompleted</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="srvWorkTask" name="Создание рабочего задания">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvCreateWorkTask" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowCreateWorkTask</bpmn:incoming>
+      <bpmn:outgoing>flowCreateWorkTaskCompleted</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="endCreateWorkTask" name="Задание создано">
+      <bpmn:incoming>flowCreateWorkTaskCompleted</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowCreateTaskProcess" name="Создать поручение" sourceRef="startControlProcess" targetRef="srvCreateTask" />
+    <bpmn:sequenceFlow id="flowCreateTask" sourceRef="srvCreateTask" targetRef="gwCreateTask" />
+    <bpmn:sequenceFlow id="flowSendForExecution" name="На исполнение" sourceRef="gwCreateTask" targetRef="utExecute" />
+    <bpmn:sequenceFlow id="flowSendNotificationTask" sourceRef="gwCreateTask" targetRef="srvNotification" />
+    <bpmn:sequenceFlow id="flowCreateWorkTask" sourceRef="gwCreateTask" targetRef="srvWorkTask" />
+    <bpmn:sequenceFlow id="flowExecutionDecision" sourceRef="utExecute" targetRef="gwDecision" />
+    <bpmn:sequenceFlow id="flowAddExecutors" name="Делегирование" sourceRef="gwDecision" targetRef="srvCreateTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "ADD_EXECUTORS"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowSendForClose" name="Исполнение" sourceRef="gwDecision" targetRef="srvParentClose">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "CLOSE"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowToCloseDecision" sourceRef="srvParentClose" targetRef="gwParent" />
+    <bpmn:sequenceFlow id="flowProcessCompleted" name="Завершить" sourceRef="gwParent" targetRef="endControlProcess" />
+    <bpmn:sequenceFlow id="flowReturnToExecuteTaskProcess" name="Вернуть на исполнение" sourceRef="gwParent" targetRef="utExecute">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=needReturn = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowSendNotifyOverdue" sourceRef="tmrCheck" targetRef="srvNotifyOverdue" />
+    <bpmn:sequenceFlow id="flowNotifyOverdueComleted" sourceRef="srvNotifyOverdue" targetRef="endNotifyOverdue" />
+    <bpmn:sequenceFlow id="flowSendNotificationCompleted" sourceRef="srvNotification" targetRef="endSendNotification" />
+    <bpmn:sequenceFlow id="flowCreateWorkTaskCompleted" sourceRef="srvWorkTask" targetRef="endCreateWorkTask" />
+    <bpmn:serviceTask id="srvParentClose" name="Проверить и закрыть родительские поручения">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvParentClose" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowSendForClose</bpmn:incoming>
+      <bpmn:outgoing>flowToCloseDecision</bpmn:outgoing>
+    </bpmn:serviceTask>
+  </bpmn:process>
+</bpmn:definitions>

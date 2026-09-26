@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_any_composite" name="any-composite-test" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="anyCompositeAgreeDecision" name="Any Composite Agree Decision">
+    <decisionTable id="DecisionTable_any_comp_agree" hitPolicy="ANY">
+      <input id="Input_1" label="Score">
+        <inputExpression id="InputExpression_1" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Decision" name="decision" typeRef="string" />
+      <output id="Output_2" label="Limit" name="limit" typeRef="number" />
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_1"><text>"APPROVED"</text></outputEntry>
+        <outputEntry id="Out_2"><text>25000</text></outputEntry>
+      </rule>
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_2a"><text>"APPROVED"</text></outputEntry>
+        <outputEntry id="Out_2b"><text>25000.0</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <decision id="anyCompositeNullAgreeDecision" name="Any Composite Null Agree Decision">
+    <decisionTable id="DecisionTable_any_comp_null" hitPolicy="ANY">
+      <input id="Input_1" label="Score">
+        <inputExpression id="InputExpression_1" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Note" name="note" typeRef="string" />
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_1"><text></text></outputEntry>
+      </rule>
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_2"><text></text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <decision id="anyCompositeConflictDecision" name="Any Composite Conflict Decision">
+    <decisionTable id="DecisionTable_any_comp_conflict" hitPolicy="ANY">
+      <input id="Input_1" label="Score">
+        <inputExpression id="InputExpression_1" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Note" name="note" typeRef="string" />
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_1"><text></text></outputEntry>
+      </rule>
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>&gt;= 50</text></inputEntry>
+        <outputEntry id="Out_2"><text>"has-note"</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

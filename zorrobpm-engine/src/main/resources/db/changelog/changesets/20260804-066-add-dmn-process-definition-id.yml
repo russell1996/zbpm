@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260804-066
+  - changeSet:
+      id: 20260804-066
+      author: zorrodev
+      comment: WO-SEC-40 — scope DMN definitions to their deploying process definition
+      changes:
+        - addColumn:
+            tableName: dmn_definitions
+            columns:
+              - column:
+                  name: process_definition_id
+                  type: uuid
+      rollback:
+        - dropColumn:
+            tableName: dmn_definitions
+            columnName: process_definition_id

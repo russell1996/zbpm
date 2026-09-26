@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_diff10m" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-diff10-gateway-mixed" name="test-diff10-gateway-mixed" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="xor" />
+    <!-- WO-DIFF-10: один поток С условием, второй БЕЗ условия и не default.
+         Поток без условия просто не матчится (как "условие ложно"), условный
+         с истинным условием маршрутизируется нормально. -->
+    <bpmn:exclusiveGateway id="xor" name="xor">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flowC</bpmn:outgoing>
+      <bpmn:outgoing>flowU</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="flowC" name="flowC" sourceRef="xor" targetRef="endC">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "A"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowU" name="flowU" sourceRef="xor" targetRef="endU" />
+    <bpmn:endEvent id="endC" name="endC">
+      <bpmn:incoming>flowC</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endU" name="endU">
+      <bpmn:incoming>flowU</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

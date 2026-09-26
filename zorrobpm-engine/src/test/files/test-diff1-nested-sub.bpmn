@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-DIFF-1 HOLD (nested subProcess-in-subProcess): outer subProcess "outer" with its own
+     ioMapping (input =outerRoot -> outerLocal, output =outerLocal -> outerOut) CONTAINING
+     a nested subProcess "inner" with its own ioMapping (input =outerLocal -> innerLocal,
+     output =innerLocal -> innerOut); innermost service task maps =innerLocal -> workSeen
+     (input) and =innerLocal -> workPromoted (output). Before the HOLD fix the raw-DOM
+     scanner found outer first (mine=false when searching inner), took the INNERMOST close
+     tag as outer's close, and leapt clean over inner's open tag — inner's ioMapping came
+     back null silently (no log, no exception). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_DIFF1_NESTED"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="diff1-nested" name="DIFF-1 nested-sub mirror" isExecutable="true">
+
+    <bpmn:startEvent id="start" name="Start">
+      <bpmn:outgoing>flow-start-outer</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="flow-start-outer" sourceRef="start" targetRef="outer"/>
+
+    <bpmn:subProcess id="outer" name="Outer">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=outerRoot" target="outerLocal"/>
+          <zeebe:output source="=outerLocal" target="outerOut"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-start-outer</bpmn:incoming>
+      <bpmn:outgoing>flow-outer-end</bpmn:outgoing>
+      <bpmn:startEvent id="outer-start" name="Outer start">
+        <bpmn:outgoing>flow-outerstart-inner</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flow-outerstart-inner" sourceRef="outer-start" targetRef="inner"/>
+      <bpmn:subProcess id="inner" name="Inner">
+        <bpmn:extensionElements>
+          <zeebe:ioMapping>
+            <zeebe:input source="=outerLocal" target="innerLocal"/>
+            <zeebe:output source="=innerLocal" target="innerOut"/>
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>flow-outerstart-inner</bpmn:incoming>
+        <bpmn:outgoing>flow-inner-outerend</bpmn:outgoing>
+        <bpmn:startEvent id="inner-start" name="Inner start">
+          <bpmn:outgoing>flow-innerstart-work</bpmn:outgoing>
+        </bpmn:startEvent>
+        <bpmn:sequenceFlow id="flow-innerstart-work" sourceRef="inner-start" targetRef="work"/>
+        <bpmn:serviceTask id="work" name="Nested work">
+          <bpmn:extensionElements>
+            <zeebe:taskDefinition type="diff1-nested-work"/>
+            <zeebe:ioMapping>
+              <zeebe:input source="=innerLocal" target="workSeen"/>
+              <zeebe:output source="=innerLocal" target="workPromoted"/>
+            </zeebe:ioMapping>
+          </bpmn:extensionElements>
+          <bpmn:incoming>flow-innerstart-work</bpmn:incoming>
+          <bpmn:outgoing>flow-work-innerend</bpmn:outgoing>
+        </bpmn:serviceTask>
+        <bpmn:sequenceFlow id="flow-work-innerend" sourceRef="work" targetRef="inner-end"/>
+        <bpmn:endEvent id="inner-end" name="Inner end">
+          <bpmn:incoming>flow-work-innerend</bpmn:incoming>
+        </bpmn:endEvent>
+      </bpmn:subProcess>
+      <bpmn:sequenceFlow id="flow-inner-outerend" sourceRef="inner" targetRef="outer-end"/>
+      <bpmn:endEvent id="outer-end" name="Outer end">
+        <bpmn:incoming>flow-inner-outerend</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+
+    <bpmn:sequenceFlow id="flow-outer-end" sourceRef="outer" targetRef="end"/>
+
+    <bpmn:endEvent id="end" name="End">
+      <bpmn:incoming>flow-outer-end</bpmn:incoming>
+    </bpmn:endEvent>
+
+  </bpmn:process>
+</bpmn:definitions>

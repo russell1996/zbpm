@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - logicalFilePath: 20260710-044
+  - changeSet:
+      id: 20260710-044
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: timer_jobs
+            columns:
+              - column:
+                  name: remaining_count
+                  type: integer

@@ -1,0 +1,36 @@
+databaseChangeLog:
+  - logicalFilePath: 20260808-068
+  - changeSet:
+      id: 20260808-068
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: timer_jobs
+            columns:
+              - column:
+                  name: attempts
+                  type: int
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+        - addColumn:
+            tableName: timer_jobs
+            columns:
+              - column:
+                  name: last_error
+                  type: varchar(2000)
+        - addColumn:
+            tableName: timer_start_jobs
+            columns:
+              - column:
+                  name: attempts
+                  type: int
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+        - addColumn:
+            tableName: timer_start_jobs
+            columns:
+              - column:
+                  name: last_error
+                  type: varchar(2000)

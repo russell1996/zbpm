@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_implicit_fork" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-implicit-fork" name="test-implicit-fork" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flowStartToFork</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStartToFork" sourceRef="startEvent" targetRef="forkTask" />
+    <bpmn:serviceTask id="forkTask" name="Fork Task">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="forkTask" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowStartToFork</bpmn:incoming>
+      <bpmn:outgoing>flowForkToA</bpmn:outgoing>
+      <bpmn:outgoing>flowForkToB</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flowForkToA" sourceRef="forkTask" targetRef="serviceA" />
+    <bpmn:sequenceFlow id="flowForkToB" sourceRef="forkTask" targetRef="userB" />
+    <bpmn:serviceTask id="serviceA" name="serviceA">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="serviceA" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowForkToA</bpmn:incoming>
+      <bpmn:outgoing>flowAToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flowAToEnd" sourceRef="serviceA" targetRef="endA" />
+    <bpmn:userTask id="userB" name="userB">
+      <bpmn:incoming>flowForkToB</bpmn:incoming>
+      <bpmn:outgoing>flowBToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowBToEnd" sourceRef="userB" targetRef="endB" />
+    <bpmn:endEvent id="endA" name="endA">
+      <bpmn:incoming>flowAToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endB" name="endB">
+      <bpmn:incoming>flowBToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

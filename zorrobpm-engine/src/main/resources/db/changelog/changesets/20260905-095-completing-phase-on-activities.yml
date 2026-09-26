@@ -1,0 +1,21 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-095
+  - changeSet:
+      id: 20260905-095
+      author: zorrodev
+      changes:
+        # WO-C8-24: completing-фаза user task — индекс и durable-бюджет ретраев на
+        # строке активности (зеркало creating-фазы из раунда 2 C8-21). Nullable: null =
+        # фазы нет. Здесь строка активности реальна (задача существует) — проблемы
+        # строки-маркера из раунда 1 C8-21 нет по построению.
+        - addColumn:
+            tableName: activities
+            columns:
+              - column:
+                  name: pending_completing_listener_index
+                  type: integer
+                  remarks: 'Индекс ожидающего completing-listener (WO-C8-24); null — фазы нет'
+              - column:
+                  name: completing_listener_retries_remaining
+                  type: integer
+                  remarks: 'Остаток ретраев текущего completing-listener job (WO-C8-24)'

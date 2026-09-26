@@ -1,0 +1,705 @@
+# ZorroBPM CI/CD
+#
+# Pipeline: test (backend + frontend)  ->  build (versioned images)  ->  deploy  ->  rollback
+#
+# Runs on the self-hosted shell runner (tag `zbpm`) which has Docker + Docker Compose. Everything goes
+# through `docker build` / `docker compose` (the proven primitive) — no host Maven/Node and no workspace
+# bind mounts, so there are no file-ownership/cleanup issues on the runner. Images are built and tagged with
+# the commit SHA on the deploy host (no external registry); the previous tag is recorded for rollback. The
+# external nginx proxy (https://test-zbpm.telecom.kz) forwards to the frontend container, which serves the SPA
+# and proxies /api -> app:8080 inside the Docker network.
+
+stages:
+  - test
+  - security
+  - build
+  - deploy
+  - rollback
+  - mirror
+
+variables:
+  COMPOSE_PROJECT_NAME: zorrobpm
+  DEPLOY_DIR: /opt/zorro-bpm
+  IMAGE_BACKEND: zorrobpm-app
+  IMAGE_FRONTEND: zorrobpm-frontend
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  # WO-OPS-5: how many SHA-tagged runtime images to keep per repository. 3 = the just-built tag
+  # (which the next deploy will run), the previous deploy tag (.previous_tag, rollback target) and
+  # one spare build ahead of deploy; protected .current_tag/.previous_tag tags survive regardless.
+  RETAIN_IMAGES_KEEP: "3"
+  # An earlier CI revision left root-owned target/ dirs on the shell runner that the gitlab-runner user
+  # can't remove — `git clean` then fails the fetch *before* any script runs. Disable git clean so checkout
+  # succeeds; before_script then reclaims ownership of the workspace (one-time, self-healing).
+  GIT_CLEAN_FLAGS: none
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+default:
+  # Self-heal: an earlier CI revision ran Maven in a root container with the workspace bind-mounted,
+  # leaving root-owned target/ dirs the gitlab-runner user can't touch. With git clean disabled (above)
+  # checkout now succeeds; here we reclaim ownership of the whole workspace via a root container so future
+  # fetches work normally. This pipeline no longer bind-mounts the workspace (all builds go through
+  # `docker build`), so nothing root-owned is created again.
+  before_script:
+    - docker run --rm -v "$CI_PROJECT_DIR":/w busybox chown -R "$(id -u):$(id -g)" /w || true
+    - docker run --rm -v "$CI_PROJECT_DIR":/w -w /w busybox sh -c 'rm -rf ./target ./*/target' || true
+  # WO-A-02: self-heal runs as root container to reclaim file ownership
+
+# ---------------------------------------------------------------------------
+# Shared changes: list — only run the expensive build/test/security/deploy jobs
+# when the diff touches actual product code. A governance-only commit (WO
+# reports, dispatch notes, diffstat-sync churn — the dominant CI volume from
+# the review workflow) skips all of them. test:gate is deliberately exempt:
+# it specifically validates governance file discipline, so it must run for
+# governance-only commits too.
+# ---------------------------------------------------------------------------
+.rules-code-changes: &rules-code-changes
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    changes: &code-changes-paths
+      - "zorrobpm-contract/**/*"
+      - "zorrobpm-engine/**/*"
+      - "zorrobpm-rest/**/*"
+      - "zorrobpm-rabbitmq/**/*"
+      - "zorrobpm-app/**/*"
+      - "zorrobpm-client/**/*"
+      - "zorrobpm-job-handler-spring-boot-starter/**/*"
+      - "zorrobpm-test/**/*"
+      - "zorrobpm-exchange/**/*"
+      - "zorrobpm-frontend/**/*"
+      - "pom.xml"
+      - "Dockerfile"
+      - "entrypoint.sh"
+      - "docker-compose.yml"
+      - "docker-compose.observability.yml"
+      - "docker-compose.multi.yml"
+      - "owasp-suppressions.xml"
+      - "ci/**/*"
+      - ".gitlab-ci.yml"
+  - if: '$CI_COMMIT_BRANCH'
+    changes: *code-changes-paths
+
+# ---------------------------------------------------------------------------
+# Test gate — blocks PRs that change src/main without a covering test
+# (WO-PROC-2 + WO-OPS-4a). Runs before docker builds (cheap shell check).
+# Self-test first: throwaway-commit fixtures assert the gate's own behaviour,
+# so a silent loosening of the gate fails on its own (WO-OPS-4a HOLD fix).
+# ---------------------------------------------------------------------------
+
+test:gate:
+  stage: test
+  tags: [zbpm]
+  # Safe to cancel mid-flight: its rules run unconditionally (no `changes:` filter, see the
+  # comment on .rules-code-changes above), so a newer pipeline on this ref ALWAYS re-runs it
+  # regardless of what changed. The jobs below (rules: *rules-code-changes) are NOT safe to mark
+  # interruptible — see the note above `build:`.
+  interruptible: true
+  script:
+    - bash ci/test-gate-selftest.sh HEAD
+    - bash ci/test-gate.sh origin/master HEAD
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Test — runs inside docker build, so a test failure fails the job. No bind mounts.
+# ---------------------------------------------------------------------------
+
+test:backend:
+  stage: test
+  tags: [zbpm]
+  coverage: '/Total.*?([0-9]{1,3})%/'
+  artifacts:
+    # WO-OPS-2: surefire/failsafe reports — 3 days
+    # WO-PERF-5: jacoco coverage — 7 days (larger report, useful for trend analysis; 3 days for test reports is enough for immediate debugging, coverage trend benefits from a week)
+    paths:
+      - "**/surefire-reports/"
+      - "**/failsafe-reports/"
+      - "**/site/jacoco/"
+    expire_in: 7 days
+    when: always
+  script:
+    # `--target test` runs `mvn -B clean verify` (full reactor: unit + integration) inside the build
+    # WO-PERF-4: -Pcoverage keeps the jacoco coverage report active in CI (profile is off by default locally)
+    # Mount target/ out to capture test reports after build
+    # WO-OPS-11 F27: уникальное имя контейнера на pipeline (фиксированный test-extract
+    # конфликтовал между параллельными job'ами) + trap-гарантия извлечения отчётов при
+    # ЛЮБОМ exit. Ключевое: `cp` живут ВНУТРИ trap-функции, а не в линейном script'е —
+    # линейный `docker build` при красном тесте даёт exit≠0, job обрывается, и линейные
+    # `cp` после него не выполняются никогда. Честная граница (доказана живой пробой
+    # /tmp/f27-proof/run.sh + run2.sh): красный тест ВНУТРИ `RUN mvn verify` роняет сам
+    # build-слой — образа нет, извлекать нечего, и это структурно не чинится обёрткой
+    # (нужен BuildKit --output или разбиение test-стадии — отдельный WO, не этот срез);
+    # trap тогда пишет маркер NO-REPORTS.txt вместо тишины, чтобы artifacts:when:always
+    # не молчали. Покрытый сценарий: build собран (отчёты в слое), job падает ПОСЛЕ —
+    # trap извлекает всё (проба run2.sh: TEST-red.xml извлечён при exit=1).
+    - export TEST_EXTRACT="test-extract-$CI_PIPELINE_ID-$CI_JOB_ID"
+    - mkdir -p target-out/zorrobpm-engine target-out/zorrobpm-rest
+    # WO-OPS-11 F27-fix (357a2a1d): блочный скаляр >- вместо plain-строки — внутри
+    # незаквоченное "F27: " (двоеточие+пробел) строгий GitLab-парсер читал как mapping.
+    - >-
+      extract_reports() { docker create --name "$TEST_EXTRACT" "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || return 1; docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/surefire-reports target-out/zorrobpm-engine/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/failsafe-reports target-out/zorrobpm-engine/failsafe-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-engine/target/site/jacoco target-out/zorrobpm-engine/site/jacoco >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/surefire-reports target-out/zorrobpm-rest/surefire-reports >/dev/null 2>&1 && docker cp "$TEST_EXTRACT":/build/zorrobpm-rest/target/failsafe-reports target-out/zorrobpm-rest/failsafe-reports >/dev/null 2>&1; }
+    - >-
+      cleanup_extract() { extract_reports || echo "F27: no test image — build failed before tests ran, no reports to extract" > target-out/NO-REPORTS.txt; docker rm -f "$TEST_EXTRACT" >/dev/null 2>&1 || true; docker image rm "zorrobpm-app-test:$IMAGE_TAG" >/dev/null 2>&1 || true; }; trap cleanup_extract EXIT
+    - docker build --target test --build-arg MAVEN_PROFILES=-Pcoverage -f Dockerfile -t zorrobpm-app-test:$IMAGE_TAG .
+  rules: *rules-code-changes
+
+# ---------------------------------------------------------------------------
+# PG-IT — runs @Tag("pg") tests against a real postgres:16 sidecar.
+# Starts postgres via docker compose, runs mvn -Dgroups=pg inside a Maven container
+# with --network host. Fails the pipeline on any PG-IT failure (WO-PROC-8).
+# ---------------------------------------------------------------------------
+
+test:pg:
+  stage: test
+  tags: [zbpm]
+  artifacts:
+    # WO-OPS-2: PG-IT reports — 3 days
+    paths:
+      - "**/failsafe-reports/"
+    expire_in: 3 days
+    when: always
+  variables:
+    # Non-standard host port so the ephemeral CI postgres never collides with any
+    # 5432 already bound on the shared runner.
+    PG_PORT: "55432"
+  script:
+    - bash ci/run-pg-tests.sh
+  rules: *rules-code-changes
+
+# ---------------------------------------------------------------------------
+# Rabbit-IT — runs @Tag("rabbit") tests against a real rabbitmq:3.13 sidecar.
+# WO-AUDIT-1 (TD8): RabbitOutboxConfirmIT (at-least-once outbox proof) ran nowhere
+# in CI — this job runs it via ci/run-rabbit-tests.sh (mirror of run-pg-tests.sh).
+# ---------------------------------------------------------------------------
+
+test:rabbit:
+  stage: test
+  tags: [zbpm]
+  artifacts:
+    paths:
+      - "**/failsafe-reports/"
+    expire_in: 3 days
+    when: always
+  variables:
+    # Non-standard host port so the ephemeral CI broker never collides with any
+    # 5672 already bound on the shared runner (same premise as PG_PORT, P-23).
+    RABBIT_PORT: "5673"
+  script:
+    - bash ci/run-rabbit-tests.sh
+  rules: *rules-code-changes
+
+# ---------------------------------------------------------------------------
+# Chaos-IT — WO-TEST-10 (WB-002): fault-injection tests with a REAL injector.
+# Topology: postgres:16 + rabbitmq:3.13 + toxiproxy 2.5.0 as sibling containers
+# (ci/run-chaos-tests.sh), tests tagged @Tag("chaos"): worker kill -9 mid-job,
+# PG network partition, RabbitMQ network partition — each asserting end state
+# (exactly-once effect / app recovery / autorecovery), not just "no crash".
+# Manual + scheduled: chaos tests are slow (network partitions with real
+# timeouts, ~2-4 min) and need the docker socket (worker kill), so they do NOT
+# run on every pipeline — visible here explicitly, played manually or nightly.
+# ---------------------------------------------------------------------------
+
+test:chaos:
+  stage: test
+  tags: [zbpm]
+  artifacts:
+    paths:
+      - "**/failsafe-reports/"
+    expire_in: 7 days
+    when: always
+  script:
+    - bash ci/run-chaos-tests.sh
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: true
+
+# ---------------------------------------------------------------------------
+# E2E login-complete — WO-TEST-12 спек, WO-QW-5 (NEW2-13) проводка в CI.
+# Сквозной Playwright login → tasks → live SSE → complete против РЕАЛЬНОГО
+# backend (compose-стенд postgres:16 + rabbitmq:4.1, prod-профиль). Медленный
+# (сборка двух образов + стенд + браузер, минуты) и тяжёлый (docker socket,
+# порты, volumes) — поэтому НЕ в каждом pipeline: schedule + ручной запуск,
+# allow_failure (стенд-зависимый, не unit-строгость). COMPOSE_PROJECT_NAME
+# выносит стенд в своё пространство имён — с чужим dev-стеком на том же
+# раннере не конфликтует (project-scoped имена/порты/volumes).
+# ---------------------------------------------------------------------------
+
+test:e2e-login:
+  stage: test
+  tags: [zbpm]
+  artifacts:
+    paths:
+      - "/tmp/e2e-app-tail.log"
+    expire_in: 3 days
+    when: always
+  script:
+    - bash ci/e2e-login-complete.sh
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: true
+
+test:frontend:
+  stage: test
+  tags: [zbpm]
+  script:
+    # WO-OPS-4a (C-01): builder stage now runs `npm ci && npm run build && npm test -- --run`
+    # (tsc typecheck + Vite build + vitest); a failing frontend test fails the build.
+    # WO-TEST-6: the stage also installs Chromium (playwright install --with-deps)
+    # and runs the browser-geometry suite (`npm run test:browser`) — six visual
+    # checks that jsdom cannot compute (tab underline, flyout clipping, h-scroll,
+    # kazakh labels, BPMN canvas height, properties panel height).
+    - docker build --target builder -f zorrobpm-frontend/Dockerfile -t zorrobpm-frontend-build:$IMAGE_TAG zorrobpm-frontend
+    - docker image rm zorrobpm-frontend-build:$IMAGE_TAG || true
+  rules: *rules-code-changes
+
+# ---------------------------------------------------------------------------
+# Security — CVE scan (WO-SEC-32), blocking gate on CVSS>=9 (WO-AUDIT-1 S6).
+# Runs OWASP dependency-check (NVD) with a hard fail threshold of 9.0: any KNOWN
+# CRITICAL stops the pipeline. WO-AUDIT-1 verified pre-flip that the tree carries
+# nothing >=9 (OSV cross-check over all 162 compile+runtime deps: max numeric CVSS
+# 7.5, zero critical; 39 test-scope deps: zero advisories; npm audit: 1 high +
+# 1 moderate, zero critical — see WO-AUDIT-1 report; NVD itself needs $NVD_API_KEY
+# and cannot run keyless locally, so the first CI run of THIS job is the final
+# arbiter — if it goes red, upgrade deps first per WO-AUDIT-1 fallback).
+# WO-OPS-11 F36: ТОЛЬКО Maven здесь (npm вынесен в cve:npm ниже): при красном
+# mvn-скане job падает ДО npm-шага, и npm-уязвимость терялась молча. Разделение
+# даёт независимые отчёты: каждая джоба — свои artifacts, свой exit.
+# ---------------------------------------------------------------------------
+
+cve:scan:
+  stage: security
+  tags: [zbpm]
+  allow_failure: false
+  cache:
+    # WO-SEC-32 FIX: fixed key so NVD DB persists across pipelines.
+    # dependency-check updates incrementally — no full re-download.
+    key: nvd-db
+    paths:
+      - .nvd-cache
+  script:
+    # NVD cache — dependency-check stores DB in its data dir; map to runner cache
+    - mkdir -p .nvd-cache
+    # Backend CVE scan: OWASP dependency-check against the built JARs
+    # WO-OPS-11 F27: --user + maven.repo.local (root-owned target, тот же класс).
+    - >-
+      docker run --rm
+      --user "$(id -u):$(id -g)"
+      -v "$CI_PROJECT_DIR":/build -w /build
+      -v "$CI_PROJECT_DIR/.nvd-cache":/tmp/nvd-cache
+      -v zbpm_m2:/tmp/.m2
+      -e NVD_API_KEY=$NVD_API_KEY
+      maven:3.9.9-eclipse-temurin-21
+      sh -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -DskipTests -q && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository org.owasp:dependency-check-maven:check
+      -DfailBuildOnCVSS=9
+      -DsuppressionFile=owasp-suppressions.xml
+      -DnvdApiKey=$NVD_API_KEY
+      -DdataDirectory=/tmp/nvd-cache
+      -DossindexAnalyzerEnabled=false
+      -DnodeAuditSkipDevDependencies=true
+      --no-transfer-progress"
+    - echo "Backend CVE scan complete (CVSS>=9 = fail)"
+  rules: *rules-code-changes
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-rest/target/dependency-check-report.html
+      - zorrobpm-engine/target/dependency-check-report.html
+    expire_in: 30 days
+    name: cve-reports-$CI_COMMIT_SHORT_SHA
+
+# ---------------------------------------------------------------------------
+# Security — CVE report (advisory). Same Maven scan at the informative threshold
+# (backend CVSS>=7) with allow_failure: true — signal without blocking while
+# the >=9 gate above is the hard bar.
+# WO-OPS-11 F36: БЕЗ npm-шага (вынесен в cve:npm): раньше npm audit шёл ПОСЛЕ
+# mvn-скана в том же script'е и не выполнялся при красном скане + маскировался
+# `|| echo`. Теперь advisory Maven-скан независим и самодостаточен.
+# ---------------------------------------------------------------------------
+
+cve:report:
+  stage: security
+  tags: [zbpm]
+  allow_failure: true
+  cache:
+    key: nvd-db
+    paths:
+      - .nvd-cache
+  script:
+    - mkdir -p .nvd-cache
+    - >-
+      docker run --rm
+      --user "$(id -u):$(id -g)"
+      -v "$CI_PROJECT_DIR":/build -w /build
+      -v "$CI_PROJECT_DIR/.nvd-cache":/tmp/nvd-cache
+      -v zbpm_m2:/tmp/.m2
+      -e NVD_API_KEY=$NVD_API_KEY
+      maven:3.9.9-eclipse-temurin-21
+      sh -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -DskipTests -q && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository org.owasp:dependency-check-maven:check
+      -DfailBuildOnCVSS=7
+      -DsuppressionFile=owasp-suppressions.xml
+      -DnvdApiKey=$NVD_API_KEY
+      -DdataDirectory=/tmp/nvd-cache
+      -DossindexAnalyzerEnabled=false
+      -DnodeAuditSkipDevDependencies=true
+      --no-transfer-progress"
+    - echo "Backend CVE scan complete (CVSS>=7 = fail)"
+  rules: *rules-code-changes
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-rest/target/dependency-check-report.html
+      - zorrobpm-engine/target/dependency-check-report.html
+    expire_in: 30 days
+    name: cve-advisory-$CI_COMMIT_SHORT_SHA
+
+# ---------------------------------------------------------------------------
+# Security — npm audit (WO-OPS-11 F36). НЕЗАВИСИМАЯ джоба: раньше жила в хвосте
+# cve:report ПОСЛЕ mvn-скана (не выполнялась при красном скане) и маскировалась
+# `|| echo` + allow_failure:true (уязвимость видна только в логе, не в отчёте).
+# Теперь: свой exit (high+ = красный advisory), свой artifacts-отчёт
+# (npm-audit.json — критерий (c) WO: намеренная npm-уязвимость попадает В ОТЧЁТ
+# независимо от состояния Maven-скана).
+# ---------------------------------------------------------------------------
+
+cve:npm:
+  stage: security
+  tags: [zbpm]
+  allow_failure: true
+  script:
+    # Frontend CVE scan: npm audit (containerized — the zbpm runner has no npm on host,
+    # same node:22-alpine base as zorrobpm-frontend/Dockerfile's builder stage)
+    # WO-QW-3 (N13): do NOT let the trailing echo mask npm audit's exit code —
+    # the old `... > npm-audit.json; echo "exit: $?"` always exited 0, so a
+    # failing audit looked green. Capture the status explicitly and re-exit
+    # with it (audit fix-example verbatim, adapted to the container sh -c
+    # quoting: \$ escapes for the outer runner shell). allow_failure: true
+    # (advisory policy) is unchanged — this task only makes the exit real.
+    - >-
+      docker run --rm
+      --user "$(id -u):$(id -g)"
+      -v "$CI_PROJECT_DIR/zorrobpm-frontend":/build -w /build
+      node:22-alpine
+      sh -c "export HOME=/tmp NPM_CONFIG_CACHE=/tmp/npm-cache && mkdir -p /tmp/npm-cache && npm ci --ignore-scripts || exit \$?; status=0; npm audit --audit-level=high --omit=dev --json > npm-audit.json || status=\$?; echo \"npm audit exit: \$status\"; exit \$status"
+    - cat zorrobpm-frontend/npm-audit.json | head -c 2000; echo
+  rules: *rules-code-changes
+  artifacts:
+    when: always
+    paths:
+      - zorrobpm-frontend/npm-audit.json
+    expire_in: 30 days
+    name: cve-npm-$CI_COMMIT_SHORT_SHA
+
+# ---------------------------------------------------------------------------
+# Build — versioned runtime images (commit SHA + latest)
+# ---------------------------------------------------------------------------
+#
+# 2026-08-30 incident: test:backend/test:pg/test:frontend/cve:scan/build (and, by extension,
+# deploy — it depends on build) used to carry `interruptible: true`. That is safe ONLY when every
+# pipeline on a ref tests the same thing regardless of which commit triggered it — these jobs
+# don't: they're all gated by `rules: *rules-code-changes`, which SKIPS them entirely when the
+# triggering push is docs/governance-only (by design, see the comment on .rules-code-changes
+# above — that's most of this repo's push volume). A real code push (WO-DEBT-1d merge, `568eb3fd`)
+# had test:backend already RUNNING when a docs-only follow-up commit was pushed seconds later
+# (`f323385e`, a routine "close out the WO" commit) — GitLab killed the running job mid-flight
+# because it was interruptible, and the new pipeline's own rules then skipped test:backend/build/
+# deploy entirely, because ITS diff was docs-only. Net effect: the actual code pipeline never
+# finished and the docs-only pipeline that superseded it never covered that code either — real
+# changes silently never reached a deploy-eligible state. Confirmed via the GitLab API
+# (pipeline 166326 vs 166327).
+#
+# Fix: removed `interruptible: true` from all `rules: *rules-code-changes`-gated jobs. The
+# project-level "auto-cancel pending pipelines" setting still cancels an OLDER pipeline's jobs
+# that haven't started yet when a newer push arrives (the actual queue-pileup problem this was
+# originally added for) — it just no longer kills a job that's already running mid-test. Only
+# test:gate keeps interruptible (see its own comment) because its rules have no `changes:`
+# filter, so cancelling it mid-flight loses nothing: the next pipeline runs it unconditionally too.
+
+build:
+  stage: build
+  tags: [zbpm]
+  artifacts:
+    paths:
+      - build-manifest.txt
+    expire_in: 7 days
+  script:
+    - docker build -t "$IMAGE_BACKEND:$IMAGE_TAG" -t "$IMAGE_BACKEND:latest" -f Dockerfile .
+    - docker build -t "$IMAGE_FRONTEND:$IMAGE_TAG" -t "$IMAGE_FRONTEND:latest" zorrobpm-frontend
+    # `docker image ls` accepts at most one repository argument — list each separately
+    - docker image ls "$IMAGE_BACKEND"
+    - docker image ls "$IMAGE_FRONTEND"
+    # WO-OPS-5: SHA-tagged images accumulate one per push — `docker image prune -f` in deploy only
+    # removes dangling images, so prune here per repository, keeping RETAIN_IMAGES_KEEP newest
+    # plus the tags in $DEPLOY_DIR/.current_tag / .previous_tag (rollback must stay possible).
+    # RETAIN_IMAGES_PROTECT=$IMAGE_TAG: this job just built that tag, and .current_tag is written
+    # only later, in deploy — BuildKit cache hits share CreatedAt, so without an explicit protect
+    # the cleanup could deterministically untag the image it itself produced (HOLD round 2).
+    - RETAIN_IMAGES_PROTECT="$IMAGE_TAG" bash ci/retain-images.sh "$IMAGE_BACKEND"
+    - RETAIN_IMAGES_PROTECT="$IMAGE_TAG" bash ci/retain-images.sh "$IMAGE_FRONTEND"
+    - docker image ls "$IMAGE_BACKEND"
+    - docker image ls "$IMAGE_FRONTEND"
+    # WO-OPS-2: save build manifest for traceability
+    - echo "backend=$IMAGE_BACKEND:$IMAGE_TAG frontend=$IMAGE_FRONTEND:$IMAGE_TAG built=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > build-manifest.txt
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: *code-changes-paths
+    - if: '$CI_COMMIT_BRANCH'
+      changes: *code-changes-paths
+      when: manual
+      allow_failure: false
+
+# ---------------------------------------------------------------------------
+# Deploy — sync sources, record rollback tag, bring the stack up on the new images
+#
+# Deliberately NOT interruptible (unlike test/security/build above): it's already `when: manual`,
+# so a human chose this exact moment to run it. Auto-cancelling it mid-flight on a newer push would
+# risk leaving the deploy host half-migrated (images swapped, compose not yet restarted, or vice
+# versa) with no one watching. Same reasoning for rollback below.
+# ---------------------------------------------------------------------------
+
+deploy:
+  stage: deploy
+  tags: [zbpm]
+  # WO-OPS-11 F26: сериализация production-операций — два параллельных deploy/rollback
+  # делят DEPLOY_DIR/compose-project и рвали бы друг другу стек. resource_group один
+  # на обоих (rollback ниже несёт тот же).
+  resource_group: zorrobpm-production
+  # WO-OPS-11 п.1: ручной deploy обязан ждать зелёных test/security/build джоб ТОГО ЖЕ
+  # пайплайна. Без needs ручную джобу можно сыграть при красных/скипнутых test:pg/
+  # test:rabbit (stage-порядок — только очередь, не гейт): аудит прав, дыра реальна.
+  # build в списке гарантирует и артефакты, и deploy-возможность (см. комментарий
+  # 2026-08-30 выше). rollback needs НЕ получает сознательно — он должен играться
+  # именно когда deploy упал (комментарий у rollback ниже).
+  needs:
+    - test:gate
+    - test:backend
+    - test:pg
+    - test:rabbit
+    - test:frontend
+    - cve:scan
+    - build
+  script:
+    - mkdir -p "$DEPLOY_DIR"
+    # WO-OPS-3-DISK: disk gate BEFORE anything is written. On a full disk both
+    # deploy and rollback die ('No space left on device') — the gate prunes
+    # build cache/stopped containers above 85% and refuses to deploy above 90%
+    # after cleanup, instead of stranding the stack mid-way.
+    - bash ci/disk-space-check.sh
+    # remember the currently deployed tag so `rollback` can restore it
+    - if [ -f "$DEPLOY_DIR/.current_tag" ]; then cp "$DEPLOY_DIR/.current_tag" "$DEPLOY_DIR/.previous_tag"; fi
+    # sync sources, preserving host .env (DB/RabbitMQ secrets) and rollback bookkeeping.
+    # Incident 2026-09-14: ci/observability/scrape-token is a live-only secret (never committed,
+    # generated once on the host) — it lived under ci/, a plain top-level dir with no exclusion
+    # here, so every deploy silently wiped it and Prometheus lost its app-scrape credential the
+    # moment the *next*, unrelated deploy ran. Back it up and restore it after the sync.
+    # WO-OPS-11 F26: backup секрета — уникальный путь на pipeline (фиксированный
+    # /tmp/scrape-token.bak делился между параллельными deploy), плюс cleanup-trap:
+    # при любом exit временный файл не остаётся лежать в /tmp с секретом внутри.
+    - export SCRAPE_TOKEN_BAK="$(mktemp /tmp/scrape-token-bak-$CI_PIPELINE_ID-XXXXXX)"
+    - trap 'rm -f "$SCRAPE_TOKEN_BAK"' EXIT
+    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" "$SCRAPE_TOKEN_BAK"; fi
+    # WO-OPS-1: `backups` исключён из wipe — там лежит ретенция pg_dump'ов
+    # (BACKUP_DIR по умолчанию $DEPLOY_DIR/backups); без исключения первая же
+    # выкатка после включения бэкапов сносила бы всю историю.
+    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' ! -name backups -exec rm -rf {} +
+    # WO-OPS-4b O-03: copy ONLY the runtime bundle — never the full checkout
+    # (.git/governance/docs stay on the runner). The set below is exactly what
+    # `docker compose -f docker-compose.yml -f docker-compose.observability.yml up`
+    # reads at runtime: both compose files plus every ./ci/observability path
+    # bind-mounted :ro into rabbitmq/prometheus/grafana (verified by reading all
+    # three compose files; build-time sources — Dockerfile/entrypoint/frontend
+    # sources — are NOT needed: images are built in the build stage before this
+    # job runs, and `up -d` without --build never rebuilds). ci/*.sh helpers run
+    # on the RUNNER from the checkout (e.g. disk-space-check.sh above), not from
+    # DEPLOY_DIR — also not copied. Directories are (re)created because the wipe
+    # above removed them; scrape-token/.env mechanics below are untouched.
+    - mkdir -p "$DEPLOY_DIR/ci/observability/rabbitmq/conf.d" "$DEPLOY_DIR/ci/observability/grafana"
+    - cp -a docker-compose.yml docker-compose.observability.yml "$DEPLOY_DIR"/
+    - cp -a ci/observability/prometheus.yml "$DEPLOY_DIR/ci/observability"/
+    - cp -a ci/observability/rabbitmq/conf.d/20-per-object-metrics.conf "$DEPLOY_DIR/ci/observability/rabbitmq/conf.d"/
+    - cp -a ci/observability/grafana/provisioning ci/observability/grafana/dashboards ci/observability/grafana/entrypoint-whitelist.sh "$DEPLOY_DIR/ci/observability/grafana"/
+    - if [ -f "$SCRAPE_TOKEN_BAK" ]; then sudo mv "$SCRAPE_TOKEN_BAK" "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    # ловушка больше не нужна — файл уже перемещён (mv) либо пуст; снимаем trap явно
+    - trap - EXIT; rm -f "$SCRAPE_TOKEN_BAK"
+    # WO-OBS-6: a brand-new host has no scrape-token at all -- without this, Docker's bind
+    # mount creates it as an empty DIRECTORY on first `up` (same bug class fixed live on
+    # 2026-09-14), and Prometheus fails with "is a directory" instead of just an auth error.
+    # An empty placeholder file scrapes as unauthorized (safe, diagnosable) until the real
+    # token is provisioned, rather than breaking the mount entirely.
+    - if [ ! -e "$DEPLOY_DIR/ci/observability/scrape-token" ]; then touch "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chown 65534:65534 "$DEPLOY_DIR/ci/observability/scrape-token"; sudo chmod 400 "$DEPLOY_DIR/ci/observability/scrape-token"; fi
+    - cd "$DEPLOY_DIR"
+    # WO-OBS-6: Grafana refuses to start without GF_SECURITY_ADMIN_PASSWORD (docker-compose.observability.yml
+    # uses the `:?` hard-fail form on purpose -- no static default for an admin account). Generate
+    # it once on first deploy instead of requiring a manual SSH step before the stack can come up;
+    # .env itself is preserved across every deploy (excluded from the resync above), so this only
+    # ever runs once per host.
+    - if ! grep -q '^GRAFANA_ADMIN_PASSWORD=' .env 2>/dev/null; then echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)" >> .env; echo "generated GRAFANA_ADMIN_PASSWORD (first deploy on this host)"; fi
+    - export APP_TAG="$IMAGE_TAG" FRONTEND_TAG="$IMAGE_TAG"
+    # Incident 2026-09-12 (pipeline 169556): when app's own Compose healthcheck fails during
+    # the dependency-wait, `docker compose up -d` itself errors out ("dependency failed to
+    # start: container ... is unhealthy") BEFORE the smoke-loop below ever runs — its log-dump
+    # code never fired, leaving zero diagnostics for the crash. Dump logs here too so a repeat
+    # failure is diagnosable instead of silent.
+    # Incident 2026-09-14: the observability overlay (Grafana/Prometheus/exporters) was stood up
+    # manually on the host via `docker compose -f docker-compose.yml -f docker-compose.observability.yml
+    # up -d` — never part of THIS job. The very next routine deploy ran plain `docker compose up -d
+    # --remove-orphans` with only docker-compose.yml, so --remove-orphans tore the whole overlay back
+    # down (not just stopped — removed) minutes later. The overlay is now a standing part of every
+    # deploy, same as the base stack.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --remove-orphans || { echo "docker compose up failed"; docker compose -f docker-compose.yml -f docker-compose.observability.yml ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
+    # Incident 2026-09-14 (live-caught right after WO-OBS-6's deploy): the DEPLOY_DIR wipe+resync
+    # above unlinks and recreates every file under ci/observability/* (scrape-token,
+    # prometheus.yml, grafana provisioning) on EVERY deploy. A single-file bind mount is bound to
+    # the inode at container-start time -- `up -d` only recreates a service whose OWN definition
+    # or image changed, so prometheus/grafana (unchanged this deploy) kept their mount pointing at
+    # the OLD, now-orphaned inode: fresh scrape-token content on the host, but Prometheus's own
+    # view of the file read back 0 bytes -- app's real token, provisioned by ScrapeTokenBootstrap,
+    # was silently invisible to Prometheus (401 on every scrape) despite everything else being
+    # correct. Force-recreating these services after every deploy makes their bind mounts always
+    # resolve to the current on-disk files, regardless of whether compose thinks anything changed.
+    # Cheap and safe: neither service is in the main app's serving path.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || true
+    # WO-REL-23: deploy smoke — wait for app health, fail job if not UP
+    - |
+      for i in $(seq 1 10); do
+        if curl -fsS http://localhost:${APP_PORT:-8080}/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then echo "health UP on attempt $i"; break; fi
+        if [ "$i" -eq 10 ]; then echo "health check failed after 10 attempts"; docker compose ps; docker compose logs app 2>&1 | tail -n 100; exit 1; fi
+        sleep 5
+      done
+    - docker compose ps
+    - echo "$IMAGE_TAG" > "$DEPLOY_DIR/.current_tag"
+    - docker image prune -f
+  environment:
+    name: production
+    url: https://test-zbpm.telecom.kz
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: *code-changes-paths
+      when: manual
+      allow_failure: false
+
+# ---------------------------------------------------------------------------
+# Rollback — manual only; redeploys the previously running image tag.
+# `when: manual` lives inside `rules` (a top-level `when` is ignored when `rules` is present).
+# ---------------------------------------------------------------------------
+
+rollback:
+  stage: rollback
+  tags: [zbpm]
+  # WO-OPS-11 F26: тот же production-mutex, что у deploy (см. выше).
+  resource_group: zorrobpm-production
+  # needs: [] detaches this job from stage ordering entirely (DAG mode): it becomes playable the
+  # moment the pipeline starts, independent of test/security/build/deploy outcome. Without this,
+  # a `deploy` failure (allow_failure: false, by design) halts the stage-sequential pipeline BEFORE
+  # the `rollback` stage is reached, and GitLab marks this job `skipped` — unplayable exactly in the
+  # one scenario (deploy failed) it exists to recover from. Confirmed live 2026-09-12: pipeline
+  # 169556, deploy job 534359 failed, rollback job 534360 came up `skipped`, API play returned
+  # "400 Unplayable Job". Safe to detach: rollback restores `.previous_tag`, an already-built image
+  # already on the deploy host — it never needed this pipeline's own test/build results to run.
+  needs: []
+  script:
+    - cd "$DEPLOY_DIR"
+    - test -f .previous_tag || { echo "No .previous_tag recorded — nothing to roll back to"; exit 1; }
+    - export APP_TAG="$(cat .previous_tag)" FRONTEND_TAG="$(cat .previous_tag)"
+    - echo "Rolling back to $APP_TAG"
+    # Same overlay-inclusion fix as `deploy` (2026-09-14 incident) — rollback must not
+    # --remove-orphans the observability stack either.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --remove-orphans || { echo "docker compose up failed"; docker compose -f docker-compose.yml -f docker-compose.observability.yml ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
+    # Same bind-mount-inode fix as `deploy` (2026-09-14 incident) — force-recreate so these
+    # services never keep an orphaned inode of a file the DEPLOY_DIR resync just replaced.
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || true
+    # WO-REL-23: rollback smoke — same health gate as deploy
+    - |
+      for i in $(seq 1 10); do
+        if curl -fsS http://localhost:${APP_PORT:-8080}/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then echo "health UP on attempt $i"; break; fi
+        if [ "$i" -eq 10 ]; then echo "rollback health check failed after 10 attempts"; docker compose ps; docker compose logs app 2>&1 | tail -n 100; exit 1; fi
+        sleep 5
+      done
+    - docker compose ps
+    - cp .previous_tag .current_tag
+  environment:
+    name: production
+    url: https://test-zbpm.telecom.kz
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: true
+
+# ---------------------------------------------------------------------------
+# PG backup — WO-OPS-1 (P0): nightly logical backup of the production database.
+# Runs ONLY on schedule (GitLab Pipeline Schedules are configured by the CTO
+# after merge — not part of this diff), on the same zbpm runner that does deploy
+# (direct `docker exec` into zorrobpm-postgres, see ci/pg-backup.sh). Never on
+# push/MR: it touches the LIVE production container and must not run per-commit.
+# needs: [] detaches it from stage ordering (same pattern as `rollback` below):
+# a backup must not wait on an unrelated build/test pipeline of the same run —
+# on a scheduled pipeline test:chaos also matches, and waiting for slow
+# fault-injection tests before dumping the database would be absurd.
+# No CI variables required: DB_* are read from $DEPLOY_DIR/.env on the host
+# (the same file compose reads), BACKUP_DIR/RETENTION_DAYS carry sane defaults.
+# resource_group: same production host as deploy/rollback (docker exec into a live
+# container) — without it, a backup mid-dump could race a concurrent deploy/rollback
+# on this compose stack, exactly the class of conflict deploy/rollback already guard
+# against between each other.
+# disk-space-check.sh: same filesystem deploy protects before writing anything —
+# nightly dumps accumulate for up to RETENTION_DAYS before pruning and must not
+# silently erode the margin that check exists to guard.
+# ---------------------------------------------------------------------------
+
+backup:pg:
+  stage: deploy
+  tags: [zbpm]
+  needs: []
+  resource_group: zorrobpm-production
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  script:
+    - bash ci/disk-space-check.sh
+    - bash ci/pg-backup.sh
+
+# ---------------------------------------------------------------------------
+# GitHub fork mirror — auto, on every push to master. Publishes a code-only
+# copy to the public fork (github.com/russell1996/zbpm) as ONE fresh squashed
+# commit each time — deliberately unrelated history, so GitHub's "Sync fork"
+# auto-merge stays permanently inert and can never pull upstream changes into
+# our fork (see governance memory public-github-fork-zbpm for the reasoning).
+# Excludes governance/, docs/audit/, AI-tooling config and internal-only CI
+# scripts, and redacts the internal prod host IP from docker-compose.yml.
+# Requires the masked/protected CI/CD variable GITHUB_SYNC_TOKEN (a
+# fine-grained GitHub PAT scoped to Contents: write on russell1996/zbpm only).
+# ---------------------------------------------------------------------------
+
+mirror:github:
+  stage: mirror
+  tags: [zbpm]
+  needs: []
+  variables:
+    GIT_STRATEGY: clone
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+  script:
+    - |
+      set -euo pipefail
+      WORKDIR=$(mktemp -d)
+      git archive HEAD | tar -x -C "$WORKDIR"
+      cd "$WORKDIR"
+      rm -rf governance docs/audit AGENTS.md .opencode .claude opencode.json
+      rm -f ci/cto-commit-guard.sh ci/cto-push-after-merge.sh ci/cto-verify-pipeline.sh \
+            ci/claude-hook-dispatch-check.sh \
+            ci/test-gate.sh ci/test-gate-selftest.sh ci/wo-report-gate.sh ci/sync-dispatch.sh \
+            ci/deploy-wait.sh
+      sed -i 's/10\.189\.131\.111/<internal-host>/g' docker-compose.yml
+      git init -q
+      git checkout -q -b main
+      git add -A
+      git -c user.name="zbpm-mirror" -c user.email="rasul.amirhan@gmail.com" \
+        commit -q -m "sync: code-only mirror from internal repo ($CI_COMMIT_SHORT_SHA)"
+      git remote add origin "https://x-access-token:${GITHUB_SYNC_TOKEN}@github.com/russell1996/zbpm.git"
+      git push --force origin main
+    - echo "Mirrored $CI_COMMIT_SHORT_SHA to github.com/russell1996/zbpm"

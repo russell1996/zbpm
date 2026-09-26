@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_collect_unknown_agg" name="collect-unknown-agg-test" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="collectUnknownAggDecision" name="Collect Unknown Agg Decision">
+    <decisionTable id="DecisionTable_collectunknownagg" hitPolicy="COLLECT" aggregation="AVERAGE">
+      <input id="Input_1" label="Score">
+        <inputExpression id="InputExpression_1" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Points" name="points" typeRef="number" />
+      <!-- WO-ENG-25 (NEW-06, критерий 4): неизвестная агрегация — evaluate
+           обязан бросить EngineException (паттерн WO-ENG-22), не вернуть список -->
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>&gt;= 0</text></inputEntry>
+        <outputEntry id="Out_1"><text>10</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

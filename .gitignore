@@ -1,0 +1,49 @@
+# Maven build output
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+
+# Frontend build artifacts (the frontend has its own .gitignore too)
+node_modules/
+zorrobpm-frontend/dist/
+
+# Local tooling (kept out of the repo)
+
+# Claude Code: локальные настройки и состояние — личные, не в репозиторий.
+# Ролевые агенты (.claude/agents/) версионируются намеренно: это часть протокола команды.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Агентские настройки: определения ролей — в репозитории, локальное состояние — нет.
+# Промпты (.opencode/agents, .claude/agents), AGENTS.md и opencode.json СОЗНАТЕЛЬНО отслеживаются:
+# это сам процесс, а не среда. opencode.json к тому же подключает governance/cto-to-agent.md через
+# `instructions` — без него в клоне диспатч перестаёт доезжать до исполнителя автоматически.
+# Ниже — только то, что привязано к конкретной машине.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# NVD vulnerability-database cache for local `mvn org.owasp:dependency-check-maven:check` runs
+# (matches the cve:scan CI job's own -v .nvd-cache:... mount) — ~500MB, machine-local, never commit.
+.nvd-cache/
+
+# opencode serve's own startup log in the executor's shared worktree — untracked-but-dirty here
+# false-positives ci/sync-dispatch.sh's "исполнитель работает, не трогаю" check (a merged, clean
+# branch reads as dirty just because this file exists), blocking --fix after every merge.
+.opencode-serve.log
+ci/soak/out/
+
+# WO-OBS-2: scrape token for prometheus (bearer, created via SUPER_ADMIN API key)
+ci/observability/scrape-token

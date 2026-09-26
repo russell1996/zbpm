@@ -1,0 +1,14 @@
+databaseChangeLog:
+  - logicalFilePath: 20260621-035
+  - changeSet:
+      id: 20260621-035
+      author: zorrodev
+      changes:
+        # nullable scope: NULL = process-instance root scope (existing behaviour); a non-null value
+        # (an activity id) holds local variables for IO-mapping/multi-instance that must not leak to the instance
+        - addColumn:
+            tableName: variables
+            columns:
+              - column:
+                  name: scope_id
+                  type: uuid

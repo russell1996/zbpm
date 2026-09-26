@@ -1,0 +1,34 @@
+databaseChangeLog:
+  - logicalFilePath: 20260808-069
+  - changeSet:
+      id: 20260808-069
+      author: executor
+      comment: WO-REL-15 (R-05) — explicit deployment lifecycle state on process definitions.
+        The deployment transaction now writes PENDING first and flips to ACTIVE only after all
+        runtime artifacts (bpmn model row, message/signal start subscriptions, timer start jobs,
+        element bindings) are created inside the same transaction. A redeploy of the same sha256
+        repairs any deployment whose state is not ACTIVE instead of bailing out with "already
+        exists". Default ACTIVE keeps every existing (fully deployed) row valid.
+      changes:
+        - addColumn:
+            tableName: process_definitions
+            columns:
+              - column:
+                  name: deployment_state
+                  type: varchar(20)
+                  defaultValue: ACTIVE
+                  constraints:
+                    nullable: false
+        - sql:
+            comment: WO-REL-15 backfill — mark orphaned versions (no bpmn model row, i.e. the
+              old code committed the version but crashed before saveFile) as PENDING so a redeploy
+              of the same sha256 repairs them instead of returning "already exists".
+            sql: >-
+              UPDATE process_definitions pd
+              SET deployment_state = 'PENDING'
+              WHERE NOT EXISTS (SELECT 1 FROM bpmn b WHERE b.id = pd.id)
+      rollback:
+        # WO-OPS-15: backfill UPDATE reversed by dropping the column.
+        - dropColumn:
+            tableName: process_definitions
+            columnName: deployment_state

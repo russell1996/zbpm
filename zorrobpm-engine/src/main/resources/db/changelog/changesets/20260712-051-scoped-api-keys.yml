@@ -1,0 +1,90 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260712-051-scoped-api-keys
+      author: mimo
+      changes:
+        - createTable:
+            tableName: api_key
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: owner_user_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: key_hash
+                  type: varchar(256)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: prefix
+                  type: varchar(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_used_at
+                  type: datetime with timezone
+              - column:
+                  name: expires_at
+                  type: datetime with timezone
+              - column:
+                  name: revoked_at
+                  type: datetime with timezone
+
+        - addUniqueConstraint:
+            tableName: api_key
+            columnNames: owner_user_id
+            constraintName: uq_api_key_owner
+
+        - addForeignKeyConstraint:
+            baseTableName: api_key
+            baseColumnNames: owner_user_id
+            referencedTableName: ui_users
+            referencedColumnNames: id
+            constraintName: fk_api_key_user
+
+        - createTable:
+            tableName: api_key_grant
+            columns:
+              - column:
+                  name: api_key_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: permissions
+                  type: varchar(512)
+              - column:
+                  name: is_full
+                  type: boolean
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+
+        - addPrimaryKey:
+            tableName: api_key_grant
+            columnNames: api_key_id, process_id
+            constraintName: pk_api_key_grant
+
+        - addForeignKeyConstraint:
+            baseTableName: api_key_grant
+            baseColumnNames: api_key_id
+            referencedTableName: api_key
+            referencedColumnNames: id
+            constraintName: fk_grant_api_key

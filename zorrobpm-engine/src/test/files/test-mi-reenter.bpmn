@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="testMiReenter" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="srvSetup" name="Setup">
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowSetup</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvSetup" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="fork">
+      <bpmn:incoming>flowSetup</bpmn:incoming>
+      <bpmn:outgoing>flowToMi</bpmn:outgoing>
+      <bpmn:outgoing>flowToNotify</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:userTask id="miTask" name="Execute">
+      <bpmn:incoming>flowToMi</bpmn:incoming>
+      <bpmn:outgoing>flowFromMi</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="executorId" />
+        <zeebe:taskSchedule dueDate="=dueDate" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=executors" inputElement="executorId" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="tmrCheck" cancelActivity="false" attachedToRef="miTask">
+      <bpmn:outgoing>flowToOverdue</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDate xsi:type="bpmn:tFormalExpression">=dueDate</bpmn:timeDate>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:endEvent id="endNotify">
+      <bpmn:incoming>flowToNotify</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="gwDecision">
+      <bpmn:incoming>flowFromMi</bpmn:incoming>
+      <bpmn:outgoing>flowClose</bpmn:outgoing>
+      <bpmn:outgoing>flowAdd</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="srvParentClose" name="Close">
+      <bpmn:incoming>flowClose</bpmn:incoming>
+      <bpmn:outgoing>flowFromClose</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvParentClose" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="gwParent" default="flowEnd">
+      <bpmn:incoming>flowFromClose</bpmn:incoming>
+      <bpmn:outgoing>flowEnd</bpmn:outgoing>
+      <bpmn:outgoing>flowReEnter</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="endProcess">
+      <bpmn:incoming>flowEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="srvNotifyOverdue" name="Overdue">
+      <bpmn:incoming>flowToOverdue</bpmn:incoming>
+      <bpmn:outgoing>flowFromOverdue</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvNotifyOverdue" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="endOverdue">
+      <bpmn:incoming>flowFromOverdue</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="start" targetRef="srvSetup" />
+    <bpmn:sequenceFlow id="flowSetup" sourceRef="srvSetup" targetRef="fork" />
+    <bpmn:sequenceFlow id="flowToMi" sourceRef="fork" targetRef="miTask" />
+    <bpmn:sequenceFlow id="flowToNotify" sourceRef="fork" targetRef="endNotify" />
+    <bpmn:sequenceFlow id="flowFromMi" sourceRef="miTask" targetRef="gwDecision" />
+    <bpmn:sequenceFlow id="flowClose" sourceRef="gwDecision" targetRef="srvParentClose">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "CLOSE"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowAdd" sourceRef="gwDecision" targetRef="srvSetup">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "ADD_EXECUTORS"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowFromClose" sourceRef="srvParentClose" targetRef="gwParent" />
+    <bpmn:sequenceFlow id="flowEnd" sourceRef="gwParent" targetRef="endProcess" />
+    <bpmn:sequenceFlow id="flowReEnter" sourceRef="gwParent" targetRef="miTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=needReturn = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowToOverdue" sourceRef="tmrCheck" targetRef="srvNotifyOverdue" />
+    <bpmn:sequenceFlow id="flowFromOverdue" sourceRef="srvNotifyOverdue" targetRef="endOverdue" />
+  </bpmn:process>
+</bpmn:definitions>

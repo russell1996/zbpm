@@ -1,0 +1,33 @@
+databaseChangeLog:
+  - logicalFilePath: 20260918-113
+  - changeSet:
+      id: 20260918-113
+      author: zorrodev
+      comment: >-
+        WO-OBS-8 (WB-004): W3C traceparent на outbox-записи для сквозного трейса
+        через @Scheduled-разрыв (поток шедулера никогда не был на стеке автора
+        записи — через живой MDC границу не перекинуть, только значением в самой
+        записи; persistence-половина WO-REL-26, поглощённого этим WO). Одна колонка
+        kind-agnostic вместо трёх payload-хирургий (SERVICE_TASK/DOMAIN_EVENT/EMAIL).
+        Чистый additive-expand: nullable, старый код колонку не читает — окна
+        несовместимости при rolling-deploy нет, HALT-precondition не нужен.
+      changes:
+        - addColumn:
+            tableName: outbox
+            columns:
+              - column:
+                  name: trace_parent
+                  type: varchar(64)
+                  remarks: 'W3C traceparent на момент постановки записи (00-traceid-spanid-flags), NULL — без родителя (запись не из трейснутого контекста); читает OutboxBatchProcessor для продолжения трейса'
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON COLUMN outbox.trace_parent IS 'W3C traceparent на момент постановки записи (WO-OBS-8, persistence-половина WO-REL-26): 00-traceid-spanid-flags; NULL — запись без родителя, корреляции нет (обычное поведение)';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON COLUMN outbox.trace_parent IS 'W3C traceparent на момент постановки записи (WO-OBS-8, persistence-половина WO-REL-26): 00-traceid-spanid-flags; NULL — запись без родителя, корреляции нет (обычное поведение)';
+      rollback:
+        - dropColumn:
+            tableName: outbox
+            columnName: trace_parent

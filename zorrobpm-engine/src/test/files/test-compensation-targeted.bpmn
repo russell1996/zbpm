@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_comp_t" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-compensation-targeted" name="test-compensation-targeted" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="taskA" />
+
+    <bpmn:scriptTask id="taskA" name="taskA" scriptFormat="feel" resultVariable="tmpA">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:script>1</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:boundaryEvent id="bA" name="bA" attachedToRef="taskA">
+      <bpmn:compensateEventDefinition id="ced_a" />
+    </bpmn:boundaryEvent>
+    <bpmn:association id="assocA" sourceRef="bA" targetRef="handlerA" />
+    <bpmn:scriptTask id="handlerA" name="handlerA" scriptFormat="feel" resultVariable="log" isForCompensation="true">
+      <bpmn:script>log * 10 + 1</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="taskA" targetRef="taskB" />
+
+    <bpmn:scriptTask id="taskB" name="taskB" scriptFormat="feel" resultVariable="tmpB">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+      <bpmn:script>2</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:boundaryEvent id="bB" name="bB" attachedToRef="taskB">
+      <bpmn:compensateEventDefinition id="ced_b" />
+    </bpmn:boundaryEvent>
+    <bpmn:association id="assocB" sourceRef="bB" targetRef="handlerB" />
+    <bpmn:scriptTask id="handlerB" name="handlerB" scriptFormat="feel" resultVariable="log" isForCompensation="true">
+      <bpmn:script>log * 10 + 2</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="taskB" targetRef="compThrow" />
+
+    <bpmn:intermediateThrowEvent id="compThrow" name="compThrow">
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+      <bpmn:compensateEventDefinition id="ced_throw" activityRef="taskA" />
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="f4" name="f4" sourceRef="compThrow" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f4</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

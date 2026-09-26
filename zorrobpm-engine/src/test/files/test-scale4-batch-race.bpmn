@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_scale4_race" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="scale4Msg" name="scale4-race-received" />
+  <bpmn:signal id="scale4Sig" name="scale4-race-signal" />
+  <bpmn:process id="scale4-race" name="scale4-race" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:userTaskForm id="race-form">{"components": [{"type": "textfield", "key": "name"}]}</zeebe:userTaskForm>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="raceMsgStart" name="raceMsgStart">
+      <bpmn:outgoing>flowMsg</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="medRace" messageRef="scale4Msg" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="raceTimerStart" name="raceTimerStart">
+      <bpmn:outgoing>flowTimer</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tedRace">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT5M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:startEvent id="raceSignalStart" name="raceSignalStart">
+      <bpmn:outgoing>flowSignal</bpmn:outgoing>
+      <bpmn:signalEventDefinition id="sedRace" signalRef="scale4Sig" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowMsg" name="flowMsg" sourceRef="raceMsgStart" targetRef="review" />
+    <bpmn:sequenceFlow id="flowTimer" name="flowTimer" sourceRef="raceTimerStart" targetRef="review" />
+    <bpmn:sequenceFlow id="flowSignal" name="flowSignal" sourceRef="raceSignalStart" targetRef="review" />
+    <bpmn:userTask id="review" name="review">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:formDefinition formKey="camunda-forms:bpmn:userTaskForm_race-form" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowMsg</bpmn:incoming>
+      <bpmn:incoming>flowTimer</bpmn:incoming>
+      <bpmn:incoming>flowSignal</bpmn:incoming>
+      <bpmn:outgoing>flowEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowEnd" name="flowEnd" sourceRef="review" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flowEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

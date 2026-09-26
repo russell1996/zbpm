@@ -1,0 +1,84 @@
+databaseChangeLog:
+  - logicalFilePath: 20260917-110
+  - changeSet:
+      id: 20260917-110
+      author: zorrodev
+      comment: "WO-ENG-16: append-only история значений переменных процесса (WB-003). Новая таблица рядом с variables (expand: существующие changeset'ы не тронуты, старые код/реплики новую таблицу не читают — окна несовместимости нет). Без FK на process_instances сознательно: audit-след не должен блокировать удаление инстанса retention'ом, чистка — явным DELETE в RetentionBatchProcessor."
+      changes:
+        - createTable:
+            tableName: variable_history
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+                    primaryKeyName: pk_variable_history
+              - column:
+                  name: process_instance_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: name
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: text_value
+                  type: text
+                  constraints:
+                    nullable: false
+              - column:
+                  name: type
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: scope_id
+                  type: uuid
+              - column:
+                  name: source
+                  type: varchar(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: changed_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+        - sql:
+            dbms: postgresql
+            sql: CREATE INDEX IF NOT EXISTS idx_variable_history_pi_name_at ON variable_history (process_instance_id, name, changed_at)
+        - sql:
+            dbms: h2
+            sql: CREATE INDEX IF NOT EXISTS idx_variable_history_pi_name_at ON variable_history (process_instance_id, name, changed_at)
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON TABLE variable_history IS 'История значений переменных процесса (WO-ENG-16, WB-003): append-only, по строке на каждое изменение; текущее значение — в variables';
+              COMMENT ON COLUMN variable_history.id IS 'PK строки истории';
+              COMMENT ON COLUMN variable_history.process_instance_id IS 'Инстанс-владелец переменной (без FK сознательно — audit-след не блокирует удаление инстанса)';
+              COMMENT ON COLUMN variable_history.name IS 'Имя переменной';
+              COMMENT ON COLUMN variable_history.text_value IS 'Значение на момент изменения (тип как в variables.text_value)';
+              COMMENT ON COLUMN variable_history.type IS 'Тип переменной (ProcessVariableType) на момент изменения';
+              COMMENT ON COLUMN variable_history.scope_id IS 'Скоуп переменной: NULL — корень инстанса, иначе id активности (как variables.scope_id)';
+              COMMENT ON COLUMN variable_history.source IS 'Кто изменил: INIT (стартовые переменные), CREATE (первая запись), UPDATE (перезапись), APPEND (добавление JSON-элемента)';
+              COMMENT ON COLUMN variable_history.changed_at IS 'Момент изменения (порядок истории — changed_at, затем id)';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON TABLE variable_history IS 'История значений переменных процесса (WO-ENG-16, WB-003): append-only, по строке на каждое изменение; текущее значение — в variables';
+              COMMENT ON COLUMN variable_history.id IS 'PK строки истории';
+              COMMENT ON COLUMN variable_history.process_instance_id IS 'Инстанс-владелец переменной (без FK сознательно — audit-след не блокирует удаление инстанса)';
+              COMMENT ON COLUMN variable_history.name IS 'Имя переменной';
+              COMMENT ON COLUMN variable_history.text_value IS 'Значение на момент изменения (тип как в variables.text_value)';
+              COMMENT ON COLUMN variable_history.type IS 'Тип переменной (ProcessVariableType) на момент изменения';
+              COMMENT ON COLUMN variable_history.scope_id IS 'Скоуп переменной: NULL — корень инстанса, иначе id активности (как variables.scope_id)';
+              COMMENT ON COLUMN variable_history.source IS 'Кто изменил: INIT (стартовые переменные), CREATE (первая запись), UPDATE (перезапись), APPEND (добавление JSON-элемента)';
+              COMMENT ON COLUMN variable_history.changed_at IS 'Момент изменения (порядок истории — changed_at, затем id)';
+      rollback:
+        # WO-OPS-15: index + COMMENTs die with the table — no separate inverses needed.
+        - dropTable:
+            tableName: variable_history

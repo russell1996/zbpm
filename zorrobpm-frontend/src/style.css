@@ -1,0 +1,112 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* WO-ACL-8 criterion 37: brand color tokens.
+     Primary changed from #3b82f6 (Tailwind blue) to #0075e3. */
+  --color-primary: #0075e3;
+  --color-primary-hover: #0068ca;
+  --color-primary-foreground: #ffffff;
+  /* WO-ACL-10 criterion 2: plain white app background. */
+  --color-background: #ffffff;
+  --color-foreground: #363636;
+  --color-card: #ffffff;
+  --color-card-foreground: #363636;
+  --color-muted: #f5f6f8;
+  --color-muted-foreground: #667085;
+  --color-border: #e1e4e8;
+  --color-border-soft: #edf0f2;
+  --color-input: #e1e4e8;
+  /* Focus ring: rgba(0,117,227,.14) */
+  --color-ring: 0 0 0 3px rgba(0,117,227,.14);
+  --color-placeholder: #8f969e;
+  --color-icon: #7b828a;
+  /* WO-ACL-15 criterion 15: the BPMN canvas stays LIGHT in both themes —
+     bpmn-js paints shapes/connections black with its own styles; a dark
+     inherited background makes the diagram invisible (black on dark blue). */
+  --color-bpmn-canvas: #ffffff;
+  /* WO-ACL-10 criterion 2: sidebar matches the app background. */
+  --color-sidebar: #ffffff;
+  --color-sidebar-foreground: #363636;
+  --color-sidebar-accent: #edf0f2;
+  --color-sidebar-primary: #0075e3;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-border: #e1e4e8;
+  --color-sidebar-ring: rgba(0,117,227,.14);
+  --color-destructive: #ef4444;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #363636;
+  /* shadcn-ui accent tokens (used by DropdownMenu/Select/etc. base classes, focus:bg-accent).
+     Mapped to the muted gray so the stock components render a visible highlight — same as
+     --color-muted in light. */
+  --color-accent: #f5f6f8;
+  --color-accent-foreground: #363636;
+  --radius: 0.5rem;
+  --radius-pill: 999px;
+  /* WO-ACL-8 criterion 38: Golos Text font (self-hosted via @fontsource) */
+  --font-sans: 'Golos Text', system-ui, -apple-system, sans-serif;
+  /* Base transition */
+  --transition-base: 180ms ease;
+}
+
+.dark {
+  /* WO-ACL-10 criterion 16: every color token must exist in both palettes,
+     so the dark theme keeps its own values for all tokens from @theme. */
+  --color-primary: #0075e3;
+  --color-primary-hover: #0068ca;
+  --color-primary-foreground: #ffffff;
+  --color-background: #0f172a;
+  --color-foreground: #f8fafc;
+  --color-card: #1e293b;
+  --color-card-foreground: #f8fafc;
+  --color-muted: #1e293b;
+  --color-muted-foreground: #94a3b8;
+  --color-border: #334155;
+  --color-border-soft: #334155;
+  --color-input: #334155;
+  --color-ring: 0 0 0 3px rgba(96,165,250,.25);
+  --color-placeholder: #94a3b8;
+  --color-icon: #94a3b8;
+  --color-bpmn-canvas: #ffffff;
+  --color-sidebar: #0f172a;
+  --color-sidebar-foreground: #f8fafc;
+  --color-sidebar-accent: #1e293b;
+  --color-sidebar-primary: #0075e3;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-border: #334155;
+  --color-sidebar-ring: rgba(96,165,250,.25);
+  --color-destructive: #f87171;
+  --color-popover: #1e293b;
+  --color-popover-foreground: #f8fafc;
+  /* shadcn Select/DropdownMenu item hover (focus:bg-accent) — distinct from the #1e293b popover. */
+  --color-accent: #334155;
+  --color-accent-foreground: #f8fafc;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-foreground);
+  background: var(--color-background);
+}
+
+@layer base {
+  /* Default border color for elements that do not set one via a utility.
+     MUST live in a layer: unlayered rules beat ALL Tailwind utilities in the
+     cascade, and this rule was silently overriding border-{color} classes —
+     e.g. TabsBar's border-primary never painted the accent underline
+     (WO-ACL-15 criterion 13). */
+  * {
+    border-color: var(--color-border);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

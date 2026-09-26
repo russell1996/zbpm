@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - logicalFilePath: 20260905-088
+  - changeSet:
+      id: 20260905-088
+      author: zorrodev
+      changes:
+        # WO-C8-20: тег версии DMN-решения (bindingType="versionTag" у calledDecision).
+        # Тег живёт внутри DMN XML (<decision><extensionElements><zeebe:versionTag>) и
+        # сохраняется на строке версии; null = версия без тега (норма для большинства).
+        - addColumn:
+            tableName: dmn_definitions
+            columns:
+              - column:
+                  name: version_tag
+                  type: varchar(255)
+                  remarks: 'Тег версии DMN-решения (WO-C8-20, bindingType=versionTag); null — без тега'

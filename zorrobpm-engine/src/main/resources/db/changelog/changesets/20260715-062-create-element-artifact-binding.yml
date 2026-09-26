@@ -1,0 +1,61 @@
+databaseChangeLog:
+  - logicalFilePath: 20260715-062
+  - changeSet:
+      id: 20260715-062
+      author: mimo
+      changes:
+        - createTable:
+            tableName: element_artifact_binding
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_definition_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_definition_version
+                  type: int
+                  constraints:
+                    nullable: false
+              - column:
+                  name: element_id
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: artifact_key
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: artifact_version
+                  type: int
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamp
+                  constraints:
+                    nullable: false
+        - addPrimaryKey:
+            tableName: element_artifact_binding
+            columnNames: id
+        - createIndex:
+            tableName: element_artifact_binding
+            index_name: idx_binding_pd_element
+            columns:
+              - column:
+                  name: process_definition_id
+              - column:
+                  name: element_id
+        - createIndex:
+            tableName: element_artifact_binding
+            index_name: idx_binding_artifact
+            columns:
+              - column:
+                  name: artifact_key
