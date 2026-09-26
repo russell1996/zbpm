@@ -62,6 +62,11 @@ public class RateLimitFilterConfig {
     @Value("${zorrobpm.security.rate-limit.refresh-window-seconds:60}")
     private int refreshWindowSeconds;
 
+    // WO-QW-5 (NEW2-11): отдельный IP-бакет refresh (не capacity логина).
+    // Дефолт 60/мин — см. поле в фильтре.
+    @Value("${zorrobpm.security.rate-limit.refresh-ip-capacity:60}")
+    private int refreshIpCapacity;
+
     @Value("${zorrobpm.security.rate-limit.trusted-proxies:}")
     private String trustedProxiesRaw;
 
@@ -78,6 +83,7 @@ public class RateLimitFilterConfig {
         filter.setAccountCapacity(accountCapacity);
         filter.setRefreshCapacity(refreshCapacity);
         filter.setRefreshWindowSeconds(refreshWindowSeconds);
+        filter.setRefreshIpCapacity(refreshIpCapacity);
         // WO-INT-4 criterion 8: per-key data quota needs key identity.
         filter.setApiKeyRepository(apiKeyRepository);
         // WO-SEC-58 HOLD-fix: /me/password bucket keyed on the JWT user, not client IP.
