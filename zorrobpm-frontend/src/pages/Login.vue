@@ -56,6 +56,7 @@ async function submit() {
           <label class="block text-sm font-medium mb-1">{{ t('loginIdentifier') }}</label>
           <input
             v-model="username"
+            data-testid="login-username"
             type="text"
             autocomplete="username"
             autofocus
@@ -66,6 +67,7 @@ async function submit() {
           <label class="block text-sm font-medium mb-1">{{ t('password') }}</label>
           <input
             v-model="password"
+            data-testid="login-password"
             type="password"
             autocomplete="current-password"
             class="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -77,6 +79,7 @@ async function submit() {
 
       <button
         type="submit"
+        data-testid="login-submit"
         :disabled="isLoading"
         class="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm disabled:opacity-50"
       >

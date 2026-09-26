@@ -15,6 +15,7 @@
           </label>
           <input
             id="currentPassword"
+            data-testid="change-current"
             v-model="currentPassword"
             type="password"
             required
@@ -28,6 +29,7 @@
           </label>
           <input
             id="newPassword"
+            data-testid="change-new"
             v-model="newPassword"
             type="password"
             required
@@ -42,6 +44,7 @@
           </label>
           <input
             id="confirmPassword"
+            data-testid="change-confirm"
             v-model="confirmPassword"
             type="password"
             required
@@ -56,6 +59,7 @@
 
         <button
           type="submit"
+          data-testid="change-submit"
           :disabled="isLoading || mismatch || !newPassword"
           class="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
         >
