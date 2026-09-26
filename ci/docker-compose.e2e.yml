@@ -1,20 +1,22 @@
 # WO-TEST-12: override для E2E-стенда (использовать ТОЛЬКО вместе с
 # базовым docker-compose.yml — сам по себе ничего не поднимает).
 #
-# Два отличия от прод-топологии:
+# Отличия от прод-топологии:
 #  1. Куки без Secure-флага, потому что E2E идёт по plain http://localhost
 #     (браузер не хранит Secure-куки без TLS). Флаг env-конфигурируем (P-13):
 #     прод-дефолт `true` в AuthResource не тронут, здесь — явный override
 #     тестового стенда, не хардкод.
+#  2. WO-QW-5 (NEW2-13): project-scoped имена. Базовый compose задаёт
+#     фиксированные `container_name: zorrobpm-*` — с COMPOSE_PROJECT_NAME они
+#     несовместимы, поэтому здесь container_name СНИМАЕМ (`!reset`:
+#     compose сгенерирует `<project>-<service>-1`), а сеть именуем от проекта
+#     явно. Итог: E2E-стенд (`zorrobpm-e2e-*`) и dev-стек (`zorrobpm-*`) живут
+#     рядом без конфликта имён, портов (см. ports ниже) и volumes
+#     (`<project>_<volume>`).
 #  3. E2E-стенд — dev-профиль БД/брокера: дефолтные `zorrodev`-креды
-#     postgres/rabbitmq здесь ЛЕГИТИМНЫ (это тестовый стенд, не прод).
-#     Прод-валидатор SEC-80 отвергает их только вне dev/test — стенд идёт
-#     с непустым SPRING_PROFILES_ACTIVE (значение ниже), т.е. guard его
-#     пропускает по построению (SAFE_PROFILES), а прод (профиль prod) —
-#     по-прежнему под защитой. Без этого стенд не стартует вообще
-#     (поймано живьём: IllegalStateException на DB_PASSWORD=zorrodev).
 services:
   postgres:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
     # Сброс базовых публикаций: compose APPEND'ит ports из override к базовым —
     # без сброса базовые 5432/5672/8080/8081 остаются и конфликтуют с чужими
     # стеками на том же хосте (проверено живой ошибкой bind 5432). Пустой
@@ -22,10 +24,12 @@ services:
     ports: !override
       - "127.0.0.1:${E2E_DB_PORT:-55432}:5432"
   rabbitmq:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
     ports: !override
       - "${E2E_RABBITMQ_PORT:-55672}:5672"
       - "${E2E_RABBITMQ_MGMT_PORT:-59300}:15672"
   app:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
     environment:
       ZORROBPM_SECURITY_COOKIE_SECURE: "false"
       # E2E идёт с http://localhost:<порт> — origin обязан быть в allowlist.
@@ -62,5 +66,6 @@ services:
     ports: !override
       - "${E2E_APP_PORT:-58080}:8080"
   frontend:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
     ports: !override
       - "${E2E_FRONTEND_PORT:-58081}:80"

@@ -32,6 +32,10 @@ class Sec79RefreshIpBucketTest {
         filter.setAccountCapacity(5);
         filter.setRefreshCapacity(100);
         filter.setRefreshWindowSeconds(3600);
+        // WO-QW-5: IP-бакет refresh — свой (refreshIpCapacity), удерживаем 5
+        // для старых сценариев класса (порог срабатывания IP-лимита), новый
+        // тест ниже ставит 60 и доказывает разделение от capacity логина.
+        filter.setRefreshIpCapacity(5);
         filter.setDataCapacity(120);
         filter.setDataWindowSeconds(60);
         filter.setRateLimitEnabled(true);
@@ -82,7 +86,6 @@ class Sec79RefreshIpBucketTest {
                 .isEqualTo(200);
         }
     }
-
     @Test
     void cookiePrefixCollision_sameFullCookie_differentPrefixTreatedEqual() throws Exception {
         // Two cookies sharing the first 16 chars but differing after must land
@@ -101,5 +104,23 @@ class Sec79RefreshIpBucketTest {
         assertThat(doFilter(refreshRequest("10.9.0.4", base + "-variant-AAA")))
             .as("3rd use of variant-AAA with capacity 2 → 429")
             .isEqualTo(429);
+    }
+
+    /**
+     * WO-QW-5 (NEW2-11): N пользователей за одним IP не душат друг друга.
+     * IP-бакет refresh — свой (`refreshIpCapacity`), не `capacity` логина:
+     * 8 разных кук с одного IP при login-capacity=5 обязаны пройти все
+     * (раньше 6-й получал 429). POF-мутация: `refreshIpCapacity` → `capacity`
+     * в IP-ветке refresh — этот тест КРАСНЫЙ (6-й refresh 429).
+     */
+    @Test
+    void sharedIp_manyUsersEachRefreshOnce_allPass() throws Exception {
+        filter.setRefreshIpCapacity(60);
+        for (int i = 0; i < 8; i++) {
+            int status = doFilter(refreshRequest("10.99.0.1", "user-" + i + "-cookie-abcdef"));
+            assertThat(status)
+                .as("пользователь %d за общим IP: свой refresh в пределах лимита обязан пройти", i)
+                .isEqualTo(200);
+        }
     }
 }
