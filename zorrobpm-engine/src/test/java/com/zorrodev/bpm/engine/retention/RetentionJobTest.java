@@ -34,6 +34,17 @@ class RetentionJobTest {
         verifyNoInteractions(batchProcessor);
     }
 
+    /**
+     * WO-QW-5 (NEW2-12): дефолтный passBudgetMs — ненулевой (10 минут).
+     * POF-мутация: `= 0` в RetentionConfig — этот тест КРАСНЫЙ.
+     */
+    @Test
+    void defaultPassBudget_isNonZero() {
+        assertThat(new RetentionConfig().getPassBudgetMs())
+            .as("дефолтный бюджет прохода retention обязан быть ненулевым (WO-QW-5)")
+            .isEqualTo(600_000L);
+    }
+
     @Test
     void enabled_delegatesToBatchProcessor() {
         config.setTtlDays(90);
