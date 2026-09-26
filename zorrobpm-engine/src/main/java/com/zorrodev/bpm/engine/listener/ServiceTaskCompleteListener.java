@@ -6,6 +6,7 @@ import com.zorrodev.bpm.engine.service.RuntimeService;
 import com.zorrodev.bpm.engine.tracing.TracingSupport;
 import com.zorrodev.bpm.exchange.ServiceTaskCompleted;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +16,7 @@ import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class ServiceTaskCompleteListener {
 
     private final RuntimeService runtimeService;
@@ -54,6 +56,23 @@ public class ServiceTaskCompleteListener {
                     return pv;
                 })
                 .toList();
-        runtimeService.completeServiceTask(serviceTaskId, variables);
+        // WO-QW-5 (NEW2-15): временная FEEL-перегрузка (ScriptOverloadException
+        // из io-mapping/condition-eval внутри complete) — НЕ бизнес-ошибка и
+        // НЕ повод в DLQ: исключение пробрасывается наружу без обёртки, и
+        // контейнерный retry (2/4/8/16с, exponential) переигрывает то же
+        // сообщение позже. Стабильная перегрузка за 5 попыток всё равно уйдёт
+        // в DLQ по общей политике — это уже не «временная», а sustained, и
+        // отдельный redrive-механизм для неё — вне scope этого WO (см. отчёт).
+        // P-46: guard узкий — только ScriptOverloadException; любой другой
+        // RuntimeException идёт прежним путём (транзакция откатывается,
+        // контейнер решает по общей политике, без новой семантики здесь).
+        try {
+            runtimeService.completeServiceTask(serviceTaskId, variables);
+        } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException overloaded) {
+            log.info("Service task {} completion deferred: FEEL pool overloaded, "
+                + "container retry will redeliver (retry-after ~{}s)",
+                serviceTaskId, overloaded.getRetryAfterSeconds());
+            throw overloaded;
+        }
     }
 }

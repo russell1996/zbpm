@@ -13,6 +13,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import axios from 'axios'
+import api from '@/services/api'
 import { useRealtimeEvents } from './useRealtimeEvents'
 import * as processService from '@/services/processService'
 import * as instanceService from '@/services/instanceService'
@@ -93,16 +95,34 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
   })
 
   function mockRefreshOk() {
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as Response)
+    // WO-QW-5: refresh идёт через axios sharedRefresh на api-инстансе
+    // (single-flight с axios-интерсептором), не прямым fetch — мокаем
+    // адаптер api-инстанса (дефолтный axios здесь ни при чём).
+    const adapter = vi.fn(async (cfg: { url?: string }) => {
+      if (cfg.url === '/auth/refresh') return { data: {}, status: 200 }
+      return { data: {}, status: 200 }
+    })
+    ;(api.defaults as Record<string, unknown>).adapter = adapter
+    return adapter
   }
 
   function mockRefreshFail() {
-    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401 } as Response)
+    const adapter = vi.fn(async (cfg: { url?: string }) => {
+      const error = new axios.AxiosError('Request failed with status code 401')
+      error.config = { url: cfg.url || '/x', method: 'GET', headers: new axios.AxiosHeaders() } as never
+      error.response = {
+        data: null, status: 401, statusText: 'Unauthorized',
+        headers: new axios.AxiosHeaders(), config: error.config,
+      }
+      throw error
+    })
+    ;(api.defaults as Record<string, unknown>).adapter = adapter
+    return adapter
   }
 
   it('criterion 1: CLOSED → refresh → new EventSource with expected params', async () => {
     vi.useFakeTimers()
-    mockRefreshOk()
+    const adapter = mockRefreshOk()
     const rt = useRealtimeEvents()
     rt.connect()
     expect(FakeEventSource.instances).toHaveLength(1)
@@ -113,10 +133,8 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     // backoff-таймер первого повтора: прокручиваем
     await vi.runAllTimersAsync()
     await Promise.resolve()
-    expect(fetch).toHaveBeenCalledTimes(1)
-    const [calledUrl, opts] = vi.mocked(fetch).mock.calls[0]
-    expect(calledUrl).toContain('/auth/refresh')
-    expect((opts as RequestInit)?.method).toBe('POST')
+    expect(adapter.mock.calls.filter(([cfg]) => (cfg as { url?: string }).url === '/auth/refresh'))
+      .toHaveLength(1)
     expect(FakeEventSource.instances).toHaveLength(2)
     expect(FakeEventSource.instances[1].url).toBe(url)
     expect(first.closed).toBe(true)
@@ -144,7 +162,7 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
 
   it('criterion 4: persistent 401 does not hammer /auth/refresh (bounded attempts)', async () => {
     vi.useFakeTimers()
-    mockRefreshFail()
+    const adapter = mockRefreshFail()
     const rt = useRealtimeEvents()
     rt.connect()
     // Каждая неудача переводит новый source в CLOSED и снова стреляет onerror:
@@ -157,20 +175,23 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
       await Promise.resolve()
     }
     // Попыток refresh — не больше капа, а не 10 (по одной на разрыв).
-    expect(vi.mocked(fetch).mock.calls.length).toBeLessThanOrEqual(5)
+    const refreshCalls = adapter.mock.calls.filter(
+      ([cfg]) => (cfg as { url?: string }).url === '/auth/refresh',
+    ).length
+    expect(refreshCalls).toBeLessThanOrEqual(5)
     expect(rt.sessionExpired.value).toBe(true)
     rt.disconnect()
   })
 
   it('non-CLOSED error keeps legacy behaviour (no refresh, channel alive)', async () => {
-    mockRefreshOk()
+    const adapter = mockRefreshOk()
     const rt = useRealtimeEvents()
     rt.connect()
     const src = FakeEventSource.instances[0]
     src.readyState = FakeEventSource.OPEN
     src.onerror?.({} as Event)
     await Promise.resolve()
-    expect(fetch).not.toHaveBeenCalled()
+    expect(adapter).not.toHaveBeenCalled()
     expect(src.closed).toBe(false)
     expect(rt.error.value).toBeTruthy()
     rt.disconnect()

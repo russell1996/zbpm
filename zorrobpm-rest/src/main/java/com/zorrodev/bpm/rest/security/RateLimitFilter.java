@@ -83,6 +83,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private int refreshCapacity;
     /** WO-SEC-44: refresh window in seconds. Default: 60. */
     private int refreshWindowSeconds;
+    /**
+     * WO-QW-5 (NEW2-11): отдельный IP-бакет refresh-пути. Раньше IP-сторона
+     * refresh переиспользовала `capacity` логина (5/60 в prod): пользователи
+     * за общим egress делили 5 refresh/мин на всех — после WO-UI-22 (refresh
+     * на каждый SSE-reconnect) легитимный шторм reconnect'ов душил соседей.
+     * Дефолт 60/мин: на порядок щедрее login-IP (flood-защита сохраняется —
+     * refresh всё равно требует валидную куку + per-user бакет 30/60 ниже),
+     * но N пользователей за одним IP друг друга не блокируют.
+     */
+    private int refreshIpCapacity = 60;
     /** WO-SEC-44: trusted proxy IPs/CIDRs. Empty = ignore XFF (current behavior). */
     private Set<String> trustedProxies = Set.of();
 
@@ -104,6 +114,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     void setAccountCapacity(int accountCapacity) { this.accountCapacity = accountCapacity; }
     void setRefreshCapacity(int refreshCapacity) { this.refreshCapacity = refreshCapacity; }
     void setRefreshWindowSeconds(int refreshWindowSeconds) { this.refreshWindowSeconds = refreshWindowSeconds; }
+    void setRefreshIpCapacity(int refreshIpCapacity) { this.refreshIpCapacity = refreshIpCapacity; }
     void setTrustedProxies(Set<String> trustedProxies) { this.trustedProxies = trustedProxies; }
 
     void setApiKeyRepository(ApiKeyRepository apiKeyRepository) { this.apiKeyRepository = apiKeyRepository; }
@@ -218,7 +229,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         // must not pay for another bucket's decision.
         if ("POST".equalsIgnoreCase(method) && "/auth/refresh".equals(path)) {
             String ipKey = "refresh:ip:" + clientIp;
-            long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, capacity, windowSeconds);
+            long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, refreshIpCapacity, windowSeconds);
             if (ipRetryAfter > 0) {
                 send429(response, ipRetryAfter);
                 return;
@@ -228,7 +239,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 String refreshKey = "refresh:" + userHash;
                 long retryAfter = pgRateLimiter.tryConsume(refreshKey, refreshCapacity, refreshWindowSeconds);
                 if (retryAfter > 0) {
-                    pgRateLimiter.rollback(ipKey, capacity);
+                    pgRateLimiter.rollback(ipKey, refreshIpCapacity);
                     send429(response, retryAfter);
                     return;
                 }

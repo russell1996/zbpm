@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import axios, { AxiosError, AxiosHeaders } from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
-import { createRefreshInterceptor, type AuthCallbacks } from './refreshInterceptor'
+import { createRefreshInterceptor, sharedRefresh, type AuthCallbacks } from './refreshInterceptor'
 
 function make401Error(config: Partial<InternalAxiosRequestConfig> = {}): AxiosError {
   const fullConfig: InternalAxiosRequestConfig = {
@@ -277,5 +277,79 @@ describe('WO-QW-1 item 12: onUnauthorized fires at most once per refresh cycle',
     await expect(cycleInstance.get('/first')).rejects.toThrow()
     await expect(cycleInstance.get('/second')).rejects.toThrow()
     expect(cycleCallbacks.onUnauthorized).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('WO-QW-5 (NEW2-10): sharedRefresh single-flight across axios + SSE paths', () => {
+  let probe: ReturnType<typeof axios.create>
+
+  beforeEach(() => {
+    probe = axios.create({ baseURL: 'http://localhost' })
+    createRefreshInterceptor(probe, {
+      onPasswordChangeRequired: vi.fn(),
+      onUnauthorized: vi.fn(),
+    })
+  })
+
+  it('concurrent axios-401 and SSE-refresh share ONE POST /auth/refresh', async () => {
+    const sseInstance = axios.create({ baseURL: 'http://localhost' })
+    let refreshPosts = 0
+    const adapterSpy = vi.fn(async (cfg: { url?: string } & Record<string, unknown>) => {
+      if (cfg.url === '/auth/refresh') {
+        refreshPosts += 1
+        // Ротируемая кука: первый POST сжигает её — второй параллельный POST
+        // получил бы «already rotated». Single-flight обязан не допустить
+        // второго POST вообще.
+        await new Promise((r) => setTimeout(r, 50))
+        return { data: { token: 'new-token' }, status: 200 }
+      }
+      if ((cfg as { _retry?: boolean })._retry) return { data: [{ id: 'retry-ok' }], status: 200 }
+      const error = new AxiosError('Request failed with status code 401')
+      const fullCfg = { url: cfg.url || '/x', method: 'GET', headers: new AxiosHeaders() }
+      error.response = {
+        data: null, status: 401, statusText: 'Unauthorized',
+        headers: new AxiosHeaders(), config: fullCfg as InternalAxiosRequestConfig,
+      }
+      error.config = fullCfg as InternalAxiosRequestConfig
+      throw error
+    })
+    ;(probe.defaults as Record<string, unknown>).adapter = adapterSpy
+    ;(sseInstance.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    // axios-путь (401 → sharedRefresh внутри интерсептора) и SSE-путь
+    // (прямой sharedRefresh — как зовёт useRealtimeEvents) одновременно.
+    const [axiosRes, sseOk] = await Promise.all([
+      probe.get('/process-instances'),
+      sharedRefresh(sseInstance),
+    ])
+    expect(axiosRes.status).toBe(200)
+    expect(sseOk).toBe(true)
+    // Один refresh на оба пути — второго POST на ротируемую куку нет.
+    expect(refreshPosts).toBe(1)
+  })
+
+  it('sequential refreshes after settle POST again (promise resets)', async () => {
+    let refreshPosts = 0
+    const adapterSpy = vi.fn(async (cfg: { url?: string }) => {
+      if (cfg.url === '/auth/refresh') {
+        refreshPosts += 1
+        return { data: {}, status: 200 }
+      }
+      return { data: {}, status: 200 }
+    })
+    ;(probe.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    expect(await sharedRefresh(probe)).toBe(true)
+    expect(await sharedRefresh(probe)).toBe(true)
+    expect(refreshPosts).toBe(2)
+  })
+
+  it('failed refresh resolves false (SSE path backs off instead of hanging)', async () => {
+    const adapterSpy = vi.fn(async () => {
+      throw make401Error({ url: '/auth/refresh' })
+    })
+    ;(probe.defaults as Record<string, unknown>).adapter = adapterSpy
+
+    await expect(sharedRefresh(probe)).resolves.toBe(false)
   })
 })

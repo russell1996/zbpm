@@ -18,6 +18,7 @@ import org.slf4j.MDC;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 
@@ -88,5 +89,32 @@ class ServiceTaskCompleteListenerTraceTest {
         assertThat(exporter.getFinishedSpanItems())
             .filteredOn(span -> span.getName().equals("completion.process"))
             .hasSize(1);
+    }
+
+    /**
+     * WO-QW-5 (NEW2-15): FEEL-перегрузка внутри complete — не бизнес-ошибка:
+     * исключение пробрасывается наружу БЕЗ обёртки (контейнерный retry
+     * переиграет сообщение; транзакция откатывается штатно), а не глотается
+     * и не превращается в FAILED-completion. POF-мутация: убрать catch —
+     * поведение то же (проброс), но без info-строки; мутация «завернуть в
+     * EngineException» — этот тест КРАСНЫЙ (isSameAs падает).
+     */
+    @Test
+    void qw5_completion_overload_propagatesUnwrapped_noFailCall() {
+        com.zorrodev.bpm.engine.service.ScriptOverloadException overload =
+            new com.zorrodev.bpm.engine.service.ScriptOverloadException("pool overloaded (test)", 5);
+        org.mockito.Mockito.doThrow(overload).when(runtimeService)
+            .completeServiceTask(any(), any());
+        ServiceTaskCompleted completed = new ServiceTaskCompleted();
+        completed.setServiceTaskId(UUID.randomUUID());
+        completed.setStatus("SUCCESS");
+        completed.setTraceParent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+        completed.setProcessInstanceId("pi-overload");
+
+        assertThatThrownBy(() -> listener.on(completed))
+            .as("overload обязана выйти наружу без обёртки — контейнер retry её переиграет")
+            .isSameAs(overload);
+        org.mockito.Mockito.verify(runtimeService, org.mockito.Mockito.never())
+            .failServiceTask(any(), any(), any());
     }
 }

@@ -226,9 +226,17 @@ class SseRel52BridgePgIT {
             }
         }
         // Прогрев: первое событие заполняет rights-кэш (30s TTL) и L2-пути —
-        // измеряем устоявшееся окно, не холодный старт.
+        // измеряем устоявшееся окно, не холодный старт. WO-QW-5 (NEW2-14):
+        // Awaitility на факте доставки прогревочного события хотя бы одному
+        // клиенту вместо фиксированного sleep (P-10/WO-OPS-14 — стена 2с либо
+        // ждёт зря, либо не дожидается на медленном раннере). Хук —
+        // существующий listener-интерфейс (REL-47 §7.2: вызывается ПОСЛЕ
+        // реального send), нового прод-кода не потребовалось.
+        java.util.concurrent.atomic.AtomicBoolean warmupDelivered =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+        sseEventStreamService.addEventListener((cid, envelope) -> warmupDelivered.set(true));
         pushEvent(pdId);
-        Thread.sleep(2000);
+        await().atMost(java.time.Duration.ofSeconds(30)).untilTrue(warmupDelivered);
 
         sseEventStreamService.clearEventListeners();
         sseEventStreamService.addEventListener((cid, envelope) -> {
