@@ -218,6 +218,33 @@ test:chaos:
       when: manual
       allow_failure: true
 
+# ---------------------------------------------------------------------------
+# E2E login-complete — WO-TEST-12 спек, WO-QW-5 (NEW2-13) проводка в CI.
+# Сквозной Playwright login → tasks → live SSE → complete против РЕАЛЬНОГО
+# backend (compose-стенд postgres:16 + rabbitmq:4.1, prod-профиль). Медленный
+# (сборка двух образов + стенд + браузер, минуты) и тяжёлый (docker socket,
+# порты, volumes) — поэтому НЕ в каждом pipeline: schedule + ручной запуск,
+# allow_failure (стенд-зависимый, не unit-строгость). COMPOSE_PROJECT_NAME
+# выносит стенд в своё пространство имён — с чужим dev-стеком на том же
+# раннере не конфликтует (project-scoped имена/порты/volumes).
+# ---------------------------------------------------------------------------
+
+test:e2e-login:
+  stage: test
+  tags: [zbpm]
+  artifacts:
+    paths:
+      - "/tmp/e2e-app-tail.log"
+    expire_in: 3 days
+    when: always
+  script:
+    - bash ci/e2e-login-complete.sh
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: true
+
 test:frontend:
   stage: test
   tags: [zbpm]
