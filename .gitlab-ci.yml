@@ -690,7 +690,8 @@ mirror:github:
       git archive HEAD | tar -x -C "$WORKDIR"
       cd "$WORKDIR"
       rm -rf governance docs/audit AGENTS.md .opencode .claude opencode.json
-      rm -f ci/cto-commit-guard.sh ci/cto-push-after-merge.sh ci/claude-hook-dispatch-check.sh \
+      rm -f ci/cto-commit-guard.sh ci/cto-push-after-merge.sh ci/cto-verify-pipeline.sh \
+            ci/claude-hook-dispatch-check.sh \
             ci/test-gate.sh ci/test-gate-selftest.sh ci/wo-report-gate.sh ci/sync-dispatch.sh \
             ci/deploy-wait.sh
       sed -i 's/10\.189\.131\.111/<internal-host>/g' docker-compose.yml
