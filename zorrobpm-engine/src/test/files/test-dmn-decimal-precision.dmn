@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_decimal_precision" name="decimal-precision-test" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="largeDecimalDecision" name="Large Decimal Decision">
+    <decisionTable id="DecisionTable_largedecimal" hitPolicy="UNIQUE">
+      <input id="Input_1" label="Any">
+        <inputExpression id="InputExpression_1" typeRef="string" expressionLanguage="feel">
+          <text>flag</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Amount" name="amount" typeRef="number" />
+      <!-- WO-ENG-27 (NEW2-05): 17 значащих цифр — обязано сохраниться точно, не LONG -->
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>-</text></inputEntry>
+        <outputEntry id="Out_1"><text>12345678901234567.89</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <decision id="fractionalProductDecision" name="Fractional Product Decision">
+    <decisionTable id="DecisionTable_fractionalproduct" hitPolicy="UNIQUE">
+      <input id="Input_2" label="Any">
+        <inputExpression id="InputExpression_2" typeRef="string" expressionLanguage="feel">
+          <text>flag</text>
+        </inputExpression>
+      </input>
+      <output id="Output_2" label="Total" name="total" typeRef="number" />
+      <!-- WO-ENG-27 (NEW2-05): дробное произведение — обязано дать ровно 3000000000.21 -->
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>-</text></inputEntry>
+        <outputEntry id="Out_2"><text>1000000000.07 * 3</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>
