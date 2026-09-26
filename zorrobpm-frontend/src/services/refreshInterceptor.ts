@@ -18,7 +18,31 @@ export interface AuthCallbacks {
  *
  * WO-SEC-19: Also handles 403 PASSWORD_CHANGE_REQUIRED via callbacks.onPasswordChangeRequired.
  * WO-FE-8: callbacks injected to break circular import api ↔ auth.
+ *
+ * WO-QW-5 (NEW2-10): общий single-flight refresh для axios-пути И SSE-пути
+ * (`useRealtimeEvents.refreshAndReconnect` делал прямой `fetch` мимо
+ * `isRefreshing`: одновременный 401-refresh от axios гонялся за ту же
+ * ротируемую refresh-куку — проигравший получал «already rotated», и если
+ * проигрывал axios-путь, пользователя разлогинивало). Модульный promise
+ * `sharedRefresh()`: кто первый начал — делает POST, остальные ждут тот же
+ * promise; сброс в finally. SSE-сторона зовёт его же вместо прямого fetch
+ * (креда `include` — та же ротируемая кука, тот же один refresh).
  */
+let sharedRefreshPromise: Promise<boolean> | null = null
+
+export function sharedRefresh(instance: AxiosInstance): Promise<boolean> {
+  if (sharedRefreshPromise) {
+    return sharedRefreshPromise
+  }
+  sharedRefreshPromise = instance
+    .post('/auth/refresh')
+    .then(() => true)
+    .catch(() => false)
+    .finally(() => {
+      sharedRefreshPromise = null
+    })
+  return sharedRefreshPromise
+}
 export function createRefreshInterceptor(instance: AxiosInstance, callbacks: AuthCallbacks): void {
   let isRefreshing = false
   // WO-QW-1 (item 12): onUnauthorized must fire at most once per refresh cycle —
@@ -92,8 +116,11 @@ export function createRefreshInterceptor(instance: AxiosInstance, callbacks: Aut
       unauthorizedNotified = false
 
       try {
-        // Attempt refresh (cookie is sent automatically with withCredentials: true)
-        await instance.post('/auth/refresh')
+        // Attempt refresh (cookie is sent automatically with withCredentials: true).
+        // WO-QW-5: через sharedRefresh — SSE-сторона ждёт тот же promise,
+        // второго POST на ту же ротируемую куку не будет.
+        const ok = await sharedRefresh(instance)
+        if (!ok) throw new Error('refresh failed')
         processPendingQueue(null, 'ok')
         return instance(originalRequest)
       } catch (refreshError) {
