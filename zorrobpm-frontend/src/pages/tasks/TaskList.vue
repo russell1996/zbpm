@@ -172,6 +172,7 @@ watch(filterCompleted, debounce(() => { resetPage(); load() }))
           <tr
             v-for="task in (store.userTasks?.data || [])"
             :key="task.id"
+            :data-testid="`task-row-${task.id}`"
             class="border-t border-border hover:bg-muted/50 cursor-pointer"
             tabindex="0"
             @click="viewDetail(task.id)"
