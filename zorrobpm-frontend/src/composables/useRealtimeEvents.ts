@@ -3,6 +3,8 @@ import type { EventEnvelope } from '@/types/api'
 import { useProcessStore } from '@/stores/process'
 import { useTaskStore } from '@/stores/task'
 import { useIncidentStore } from '@/stores/incident'
+import api from '@/services/api'
+import { sharedRefresh } from '@/services/refreshInterceptor'
 
 /**
  * WO-UI-18, часть A — живой realtime-канал для встроенного SPA.
@@ -55,7 +57,9 @@ export function buildStreamUrl(): string {
   return `${base}/events/stream`
 }
 
-// WO-UI-22: refresh идёт на тот же base (кука __Host-zbpm_token — тот же
+// WO-UI-22: refresh шёл на тот же base напрямую fetch'ем; WO-QW-5 перевёл
+// путь на sharedRefresh (тот же origin/кука через api-инстанс). Хелпер
+// оставлен для совместимости тестов/вызывающих — URL тот же.
 // origin, credentials:include обязателен — иначе браузер не приложит куки).
 export function buildRefreshUrl(): string {
   const base = import.meta.env.VITE_API_URL || '/api'
@@ -161,16 +165,12 @@ export function useRealtimeEvents() {
   }
 
   async function refreshAndReconnect() {
-    // Прямой fetch, не axios-инстанс: refreshInterceptor исключает
-    // /auth/refresh из ретраев (там это конец цепочки — logout), а здесь
-    // refresh и есть сама задача.
-    let ok = false
-    try {
-      const res = await fetch(buildRefreshUrl(), { method: 'POST', credentials: 'include' })
-      ok = res.ok
-    } catch {
-      ok = false
-    }
+    // WO-QW-5 (NEW2-10): refresh через sharedRefresh — тот же single-flight
+    // promise, что у axios-интерсептора. Раньше здесь был прямой `fetch`
+    // мимо `isRefreshing`: одновременный 401-refresh от axios гонялся за ту
+    // же ротируемую refresh-куку, проигравший получал «already rotated».
+    // credentials те же (api-инстанс с withCredentials — кука приложится).
+    const ok = await sharedRefresh(api)
     if (ok) {
       error.value = null
       if (eventSource) {
