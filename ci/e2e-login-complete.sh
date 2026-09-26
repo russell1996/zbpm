@@ -36,6 +36,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# WO-QW-5 (NEW2-13): project-scoped имена — E2E-стенд не конфликтует с чужим
+# dev-стеком на хосте. Раньше container_name были фиксированы
+# (zorrobpm-app/...) — два стека на одних именах физически не живут, скрипт
+# fail-fast'ился при запущенном dev-стеке. Теперь суффикс проекта выносит их
+# в отдельное пространство (COMPOSE_PROJECT_NAME переименовывает И
+# container_name — compose честно ругается, что оба заданы; поэтому
+# container_name снимаем override-файлом ci/docker-compose.e2e.yml ниже, а
+# сеть/volume именуем от проекта — см. тот файл).
+export COMPOSE_PROJECT_NAME="${E2E_PROJECT_NAME:-zorrobpm-e2e}"
 COMPOSE="docker compose -f docker-compose.yml -f ci/docker-compose.e2e.yml"
 
 E2E_ADMIN_PASSWORD="${E2E_ADMIN_PASSWORD:-E2eAdminStr0ng!Pass}"
@@ -78,23 +87,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- 0. Preflight: фиксированные container_name заняты чужим стеком? ------------
+# --- 0. Preflight: чужой стек на ТЕХ ЖЕ проектных именах? --------------------
+# WO-QW-5: фильтр — по нашему project-суффиксу, а не по голым zorrobpm-*:
+# dev-стек (`zorrobpm-*`, проект `zorrobpm`) больше не считается чужим —
+# он живёт в своём пространстве имён. Чужим считается только второй E2E-стенд
+# (тот же COMPOSE_PROJECT_NAME) — два E2E-прогона на одних именах не живут.
 # Проверяем ТОЛЬКО когда скрипт сам поднимает стек: при E2E_SKIP_BUILD=1 стек
-# уже поднят (нами же или вручную) — это норма, а не конфликт. Фильтруем по
-# образу: наши e2e-контейнеры (APP_TAG) чужими не считаются, чужие (прод-стенд
-# на :latest, лабораторные) — да. Честная граница: два стека с одним именем
-# контейнера физически не живут — молча продолжать нельзя.
+# уже поднят (нами же или вручную) — это норма, а не конфликт.
 if [ "${E2E_SKIP_BUILD:-0}" != "1" ]; then
-  # `docker ps` без -a: только ЗАПУЩЕННЫЕ чужие (остановленные остатки имён —
-  # не конфликт, их снесёт наш down -v ниже). Точное совпадение имени
-  # (== со шкалой): префикс-матч цеплял бы raxon-lab-zorro-* как «чужих».
+  # `docker ps` без -a: только ЗАПУЩЕННЫЕ чужие. Имена — с project-суффиксом
+  # (COMPOSE_PROJECT_NAME выше): dev-стек `zorrobpm-*` сюда не попадает.
+  E2E_SUFFIX="${COMPOSE_PROJECT_NAME:-zorrobpm-e2e}"
   FOREIGN_UP="$(docker ps --format '{{.Names}} {{.Image}}' \
-    | awk '$1=="zorrobpm-app"||$1=="zorrobpm-frontend"||$1=="zorrobpm-postgres"||$1=="zorrobpm-rabbitmq"' \
+    | awk -v sfx="$E2E_SUFFIX" '$1==sfx"-app"||$1==sfx"-frontend"||$1==sfx"-postgres"||$1==sfx"-rabbitmq"' \
     | grep -v "${APP_TAG:-e2e-test-12}" || true)"
   if [ -n "$FOREIGN_UP" ]; then
-    echo "[e2e] FAIL: чужой стек zorrobpm-* уже запущен — останови его" >&2
+    echo "[e2e] FAIL: другой E2E-стенд $E2E_SUFFIX уже запущен — останови его" >&2
     echo "$FOREIGN_UP" >&2
-    echo "[e2e] (container_name фиксированы, два стека не живут рядом)" >&2
+    echo "[e2e] (dev-стек zorrobpm-* больше не мешает: у него своё пространство имён)" >&2
     TEST_EXIT=1
     exit 1
   fi
@@ -124,8 +134,11 @@ echo "[e2e] down -v (чистый старт: volumes сносятся всег�
 $COMPOSE down -v || true
 # down -v НЕ удаляет volumes, занятые остановленными контейнерами чужого
 # проекта с тем же именем (live-поймано: volume пережил down, bootstrap
-# пропустил сид, спек получил чужой пароль). Проверяем пустоту жёстко:
-for v in zorrobpm_postgres-data zorrobpm_rabbitmq-data zorrobpm_app-files; do
+# пропустил сид, спек получил чужой пароль). Проверяем пустоту жёстко.
+# WO-QW-5: имена volumes — с project-префиксом (compose именует
+# `<project>_<volume>`): dev-объёмы `zorrobpm_*` сюда не попадают.
+E2E_VOL_PREFIX="${COMPOSE_PROJECT_NAME:-zorrobpm-e2e}"
+for v in "${E2E_VOL_PREFIX}_postgres-data" "${E2E_VOL_PREFIX}_rabbitmq-data" "${E2E_VOL_PREFIX}_app-files"; do
   if docker volume inspect "$v" >/dev/null 2>&1; then
     echo "[e2e] FAIL: volume $v пережил down -v — удали вручную:" >&2
     echo "[e2e]   docker volume rm $v  (или останови чужой стек на нём)" >&2
