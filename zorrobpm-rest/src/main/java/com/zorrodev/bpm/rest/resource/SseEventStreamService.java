@@ -1862,6 +1862,15 @@ public class SseEventStreamService implements SmartLifecycle {
          */
         private void sendOne(QueuedSend queued) {
             CompletableFuture<Void> send;
+            // WO-URGENT-1 (NEW2-03): the CLOSED-drop below returns WITHOUT
+            // sending, but the continuation used to treat "no exception" as
+            // "delivered" and called notifySent anyway — a closed writer
+            // reported sends that never happened (phantom delivery,
+            // notified 1 != delivered 0). The flag carries the fact of a
+            // REAL send across the async boundary; notifySent fires only
+            // when an actual emitter.send() happened.
+            java.util.concurrent.atomic.AtomicBoolean actuallySent =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
             try {
                 send = CompletableFuture.runAsync(() -> {
                     try {
@@ -1877,6 +1886,7 @@ public class SseEventStreamService implements SmartLifecycle {
                             }
                         }
                         emitter.send(queued.event);
+                        actuallySent.set(true);
                     } catch (IOException e) {
                         throw new java.util.concurrent.CompletionException(e);
                     }
@@ -1899,7 +1909,13 @@ public class SseEventStreamService implements SmartLifecycle {
             }
             send.orTimeout(sendTimeoutMs, TimeUnit.MILLISECONDS).whenCompleteAsync((v, ex) -> {
                 if (ex == null) {
-                    notifySent(queued.envelope);
+                    // WO-URGENT-1 (NEW2-03): report a delivery ONLY when the
+                    // send above really ran. A CLOSED-drop (flag unset) still
+                    // pumps so pumpActive resets through the CLOSED no-op —
+                    // but never notifies.
+                    if (actuallySent.get()) {
+                        notifySent(queued.envelope);
+                    }
                     pump();
                     return;
                 }
