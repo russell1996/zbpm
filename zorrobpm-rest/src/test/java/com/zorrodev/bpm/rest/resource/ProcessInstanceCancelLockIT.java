@@ -70,8 +70,6 @@ class ProcessInstanceCancelLockIT {
      * любой re-arm INSERT ляжет поверх удалённых (мутант без lock: зомби).
      */
     static final CountDownLatch A_DELETED_DONE = new CountDownLatch(1);
-    /** Fire закоммитил свой re-arm (освобождает guard-lock). */
-    static final CountDownLatch B_COMMITTED = new CountDownLatch(1);
 
     @Autowired private ProcessInstanceRuntimeOperations processInstanceRuntimeOperations;
     @Autowired private ProcessInstanceRepository processInstanceRepository;
@@ -161,7 +159,6 @@ class ProcessInstanceCancelLockIT {
                         null, 1, "R3/PT1H", piId);
                     return null;
                 });
-                B_COMMITTED.countDown();
                 return null;
             });
             assertThat(guardHeld.await(10, TimeUnit.SECONDS)).isTrue();
