@@ -104,13 +104,24 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
     @Transactional
     @Override
     public IdDTO cancelProcessInstance(UUID id) {
+        // WO-ACL-21 (а): authz ПЕРВЫМ — статус-оракул после. Ghost (null-key)
+        // даёт 404 через requireOperate, неавторизованный — 403 и для running,
+        // и для completed (раньше completed отвечал 409 до authz и тем самым
+        // раскрывал статус чужого экземпляра по коду ответа).
+        String key = runtimeOperationSupport.resolveDefinitionKeyByInstance(id);
+        runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
+
+        // WO-ACL-21 (б): instance-lock как у resolve/escalation/message-signal/
+        // call-activity — сериализует отмену с timer-fire (TimerJobExecutor.fire
+        // берёт тот же FOR UPDATE + cancelled-guard, L1 FIX). Против complete-
+        // путей односторонний (те lock'а не берут) — честная граница в отчёте
+        // (V7-находка: cancelled-guard в CompletionService, не чинится здесь).
+        dbService.lockProcessInstance(id);
+
         var pi = dbService.getProcessInstance(id);
         if (pi.getCompletedAt() != null || pi.isCancelled()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Process instance already completed or cancelled");
         }
-
-        String key = runtimeOperationSupport.resolveDefinitionKeyByInstance(id);
-        runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
 
         // WO-C8-28: canceling listeners observe the cancellation; while any phase is
         // open the process-cancel tail below waits (the last-closing listener runs it
