@@ -692,10 +692,59 @@ ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(id); st.setProcessInsta
         UUID id = UUID.randomUUID();
         ProcessInstance pi = new ProcessInstance(); pi.setId(id); pi.setCompletedAt(Instant.now()); pi.setCancelled(false);
         when(dbService.getProcessInstance(id)).thenReturn(pi);
+        // WO-ACL-21 (а): authz теперь ПЕРВЫМ — до 409 добираемся только с
+        // грантом (механическая добавка стабов, гарантия та же).
+        ProcessInstanceEntity piEntity = new ProcessInstanceEntity(); piEntity.setId(id); piEntity.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(piEntity));
+        when(processInstanceRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("cancel-key"));
+        when(authorizationService.canOperate(any(), eq("cancel-key"), eq(AuthorizationService.Action.DELETE_PROCESS))).thenReturn(true);
 
         mockMvc.perform(post("/process-instances/" + id + "/cancel")
                 .header("Authorization", "Bearer " + ADMIN_TOKEN))
                 .andExpect(status().isConflict());
+    }
+
+    // WO-ACL-21 (а): завершённый экземпляр + нет гранта → 403, а не 409.
+    // До фикса этот же запрос отвечал 409 (статус-оракул: чужой статус
+    // читался по коду ответа без прав на операцию).
+    @Test
+    void cancelProcessInstance_completedWithoutGrant_403Not409() throws Exception {
+        UUID id = UUID.randomUUID();
+        ProcessInstance pi = new ProcessInstance(); pi.setId(id); pi.setCompletedAt(Instant.now()); pi.setCancelled(false);
+        when(dbService.getProcessInstance(id)).thenReturn(pi);
+        ProcessInstanceEntity piEntity = new ProcessInstanceEntity(); piEntity.setId(id); piEntity.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(piEntity));
+        when(processInstanceRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("cancel-key"));
+        when(authorizationService.canOperate(any(), eq("cancel-key"), eq(AuthorizationService.Action.DELETE_PROCESS))).thenReturn(false);
+
+        mockMvc.perform(post("/process-instances/" + id + "/cancel")
+                .header("Authorization", "Bearer " + USER_TOKEN))
+                .andExpect(status().isForbidden());
+
+        verify(dbService, never()).cancelProcessInstance(any());
+    }
+
+    // WO-ACL-21 (б): отмена берёт instance-lock (сериализация с timer-fire,
+    // тот же FOR UPDATE что TimerJobExecutor.fire). Убери lock-строку из
+    // прод-кода — этот verify покраснеет (Wanted but not invoked).
+    @Test
+    void cancelProcessInstance_takesInstanceLock() throws Exception {
+        UUID id = UUID.randomUUID();
+        UUID pdId = UUID.randomUUID();
+        ProcessInstance pi = new ProcessInstance(); pi.setId(id); pi.setCompletedAt(null); pi.setCancelled(false);
+        when(dbService.getProcessInstance(id)).thenReturn(pi);
+        ProcessInstanceEntity piEntity = new ProcessInstanceEntity(); piEntity.setId(id); piEntity.setProcessDefinitionId(pdId);
+        ProcessDefinitionEntity pd = new ProcessDefinitionEntity(); pd.setId(pdId); pd.setKey("cancel-key");
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(piEntity));
+        when(processInstanceRepository.findDefinitionKeyById(id)).thenReturn(Optional.of("cancel-key"));
+        when(processDefinitionRepository.findById(pdId)).thenReturn(Optional.of(pd));
+        when(authorizationService.canOperate(any(), eq("cancel-key"), eq(AuthorizationService.Action.DELETE_PROCESS))).thenReturn(true);
+
+        mockMvc.perform(post("/process-instances/" + id + "/cancel")
+                .header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andExpect(status().isAccepted());
+
+        verify(dbService).lockProcessInstance(id);
     }
 
     // WO-API-1: пустой DTO обязан нести variables=[] (null отклоняется @NotNull).
