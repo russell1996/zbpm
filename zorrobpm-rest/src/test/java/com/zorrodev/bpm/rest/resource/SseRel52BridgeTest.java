@@ -222,13 +222,17 @@ class SseRel52BridgeTest {
 
     /**
      * A3: одно "медленное" разрешение курсора (позиция появляется только
-     * через ~2с) НЕ задерживает доставку другим клиентам: второе событие
-     * (позиция готова сразу) доставляется за миллисекунды, пока первое ещё
-     * ждёт в retry-lane. До фикса onDomainEvent спал 30×100мс в
-     * consumer-потоке — второе событие ждало бы все 2с.
+     * через ~2с) НЕ задерживает consumer-поток моста и НЕ переупорядочивает
+     * курсоры: второе событие (позиция готова сразу) ждёт разрешения первого
+     * в сиквенсоре (WO-REL-55: иначе один клиент получил бы `[11, 10]` и
+     * потерял бы 10 при reconnect с Last-Event-ID=11), но consumer-поток
+     * свободен сразу. До REL-52 onDomainEvent спал 30×100мс в
+     * consumer-потоке — второе событие ждало бы все 2с; до REL-55 второе
+     * событие обгоняло первое.
      *
      * <p>POF-мутация: вернуть sleep-цикл в resolveLiveCursor — этот тест
-     * КРАСНЫЙ (fast-delivery превышает 1.5с).
+     * КРАСНЫЙ (fast-delivery превышает 1.5с). Обратная мутация (рассылка без
+     * сиквенсора, сразу по разрешении) — КРАСНАЯ на порядке fast=[2,1].
      */
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -252,14 +256,18 @@ class SseRel52BridgeTest {
 
         CapturingEmitter slow = new CapturingEmitter();
         CapturingEmitter fast = new CapturingEmitter();
+        // WO-REL-55: fast-клиент отделён type-фильтром — ловит ТОЛЬКО seq 2
+        // (своё событие), переплетение slow/fast видно по его же записи;
+        // slow-клиент без фильтра ловит оба (порядок [1, 2]).
+        String preType = "rel52.a3." + UUID.randomUUID();
         String slowId = svc.registerBufferedClient(slow, admin(UUID.randomUUID()), null, null, null);
-        String fastId = svc.registerBufferedClient(fast, admin(UUID.randomUUID()), null, null, null);
+        String fastId = svc.registerBufferedClient(fast, admin(UUID.randomUUID()), preType, null, null);
         svc.drainBufferedClient(slowId, 0L);
         svc.drainBufferedClient(fastId, 0L);
         List<String> sentTo = new CopyOnWriteArrayList<>();
         svc.addEventListener((cid, envelope) -> sentTo.add(cid));
 
-        String type = "rel52.a3." + UUID.randomUUID();
+        String type = preType;
         long slowStart = System.nanoTime();
         svc.onDomainEvent(body(1L, type)); // медленная позиция — уходит в defer
         long deferReturnMs = (System.nanoTime() - slowStart) / 1_000_000;
@@ -268,18 +276,28 @@ class SseRel52BridgeTest {
             .as("onDomainEvent with unpositioned sequence must return without sleeping")
             .isLessThan(1500);
 
-        // Быстрое событие — доставляется немедленно, не ждёт медленное.
+        // Быстрое событие — не ждёт медленное в CONSUMER-потоке (мост
+        // свободен сразу), но ждёт его в СИКВЕНСОРЕ: рассылка строго по
+        // порядку прибытия (WO-REL-55 — иначе клиент получил бы `[2, 1]`,
+        // нарушение non-decreasing + потеря 1 при Last-Event-ID=2).
+        // Поэтому fast-клиент получает ОБА события — [1, 2] по порядку —
+        // как только разрешается медленная позиция (≈1с), а не одно событие
+        // за миллисекунды.
         long fastStart = System.nanoTime();
         svc.onDomainEvent(body(2L, type));
         await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
-            assertThat(fast.delivered).hasSize(1));
+            assertThat(fast.delivered).hasSize(2));
         long fastMs = (System.nanoTime() - fastStart) / 1_000_000;
         assertThat(fastMs)
-            .as("fast event must not wait behind the slow cursor resolution")
-            .isLessThan(1500);
+            .as("sequenced delivery must still arrive promptly after the slow cursor resolves (~1s), not stall")
+            .isLessThan(5000);
+        assertThat(fast.delivered.stream()
+            .map(e -> ((Number) e.get("feedPosition")).longValue()).toList())
+            .as("one client's cursors must be non-decreasing (WO-REL-55: no [2, 1] overtake)")
+            .isSorted();
 
-        // Медленное — доставляется позже через retry-lane (та же семантика):
-        // позиция seq=1 разрешается на 40-й попытке (~2с), доставка идёт
+        // Медленное — доставляется через retry-lane (та же семантика):
+        // позиция seq=1 разрешается на 20-й попытке (≈1с), доставка идёт
         // сразу после — ждём сначала доставку (событие), затем порог попыток
         // (механизм). Доставка доказывает разрешение; порог — что defer-цикл
         // реально ходил, а не «повезло с первым read».
@@ -288,6 +306,10 @@ class SseRel52BridgeTest {
         await().atMost(java.time.Duration.ofSeconds(15)).untilAsserted(() ->
             assertThat(slowReads.get()).isGreaterThanOrEqualTo(20));
         assertThat(slow.delivered).isNotEmpty();
+        assertThat(slow.delivered.stream()
+            .map(e -> ((Number) e.get("feedPosition")).longValue()).toList())
+            .as("slow client's cursors also non-decreasing")
+            .isSorted();
 
         svc.removeClient(slowId);
         svc.removeClient(fastId);
