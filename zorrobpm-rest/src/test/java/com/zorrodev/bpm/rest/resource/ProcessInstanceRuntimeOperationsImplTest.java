@@ -132,9 +132,12 @@ class ProcessInstanceRuntimeOperationsImplTest {
         IdDTO result = impl.cancelProcessInstance(id);
 
         assertThat(result.getId()).isEqualTo(id);
-        verify(dbService).getProcessInstance(id);
-        verify(runtimeOperationSupport).resolveDefinitionKeyByInstance(id);
-        verify(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
+        // WO-ACL-21 (а)+(б): authz первым, затем lock, затем чтение статуса.
+        var order = inOrder(runtimeOperationSupport, dbService);
+        order.verify(runtimeOperationSupport).resolveDefinitionKeyByInstance(id);
+        order.verify(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
+        order.verify(dbService).lockProcessInstance(id);
+        order.verify(dbService).getProcessInstance(id);
         verify(dbService).cancelActiveActivities(id);
         verify(dbService).deleteTimerJobsByProcessInstanceId(id);
         verify(dbService).deleteMessageSubscriptionsByProcessInstanceId(id);
@@ -176,23 +179,28 @@ class ProcessInstanceRuntimeOperationsImplTest {
         com.zorrodev.bpm.contract.model.ProcessInstance pi = new com.zorrodev.bpm.contract.model.ProcessInstance();
         pi.setId(id);
         pi.setCompletedAt(java.time.Instant.now());
+        // WO-ACL-21 (а): до 409 добираемся только с грантом (authz первым).
+        String key = "key";
+        when(runtimeOperationSupport.resolveDefinitionKeyByInstance(id)).thenReturn(key);
+        doNothing().when(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
         when(dbService.getProcessInstance(id)).thenReturn(pi);
 
         assertThatThrownBy(() -> impl.cancelProcessInstance(id))
             .isInstanceOf(ResponseStatusException.class)
             .hasFieldOrPropertyWithValue("status", HttpStatus.CONFLICT);
 
-        verify(runtimeOperationSupport, never()).resolveDefinitionKeyByInstance(any());
+        verify(runtimeOperationSupport).resolveDefinitionKeyByInstance(id);
         verify(dbService, never()).cancelProcessInstance(any());
     }
 
     @Test
-    void cancelProcessInstance_denyWhenNotAuthorized() {
+    void cancelProcessInstance_completedWithoutGrant_throwsForbidden() {
+        // WO-ACL-21 (а): завершённый экземпляр + нет гранта → 403, а не 409
+        // (статус-оракул закрыт: чужой статус не читается по коду ответа).
         UUID id = UUID.randomUUID();
         com.zorrodev.bpm.contract.model.ProcessInstance pi = new com.zorrodev.bpm.contract.model.ProcessInstance();
         pi.setId(id);
-        pi.setCompletedAt(null);
-        when(dbService.getProcessInstance(id)).thenReturn(pi);
+        pi.setCompletedAt(java.time.Instant.now());
         String key = "key";
         when(runtimeOperationSupport.resolveDefinitionKeyByInstance(id)).thenReturn(key);
         doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied"))
@@ -202,6 +210,27 @@ class ProcessInstanceRuntimeOperationsImplTest {
             .isInstanceOf(ResponseStatusException.class)
             .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
 
+        // До статуса дело не дошло: чтение экземпляра — после authz.
+        verify(dbService, never()).getProcessInstance(any());
+        verify(dbService, never()).lockProcessInstance(any());
+        verify(dbService, never()).cancelProcessInstance(any());
+    }
+
+    @Test
+    void cancelProcessInstance_denyWhenNotAuthorized() {
+        UUID id = UUID.randomUUID();
+        // WO-ACL-21 (а): authz первым — чтение экземпляра после, стаба
+        // getProcessInstance больше нет (strict-stub: лишняя стаба = ошибка).
+        String key = "key";
+        when(runtimeOperationSupport.resolveDefinitionKeyByInstance(id)).thenReturn(key);
+        doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied"))
+            .when(runtimeOperationSupport).requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
+
+        assertThatThrownBy(() -> impl.cancelProcessInstance(id))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);
+
+        verify(dbService, never()).lockProcessInstance(any());
         verify(dbService, never()).cancelActiveActivities(any());
     }
 }
