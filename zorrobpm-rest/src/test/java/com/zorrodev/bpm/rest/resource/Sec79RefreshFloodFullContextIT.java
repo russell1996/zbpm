@@ -40,6 +40,10 @@ import static org.assertj.core.api.Assertions.assertThat;
     "zorrobpm.security.rate-limit.window-seconds=3600",
     "zorrobpm.security.rate-limit.refresh-capacity=100",
     "zorrobpm.security.rate-limit.refresh-window-seconds=3600",
+    // WO-QW-5 (NEW2-11): IP-бакет refresh — свой ключ; удерживаем 5 для
+    // этого flood-сценария (доказательство, что IP-лимит жив), разделение
+    // от capacity логина доказывает Sec79RefreshIpBucketTest новым тестом.
+    "zorrobpm.security.rate-limit.refresh-ip-capacity=5",
     "server.forward-headers-strategy=framework"
 })
 class Sec79RefreshFloodFullContextIT {
