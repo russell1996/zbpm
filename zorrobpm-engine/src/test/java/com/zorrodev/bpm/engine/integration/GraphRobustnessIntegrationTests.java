@@ -67,11 +67,23 @@ public class GraphRobustnessIntegrationTests {
         // incident parks on a fresh fallback activity for (token, s1) — not on s1's own
         // COMPLETED row (flipping it to ERROR would corrupt history). The guarantee of
         // this test is the informative message, not the binding row.
-        List<IncidentEntity> incidents = incidentRepository.findAll().stream()
+        //
+        // WO-URGENT-1 (NEW2-06): scope the scan to THIS test's instance via
+        // the activity-subquery spec — never a global findAll(). A sibling
+        // @Transactional test (IncidentContextIntegrationTests,
+        // deletedInstance_incidentStillReturned_withEmptyContext) leaves a
+        // committed orphan incident behind (H2 SET REFERENTIAL_INTEGRITY TRUE
+        // commits the open tx, so the row survives that test's rollback), and
+        // a global scan trips over it (orElseThrow on its missing activity) —
+        // red or green depending on class order. The spec excludes
+        // foreign/orphan rows in SQL, so this test is order-independent.
+        // The leak source itself is left untouched (out of scope, V7 — needs
+        // its own WO if cleanup is wanted).
+        List<IncidentEntity> incidents = incidentRepository.findAll(
+                IncidentRepository.byProcessInstanceId(processInstanceId)).stream()
             .filter(i -> {
                 ActivityEntity parked = activityRepository.findById(i.getActivityId()).orElseThrow();
-                return parked.getProcessInstanceId().equals(processInstanceId)
-                    && parked.getBpmnElementId().equals("s1")
+                return parked.getBpmnElementId().equals("s1")
                     && parked.getToken().equals(s1.getToken());
             })
             .toList();
