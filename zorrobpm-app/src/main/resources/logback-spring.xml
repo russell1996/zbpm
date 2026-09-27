@@ -22,10 +22,17 @@
         </encoder>
     </appender>
 
-    <root level="INFO">
-        <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="FILE"/>
-    </root>
+    <!-- WO-OPS-20 (NEW2-04): в prod-профиле в stdout идёт ТОЛЬКО JSON. Logback
+         root — один логический элемент: appender-ref'ы глобального root и root
+         внутри <springProfile name="prod"> СУММИРУЮТСЯ, а не переопределяются —
+         поэтому CONSOLE (pattern) здесь обёрнут в !prod: иначе каждая строка
+         дублируется (pattern + JSON). FILE вне scope — как был. -->
+    <springProfile name="!prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </root>
+    </springProfile>
 
     <!-- WO-QW-4 (NEW-16f): prod-профиль — JSON на консоль (одна строка = один
          валидный JSON: timestamp/level/thread/logger/message/traceId/
