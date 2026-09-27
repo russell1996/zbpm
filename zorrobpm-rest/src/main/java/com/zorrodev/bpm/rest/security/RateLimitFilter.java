@@ -77,6 +77,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private int windowSeconds;
     private int dataCapacity;
     private int dataWindowSeconds;
+    /**
+     * WO-REL-57: отдельный бакет SSE-подключений
+     * ({@code GET /events/stream}). Долгоживущий стрим — один запрос на всё
+     * соединение: делить общий REST-бюджет значило бы, что активный UI-шум
+     * (или серия обрывов+reconnect'ов) душит сам realtime-канал. Дефолт
+     * 60 подключений/мин на identity: браузерный автореконнект + UI-22
+     * refresh-цикл укладываются с запасом, тайт-луп всё ещё режется.
+     */
+    private int sseCapacity = 60;
+    /** WO-REL-57: окно SSE-бакета в секундах. Дефолт 60, как у соседних. */
+    private int sseWindowSeconds = 60;
     /** WO-SEC-44: per-account login limit (separate from IP limit). Default same as capacity. */
     private int accountCapacity;
     /** WO-SEC-44: per-user refresh limit. Default: 30 per window. */
@@ -111,6 +122,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
     void setWindowSeconds(int windowSeconds) { this.windowSeconds = windowSeconds; }
     void setDataCapacity(int dataCapacity) { this.dataCapacity = dataCapacity; }
     void setDataWindowSeconds(int dataWindowSeconds) { this.dataWindowSeconds = dataWindowSeconds; }
+    void setSseCapacity(int sseCapacity) { this.sseCapacity = sseCapacity; }
+    void setSseWindowSeconds(int sseWindowSeconds) { this.sseWindowSeconds = sseWindowSeconds; }
     void setAccountCapacity(int accountCapacity) { this.accountCapacity = accountCapacity; }
     void setRefreshCapacity(int refreshCapacity) { this.refreshCapacity = refreshCapacity; }
     void setRefreshWindowSeconds(int refreshWindowSeconds) { this.refreshWindowSeconds = refreshWindowSeconds; }
@@ -250,10 +263,26 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         // Data endpoints: generous limit
         if (isDataEndpoint(method, path)) {
+            // WO-REL-57: GET /events/stream — долгоживущий стрим, а не
+            // очередной REST-вызов: у него СВОЙ бакет подключений (ниже),
+            // общий REST-бюджет он не тратит и не съедает. Точное совпадение
+            // нормализованного пути — EventResource GET /events (лист)
+            // остаётся в data-бакете, делится только стрим.
+            // Порядок важен: путь мачится обеими ветками, эта — первая.
+            if ("GET".equalsIgnoreCase(method) && "/events/stream".equals(path)) {
+                String sseKey = "sse:" + resolveDataBucketIdentity(request, clientIp);
+                long sseRetryAfter = pgRateLimiter.tryConsume(sseKey, sseCapacity, sseWindowSeconds);
+                if (sseRetryAfter > 0) {
+                    send429(response, sseRetryAfter);
+                    return;
+                }
+                chain.doFilter(request, response);
+                return;
+            }
             // WO-INT-4 criterion 8: quota is counted per API KEY, not per IP — an
             // integration BFF calling from one address must not be throttled by another
             // BFF on the same address (and must not exhaust the shared per-IP quota).
-            String key = resolveDataBucketKey(request, clientIp);
+            String key = "data:" + resolveDataBucketIdentity(request, clientIp);
             long retryAfter = pgRateLimiter.tryConsume(key, dataCapacity, dataWindowSeconds);
             if (retryAfter > 0) {
                 send429(response, retryAfter);
@@ -269,18 +298,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
      * keyed by the key's id (one quota per key); everything else falls back to the IP.
      * An invalid/unknown key still falls back to the IP bucket — the auth filter rejects
      * it afterwards with 401, so no quota bypass is possible.
+     *
+     * <p>WO-REL-57: identity-часть вынесена из прежнего {@code resolveDataBucketKey}
+     * в общий хелпер — data-ветка клеит префикс {@code "data:"}, SSE-ветка
+     * {@code "sse:"} (P-24: не копия, а переиспользование того же резолвинга).
      */
-    private String resolveDataBucketKey(HttpServletRequest request, String clientIp) {
-        if (apiKeyRepository == null) return "data:" + clientIp;
+    private String resolveDataBucketIdentity(HttpServletRequest request, String clientIp) {
+        if (apiKeyRepository == null) return clientIp;
         String header = request.getHeader("Authorization");
         if (header == null || !header.startsWith("Bearer zbpm_sk_")) {
-            return "data:" + clientIp;
+            return clientIp;
         }
         String token = header.substring(7);
         ApiKeyEntity key = apiKeyRepository.findByKeyHash(KeyHasher.sha256(token)).orElse(null);
-        if (key == null || key.getRevokedAt() != null) return "data:" + clientIp;
-        if (key.getExpiresAt() != null && key.getExpiresAt().isBefore(Instant.now())) return "data:" + clientIp;
-        return "data:key:" + key.getId();
+        if (key == null || key.getRevokedAt() != null) return clientIp;
+        if (key.getExpiresAt() != null && key.getExpiresAt().isBefore(Instant.now())) return clientIp;
+        return "key:" + key.getId();
     }
 
     private boolean isDataEndpoint(String method, String path) {
@@ -291,7 +324,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         // compromised SUPER_ADMIN key could flood batch deploys unthrottled. They join
         // the SAME data bucket (no new key, no new fail-fast surface — P-41): these
         // are admin-UI reads/writes with the same cost profile as the existing reads,
-        // and per-key bucketing (resolveDataBucketKey, WO-INT-4) already contains a
+        // and per-key bucketing (resolveDataBucketIdentity, WO-INT-4, WO-REL-57) already contains a
         // compromised key without punishing the shared prod proxy address (P-63).
         if ("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method)
                 || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)

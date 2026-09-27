@@ -96,6 +96,16 @@ export function useRealtimeEvents() {
   // восстановить нельзя, нужен вход. Отличается от transient-обрыва, после
   // которого нативный автореконнект жив.
   const sessionExpired = ref(false)
+  // WO-REL-57: JWT-сессия ЖИВА (refresh проходит), а сам realtime-канал не
+  // поднимается (429/обрывы исчерпали попытки). Прежний код схлопывал это в
+  // sessionExpired с текстом "Session expired" — враньё: вход не нужен и
+  // клик "Войти" отбивается router-guard'ом обратно на dashboard, а плашка
+  // не исчезает (живой прод-репорт 2026-09-27). Честный сигнал — отдельно.
+  const realtimeDown = ref(false)
+  // WO-REL-57: результат последнего refresh — различаем "сессия мертва"
+  // (refresh не проходит → sessionExpired) от "канал мёртв" (refresh жив,
+  // а переподключения исчерпаны → realtimeDown). null — refresh ещё не было.
+  let lastRefreshOk: boolean | null = null
 
   let eventSource: EventSource | null = null
   let reconnectAttempts = 0
@@ -133,6 +143,7 @@ export function useRealtimeEvents() {
       isConnected.value = true
       error.value = null
       sessionExpired.value = false
+      realtimeDown.value = false
       reconnectAttempts = 0
     }
     // WO-UI-18: намеренно НЕ закрываем source на transient-ошибке — нативный
@@ -161,7 +172,14 @@ export function useRealtimeEvents() {
 
   function scheduleReconnect() {
     if (reconnectAttempts >= SSE_RECONNECT_MAX_ATTEMPTS) {
-      markSessionExpired()
+      // WO-REL-57: refresh жив, а канал не поднялся — это НЕ expired-сессия
+      // (вход не поможет и guard его отобьёт), а мёртвый realtime при живой
+      // сессии. Честный сигнал вместо ложного "Session expired".
+      if (lastRefreshOk === true) {
+        markRealtimeDown()
+      } else {
+        markSessionExpired()
+      }
       return
     }
     const delay = reconnectDelayMs(reconnectAttempts)
@@ -180,6 +198,7 @@ export function useRealtimeEvents() {
     // же ротируемую refresh-куку, проигравший получал «already rotated».
     // credentials те же (api-инстанс с withCredentials — кука приложится).
     const ok = await sharedRefresh(api)
+    lastRefreshOk = ok
     if (ok) {
       error.value = null
       if (eventSource) {
@@ -194,7 +213,27 @@ export function useRealtimeEvents() {
 
   function markSessionExpired() {
     sessionExpired.value = true
+    realtimeDown.value = false
     error.value = 'Session expired, please sign in again'
+  }
+
+  // WO-REL-57: канал мёртв при живой сессии — честный сигнал + ручной retry
+  // (счётчик попыток сброшен, следующий обрыв начнёт цикл заново).
+  function markRealtimeDown() {
+    realtimeDown.value = true
+    sessionExpired.value = false
+    error.value = 'Realtime unavailable, retrying…'
+  }
+
+  function retryConnection() {
+    reconnectAttempts = 0
+    realtimeDown.value = false
+    error.value = null
+    if (eventSource) {
+      eventSource.close()
+      eventSource = null
+    }
+    openSource()
   }
 
   function connect() {
@@ -213,7 +252,9 @@ export function useRealtimeEvents() {
       reconnectTimer = null
     }
     reconnectAttempts = 0
+    lastRefreshOk = null
     sessionExpired.value = false
+    realtimeDown.value = false
     if (eventSource) {
       eventSource.close()
       eventSource = null
@@ -225,5 +266,5 @@ export function useRealtimeEvents() {
     disconnect()
   })
 
-  return { isConnected, lastEventId, error, sessionExpired, connect, disconnect }
+  return { isConnected, lastEventId, error, sessionExpired, realtimeDown, connect, disconnect, retryConnection }
 }

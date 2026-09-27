@@ -53,6 +53,17 @@ public class RateLimitFilterConfig {
     @Value("${zorrobpm.security.rate-limit.data-window-seconds:60}")
     private int dataWindowSeconds;
 
+    // WO-REL-57: отдельный бакет SSE-подключений (GET /events/stream — один
+    // запрос на всё соединение, делить REST-бюджет ему нельзя). Дефолт
+    // 60 подключений/мин на identity — щедро к браузерному автореконнекту,
+    // строго к тайт-лупу. Форма та же, что у соседних ключей (P-41): plain
+    // @Value с дефолтом в коде, fail-closed на <=0 из PgRateLimiter.
+    @Value("${zorrobpm.security.rate-limit.sse-capacity:60}")
+    private int sseCapacity;
+
+    @Value("${zorrobpm.security.rate-limit.sse-window-seconds:60}")
+    private int sseWindowSeconds;
+
     @Value("${zorrobpm.security.rate-limit.account-capacity:5}")
     private int accountCapacity;
 
@@ -80,6 +91,8 @@ public class RateLimitFilterConfig {
         filter.setWindowSeconds(windowSeconds);
         filter.setDataCapacity(dataCapacity);
         filter.setDataWindowSeconds(dataWindowSeconds);
+        filter.setSseCapacity(sseCapacity);
+        filter.setSseWindowSeconds(sseWindowSeconds);
         filter.setAccountCapacity(accountCapacity);
         filter.setRefreshCapacity(refreshCapacity);
         filter.setRefreshWindowSeconds(refreshWindowSeconds);

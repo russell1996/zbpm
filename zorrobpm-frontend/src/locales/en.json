@@ -588,5 +588,7 @@
   "failedToRejectRegistration": "Could not reject registration.",
   "rejectRegistrationTitle": "Reject registration",
   "rejectRegistrationHint": "Rejecting registration for",
-  "createdAt": "Created"
+  "createdAt": "Created",
+  "realtimeDown": "Realtime unavailable — you are still signed in",
+  "realtimeRetry": "Reconnect"
 }
