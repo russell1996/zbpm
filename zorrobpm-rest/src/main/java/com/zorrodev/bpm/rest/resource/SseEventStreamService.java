@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.rest.resource;
 
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.security.UiUserLookupService;
 import com.zorrodev.bpm.engine.service.ApiKeyService;
@@ -71,6 +72,10 @@ public class SseEventStreamService implements SmartLifecycle {
     // REST→JPA boundary: rest/resource must not import engine.repository).
     private final UiUserLookupService uiUserLookupService;
     private final ApiKeyService apiKeyService;
+    // WO-REL-56 (part B): foreign-sequence drop counter (may be null in
+    // unit-scope harnesses — same nullable-collaborator shape as the SEC-67
+    // lookups above; the drop itself never depends on the meter).
+    private final BpmMetrics bpmMetrics;
     // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
     private final tools.jackson.databind.ObjectMapper objectMapper;
 
@@ -80,13 +85,29 @@ public class SseEventStreamService implements SmartLifecycle {
                                     @Lazy @Autowired(required = false) RabbitAdmin rabbitAdmin,
                                     tools.jackson.databind.ObjectMapper objectMapper,
                                     UiUserLookupService uiUserLookupService,
-                                    ApiKeyService apiKeyService) {
+                                    ApiKeyService apiKeyService,
+                                    @Lazy @Autowired(required = false) BpmMetrics bpmMetrics) {
         this.eventQueryService = eventQueryService;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
         this.objectMapper = objectMapper;
         this.uiUserLookupService = uiUserLookupService;
         this.apiKeyService = apiKeyService;
+        this.bpmMetrics = bpmMetrics;
+    }
+
+    /**
+     * Unit-scope overload (existing harnesses pass six args; the meter is
+     * absent there — drops still happen, only the counter stays silent).
+     */
+    public SseEventStreamService(EventQueryService eventQueryService,
+                                    EventAuthzResolver eventAuthzResolver,
+                                    RabbitAdmin rabbitAdmin,
+                                    tools.jackson.databind.ObjectMapper objectMapper,
+                                    UiUserLookupService uiUserLookupService,
+                                    ApiKeyService apiKeyService) {
+        this(eventQueryService, eventAuthzResolver, rabbitAdmin, objectMapper,
+            uiUserLookupService, apiKeyService, null);
     }
 
     /** Connected SSE clients: emitterId → client info */
@@ -597,18 +618,27 @@ public class SseEventStreamService implements SmartLifecycle {
         Long cursor = resolveLiveCursor(sequence);
         if (cursor == null) {
             if (eventQueryService.eventSequenceExists(sequence)) {
-                long ticket = stageSequencedEvent(messageBody, amqpHeaders, sequence);
+                long ticket = stageSequencedEvent(messageBody, amqpHeaders, sequence, null);
                 deferUnpositioned(messageBody, amqpHeaders, sequence, ticket, 1);
             } else {
-                // WO-REL-55 (A): чужой sequence — в сиквенсор не ставим (ждать
-                // нечего: позиции не будет никогда) и рассылаем сразу, как
-                // раньше: порядок FIFO касается только событий НАШЕГО ряда.
-                dispatchUnsequenced(messageBody, amqpHeaders, sequence);
+                // WO-REL-56 (part B, NEW3-03): чужой sequence (нет строки в
+                // ЭТОЙ БД — другая инсталляция на том же брокере/vhost,
+                // тестовая публикация) — отброс, как было до WO-REL-55
+                // ("unknown sequence skipped" на 9ba3be16). Рассылка с
+                // cursor = sequence смешивала домены: клиент получал SSE id
+                // из чужого домена, и его Last-Event-ID перескакивал не на
+                // ту точку (пропуск/дубль на reconnect; для sequence=0 —
+                // утечка чужих событий SUPER_ADMIN-клиентам, чей фильтр
+                // pdId null). Отброс видимый: счётчик, не тихий warn.
+                log.warn("SSE live event with unknown sequence {} skipped (no such row in this DB)", sequence);
+                if (bpmMetrics != null) {
+                    bpmMetrics.sseForeignSequenceDropped();
+                }
             }
             return;
         }
         try {
-            stageSequencedEvent(messageBody, amqpHeaders, sequence);
+            stageSequencedEvent(messageBody, amqpHeaders, sequence, cursor);
             markSequencedResolved(sequence, cursor);
             releaseSequencedReady();
         } finally {
@@ -664,35 +694,39 @@ public class SseEventStreamService implements SmartLifecycle {
     private volatile long deferredCursorDelayMs = DEFERRED_CURSOR_DELAY_MS;
 
     /**
-     * WO-REL-55 (NEW2-02, часть A): arrival-FIFO сиквенсор рассылки.
+     * WO-REL-56 (part A, NEW3-02): выпуск по ПОЗИЦИИ с водяным знаком.
      *
-     * <p>Проблема: отложенное событие (позиция разрешилась позже) рассылалось
-     * СРАЗУ по разрешении — позже пришедшее событие с уже готовой позицией
-     * обгоняло его, и один клиент получал курсоры `[11, 10]` (нарушение
-     * "SSE ids must be non-decreasing", потеря 10 при reconnect с
-     * Last-Event-ID=11). Неблокирующий мост при этом сохраняется: событие
-     * с неразрешённой позицией по-прежнему не держит consumer-поток, оно
-     * лишь становится ГОЛОВОЙ очереди — последующие разрешённые события
-     * ждут её разрешения в сиквенсоре, а не в consumer-потоке.
+     * <p>Проблема WO-REL-55: arrival-FIFO выпускал события в порядке ПРИБЫТИЯ
+     * (outbox `ORDER BY created_at` — момент emit, Java-часы), а gap-детектор
+     * сравнивал по feed-ПОЗИЦИИ (порядок commit, `FeedPositionAssigner`).
+     * Порядок emit ≠ порядок commit — штатная ситуация под конкурентной
+     * нагрузкой (T1 emit раньше / commit позже, T2 наоборот): прибытие
+     * pos 9 → 11 → 10 детектор читал как "дыру" между 9 и 11 и закрывал ВСЕХ
+     * LIVE-клиентов, а 11 всё равно уходило раньше 10 (переупорядочивание не
+     * устранено + реконнект-шторм × число клиентов на каждый такой случай).
      *
-     * <p>Механика: каждое событие нашего ряда при прибытии встаёт в FIFO
-     * (`stageSequencedEvent`, билет = монотонный счётчик прибытия) и
-     * рассылается только с головы и только после разрешения своей позиции
-     * (`releaseSequencedReady`). Событие, чья позиция не разрешилась за
-     * бюджет попыток (или чей sequence чужой — ряда нет), помечается дырой
-     * и пропускается головой дальше. Рассылка каждого выпущенного события —
-     * тот же `dispatchDeferred`, что раньше (parse/envelope/MDC/cursor —
-     * построчно та же семантика).
+     * <p>Механика: каждое событие нашего ряда при прибытии встаёт в CACHED
+     * min-heap по курсору (`stageSequencedEvent` кэширует также тело для
+     * отложенного выпуска) и выпускается только когда водяной знак дошёл до
+     * него: позиция N выпускается, когда все позиции ≤ N либо разрешились,
+     * либо признаны дырой по таймауту (бюджет попыток defer, как раньше —
+     * только теперь дырой признаётся КОНКРЕТНАЯ позиция в heap'е, а не голова
+     * FIFO). Неразрешённое событие НЕ держит consumer-поток (как раньше) и
+     * НЕ держит выпуск меньших/уже-разрешённых позиций за собой — в отличие
+     * от FIFO-головы: разрешённое 10 выпускается сразу, даже если 11 пришло
+     * раньше, а выпуск 11 ждёт разрешения 10 или её таймаута.
      *
-     * <p>Почему FIFO по ПРИБЫТИЮ, а не min-heap по курсору (второй вариант
-     * из WO): прибытие в этот мост идёт из outbox-поллера (`ORDER BY
-     * created_at`) и брокера FIFO — в норме равно commit-порядку, в котором
-     * assigner ставит позиции. Heap по курсору держит КАЖДОЕ событие до
-     * прихода всех меньших курсоров (хвостовая задержка всего потока за
-     * одним медленным + память под весь разрыв); FIFO держит только голову.
-     * Патологический инвертированный приход (ретрай outbox) heap тоже не
-     * лечит — он выпустит их в порядке курсоров, т.е. НЕ в порядке
-     * прибытия, с той же инверсией наблюдаемого потока.
+     * <p>Порядок прибытия ≠ порядок выпуска осознанно: наблюдаемый поток —
+     * порядок commit (позиции), в котором assigner ставит feed_position; это
+     * и есть порядок, по которому catchup читает окно и по которому клиент
+     * хранит Last-Event-ID. Сценарий REL-55 A1 (медленная голова, быстрый
+     * хвост) сохраняется: медленное событие всё ещё не выпускает быстрый
+     * хвост раньше себя — но теперь по ПОЗИЦИИ, а не по билету прибытия.
+     *
+     * <p>Старые (stale) повторы уже выпущенных позиций (retry outbox,
+     * reconnect-переигрывания: водяной знак уже выше) — не ждут и не
+     * выпускаются повторно, а отбрасываются молча: их данные клиент уже
+     * получил, повторный выпуск дал бы дубль в потоке.
      *
      * <p>Потоки: сиквенсор трогают consumer-поток моста и retry-lane
      * (defer-колбэки) — всё состояние под `sequencerLock`. Рассылка
@@ -704,44 +738,64 @@ public class SseEventStreamService implements SmartLifecycle {
      * `emitter.complete()` — без I/O.
      */
     private final Object sequencerLock = new Object();
-    /** FIFO билетов в порядке прибытия; голова — oldest unresolved. */
-    private final java.util.ArrayDeque<SequencedEvent> sequencer = new java.util.ArrayDeque<>();
+    /**
+     * CACHED min-heap по курсору (позиции); голова — наименьшая
+     * неразрешённая/невыпущенная позиция. CACHED, потому что heap по курсору
+     * без тела не может выпустить событие, чья позиция разрешилась позже
+     * прибытия (defer-колбэк отмечает позицию — тело обязано ждать в heap'е,
+     * consumer-поток при этом свободен, как раньше).
+     */
+    private final java.util.PriorityQueue<SequencedEvent> sequencer =
+        new java.util.PriorityQueue<>(java.util.Comparator.comparingLong((SequencedEvent e) -> e.cursor)
+            .thenComparingLong(e -> e.ticket));
     private long nextSequencerTicket = 0;
+    /**
+     * Водяной знак выпуска: все позиции ≤ watermark либо выпущены, либо
+     * признаны дырой. Следующая к выпуску позиция — ровно watermark + 1.
+     * -1 — выпусков ещё не было, первое событие дырой не считается.
+     */
+    private long dispatchWatermark = -1;
     /**
      * Максимальный рассыльный курсор (для детекции дыры части B).
      * Null — рассылок ещё не было, первое событие дырой не считается.
      */
     private Long maxDispatchedCursor = null;
 
-    /** Одна запись сиквенсора: событие + состояние разрешения позиции. */
+    /** Одна запись сиквенсора: событие + разрешённая позиция. */
     private static final class SequencedEvent {
         final long ticket;
         final String messageBody;
         final Map<String, Object> headers;
         final long sequence;
-        Long cursor = null;
-        boolean hole = false;
+        final long cursor;
 
-        SequencedEvent(long ticket, String messageBody, Map<String, Object> headers, long sequence) {
+        SequencedEvent(long ticket, String messageBody, Map<String, Object> headers,
+                long sequence, long cursor) {
             this.ticket = ticket;
             this.messageBody = messageBody;
             this.headers = headers;
             this.sequence = sequence;
+            this.cursor = cursor;
         }
     }
 
     /**
-     * Поставить событие в хвост FIFO. Копия заголовков — та же причина, что
+     * Поставить событие в heap. Копия заголовков — та же причина, что
      * в defer: исходный map принадлежит listener-контейнеру.
      *
+     * @param cursorOrNull уже разрешённая позиция (live-путь) или null
+     *     (defer-путь: позиция ещё неизвестна, запись ждёт разрешения;
+     *     отдельный DB-read здесь не делаем — вызывающий только что читал)
      * @return билет записи (для mark/mark-hole из defer-колбэков)
      */
-    private long stageSequencedEvent(String messageBody, Map<String, ?> amqpHeaders, long sequence) {
+    private long stageSequencedEvent(String messageBody, Map<String, ?> amqpHeaders,
+            long sequence, Long cursorOrNull) {
         Map<String, Object> headersCopy = amqpHeaders == null ? null
             : new java.util.LinkedHashMap<>(amqpHeaders);
         synchronized (sequencerLock) {
             long ticket = nextSequencerTicket++;
-            sequencer.addLast(new SequencedEvent(ticket, messageBody, headersCopy, sequence));
+            sequencer.add(new SequencedEvent(ticket, messageBody, headersCopy, sequence,
+                cursorOrNull == null ? Long.MIN_VALUE : cursorOrNull));
             return ticket;
         }
     }
@@ -749,68 +803,199 @@ public class SseEventStreamService implements SmartLifecycle {
     /** Позиция разрешилась (live или defer-колбэк) — отметить и выпустить готовое. */
     private void markSequencedResolved(long sequence, long cursor) {
         synchronized (sequencerLock) {
+            SequencedEvent found = null;
             for (SequencedEvent e : sequencer) {
-                if (e.sequence == sequence && !e.hole && e.cursor == null) {
-                    e.cursor = cursor;
+                if (e.sequence == sequence && e.cursor == Long.MIN_VALUE) {
+                    found = e;
                     break;
                 }
+            }
+            if (found != null) {
+                sequencer.remove(found);
+                sequencer.add(new SequencedEvent(found.ticket, found.messageBody, found.headers,
+                    found.sequence, cursor));
             }
         }
     }
 
-    /** Бюджет исчерпан / ряда нет — пометить дырой, чтобы голова прошла дальше. */
+    /**
+     * Бюджет исчерпан / ряда нет — признать позицию дырой: удалить запись из
+     * heap'а и двинуть водяной знак через неё, чтобы выпуск пошёл дальше.
+     */
     private void markSequencedHole(long ticket) {
         synchronized (sequencerLock) {
+            SequencedEvent found = null;
             for (SequencedEvent e : sequencer) {
                 if (e.ticket == ticket) {
-                    e.hole = true;
+                    found = e;
                     break;
+                }
+            }
+            if (found != null) {
+                sequencer.remove(found);
+                if (found.cursor != Long.MIN_VALUE && found.cursor == dispatchWatermark + 1) {
+                    dispatchWatermark = found.cursor;
                 }
             }
         }
     }
 
     /**
-     * Выпустить готовый префикс FIFO: с головы, пока голова разрешена
-     * (дыры — пропустить молча, кроме warn). Каждое выпущенное событие —
-     * через gap-детекцию части B в `dispatchDeferred`.
+     * Выпустить готовое по водяному знаку: голова heap'а — наименьшая позиция;
+     * неразрешённая голова (MIN_VALUE) держит ВЫПУСК (не consumer-поток), пока
+     * её defer-цикл не разрешит позицию или не признает дырой по таймауту.
+     *
+     * <p>Правила выпуска головы (под сиквенсор-локом, рассылка там же —
+     * порядок выпуска = порядок рассылки):
+     * <ul>
+     *   <li>bootstrap: ничего ещё не рассылалось — водяной знак прыгает к
+     *       голове без gap-close (клиент не может пропустить то, что никогда
+     *       не отправлялось; стартовые курсоры произвольны — позиции в БД
+     *       не начинаются с нуля);</li>
+     *   <li>голова == watermark + 1 — штатный выпуск;</li>
+     *   <li>голова ≤ watermark — stale-повтор уже выпущенного (retry outbox,
+     *       переигрывание): выпускаем повторно, как раньше (REL-55 тоже
+     *       перевыпускал всё поставленное; gap-детектор на неё не стреляет —
+     *       курсор не превышает максимум);</li>
+     *   <li>голова > watermark + 1 и разрешена — ЖДЁМ (не закрываем!): меньшая
+     *       позиция могла просто прибыть позже (порядок emit ≠ порядок commit —
+     *       NEW3-02). Одноразовый gap-таймер на бюджет defer признает её дырой,
+     *       только если она не пришла за бюджет; тогда — gap-close + выпуск.</li>
+     * </ul>
+     *
+     * <p>Ложная дыра NEW3-02 сюда не попадает структурно: прибытие 11 раньше
+     * 10 (обе разрешены) — это разрешённая голова с разрывом, выпуск ждёт
+     * прихода 10 или gap-таймаута, gap-детектор не вызывается. Детектор видит
+     * только разрешённые головы, меньшие которых уже либо выпущены, либо
+     * признаны дырой по таймауту.
      *
      * <p>WO-REL-55: решение о выпуске под сиквенсор-локом НЕДОСТАТОЧНО —
      * consumer-поток и retry-lane конкурентны, и live-разрешение seq 2
      * успевает раньше defer-разрешения seq 1. Поэтому `releaseSequencedReady`
      * вызывается и из live-пути, и из defer-колбэка: кто бы ни разрешил
-     * позицию, выпуск идёт строго с головы FIFO. Defer-колбэк, разрешивший
-     * НЕ голову, только отмечает позицию — рассылку сделает тот, кто
-     * разрешит голову. Это и есть упорядочивающий механизм (не блокировка
+     * позицию, выпуск идёт строго по водяному знаку. Defer-колбэк,
+     * разрешивший НЕ голову, только отмечает позицию — рассылку сделает тот,
+     * кто разрешит голову. Это и есть упорядочивающий механизм (не блокировка
      * потока, а блокировка ВЫПУСКА).
      */
     private void releaseSequencedReady() {
         java.util.List<SequencedEvent> ready = new java.util.ArrayList<>();
         synchronized (sequencerLock) {
             while (!sequencer.isEmpty()) {
-                SequencedEvent head = sequencer.peekFirst();
-                if (head.hole) {
-                    sequencer.pollFirst();
-                    log.warn("SSE sequenced event with sequence {} never resolved a feed position, "
-                        + "skipped — FIFO head advances (catchup will heal on reconnect)", head.sequence);
-                    continue;
-                }
-                if (head.cursor == null) {
+                SequencedEvent head = sequencer.peek();
+                if (head.cursor == Long.MIN_VALUE) {
                     break;
                 }
-                ready.add(sequencer.pollFirst());
-            }
-            // Gap-детекция и рассылка — под тем же локом: порядок выпуска =
-            // порядок рассылки (см. javadoc сиквенсора про порядок локов).
-            boolean gapClosed = false;
-            for (SequencedEvent e : ready) {
-                if (maxDispatchedCursor != null && e.cursor > maxDispatchedCursor + 1 && !gapClosed) {
-                    closeLiveClientsForGap(maxDispatchedCursor, e.cursor);
-                    gapClosed = true;
+                if (maxDispatchedCursor == null) {
+                    // Bootstrap (см. javadoc выше): первый выпуск без дыры.
+                    dispatchWatermark = head.cursor - 1;
+                } else if (head.cursor > dispatchWatermark + 1) {
+                    // Разрыв вперёд — ждём меньшую позицию (NEW3-02), а не
+                    // закрываем: планируем одноразовый gap-таймер на бюджет
+                    // defer, если его ещё нет.
+                    armGapTimerLocked();
+                    break;
                 }
+                ready.add(sequencer.poll());
+            }
+            // Рассылка — под тем же локом: порядок выпуска = порядок рассылки
+            // (см. javadoc сиквенсора про порядок локов).
+            for (SequencedEvent e : ready) {
                 dispatchDeferred(e.messageBody, e.headers, e.sequence, e.cursor);
                 maxDispatchedCursor = e.cursor;
+                if (e.cursor > dispatchWatermark) {
+                    dispatchWatermark = e.cursor;
+                }
             }
+            if (sequencer.isEmpty()) {
+                cancelGapTimerLocked();
+            }
+        }
+    }
+
+    /**
+     * WO-REL-56 (part A): одноразовый gap-таймер. Разрешённая голова с
+     * разрывом ждёт меньшую позицию не дольше бюджета defer (те же 30 попыток
+     * × deferredCursorDelayMs — shrink через то же volatile-поле, что REL-55
+     * A1). Срабатывание признаёт дырой ВСЁ до минимальной разрешённой головы
+     * (младшие неразрешённые к тому моменту уже признаны дырой своим
+     * defer-циклом либо всё ещё в бюджете — но раз голова разрешена и ждёт,
+     * младшая либо придёт своим defer, либо её hole двинет знак; двойного
+     * учёта нет: hole двигает знак только через свою позицию).
+     *
+     * <p>Один таймер на heap (не на событие): повторные разрывы, пока таймер
+     * взведён, нового не планируют. Срабатывание — no-op, если разрыв уже
+     * закрылся приходом (знак уже ≥).
+     */
+    private java.util.concurrent.ScheduledFuture<?> gapTimerFuture = null;
+
+    private void armGapTimerLocked() {
+        if (gapTimerFuture != null && !gapTimerFuture.isDone()) {
+            return;
+        }
+        java.util.concurrent.ScheduledExecutorService lane;
+        try {
+            lane = retryLane();
+        } catch (java.util.concurrent.RejectedExecutionException re) {
+            // Lane насыщена — ждать негде: деградация к поведению REL-55
+            // (немедленный gap-close), с явным warn, не тихая.
+            SequencedEvent head = sequencer.peek();
+            log.warn("SSE gap-timer lane saturated, closing LIVE clients immediately for gap "
+                + "(head cursor {}, watermark {})", head == null ? -1 : head.cursor, dispatchWatermark);
+            if (head != null && maxDispatchedCursor != null) {
+                closeLiveClientsForGap(maxDispatchedCursor, head.cursor);
+                dispatchWatermark = head.cursor - 1;
+                releaseSequencedReady();
+            }
+            return;
+        }
+        long budgetMs = (long) DEFERRED_CURSOR_ATTEMPTS * deferredCursorDelayMs;
+        gapTimerFuture = lane.schedule(() -> {
+            synchronized (sequencerLock) {
+                gapTimerFuture = null;
+                SequencedEvent head = sequencer.peek();
+                if (head == null || head.cursor == Long.MIN_VALUE) {
+                    // Разрыв уже закрылся приходом (знак двинулся) либо голова
+                    // всё ещё разрешается своим defer-циклом — он сам двинет
+                    // знак (разрешение/дыра) и вызовет выпуск. No-op.
+                    return;
+                }
+                if (maxDispatchedCursor != null && head.cursor > dispatchWatermark + 1) {
+                    // Позиция пропущена дольше бюджета — РЕАЛЬНАЯ дыра:
+                    // закрываем LIVE до рассылки детектора (Last-Event-ID
+                    // закрытых остаётся на последнем доставленном, catchup на
+                    // reconnect забирает дыру честно), затем выпускаем голову
+                    // и непрерывную цепочку за ней; второй разрыв (если есть)
+                    // ждёт заново через обычный arm в release.
+                    closeLiveClientsForGap(maxDispatchedCursor, head.cursor);
+                    while (!sequencer.isEmpty()) {
+                        SequencedEvent h = sequencer.peek();
+                        if (h.cursor == Long.MIN_VALUE) {
+                            break;
+                        }
+                        if (h.cursor > dispatchWatermark + 1) {
+                            break;
+                        }
+                        sequencer.poll();
+                        dispatchDeferred(h.messageBody, h.headers, h.sequence, h.cursor);
+                        maxDispatchedCursor = h.cursor;
+                        if (h.cursor > dispatchWatermark) {
+                            dispatchWatermark = h.cursor;
+                        }
+                    }
+                }
+                // Добивка: остаток heap'а (второй разрыв, неразрешённая голова)
+                // — либо выпустить, либо взвести таймер заново. Reentrant
+                // (тот же поток уже держит sequencerLock) — безопасно.
+                releaseSequencedReady();
+            }
+        }, budgetMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void cancelGapTimerLocked() {
+        if (gapTimerFuture != null) {
+            gapTimerFuture.cancel(false);
+            gapTimerFuture = null;
         }
     }
 
@@ -847,55 +1032,6 @@ public class SseEventStreamService implements SmartLifecycle {
                 closeRevokedClient(client.clientId,
                     "cursor-gap " + fromCursor + "→" + toCursor + " (drop-head suspected)");
             }
-        }
-    }
-
-    /**
-     * Событие чужого ряда (sequence без строки в events — не наш writer):
-     * позиции не будет никогда, в сиквенсор не ставим, рассылаем сразу тем
-     * же путём (cursor = resolveLiveCursor уже вернул null, dispatchDeferred
-     * разберёт envelope заново; feedPosition внутри — как раньше).
-     */
-    private void dispatchUnsequenced(String messageBody, Map<String, ?> amqpHeaders, long sequence) {
-        Map<String, Object> headersCopy = amqpHeaders == null ? null
-            : new java.util.LinkedHashMap<>(amqpHeaders);
-        String priorTraceId = org.slf4j.MDC.get(TraceHeaders.MDC_TRACE_ID);
-        String priorPi = org.slf4j.MDC.get(TraceHeaders.MDC_PROCESS_INSTANCE_ID);
-        if (amqpHeaders != null) {
-            Object piHeader = amqpHeaders.get(TraceHeaders.PROCESS_INSTANCE_ID_HEADER);
-            if (piHeader != null) {
-                org.slf4j.MDC.put(TraceHeaders.MDC_PROCESS_INSTANCE_ID, piHeader.toString());
-            }
-            Object tpHeader = amqpHeaders.get(TraceHeaders.TRACE_PARENT_HEADER);
-            String headerTraceId = tpHeader != null
-                ? TraceHeaders.extractTraceId(tpHeader.toString()) : null;
-            if (headerTraceId != null) {
-                org.slf4j.MDC.put(TraceHeaders.MDC_TRACE_ID, headerTraceId);
-            }
-        }
-        try {
-            Map<String, Object> envelope;
-            try {
-                envelope = objectMapper.readValue(messageBody, Map.class);
-            } catch (Exception e) {
-                log.error("Failed to parse domain event envelope", e);
-                return;
-            }
-            String eventType = (String) envelope.get("type");
-            String processInstanceId = (String) envelope.get("processInstanceId");
-            String processDefinitionId = (String) envelope.get("processDefinitionId");
-            UUID pdUuid = resolveEventPdUuid(processDefinitionId);
-            if (processDefinitionId != null && pdUuid == null) {
-                return;
-            }
-            // Курсор чужого ряда: позиция не назначалась — рассылаем с
-            // sequence как курсором (та же совместимость, что cursorOf).
-            dispatchToClientsTraced(envelope, eventType, processInstanceId, pdUuid, sequence);
-            log.info("SSE dispatch: type={}, processInstanceId={}, sequence={}, feedPosition={}",
-                eventType, processInstanceId, sequence, sequence);
-        } finally {
-            restoreSseMdc(TraceHeaders.MDC_TRACE_ID, priorTraceId);
-            restoreSseMdc(TraceHeaders.MDC_PROCESS_INSTANCE_ID, priorPi);
         }
     }
 
@@ -1846,6 +1982,13 @@ public class SseEventStreamService implements SmartLifecycle {
             dispatchExecutor = null;
             sendExecutor = null;
             retryScheduler = null;
+            // WO-REL-56 (verifier-находка 1): взведённый gap-таймер гасится
+            // здесь же, под sequencerLock (таймер при срабатывании берёт его
+            // же — взаимного ожидания с монитором this нет: этот блок держит
+            // this, а не sequencerLock; cancel(false) не ждёт выполнения).
+            synchronized (sequencerLock) {
+                cancelGapTimerLocked();
+            }
             if (dispatchDoomed != null) {
                 dispatchDoomed.shutdown();
             }
