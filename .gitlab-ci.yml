@@ -165,6 +165,12 @@ test:pg:
     # Non-standard host port so the ephemeral CI postgres never collides with any
     # 5432 already bound on the shared runner.
     PG_PORT: "55432"
+  # concurrent raised 1->4 on the runner (single shell-executor host, WO-OPS-* class
+  # concurrency fix): jobs of DIFFERENT types in one pipeline don't share ports and are
+  # safe in parallel, but PG_PORT above is a FIXED host port — two test:pg jobs from
+  # DIFFERENT pipelines running at once would collide on it. resource_group serializes
+  # only same-named jobs across pipelines, not the whole runner.
+  resource_group: test-pg
   script:
     - bash ci/run-pg-tests.sh
   rules: *rules-code-changes
@@ -187,6 +193,9 @@ test:rabbit:
     # Non-standard host port so the ephemeral CI broker never collides with any
     # 5672 already bound on the shared runner (same premise as PG_PORT, P-23).
     RABBIT_PORT: "5673"
+  # Same reasoning as test:pg's resource_group above — RABBIT_PORT is fixed, two
+  # test:rabbit jobs from different pipelines running concurrently would collide.
+  resource_group: test-rabbit
   script:
     - bash ci/run-rabbit-tests.sh
   rules: *rules-code-changes
@@ -210,6 +219,10 @@ test:chaos:
       - "**/failsafe-reports/"
     expire_in: 7 days
     when: always
+  # run-chaos-tests.sh binds fixed CHAOS_PG_PORT/CHAOS_RABBIT_PORT/CHAOS_TOXI_PORT —
+  # two concurrent test:chaos jobs (schedule + a manual trigger overlapping) would
+  # collide on them, same reasoning as test:pg/test:rabbit above.
+  resource_group: test-chaos
   script:
     - bash ci/run-chaos-tests.sh
   rules:
@@ -239,6 +252,9 @@ test:e2e-login:
       - "e2e-app-tail.log"
     expire_in: 3 days
     when: always
+  # e2e-login-complete.sh binds fixed E2E_APP_PORT/E2E_FRONTEND_PORT — same
+  # cross-pipeline collision risk as test:pg/test:rabbit/test:chaos above.
+  resource_group: test-e2e-login
   script:
     - E2E_APP_LOG_TAIL="$CI_PROJECT_DIR/e2e-app-tail.log" bash ci/e2e-login-complete.sh
   rules:
