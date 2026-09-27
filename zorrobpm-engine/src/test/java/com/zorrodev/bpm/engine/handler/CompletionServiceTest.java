@@ -148,10 +148,81 @@ class CompletionServiceTest {
         activity.setBpmnElementId("serviceTask1");
 
         when(elementSupport.lockAndReload(serviceTaskId)).thenReturn(activity);
+        // WO-ENG-28: plain re-read после instance-lock видит ту же строку.
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
 
         completionService.completeServiceTask(serviceTaskId, java.util.List.of(),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.TokenExecutor.class));
 
         verify(bpmMetrics).activityTransitionIgnored("stale_status");
+    }
+
+    /**
+     * WO-ENG-28 (NEW3-05) criterion 1 (direct POF anchor): complete-пути берут
+     * instance-lock. POF-мутация — убрать `dbService.lockProcessInstance` в
+     * complete-путях: эти тесты краснеют (`Wanted but not invoked`), остальные —
+     * нет (хук только здесь). Порядок — activity-lock, затем instance-lock,
+     * затем plain re-read (паттерн WO-ENG-19 + инвариант WO-REL-30: ровно один
+     * FOR UPDATE — `lockAndReload` вызывается times(1), re-read идёт через
+     * plain `dbService.getActivity`). Порядок фиксирует IT
+     * `CompletionInstanceLockIT`.
+     */
+    @Test
+    void completeServiceTask_takesInstanceLock() {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID piId = UUID.randomUUID();
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setStatus(ActivityStatus.CREATED);
+        activity.setProcessInstanceId(piId);
+        activity.setToken(UUID.randomUUID());
+        activity.setBpmnElementId("serviceTask1");
+
+        when(elementSupport.lockAndReload(serviceTaskId)).thenReturn(activity);
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+
+        // Guard дальше требует bpmn-блоков — достаточно достичь lock'а:
+        // lock стоит ДО guard'а, вызов произойдёт до любого orElseThrow ниже.
+        try {
+            completionService.completeServiceTask(serviceTaskId, java.util.List.of(),
+                org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.TokenExecutor.class));
+        } catch (Exception ignored) {
+            // путь дальше lock'а (bpmn lookup) в unit-scope не стабаем —
+            // важен сам факт вызова lock'а, а не завершение пути
+        }
+
+        verify(dbService).lockProcessInstance(piId);
+        // WO-REL-30: ровно один SELECT FOR UPDATE, re-read — plain.
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockAndReload(serviceTaskId);
+        verify(dbService).getActivity(serviceTaskId);
+    }
+
+    @Test
+    void completeUserTask_takesInstanceLock() {
+        UUID userTaskId = UUID.randomUUID();
+        UUID piId = UUID.randomUUID();
+
+        Activity activity = new Activity();
+        activity.setId(userTaskId);
+        activity.setStatus(ActivityStatus.CREATED);
+        activity.setProcessInstanceId(piId);
+        activity.setToken(UUID.randomUUID());
+        activity.setBpmnElementId("userTask1");
+
+        when(elementSupport.lockAndReload(userTaskId)).thenReturn(activity);
+        when(dbService.getActivity(userTaskId)).thenReturn(activity);
+
+        try {
+            completionService.completeUserTask(userTaskId, java.util.List.of(),
+                org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.TokenExecutor.class));
+        } catch (Exception ignored) {
+            // см. выше — важен сам факт вызова lock'а
+        }
+
+        verify(dbService).lockProcessInstance(piId);
+        // WO-REL-30: ровно один SELECT FOR UPDATE, re-read — plain.
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockAndReload(userTaskId);
+        verify(dbService).getActivity(userTaskId);
     }
 }
