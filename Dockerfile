@@ -48,8 +48,15 @@ COPY . .
 # WO-PERF-4: the jacoco plugin lives behind the Maven `coverage` profile (see
 # zorrobpm-engine/pom.xml). CI passes --build-arg MAVEN_PROFILES=-Pcoverage so the coverage
 # report keeps being produced in CI; local builds default to no instrumentation.
+# WO-OPS-21 шаг 1: module-level параллелизм. contract/exchange — листья графа
+# (exchange ни от чего не зависит, client — только от contract: сверено
+# dependency:tree), engine/rabbitmq/client перекрываются во времени. -T 2, не
+# больше: у раннера 4 ядра и concurrency=2, хост делит живой стенд. Внутримодульные
+# тесты остаются строго последовательными — shared-state находки аудитов 09-26/09-27
+# (IncidentContextIntegrationTests, Caffeine-тайминг, OTel/MDC-бридж) этим шагом не
+# затрагиваются. 5/5 полных прогонов чисто — см. governance/reports/WO-OPS-21.md.
 ARG MAVEN_PROFILES
-RUN mvn -B -ntp clean verify $MAVEN_PROFILES
+RUN mvn -B -ntp -T 2 clean verify $MAVEN_PROFILES
 # WO-QW-4 (NEW-13): GitLab `coverage:` парсит ЛОГ job'а, а JaCoCo пишет только
 # файлы (target/site/jacoco) — поле coverage вечно None. Печатаем итог из
 # jacoco.csv в лог build'а (он — часть лога job'а) строкой вида
