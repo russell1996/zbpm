@@ -52,9 +52,18 @@ export const REALTIME_EVENT_TYPES = [
 
 // Тот же baseURL-резолвинг, что в services/api.ts: EventSource обязан идти на
 // тот же origin/base, иначе cookie-auth не приложится.
+// WO-URGENT-3: хвостовой '/' у base ОБЯЗАТЕЛЬНО срезается — при дефолте
+// Dockerfile `VITE_API_URL=/` наивный `${base}/events/stream` давал
+// `'//events/stream'` (protocol-relative URL с хостом `events`, CSP-блок,
+// realtime мёртв на проде). axios в services/api.ts от этого защищён сам
+// (combineURLs нормализует слэши), здесь нормализация явная.
+function stripTrailingSlash(base: string): string {
+  return base.replace(/\/+$/, '')
+}
+
 export function buildStreamUrl(): string {
   const base = import.meta.env.VITE_API_URL || '/api'
-  return `${base}/events/stream`
+  return `${stripTrailingSlash(base)}/events/stream`
 }
 
 // WO-UI-22: refresh шёл на тот же base напрямую fetch'ем; WO-QW-5 перевёл
@@ -63,7 +72,7 @@ export function buildStreamUrl(): string {
 // origin, credentials:include обязателен — иначе браузер не приложит куки).
 export function buildRefreshUrl(): string {
   const base = import.meta.env.VITE_API_URL || '/api'
-  return `${base}/auth/refresh`
+  return `${stripTrailingSlash(base)}/auth/refresh`
 }
 
 /**
