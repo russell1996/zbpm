@@ -107,6 +107,19 @@ public class CompletionService {
      */
     public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
         Activity activity = elementSupport.lockAndReload(userTaskId);
+        // WO-ENG-28 (NEW3-05): instance-lock как у cancel/timer-fire/resolve —
+        // сериализует завершение с отменой того же экземпляра. Порядок
+        // activity→instance: отмена берёт только instance-lock (activity-lock
+        // не берёт никто из соседей), инверсии нет. Re-read после лока —
+        // паттерн WO-ENG-19: отмена, целиком прошедшая между нашим первым
+        // чтением и локом, иначе решалась бы по stale-статусу guard'ом ниже.
+        // Re-read — plain `getActivity` (без второго FOR UPDATE): свежесть
+        // даёт сам instance-lock (отмена/timer пишут activity-строки только
+        // под ним — см. `cancelProcessInstance`), а row-lock первого чтения
+        // держится до коммита той же транзакции. Инвариант WO-REL-30
+        // (ровно один SELECT FOR UPDATE) сохранён.
+        dbService.lockProcessInstance(activity.getProcessInstanceId());
+        activity = dbService.getActivity(userTaskId);
         if (!isUserTaskCompletionAllowed(userTaskId, activity)) {
             return;
         }
@@ -379,6 +392,13 @@ public class CompletionService {
             return;
         }
         Activity activity = elementSupport.lockAndReload(serviceTaskId);
+        // WO-ENG-28 (NEW3-05): тот же instance-lock, что в completeUserTask
+        // выше (сериализация с cancel/timer-fire; plain re-read после лока —
+        // паттерн WO-ENG-19 + инвариант WO-REL-30, см. комментарий выше).
+        // Phase-resume выше лока осознанно: у phase-job нет activity-строки
+        // (lock ниже orElseThrow — см. C8-25).
+        dbService.lockProcessInstance(activity.getProcessInstanceId());
+        activity = dbService.getActivity(serviceTaskId);
         if (!isCompletionAllowed(serviceTaskId, activity)) {
             return;
         }

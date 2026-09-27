@@ -338,6 +338,8 @@ public class ActivityServiceImplTests {
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(dbService.getActivityForUpdate(serviceTaskId)).thenReturn(activity);
+        // WO-ENG-28: plain re-read после instance-lock видит ту же строку.
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("serviceTask1"))).thenReturn(serviceTaskId);
@@ -383,6 +385,8 @@ public class ActivityServiceImplTests {
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(dbService.getActivityForUpdate(userTaskId)).thenReturn(activity);
+        // WO-ENG-28: plain re-read после instance-lock видит ту же строку.
+        when(dbService.getActivity(userTaskId)).thenReturn(activity);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("startEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("endEvent"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("userTask1"))).thenReturn(userTaskId);
@@ -1045,6 +1049,8 @@ public class ActivityServiceImplTests {
         activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
 
         when(dbService.getActivityForUpdate(serviceTaskId)).thenReturn(activity);
+        // WO-ENG-28: plain re-read после instance-lock видит ту же строку.
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
 
         activityService.completeServiceTask(serviceTaskId, List.of());
 
@@ -1067,6 +1073,9 @@ public class ActivityServiceImplTests {
         activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
 
         when(dbService.getActivityForUpdate(serviceTaskId)).thenReturn(activity);
+        // WO-ENG-28: plain re-read после instance-lock видит ту же строку
+        // (второй FOR UPDATE не добавляется — инвариант WO-REL-30 ниже).
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
 
         activityService.completeServiceTask(serviceTaskId, List.of());
 
