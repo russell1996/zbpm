@@ -25,7 +25,10 @@ import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -49,6 +52,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
+// WO-QW-6 (NEW3-06): orphan test MUST run before the global-scan test (explicit
+// @Order, not declaration luck) — otherwise the leak this class guards against
+// is unobservable in-class by construction. Other methods stay unordered.
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class IncidentContextIntegrationTests {
 
     @Autowired
@@ -82,20 +89,32 @@ public class IncidentContextIntegrationTests {
         statistics().setStatisticsEnabled(true);
     }
 
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
     /**
      * WO-QW-6 (NEW3-06): the orphan-incident test below disables FK checks, which
      * commits its row outside the test transaction (H2 DDL) — the rollback at test
      * end does NOT remove it, and the next global incident scan trips over it
      * (order-dependent red/green — WO-URGENT-1 comment in
      * {@code GraphRobustnessIntegrationTests}). Delete the orphan explicitly so no
-     * sibling test can observe it, whatever the class order. Runs even when the
-     * test itself fails (the orphan is committed, the assertion is rolled back).
+     * sibling test can observe it, whatever the class order.
+     *
+     * <p>The delete runs in its OWN transaction ({@code REQUIRES_NEW}): a plain
+     * repository call here would join the method-level test transaction and be
+     * rolled back with it (the orphan is committed — committed must be deleted
+     * committed). Runs even when the test itself fails (the orphan is committed,
+     * the assertions roll back).
      */
     @AfterEach
     void deleteOrphanIncidents() {
-        incidentRepository.deleteAll(incidentRepository.findAll().stream()
-            .filter(i -> "orphan incident".equals(i.getMessage()))
-            .toList());
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager,
+            new org.springframework.transaction.support.DefaultTransactionDefinition(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW))
+            .executeWithoutResult(status -> incidentRepository.deleteAll(
+                incidentRepository.findAll().stream()
+                    .filter(i -> "orphan incident".equals(i.getMessage()))
+                    .toList()));
     }
 
     private Statistics statistics() {
@@ -182,6 +201,7 @@ public class IncidentContextIntegrationTests {
      *  reference can only appear through out-of-band data maintenance (manual cleanup, partial
      *  restore); the test emulates exactly that state by inserting the incident with FK checks
      *  temporarily disabled. */
+    @Order(1)
     @Transactional
     @Test
     void deletedInstance_incidentStillReturned_withEmptyContext() throws Exception {
@@ -211,6 +231,32 @@ public class IncidentContextIntegrationTests {
         // legacy fields survive
         assertThat(degraded.getMessage()).isEqualTo("orphan incident");
         assertThat(degraded.getCreatedAt()).isNotNull();
+    }
+
+    /**
+     * WO-QW-6 (NEW3-06) criterion a: the orphan above must not leak into a
+     * sibling global scan. This test does a bare {@code findAll()} over the
+     * incidents table (same shape as
+     * {@code GatewayNoDefaultIntegrationTests} — no spec, no filter) and asserts
+     * no {@code 'orphan incident'} row is visible — whatever the class/method
+     * order (the orphan test and this one share the JVM/database).
+     *
+     * <p>POF anchor (G-N): with the {@code REQUIRES_NEW} cleanup in
+     * {@code @AfterEach} removed, run
+     * {@code deletedInstance_incidentStillReturned_withEmptyContext} first and
+     * this test second — this test goes RED (orphan visible). With the cleanup —
+     * GREEN in any order.
+     */
+    @Order(2)
+    @Transactional
+    @Test
+    void globalIncidentScan_seesNoOrphanFromSiblingTest() {
+        List<IncidentEntity> orphans = incidentRepository.findAll().stream()
+            .filter(i -> "orphan incident".equals(i.getMessage()))
+            .toList();
+        assertThat(orphans)
+            .as("sibling orphan-incident test must not leak rows into a global scan")
+            .isEmpty();
     }
 
     /**
