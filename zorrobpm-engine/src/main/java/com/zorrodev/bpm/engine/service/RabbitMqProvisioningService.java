@@ -44,9 +44,11 @@ import java.util.regex.Pattern;
  * <p>Источник «у юзера есть брокер-аккаунт» — DB-флаг
  * {@code UiUserEntity.rabbitmqProvisioned} (решение CTO по V10-a: брокер как
  * источник не годится — лишний roundtrip на горячем membership-пути + брокер
- * может лежать). Провижининг идемпотентен (PUT /api/users создаёт если нет),
- * так что рассинхрон флага с брокером (аккаунт удалён руками) чинится сам при
- * следующей генерации/синке.
+ * может лежать). Рассинхрон флага с брокером (аккаунт удалён руками) НЕ
+ * чинится сам: синк зовёт только permissions (пароль не хранится — пересоздать
+ * аккаунт без ре-генерации нечем) и fail-closed 503 требует ручной
+ * ре-генерации пароля (verifier HOLD #5 — комментарий v1 про self-heal был
+ * неверен, исправлен здесь).
  *
  * <p>Брокер недоступен в момент синка для provisioned-юзера → 503, membership-
  * транзакция падает целиком (fail-closed, решение CTO по V10-b: DB-коммит +
@@ -115,6 +117,16 @@ public class RabbitMqProvisioningService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Cannot provision credentials for a deactivated account");
         }
+        // Verifier HOLD #1 (red-team): логин, совпадающий с брокер-админом app
+        // (дефолт `zorrodev`), резервируется — иначе PUT /api/users с пустыми
+        // тегами снёс бы administrator-тег и перетёр пароль аккаунта самого
+        // приложения (self-DoS + поломка общего аккаунта переходного периода,
+        // критерий 6). Создание такого SYSTEM-логина ничем не запрещено,
+        // поэтому guard стоит здесь, а не в валидации имени.
+        if (user.getUsername() != null && user.getUsername().equals(brokerAdminUser)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Login is reserved for the broker administrator");
+        }
 
         String password = generatePassword();
         // RabbitMQ password_hash: base64( salt(4 bytes) || sha256(salt || password) ).
@@ -131,7 +143,20 @@ public class RabbitMqProvisioningService {
             // при первой генерации юзер уже может состоять в процессах.
             // Ротация permissions НЕ трогает (критерий 5, решение CTO по V10-e:
             // разные жизненные циклы — синк идёт только из членства).
-            syncPermissions(user);
+            // Verifier HOLD #6: если синк упал ПОСЛЕ создания брокер-юзера —
+            // компенсируем удалением (иначе orphan-аккаунт с правами при
+            // откате флага, которого no-op-правило больше не коснётся).
+            try {
+                syncPermissions(user);
+            } catch (RuntimeException e) {
+                try {
+                    deleteBrokerUser(user.getUsername());
+                } catch (Exception cleanupEx) {
+                    log.warn("WO-INT-9: failed to clean up broker user {} after sync failure: {}",
+                        user.getUsername(), cleanupEx.getMessage());
+                }
+                throw e;
+            }
         }
 
         log.info("RabbitMQ password {} for system user={}",
@@ -194,13 +219,21 @@ public class RabbitMqProvisioningService {
     }
 
     /**
-     * Схема permissions (vhost {@code /}), решение CTO по V10-c.
+     * Схема permissions (vhost {@code /}), решение CTO по V10-c + verifier HOLD #2.
      * configure покрывает declare очередей + DLQ; exchange
      * {@code zorrobpm.jobs.dlx} + биндинги объявляет сам app под
      * admin-аккаунтом (declare идемпотентен) — воркеру свои не нужны.
      * write — job-очереди + {@code zorrobpm.complete-service-task}
      * (воркер публикует completion'ы через default exchange —
-     * {@code JobCompletionListener.convertAndSend(completeQueueName, …)}).
+     * {@code JobCompletionListener.convertAndSend(completeQueueName, …)}),
+     * но ТОЛЬКО при непустом членстве: юзер с нулём процессов получает
+     * deny-all целиком (иначе любой provisioned юзер без процессов мог бы
+     * ковать completion'ы чужих service-task'ов — consumer
+     * {@code ServiceTaskListener.on(ServiceTaskCompleteData)} не делает
+     * auth-проверки, канал общий). Остаточный риск: член процесса A может
+     * ковать completion'ы процесса B (общий канал, identity отправителя
+     * брокер листенеру не передаёт) — архитектурное ограничение модели,
+     * follow-up (per-process completion-скasing или server-side ownership-check).
      * read — consume + passive-declare + basicGet на job-очередях и их DLQ.
      * Теги нового юзера — пустые (не management, не administrator).
      */
@@ -217,15 +250,16 @@ public class RabbitMqProvisioningService {
             // Вне character-class опасна только точка — экранируем её.
             jobs.append(job.replace(".", "\\."));
         }
-        String jobAlt = jobs.length() == 0 ? "a^" : jobs.toString();
+        boolean hasJobs = jobs.length() > 0;
+        String jobAlt = hasJobs ? jobs.toString() : "a^";
         // "a^" (never-matches) вместо "^$" — Erlang re обязан принять паттерн;
-        // пустого членства нет очередей вообще: deny-all по построению.
+        // пустое членство: deny-all по построению (verifier HOLD #2).
         String jobsAndDlq = "^zorrobpm\\.jobs\\.(" + jobAlt + ")(\\.dlq)?$";
         String jobsOnly = "^zorrobpm\\.jobs\\.(" + jobAlt + ")$";
-        return new Permissions(
-            jobsAndDlq,
-            "(" + jobsOnly + ")|(^zorrobpm\\.complete-service-task$)",
-            jobsAndDlq);
+        String write = hasJobs
+            ? "(" + jobsOnly + ")|(^zorrobpm\\.complete-service-task$)"
+            : jobsOnly;
+        return new Permissions(jobsAndDlq, write, jobsAndDlq);
     }
 
     /** Пароль — 40 символов [A-Za-z0-9] через SecureRandom (240 бит). */
@@ -277,6 +311,24 @@ public class RabbitMqProvisioningService {
             mgmtPut("/api/permissions/" + encode(VHOST) + "/" + encode(login), body);
         if (response.statusCode() != 200 && response.statusCode() != 201 && response.statusCode() != 204) {
             throw brokerUnavailable("set broker permissions for " + login, response);
+        }
+    }
+
+    private void deleteBrokerUser(String login) {
+        try {
+            String credentials = brokerAdminUser + ":" + brokerAdminPassword;
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(normalizeBaseUrl(managementBaseUrl) + "/api/users/" + encode(login)))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                    .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)))
+                .DELETE()
+                .build();
+            client().send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "RabbitMQ broker unavailable: " + e.getMessage());
         }
     }
 

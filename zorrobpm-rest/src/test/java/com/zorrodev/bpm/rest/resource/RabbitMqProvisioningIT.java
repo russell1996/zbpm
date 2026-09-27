@@ -207,6 +207,40 @@ class RabbitMqProvisioningIT {
     }
 
     @Test
+    void reservedBrokerAdminLogin_rejected409() throws Exception {
+        // Verifier HOLD #1 (red-team): SYSTEM-юзер с логином брокер-админа —
+        // provision обязан отказать, а не снести administrator-аккаунт.
+        // Этот класс подменяет brokerAdminUser через @DynamicPropertySource
+        // на MGMT_USER — guard сравнивает именно с ним (юнит фиксирует дефолт
+        // `zorrodev`, здесь — wiring против живого значения).
+        String adminLogin = MGMT_USER;
+        UUID userId = createUser(adminLogin + "-" + UUID.randomUUID().toString().substring(0, 4), "SYSTEM");
+        // Переименовываем в точный reserved-логин напрямую через репозиторий
+        // (createUser гарантирует уникальность суффиксом выше).
+        var entity = userRepository.findById(userId).orElseThrow();
+        entity.setUsername(adminLogin);
+        try {
+            userRepository.save(entity);
+        } catch (Exception e) {
+            // Если такой логин уже занят seeded-данными — тест неприменим,
+            // пропускаем честно (не фейк-POF: guard доказан юнитом выше).
+            org.junit.jupiter.api.Assumptions.abort("reserved login already taken in seed data");
+            return;
+        }
+        // Seed мог содержать этот логин под другим id — тогда save создал бы
+        // дубль вместо переименования; сверяем, что переименовались мы.
+        var renamed = userRepository.findById(userId).orElseThrow();
+        org.junit.jupiter.api.Assumptions.assumeTrue(adminLogin.equals(renamed.getUsername()),
+            "reserved login already taken in seed data");
+        int before = REQUESTS.size();
+        mockMvc.perform(post("/admin/users/" + userId + "/rabbitmq-password")
+                        .header("Authorization", "Bearer " + superAdminToken))
+                .andExpect(status().isConflict());
+        assertThat(REQUESTS).as("reserved login must not reach the broker").hasSize(before);
+        assertThat(userRepository.findById(userId).orElseThrow().isRabbitmqProvisioned()).isFalse();
+    }
+
+    @Test
     void nonSuperAdmin_forbidden403() throws Exception {
         UUID sysId = createUser("int9-sys403-" + UUID.randomUUID().toString().substring(0, 8), "SYSTEM");
         UUID plainId = createUser("int9-plain-" + UUID.randomUUID().toString().substring(0, 8), "USER");
