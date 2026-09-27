@@ -27,6 +27,13 @@ public class UiUserEntity {
     private boolean forcePasswordChange;
     /** WO-INT-4: "HUMAN" or "SYSTEM". A SYSTEM account has no usable password. */
     private String userType = "HUMAN";
+    /**
+     * WO-INT-9: TRUE — для SYSTEM-юзера хоть раз генерировался RabbitMQ-пароль
+     * (брокер-аккаунт существует, права синкаются из членства в процессах).
+     * Java default false (прецедент WO-REG-2: Hibernate шлёт explicit NULL
+     * мимо DB-дефолта — Java-слой владеет значением, не DB-дефолт один).
+     */
+    private boolean rabbitmqProvisioned = false;
     private Instant createdAt;
     private Instant updatedAt;
     /**

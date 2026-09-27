@@ -96,6 +96,8 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-zorrodev}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-zorrodev}
+      # WO-INT-9: Management API для per-system провижининга (внутри сети — имя сервиса).
+      RABBITMQ_MGMT_BASE_URL: ${RABBITMQ_MGMT_BASE_URL:-http://rabbitmq:15672}
       APP_FILES_DIR: /app/files
       ZORROBPM_JWT_SECRET: ${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}
       ZORROBPM_DEFAULT_ADMIN_PASSWORD: ${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}
