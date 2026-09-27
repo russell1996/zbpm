@@ -588,5 +588,7 @@
   "failedToRejectRegistration": "Тіркеуді қабылдамау мүмкін болмады.",
   "rejectRegistrationTitle": "Тіркеуді қабылдамау",
   "rejectRegistrationHint": "Пайдаланушы тіркеуін қабылдамау",
-  "createdAt": "Жасалды"
+  "createdAt": "Жасалды",
+  "realtimeDown": "Realtime қолжетімсіз — сіз әлі кіргенсіз",
+  "realtimeRetry": "Қайта қосылу"
 }

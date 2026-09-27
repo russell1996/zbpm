@@ -588,5 +588,7 @@
   "failedToRejectRegistration": "Не удалось отклонить регистрацию.",
   "rejectRegistrationTitle": "Отклонить регистрацию",
   "rejectRegistrationHint": "Отклоняем регистрацию пользователя",
-  "createdAt": "Создано"
+  "createdAt": "Создано",
+  "realtimeDown": "Realtime недоступен — вы всё ещё вошли",
+  "realtimeRetry": "Переподключить"
 }

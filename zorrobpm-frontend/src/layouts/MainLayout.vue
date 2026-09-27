@@ -55,6 +55,21 @@ onUnmounted(() => realtime.disconnect())
           {{ t('realtimeSignIn') }}
         </button>
       </div>
+      <!-- WO-REL-57: JWT-сессия жива, а realtime-канал не поднимается (429 /
+           обрывы исчерпали попытки). Это НЕ expired-сессия: кнопка "Войти"
+           здесь врала бы (router-guard отобьёт обратно, плашка не исчезнет —
+           живой прод-репорт 2026-09-27). Честный сигнал + ручной retry. -->
+      <div
+        v-if="realtime.realtimeDown.value"
+        class="bg-sky-50 border-b border-sky-200 px-4 py-2 text-sm flex items-center gap-2"
+        role="status"
+      >
+        <LogIn class="h-4 w-4 shrink-0 text-sky-600" />
+        <span>{{ t('realtimeDown') }}</span>
+        <button class="ml-auto underline font-medium" @click="realtime.retryConnection()">
+          {{ t('realtimeRetry') }}
+        </button>
+      </div>
       <main class="flex-1 overflow-auto p-2 md:p-3">
         <router-view />
       </main>
