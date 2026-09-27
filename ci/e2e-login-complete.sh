@@ -73,7 +73,10 @@ TEST_EXIT=0
 # Хвост логов печатаем в файл, а не в stdout: json-логи app хоронят вывод
 # playwright под сотнями строк (поймано живьём — причину падения пришлось
 # искать в test-results, а не в логе скрипта).
-E2E_APP_LOG_TAIL="${E2E_APP_LOG_TAIL:-/tmp/e2e-app-tail.log}"
+# WO-QW-6 (NEW3-07): дефолт — внутри $CI_PROJECT_DIR, иначе GitLab не заберёт
+# файл в артефакты (абсолютный /tmp вне проекта молча теряется); CI-job
+# передаёт E2E_APP_LOG_TAIL="$CI_PROJECT_DIR/e2e-app-tail.log" явно.
+E2E_APP_LOG_TAIL="${E2E_APP_LOG_TAIL:-$ROOT/e2e-app-tail.log}"
 
 cleanup() {
   # P-42: teardown не должен маскировать exit-код теста — чистим с || true,
@@ -177,7 +180,11 @@ fi
 
 # --- 3. Спек ----------------------------------------------------------------------
 echo "[e2e] playwright: login → tasks → live SSE → complete…"
-if ! (cd zorrobpm-frontend && npx playwright test); then
+# WO-QW-6 (NEW3-07): зависимости обязаны ставиться внутри скрипта — на чистом
+# checkout node_modules нет и `npx playwright test` падает
+# `Cannot find package 'playwright'` (раньше работало только за счёт
+# унаследованного состояния раннера). `npm ci` — детерминированно по lock'у.
+if ! (cd zorrobpm-frontend && npm ci && npx playwright test); then
   TEST_EXIT=1
   echo "[e2e] FAIL: спек красный — хвост логов app → $E2E_APP_LOG_TAIL" >&2
   $COMPOSE logs --tail=80 app > "$E2E_APP_LOG_TAIL" 2>&1 || true

@@ -23,6 +23,7 @@ import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceContext;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,6 +80,22 @@ public class IncidentContextIntegrationTests {
     @BeforeEach
     void enableStatistics() {
         statistics().setStatisticsEnabled(true);
+    }
+
+    /**
+     * WO-QW-6 (NEW3-06): the orphan-incident test below disables FK checks, which
+     * commits its row outside the test transaction (H2 DDL) — the rollback at test
+     * end does NOT remove it, and the next global incident scan trips over it
+     * (order-dependent red/green — WO-URGENT-1 comment in
+     * {@code GraphRobustnessIntegrationTests}). Delete the orphan explicitly so no
+     * sibling test can observe it, whatever the class order. Runs even when the
+     * test itself fails (the orphan is committed, the assertion is rolled back).
+     */
+    @AfterEach
+    void deleteOrphanIncidents() {
+        incidentRepository.deleteAll(incidentRepository.findAll().stream()
+            .filter(i -> "orphan incident".equals(i.getMessage()))
+            .toList());
     }
 
     private Statistics statistics() {

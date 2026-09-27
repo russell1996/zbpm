@@ -149,8 +149,12 @@ public class ElementSupport {
         String resolved = resolveExpression(raw, processInstanceId);
         if (resolved == null) return null;
         try {
-            return Integer.parseInt(resolved.trim());
-        } catch (NumberFormatException e) {
+            // WO-QW-6 (NEW3-08): FEEL отдаёт целые с масштабом ("5.00" после
+            // WO-ENG-27, "5.0" от Double до этого) — parseInt на таком падает.
+            // intValueExact: целые с лишними нулями парсятся, настоящая дробь
+            // бросает ArithmeticException → тот же null-контракт, что раньше.
+            return new java.math.BigDecimal(resolved.trim()).intValueExact();
+        } catch (NumberFormatException | ArithmeticException e) {
             log.warn("jobPriorityDefinition '{}' resolved to non-integer '{}' — ignoring", raw, resolved);
             return null;
         }
@@ -180,8 +184,11 @@ public class ElementSupport {
         Integer value = null;
         if (resolved != null && !resolved.isBlank()) {
             try {
-                value = Integer.parseInt(resolved.trim());
-            } catch (NumberFormatException e) {
+                // WO-QW-6 (NEW3-08): см. resolvePriority выше — та же замена
+                // parseInt → BigDecimal.intValueExact (целая гарантия 0–100
+                // ниже не меняется, "5.50" по-прежнему явная ошибка).
+                value = new java.math.BigDecimal(resolved.trim()).intValueExact();
+            } catch (NumberFormatException | ArithmeticException e) {
                 value = null;
             }
         }
