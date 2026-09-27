@@ -233,12 +233,14 @@ test:e2e-login:
   stage: test
   tags: [zbpm]
   artifacts:
+    # WO-QW-6 (NEW3-07): путь ОБЯЗАН быть внутри $CI_PROJECT_DIR — абсолютный
+    # /tmp GitLab в артефакты не забирает (молча нет файла при падении).
     paths:
-      - "/tmp/e2e-app-tail.log"
+      - "e2e-app-tail.log"
     expire_in: 3 days
     when: always
   script:
-    - bash ci/e2e-login-complete.sh
+    - E2E_APP_LOG_TAIL="$CI_PROJECT_DIR/e2e-app-tail.log" bash ci/e2e-login-complete.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - if: '$CI_COMMIT_BRANCH'

@@ -99,6 +99,22 @@ class Acl9SubmissionIdentityIntegrationTest {
             });
         });
         createdKeys.clear();
+        // WO-QW-6 (NEW3-06): criterion4 deletes a user with FK checks disabled
+        // (H2 DDL commits outside the test tx) — the orphaned submission row would
+        // survive rollback and pollute sibling global scans. Re-enable integrity
+        // defensively and remove submissions whose submitter no longer exists.
+        try {
+            jdbcTemplate.execute("SET REFERENTIAL_INTEGRITY TRUE");
+        } catch (Exception ignored) {
+        }
+        submissionRepository.findAll().stream()
+            .filter(s -> s.getSubmittedBy() != null && userRepository.findById(s.getSubmittedBy()).isEmpty())
+            .forEach(s -> {
+                try {
+                    submissionRepository.deleteById(s.getId());
+                } catch (Exception ignored) {
+                }
+            });
     }
 
     // === CRITERIA 1-3: DTO enrichment ===
