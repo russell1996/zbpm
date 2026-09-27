@@ -1982,6 +1982,13 @@ public class SseEventStreamService implements SmartLifecycle {
             dispatchExecutor = null;
             sendExecutor = null;
             retryScheduler = null;
+            // WO-REL-56 (verifier-находка 1): взведённый gap-таймер гасится
+            // здесь же, под sequencerLock (таймер при срабатывании берёт его
+            // же — взаимного ожидания с монитором this нет: этот блок держит
+            // this, а не sequencerLock; cancel(false) не ждёт выполнения).
+            synchronized (sequencerLock) {
+                cancelGapTimerLocked();
+            }
             if (dispatchDoomed != null) {
                 dispatchDoomed.shutdown();
             }
