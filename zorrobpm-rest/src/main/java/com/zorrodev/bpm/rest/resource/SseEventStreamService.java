@@ -321,6 +321,28 @@ public class SseEventStreamService implements SmartLifecycle {
     /** Delay between bridge start retries while clients wait (test-shrinkable). */
     private volatile long retryIntervalMs = 10_000;
 
+    /**
+     * WO-REL-57: SSE heartbeat interval (test-shrinkable, default 15s).
+     * A periodic SSE comment keeps idle streams alive across middleboxes
+     * with an idle timeout (the external edge proxy killed silent chunked
+     * connections with {@code ERR_INCOMPLETE_CHUNKED_ENCODING} on prod).
+     * The comment carries no id/name/data — per the SSE spec a bare
+     * comment line never dispatches a MessageEvent, so the frontend needs
+     * no change (no listener can catch it, see REALTIME_EVENT_TYPES).
+     * Heartbeats travel the SAME per-client writer queue as events (never a
+     * parallel direct {@code emitter.send} — the writer protocol stays the
+     * single send path), but they never trigger close-on-overflow (a full
+     * queue skips the tick for that client) and never fire
+     * {@link EventDispatchListener} (delivery hook is for domain events).
+     */
+    private volatile long heartbeatIntervalMs = 15_000;
+
+    /** WO-REL-57: heartbeat payload (wire form {@code ":heartbeat\n\n"}). */
+    static final String HEARTBEAT_COMMENT = "heartbeat";
+
+    /** WO-REL-57: the armed periodic heartbeat (null = no clients yet / stopped). */
+    private volatile java.util.concurrent.ScheduledFuture<?> heartbeatFuture;
+
     /** Functional interface for test event capture: receives clientId + envelope. */
     @FunctionalInterface
     public interface EventDispatchListener {
@@ -408,6 +430,9 @@ public class SseEventStreamService implements SmartLifecycle {
             // stalled broker once hung GET /events/stream with zero response
             // (WO-REL-20). The stream opens immediately; events flow once ready.
             ensureBridgeStarted();
+            // WO-REL-57: arm the heartbeat with the first client (lazy — no
+            // clients, no ticks; cancelled by stop(), re-armed on resume).
+            ensureHeartbeat();
 
             log.info("SSE client {} registered: type={}, processInstanceId={}, processDefinitionKey={}",
                 clientId, typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
@@ -540,6 +565,60 @@ public class SseEventStreamService implements SmartLifecycle {
             return;
         }
         client.drainToLive(catchupBoundary);
+    }
+
+    /**
+     * WO-REL-57: arm the periodic heartbeat (idempotent, lazy). The first
+     * registration starts it; ticks are {@code scheduleWithFixedDelay} on the
+     * shared bounded retry lane (no new pool — one daemon thread, same as the
+     * pump-retry traffic). A tick with zero clients is a no-op; each tick
+     * re-checks liveness per client under the client lock (a client that
+     * closed between ticks is skipped, never sent into).
+     */
+    private synchronized void ensureHeartbeat() {
+        java.util.concurrent.ScheduledFuture<?> armed = heartbeatFuture;
+        if (armed != null && !armed.isDone()) {
+            return;
+        }
+        try {
+            heartbeatFuture = retryLane().scheduleWithFixedDelay(
+                this::sendHeartbeatToAll,
+                heartbeatIntervalMs, heartbeatIntervalMs, TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException re) {
+            log.warn("SSE heartbeat arming rejected (retry lane saturated) — "
+                + "next registration re-arms", re);
+            heartbeatFuture = null;
+        }
+    }
+
+    /** WO-REL-57: cancel the heartbeat (stop() path; re-armed lazily). */
+    private synchronized void cancelHeartbeat() {
+        java.util.concurrent.ScheduledFuture<?> armed = heartbeatFuture;
+        heartbeatFuture = null;
+        if (armed != null) {
+            armed.cancel(false);
+        }
+    }
+
+    /**
+     * WO-REL-57: one heartbeat tick — a comment to every LIVE client.
+     * Package-visible for tests (the interval itself is wall-clock).
+     * Never throws into the scheduler (a rogue client must not kill the
+     * periodic task — {@code scheduleWithFixedDelay} cancels itself on an
+     * escaping exception).
+     */
+    void sendHeartbeatToAll() {
+        try {
+            for (SseClientInfo client : clients.values()) {
+                try {
+                    client.enqueueHeartbeat();
+                } catch (RuntimeException e) {
+                    log.warn("SSE heartbeat enqueue failed for client {}", client.clientId(), e);
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("SSE heartbeat tick failed", e);
+        }
     }
 
     /**
@@ -1989,6 +2068,9 @@ public class SseEventStreamService implements SmartLifecycle {
             synchronized (sequencerLock) {
                 cancelGapTimerLocked();
             }
+            // WO-REL-57: взведённый heartbeat гасится здесь же (тиковый
+            // future; сама retry-lane глушится ниже вместе с остальными).
+            cancelHeartbeat();
             if (dispatchDoomed != null) {
                 dispatchDoomed.shutdown();
             }
@@ -2074,9 +2156,15 @@ public class SseEventStreamService implements SmartLifecycle {
          * cursor (drain dedup without re-parsing) and a direct envelope
          * handle (post-send notify without re-extracting). No double
          * retention worth mentioning: two references to the same map.
+         *
+         * <p>WO-REL-57: {@code heartbeat} marks a keep-alive comment (no
+         * cursor, no envelope — {@code Long.MIN_VALUE}/{@code null}): the
+         * drain drops it unconditionally (a pre-LIVE tick carries nothing
+         * worth delivering) and the post-send hook skips it (delivery
+         * observability is for domain events, not keep-alives).
          */
         private record QueuedSend(SseEmitter.SseEventBuilder event, long cursor,
-                Map<String, Object> envelope) {}
+                Map<String, Object> envelope, boolean heartbeat) {}
         private final java.util.ArrayDeque<QueuedSend> queue = new java.util.ArrayDeque<>();
         /**
          * True while a send is in flight OR a pump run is scheduled: exactly
@@ -2154,7 +2242,7 @@ public class SseEventStreamService implements SmartLifecycle {
                     queue.clear();
                     overflowed = true;
                 } else {
-                    queue.addLast(new QueuedSend(event, cursor, envelope));
+                    queue.addLast(new QueuedSend(event, cursor, envelope, false));
                     if (mode == Mode.LIVE && !pumpActive) {
                         pumpActive = true;
                         kick = true;
@@ -2191,6 +2279,12 @@ public class SseEventStreamService implements SmartLifecycle {
                 if (!queue.isEmpty()) {
                     java.util.ArrayDeque<QueuedSend> survivors = new java.util.ArrayDeque<>();
                     for (QueuedSend queued : queue) {
+                        // WO-REL-57: heartbeat ticks queued pre-LIVE carry no
+                        // cursor and nothing worth delivering — drop, the next
+                        // tick re-arms on the live writer.
+                        if (queued.heartbeat) {
+                            continue;
+                        }
                         // WO-REL-38: дедуп по позиции курсора (feedPosition;
                         // fallback — sequence, см. cursorOf выше).
                         if (queued.cursor <= catchupBoundary) {
@@ -2224,6 +2318,35 @@ public class SseEventStreamService implements SmartLifecycle {
         synchronized void closeWriter() {
             mode = Mode.CLOSED;
             queue.clear();
+        }
+
+        /**
+         * WO-REL-57: queue one heartbeat comment for the pump. LIVE only
+         * (BUFFERING ticks would sit in the pre-drain queue and be dropped
+         * by the drain anyway — skip them early). A FULL queue skips the
+         * tick for this client WITHOUT closing: the heartbeat carries no
+         * data worth losing the stream over, and closing here would turn
+         * event pressure into heartbeat-driven overflow kills. CLOSED drops.
+         */
+        void enqueueHeartbeat() {
+            boolean kick = false;
+            synchronized (this) {
+                if (mode != Mode.LIVE) {
+                    return;
+                }
+                if (queue.size() >= perClientQueueEvents) {
+                    return;
+                }
+                queue.addLast(new QueuedSend(SseEmitter.event().comment(HEARTBEAT_COMMENT),
+                    Long.MIN_VALUE, null, true));
+                if (!pumpActive) {
+                    pumpActive = true;
+                    kick = true;
+                }
+            }
+            if (kick) {
+                kickPump();
+            }
         }
 
         /**
@@ -2309,7 +2432,9 @@ public class SseEventStreamService implements SmartLifecycle {
                     // send above really ran. A CLOSED-drop (flag unset) still
                     // pumps so pumpActive resets through the CLOSED no-op —
                     // but never notifies.
-                    if (actuallySent.get()) {
+                    // WO-REL-57: heartbeats never notify either (keep-alive,
+                    // not delivery — the listener hook is for domain events).
+                    if (actuallySent.get() && !queued.heartbeat) {
                         notifySent(queued.envelope);
                     }
                     pump();
