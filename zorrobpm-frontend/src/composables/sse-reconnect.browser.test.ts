@@ -14,6 +14,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { defineComponent, h, onMounted } from 'vue'
+import axios from 'axios'
+import api from '@/services/api'
 import TaskList from '@/pages/tasks/TaskList.vue'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useRealtimeEvents } from '@/composables/useRealtimeEvents'
@@ -141,16 +143,47 @@ function until(cond: () => boolean, timeout = 8000): Promise<void> {
   })
 }
 
+// WO-URGENT-2: refresh идёт через sharedRefresh(api) — axios-путь с single-flight
+// (WO-QW-5 перевёл refreshAndReconnect с прямого fetch), поэтому мокаем адаптер
+// api-инстанса, а не глобальный fetch. Формы дословно по образцу
+// useRealtimeEventsReconnect.test.ts (mockRefreshOk/mockRefreshFail оттуда).
+const originalAdapter = api.defaults.adapter
+let refreshAdapter: ReturnType<typeof vi.fn>
+
+function mockRefreshOk() {
+  const adapter = vi.fn(async (cfg: { url?: string }) => {
+    if (cfg.url === '/auth/refresh') return { data: {}, status: 200 }
+    return { data: {}, status: 200 }
+  })
+  ;(api.defaults as Record<string, unknown>).adapter = adapter
+  return adapter
+}
+
+function mockRefreshFail() {
+  const adapter = vi.fn(async (cfg: { url?: string }) => {
+    const error = new axios.AxiosError('Request failed with status code 401')
+    error.config = { url: cfg.url || '/x', method: 'GET', headers: new axios.AxiosHeaders() } as never
+    error.response = {
+      data: null, status: 401, statusText: 'Unauthorized',
+      headers: new axios.AxiosHeaders(), config: error.config,
+    }
+    throw error
+  })
+  ;(api.defaults as Record<string, unknown>).adapter = adapter
+  return adapter
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+  refreshAdapter = mockRefreshOk()
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  ;(api.defaults as Record<string, unknown>).adapter = originalAdapter
   for (const w of mounted) w.unmount()
   mounted = []
   for (const h of hosts) h.remove()
@@ -186,7 +219,8 @@ describe('WO-UI-22 SSE reconnect in a real browser', () => {
     FakeEventSource.instances[0].onerror?.({} as Event)
     // Backoff первой попытки — 1с реального времени.
     await until(() => FakeEventSource.instances.length === 2, 10000)
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(refreshAdapter.mock.calls.filter(([cfg]) => (cfg as { url?: string }).url === '/auth/refresh'))
+      .toHaveLength(1)
 
     // Новый источник жив: событие долетает до списка без reload страницы.
     mockGetUserTasks.mockResolvedValue({
@@ -210,7 +244,7 @@ describe('WO-UI-22 SSE reconnect in a real browser', () => {
   })
 
   it('criterion 3 (UI): dead refresh shows the banner, Sign in routes to login', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401 } as Response)
+    mockRefreshFail()
     const wrapper = mount(MainLayout, {
       attachTo: mountHost(),
       global: {
