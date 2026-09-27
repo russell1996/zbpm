@@ -82,9 +82,11 @@ class RabbitMqProvisioningServiceTest {
         RabbitMqProvisioningService.Permissions p =
             RabbitMqProvisioningService.permissionsFor(Set.of());
 
-        // Ни одна настоящая очередь не матчится (never-matches вместо "^$").
+        // Verifier HOLD #2: юзер с нулём процессов — deny-all целиком,
+        // включая completions (иначе ковка чужих service-task'ов).
         assertThat(Pattern.compile(p.read()).matcher("zorrobpm.jobs.anything").matches()).isFalse();
-        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.complete-service-task").matches()).isTrue();
+        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.complete-service-task").matches()).isFalse();
+        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.jobs.anything").matches()).isFalse();
     }
 
     @Test
@@ -140,6 +142,21 @@ class RabbitMqProvisioningServiceTest {
             .isInstanceOf(ResponseStatusException.class)
             .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
+    void provision_reservedBrokerAdminLogin_409() throws Exception {
+        UiUserEntity user = systemUser("zorrodev", "SYSTEM");
+        when(uiUserRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        // Verifier HOLD #1: guard сравнивает с brokerAdminUser — подменяем
+        // поле тем же способом, что no-op-тест ниже.
+        setField(service, "brokerAdminUser", "zorrodev");
+
+        assertThatThrownBy(() -> service.provisionPassword(user.getId(), null))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT));
+        verify(uiUserRepository, never()).save(any());
     }
 
     @Test
