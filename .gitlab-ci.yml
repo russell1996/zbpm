@@ -491,6 +491,10 @@ deploy:
     # build cache/stopped containers above 85% and refuses to deploy above 90%
     # after cleanup, instead of stranding the stack mid-way.
     - bash ci/disk-space-check.sh
+    # NEW2-07 / инцидент 2026-09-27: дефолтные DB/Rabbit пароли на хосте валили
+    # приложение на старте ПОСЛЕ того, как этот же деплой уже снёс рабочий контейнер
+    # (compose up -d --remove-orphans). Гейт ДО деструктивных шагов — не после.
+    - bash ci/credential-rotation-check.sh
     # remember the currently deployed tag so `rollback` can restore it
     - if [ -f "$DEPLOY_DIR/.current_tag" ]; then cp "$DEPLOY_DIR/.current_tag" "$DEPLOY_DIR/.previous_tag"; fi
     # sync sources, preserving host .env (DB/RabbitMQ secrets) and rollback bookkeeping.
