@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.ApiKeyManagementContract;
 import com.zorrodev.bpm.contract.dto.*;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.ApiKeyService;
+import com.zorrodev.bpm.engine.service.RabbitMqProvisioningService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,8 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
     private final HttpServletResponse httpResponse;
     /** WO-SEC-67 (F13): close live SSE streams on key revoke (credential behind them is dead). */
     private final SseEventStreamService sseEventStreamService;
+    /** WO-INT-9: per-system RabbitMQ-креды — JPA и брокер-синк живут в сервисе. */
+    private final RabbitMqProvisioningService rabbitMqProvisioningService;
 
     // ==================== Super-admin endpoints ====================
 
@@ -202,6 +205,24 @@ public class ApiKeyManagementResource implements ApiKeyManagementContract {
         apiKeyService.revokeKeyById(userId, apiKeyId, getPrincipal());
         // WO-SEC-67 (F13): the key behind open streams just died — close them now.
         sseEventStreamService.invalidateStreams();
+    }
+
+    // ==================== WO-INT-9: per-system RabbitMQ credentials ====================
+
+    /**
+     * Генерация/ротация RabbitMQ-пароля SYSTEM-юзера. Секрет — только в ответе
+     * (один показ, не хранится, не логируется — тот же контракт, что у
+     * API-ключа). Guard — существующий requireSuperAdmin (deny-by-default,
+     * нового guard'а нет). Ротация broker-права не меняет (отдельный цикл).
+     */
+    @Transactional
+    @Override
+    public RabbitMqPasswordDTO rotateRabbitMqPassword(@PathVariable UUID userId) {
+        requireSuperAdmin();
+        String password = rabbitMqProvisioningService.provisionPassword(userId, getPrincipal());
+        RabbitMqPasswordDTO dto = new RabbitMqPasswordDTO();
+        dto.setPassword(password);
+        return dto;
     }
 
     // ==================== Helpers (no JPA) ====================

@@ -42,6 +42,13 @@ const keyCopied = ref(false)
 const rotating = ref(false)
 const showRevokeConfirm = ref(false)
 
+// --- WO-INT-9: per-system RabbitMQ password (SYSTEM accounts) ---
+// Отдельный секрет на существующем юзере (не бандл с API-ключом).
+// Пароль — только в локальном ref, тот же one-time-паттерн, что у API-ключа.
+const showRabbitModal = ref(false)
+const displayedRabbitPassword = ref('')
+const rotatingRabbit = ref(false)
+
 // View wrapper so the API-key section renders as a list of compact cards and
 // scales to multiple keys if the backend ever returns more than one.
 const apiKeyList = computed<admin.ApiKeyInfo[]>(() => (apiKey.value ? [apiKey.value] : []))
@@ -224,6 +231,34 @@ function closeKeyModal() {
 async function copyKey() {
   try {
     await navigator.clipboard.writeText(displayedKey.value)
+  } catch {
+    // ignore
+  }
+}
+
+// WO-INT-9: генерация/ротация RabbitMQ-пароля (SYSTEM only — кнопка
+// рендерится только для SYSTEM, см. template; бэкенд тоже 400 на HUMAN).
+async function rotateRabbitPassword() {
+  rotatingRabbit.value = true
+  try {
+    const result = await admin.rotateRabbitMqPassword(props.user.id)
+    displayedRabbitPassword.value = result.password
+    showRabbitModal.value = true
+  } catch {
+    toast.error(t('failedToGenerateRabbitMqPassword'))
+  } finally {
+    rotatingRabbit.value = false
+  }
+}
+
+function closeRabbitModal() {
+  showRabbitModal.value = false
+  displayedRabbitPassword.value = ''
+}
+
+async function copyRabbitPassword() {
+  try {
+    await navigator.clipboard.writeText(displayedRabbitPassword.value)
   } catch {
     // ignore
   }
@@ -419,6 +454,20 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <!-- === WO-INT-9: RabbitMQ credentials (SYSTEM accounts only) === -->
+    <section v-if="isSystem" class="space-y-2">
+      <h4 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('rabbitmqCredentials') }}</h4>
+      <p class="text-xs text-muted-foreground">{{ t('rabbitmqCredentialsHint') }}</p>
+      <button
+        class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50"
+        data-testid="rotate-rabbitmq-password-button"
+        :disabled="rotatingRabbit"
+        @click="rotateRabbitPassword"
+      >
+        {{ t('generateRabbitMqPassword') }}
+      </button>
+    </section>
+
     <!-- === Memberships Section === -->
     <section class="space-y-2">
       <div class="flex items-center justify-between">
@@ -516,6 +565,19 @@ onUnmounted(() => {
         <div class="flex justify-end gap-2">
           <button class="px-3 py-1.5 text-sm border border-border rounded" @click="showRevokeConfirm = false">{{ t('cancel') }}</button>
           <button class="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700" @click="revokeKey">{{ t('revoke') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- WO-INT-9: RabbitMQ one-time password modal — пароль живёт ТОЛЬКО здесь -->
+    <div v-if="showRabbitModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeRabbitModal">
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-lg p-6 space-y-4">
+        <h3 class="font-bold">{{ t('rabbitmqPasswordCreated') }}</h3>
+        <p class="text-sm text-muted-foreground" v-html="t('rabbitmqPasswordNotShown')"></p>
+        <div class="bg-muted rounded p-3 font-mono text-sm break-all select-all border border-border">{{ displayedRabbitPassword }}</div>
+        <div class="flex justify-between">
+          <button class="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted" data-testid="copy-rabbitmq-password-button" @click="copyRabbitPassword">{{ t('copy') }}</button>
+          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded hover:opacity-90" data-testid="close-rabbitmq-password-modal-button" @click="closeRabbitModal">{{ t('savedClose') }}</button>
         </div>
       </div>
     </div>

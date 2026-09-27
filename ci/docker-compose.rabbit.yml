@@ -12,6 +12,9 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-zorrodev}
     ports:
       - "${RABBIT_PORT:-5673}:5672"
+      # WO-INT-9: management-порт для per-system провижининг-тестов
+      # (Management API: PUT /api/users, PUT /api/permissions).
+      - "${RABBIT_MGMT_PORT:-15673}:15672"
     # NO docker healthcheck on purpose: it would exec rabbitmq-diagnostics as root from
     # second ~3, racing the broker for .erlang.cookie ownership (see run-rabbit-tests.sh
     # note) — readiness is owned by the script's -u rabbitmq wait loop instead.

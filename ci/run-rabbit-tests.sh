@@ -16,6 +16,9 @@
 # Environment variables (override defaults):
 #   RABBIT_PORT     — host port for AMQP (default: 5673, non-standard on purpose:
 #                     never collide with a host-side 5672, same premise as PG_PORT)
+#   RABBIT_MGMT_PORT — host port for the Management API (default: 15673 —
+#                     non-standard on purpose: never collide with a host-side
+#                     15672; WO-INT-9 per-system provisioning tests use it)
 #   RABBIT_USER     — broker user (default: zorrodev)
 #   RABBIT_PASSWORD — broker password (default: zorrodev)
 #   MAVEN_OPTS      — JVM args for Maven (default: -Xmx1g)
@@ -25,8 +28,12 @@
 set -euo pipefail
 
 export RABBIT_PORT="${RABBIT_PORT:-5673}"
+export RABBIT_MGMT_PORT="${RABBIT_MGMT_PORT:-15673}"
 export RABBIT_USER="${RABBIT_USER:-zorrodev}"
 export RABBIT_PASSWORD="${RABBIT_PASSWORD:-zorrodev}"
+# WO-INT-9: Management API base for the provisioning tests (mirror of the
+# AMQP plumbing below — P-23: surefire/failsafe forks inherit env reliably).
+export RABBITMQ_MGMT_BASE_URL="${RABBITMQ_MGMT_BASE_URL:-http://127.0.0.1:${RABBIT_MGMT_PORT}}"
 
 # WO-OPS-11 F26: тот же развод, что в run-pg-tests.sh (суффикс + сдвиг порта).
 if [ -n "${CI_PIPELINE_ID:-}" ]; then
@@ -34,6 +41,11 @@ if [ -n "${CI_PIPELINE_ID:-}" ]; then
   PROJECT="zbpm-rabbitci-${SUFFIX}"
   RABBIT_PORT="$((5673 + (SUFFIX % 2000)))"
   export RABBIT_PORT
+  # WO-INT-9: mgmt-порт сдвигается вместе с AMQP (та же арифметика развода).
+  RABBIT_MGMT_PORT="$((15673 + (SUFFIX % 2000)))"
+  export RABBIT_MGMT_PORT
+  RABBITMQ_MGMT_BASE_URL="http://127.0.0.1:${RABBIT_MGMT_PORT}"
+  export RABBITMQ_MGMT_BASE_URL
 else
   PROJECT="zbpm-rabbitci"
 fi
@@ -93,6 +105,7 @@ docker run --rm \
   -e RABBITMQ_PORT="$RABBIT_PORT" \
   -e RABBITMQ_USER="$RABBIT_USER" \
   -e RABBITMQ_PASSWORD="$RABBIT_PASSWORD" \
+  -e RABBITMQ_MGMT_BASE_URL="$RABBITMQ_MGMT_BASE_URL" \
   -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
   maven:3.9.9-eclipse-temurin-21 \
   mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
@@ -105,7 +118,8 @@ docker run --rm \
     -DRABBITMQ_HOST=127.0.0.1 \
     -DRABBITMQ_PORT="$RABBIT_PORT" \
     -DRABBITMQ_USER="$RABBIT_USER" \
-    -DRABBITMQ_PASSWORD="$RABBIT_PASSWORD"
+    -DRABBITMQ_PASSWORD="$RABBIT_PASSWORD" \
+    -DRABBITMQ_MGMT_BASE_URL="$RABBITMQ_MGMT_BASE_URL"
 rc=$?
 set -e
 echo "=== rabbit suite exited with code $rc ==="

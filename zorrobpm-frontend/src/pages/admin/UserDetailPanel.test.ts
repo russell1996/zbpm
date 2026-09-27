@@ -31,6 +31,8 @@ vi.mock('@/services/adminService', () => ({
   createApiKey: vi.fn(),
   rotateApiKey: vi.fn(),
   revokeApiKey: vi.fn(),
+  // WO-INT-9: per-system RabbitMQ password.
+  rotateRabbitMqPassword: vi.fn(),
   setGrants: vi.fn(),
   changeMemberRole: vi.fn().mockResolvedValue({}),
   listProcesses: vi.fn().mockResolvedValue([
@@ -294,5 +296,47 @@ describe('UserDetailPanel', () => {
     expect(wrapper.find('[data-testid="userType"]').exists()).toBe(false)
     // No separate create/edit modal is spawned on top
     expect(document.querySelector('[data-testid="form-username"]')).toBeNull()
+  })
+
+  // WO-INT-9: RabbitMQ password action — SYSTEM only, one-time modal.
+  it('SYSTEM user sees the RabbitMQ action; HUMAN does not', async () => {
+    const sys = mount(UserDetailPanel, {
+      props: { user: { ...mockUser, userType: 'SYSTEM' } },
+      global: { stubs: { teleport: false } },
+    })
+    await vi.waitFor(() => {
+      expect(sys.text()).toContain('proc-a')
+    }, { timeout: 2000 })
+    expect(sys.find('[data-testid="rotate-rabbitmq-password-button"]').exists()).toBe(true)
+
+    const human = mount(UserDetailPanel, {
+      props: { user: { ...mockUser } },
+      global: { stubs: { teleport: false } },
+    })
+    await vi.waitFor(() => {
+      expect(human.text()).toContain('proc-a')
+    }, { timeout: 2000 })
+    expect(human.find('[data-testid="rotate-rabbitmq-password-button"]').exists()).toBe(false)
+  })
+
+  it('rotate action calls the service and shows the one-time modal', async () => {
+    vi.mocked(admin.rotateRabbitMqPassword).mockResolvedValue({ password: 'rabbit-secret-once' })
+    const wrapper = mount(UserDetailPanel, {
+      props: { user: { ...mockUser, userType: 'SYSTEM' } },
+      global: { stubs: { teleport: false } },
+    })
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('proc-a')
+    }, { timeout: 2000 })
+
+    await wrapper.find('[data-testid="rotate-rabbitmq-password-button"]').trigger('click')
+    await vi.waitFor(() => {
+      expect(admin.rotateRabbitMqPassword).toHaveBeenCalledWith('u1')
+    }, { timeout: 2000 })
+    // One-time show, clearable via the modal close.
+    expect(wrapper.text()).toContain('rabbit-secret-once')
+    await wrapper.find('[data-testid="close-rabbitmq-password-modal-button"]').trigger('click')
+    await nextTickFlush()
+    expect(wrapper.text()).not.toContain('rabbit-secret-once')
   })
 })

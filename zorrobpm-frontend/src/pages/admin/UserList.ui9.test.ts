@@ -35,6 +35,7 @@ vi.mock('@/services/adminService', () => ({
   createApiKey: vi.fn().mockResolvedValue({ key: 'k' }),
   revokeApiKey: vi.fn().mockResolvedValue({}),
   rotateApiKey: vi.fn().mockResolvedValue({ key: 'k' }),
+  rotateRabbitMqPassword: vi.fn().mockResolvedValue({ password: 'p' }),
 }))
 
 vi.mock('@/composables/useToast', () => ({

@@ -65,6 +65,13 @@ public class ProcessMemberService {
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyGrantRepository apiKeyGrantRepository;
     private final AuditLogService auditLogService;
+    /**
+     * WO-INT-9: синк broker-прав SYSTEM-юзеров из членства. No-op для всех,
+     * у кого нет брокер-аккаунта (флаг rabbitmqProvisioned) — см.
+     * {@code RabbitMqProvisioningService}. Зависимость в одну сторону
+     * (провижининг этот сервис не знает) — цикла нет.
+     */
+    private final RabbitMqProvisioningService rabbitMqProvisioningService;
 
     /**
      * Memberships of one user, enriched with the process key.
@@ -169,6 +176,12 @@ public class ProcessMemberService {
         member.setAddedAt(Instant.now());
         processMemberRepository.save(member);
 
+        // WO-INT-9: права на брокере — производная от членства. Синк ПОЛНОГО
+        // набора (не дельты) после изменения; no-op если у юзера нет
+        // брокер-аккаунта. Внутри транзакции вызывающего: брокер недоступен →
+        // 503 → мутация откатывается целиком (fail-closed, V10-b).
+        rabbitMqProvisioningService.syncPermissionsForUser(dto.getUserId());
+
         auditLogService.record(principal, "MEMBER_ADD", processKey, dto.getUserId().toString());
         return toDTO(member);
     }
@@ -208,6 +221,10 @@ public class ProcessMemberService {
                 .filter(g -> process.getId().equals(g.getProcessId()))
                 .forEach(g -> apiKeyGrantRepository.delete(g));
         });
+
+        // WO-INT-9: тот же синк, что в addMember — ПОЛНЫЙ набор после
+        // удаления (удалённая очередь обязана исчезнуть из прав).
+        rabbitMqProvisioningService.syncPermissionsForUser(userId);
 
         auditLogService.record(principal, "MEMBER_REMOVE", processKey, userId.toString());
 

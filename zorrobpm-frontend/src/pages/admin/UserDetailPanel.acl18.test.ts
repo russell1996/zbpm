@@ -22,6 +22,7 @@ vi.mock('@/services/adminService', () => ({
   createApiKey: vi.fn(),
   rotateApiKey: vi.fn(),
   revokeApiKey: vi.fn(),
+  rotateRabbitMqPassword: vi.fn(),
 }))
 vi.mock('@/services/userService', () => ({
   adminResetPassword: vi.fn().mockResolvedValue(undefined),
