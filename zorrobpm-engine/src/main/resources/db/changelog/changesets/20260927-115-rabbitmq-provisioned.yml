@@ -1,0 +1,35 @@
+databaseChangeLog:
+  - logicalFilePath: 20260927-115
+  - changeSet:
+      id: 20260927-115
+      author: zorrodev
+      comment: >-
+        WO-INT-9: per-system RabbitMQ-креды. Флаг «пароль когда-то генерирован»
+        на ui_users — источник истины для no-op правила в addMember/removeMember
+        (брокер как источник не годится: лишний roundtrip на горячем пути +
+        брокер может лежать). Чистый additive-expand: NOT NULL с дефолтом FALSE,
+        существующие строки получают FALSE без backfill, старый код колонку не
+        читает — окна несовместимости при rolling-deploy нет.
+      changes:
+        - addColumn:
+            tableName: ui_users
+            columns:
+              - column:
+                  name: rabbitmq_provisioned
+                  type: boolean
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+                  remarks: 'WO-INT-9: TRUE — для SYSTEM-юзера хоть раз генерировался RabbitMQ-пароль (брокер-аккаунт существует, права синкаются из членства); FALSE — провижининга не было, addMember/removeMember брокер не трогают'
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON COLUMN ui_users.rabbitmq_provisioned IS 'WO-INT-9: TRUE — для SYSTEM-юзера хоть раз генерировался RabbitMQ-пароль (брокер-аккаунт существует, права синкаются из членства); FALSE — провижининга не было, addMember/removeMember брокер не трогают';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON COLUMN ui_users.rabbitmq_provisioned IS 'WO-INT-9: TRUE — для SYSTEM-юзера хоть раз генерировался RabbitMQ-пароль (брокер-аккаунт существует, права синкаются из членства); FALSE — провижининга не было, addMember/removeMember брокер не трогают';
+      rollback:
+        - dropColumn:
+            tableName: ui_users
+            columnName: rabbitmq_provisioned
