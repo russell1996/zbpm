@@ -73,6 +73,9 @@ public class BpmMetrics {
     // --- Activity transitions (WO-QW-2) ---
     private final Counter activityTransitionIgnored;
 
+    // --- SSE bridge (WO-REL-56, part B) ---
+    private final Counter sseForeignSequenceDropped;
+
     /**
      * WO-REL-48: feed-position backlog visibility. NOT new injected
      * dependencies — these three meters live in BpmMetrics because that is
@@ -191,6 +194,13 @@ public class BpmMetrics {
             .description("Activity completions ignored by the idempotent status guard")
             .tag("reason", "stale_status")
             .register(registry);
+
+        // WO-REL-56 (part B): foreign sequence dropped, visible to the
+        // operator instead of silently skipped (pre-REL-55 behavior was a
+        // bare warn; REL-55 dispatched it with a foreign-domain SSE id).
+        this.sseForeignSequenceDropped = Counter.builder("zbpm.sse.foreign.dropped")
+            .description("SSE live events dropped: sequence has no row in this DB (foreign installation/test publish)")
+            .register(registry);
     }
 
     // --- Process lifecycle ---
@@ -245,4 +255,7 @@ public class BpmMetrics {
         // keeps the call-site honest if a second reason ever appears.
         if ("stale_status".equals(reason)) activityTransitionIgnored.increment();
     }
+
+    // --- SSE bridge (WO-REL-56, part B) ---
+    public void sseForeignSequenceDropped() { sseForeignSequenceDropped.increment(); }
 }
