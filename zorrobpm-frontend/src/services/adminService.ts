@@ -111,6 +111,18 @@ export async function revokeApiKey(userId: string): Promise<void> {
   await api.post(`/admin/users/${userId}/api-key/revoke`)
 }
 
+// --- WO-INT-9: per-system RabbitMQ credentials (SYSTEM-аккаунты) ---
+// Отдельный секрет на существующем юзере (не бандл с API-ключом —
+// разные blast radius). Пароль показывается один раз.
+export interface RabbitMqPassword {
+  password: string
+}
+
+export async function rotateRabbitMqPassword(userId: string): Promise<RabbitMqPassword> {
+  const { data } = await api.post<RabbitMqPassword>(`/admin/users/${userId}/rabbitmq-password`)
+  return data
+}
+
 // --- Process list (for grant configuration) ---
 export interface ProcessInfo {
   id: string

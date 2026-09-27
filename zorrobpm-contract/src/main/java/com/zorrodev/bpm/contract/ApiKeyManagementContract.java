@@ -48,6 +48,21 @@ public interface ApiKeyManagementContract {
     @PostExchange("/admin/users/{userId}/api-keys/{apiKeyId}/revoke")
     void revokeApiKeyById(@PathVariable UUID userId, @PathVariable UUID apiKeyId);
 
+    // ==================== WO-INT-9: per-system RabbitMQ credentials ====================
+    // Отдельный секрет на СУЩЕСТВУЮЩЕМ SYSTEM-юзере (не бандл с API-ключом —
+    // разные blast radius, разные поводы для ротации). Пароль показывается
+    // один раз (тот же секретный контракт, что у API-ключа), права на брокере
+    // живут отдельным циклом от членства в процессах и ротацией не трогаются.
+
+    /**
+     * Генерирует (первый вызов — создаёт брокер-аккаунт) или ротирует
+     * RabbitMQ-пароль SYSTEM-юзера под его СУЩЕСТВУЮЩИМ логином.
+     * Только SYSTEM-аккаунты (HUMAN → 400). Guard — существующий
+     * requireSuperAdmin на стороне ресурса (нового guard'а нет).
+     */
+    @PostExchange("/admin/users/{userId}/rabbitmq-password")
+    RabbitMqPasswordDTO rotateRabbitMqPassword(@PathVariable UUID userId);
+
     // ==================== User self-service endpoints ====================
 
     @GetExchange("/me/api-key")
