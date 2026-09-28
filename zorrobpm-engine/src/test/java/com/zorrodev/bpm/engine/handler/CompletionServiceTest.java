@@ -213,6 +213,8 @@ class CompletionServiceTest {
         activity.setToken(UUID.randomUUID());
         activity.setBpmnElementId("userTask1");
 
+        when(elementSupport.lockInstanceFirst(userTaskId)).thenReturn(activity);
+
         try {
             completionService.completeUserTask(userTaskId, java.util.List.of(),
                 org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.TokenExecutor.class));
