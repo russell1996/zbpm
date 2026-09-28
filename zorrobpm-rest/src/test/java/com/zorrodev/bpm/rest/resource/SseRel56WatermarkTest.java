@@ -213,6 +213,69 @@ class SseRel56WatermarkTest {
     }
 
     /**
+     * WO-REL-58 (AUDIT-E): реальная дыра убивала realtime НАВСЕГДА — знак не
+     * двигался за дыру, та же голова детектилась каждые ~1.5с бесконечно.
+     * Сценарий: 9 → 11 (10 не приходит вообще) → gap-таймер закрывает первого
+     * LIVE-клиента → НОВЫЙ клиент подключается и реально получает 12, 13.
+     * POF-мутация: убрать `dispatchWatermark = head.cursor - 1` из обычной
+     * ветки таймера — этот тест КРАСНЫЙ (новый клиент получает `sent=[]`:
+     * 11 вечно торчит головой heap'а, 12/13 встают за ней и не выпускаются,
+     * а взведённый заново таймер закрывает и нового клиента).
+     */
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void gapTimerRecovery_newLiveClientReceivesEventsAfterRealGap() {
+        SseEventStreamService svc = service();
+        // Бюджет 30 × 50мс = 1.5с, как в A2.
+        ReflectionTestUtils.setField(svc, "deferredCursorDelayMs", 50L);
+
+        lenient().when(eventQueryService.resolveFeedPositionBySequence(100L))
+            .thenReturn(java.util.Optional.of(9L));
+        lenient().when(eventQueryService.resolveFeedPositionBySequence(101L))
+            .thenReturn(java.util.Optional.of(11L));
+        lenient().when(eventQueryService.resolveFeedPositionBySequence(102L))
+            .thenReturn(java.util.Optional.of(12L));
+        lenient().when(eventQueryService.resolveFeedPositionBySequence(103L))
+            .thenReturn(java.util.Optional.of(13L));
+
+        CapturingEmitter first = new CapturingEmitter();
+        String firstId = svc.registerBufferedClient(first, admin(UUID.randomUUID()), null, null, null);
+        svc.drainBufferedClient(firstId, 0L);
+
+        String type = "rel58.auditE." + UUID.randomUUID();
+        svc.onDomainEvent(body(100L, type)); // pos 9 — доставлена
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+            assertThat(first.delivered).hasSize(1));
+        svc.onDomainEvent(body(101L, type)); // pos 11 — разрыв, 10 не придёт никогда
+
+        // Реальная дыра: первый LIVE-клиент закрыт после бюджета.
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+            assertThat(first.completed).isTrue());
+
+        // Новый клиент — как reconnect с Last-Event-ID=9 после закрытия.
+        CapturingEmitter second = new CapturingEmitter();
+        String secondId = svc.registerBufferedClient(second, admin(UUID.randomUUID()), null, null, null);
+        svc.drainBufferedClient(secondId, 9L);
+
+        svc.onDomainEvent(body(102L, type)); // pos 12
+        svc.onDomainEvent(body(103L, type)); // pos 13
+
+        await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+            assertThat(second.delivered).hasSize(2));
+        List<Long> cursors = second.delivered.stream()
+            .map(e -> ((Number) e.get("feedPosition")).longValue()).toList();
+        assertThat(cursors)
+            .as("поток восстановился после дыры: новый клиент получает 12, 13, а не sent=[]")
+            .containsExactly(12L, 13L);
+        assertThat(second.completed)
+            .as("повторного gap-close для непрерывного хвоста нет — realtime жив")
+            .isFalse();
+
+        svc.removeClient(firstId);
+        svc.removeClient(secondId);
+    }
+
+    /**
      * B1: чужой sequence и sequence=0 — отброс + метрика.
      * POF-мутация B2: вернуть рассылку чужого ряда (код REL-55
      * `dispatchUnsequenced`) — этот тест КРАСНЫЙ (чужое событие с
