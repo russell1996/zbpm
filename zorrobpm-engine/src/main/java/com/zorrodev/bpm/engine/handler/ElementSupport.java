@@ -476,14 +476,88 @@ public class ElementSupport {
      * <p>Shared by {@link #applyIoMappings} (activity-scoped writes) and WO-ENG-11 call-activity
      * mappings: input mappings seed a not-yet-created child instance, output mappings override the
      * propagateAllChildVariables toggle — same evaluation pattern, different write scope.</p>
+     * <p>WO-ENG-29: evaluation goes through the native FEEL API (same engine, same typed
+     * context as the DMN-eval path — {@code FeelBudget}/{@code FeelEngineApi}, not the
+     * lossy JSR-223 wrapper) so «evaluation failure» is distinguishable from «honest
+     * null»: a failed evaluation (e.g. source references a variable absent from the job
+     * result) throws {@link com.zorrodev.bpm.engine.service.FeelEvaluationException}
+     * (incident path at callers), while a legitimate FEEL {@code null} (explicit
+     * {@code =null} literal) still returns a null-valued variable as before, no
+     * exception, no incident. Callers must NOT catch this into a silent default —
+     * the input path relies on {@code ActivityServiceImpl.execute()}'s element-failure
+     * catch → {@code incidentService.raiseIncident(...)}, the output path on
+     * {@code CompletionService}'s symmetric catch in the service-task tail.</p>
      */
     public ProcessVariable evaluateMapping(IoMappingExtensionModel.Mapping mapping, List<ProcessVariable> variables) {
         if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
             return null;
         }
-        String expression = mapping.getSource().startsWith("=") ? mapping.getSource().substring(1) : mapping.getSource();
-        Object value = scriptService.evaluateExpression(expression, variables);
-        return toProcessVariable(mapping.getTarget(), value);
+        String source = mapping.getSource();
+        if (source.isBlank()) {
+            // WO-ENG-29: degenerate but previously-valid shape — legacy JSR-223 eval of
+            // "" returned null → "" STRING variable; keep byte-identical, no incident.
+            Object legacy = scriptService.evaluateExpression(source, variables);
+            return toProcessVariable(mapping.getTarget(), legacy);
+        }
+        String expression = source.startsWith("=") ? source.substring(1) : source;
+        Map<String, Object> context = toFeelContext(variables, objectMapper);
+        // WO-ENG-20: same budget entry point (pool/timeout/bulkhead) as every other
+        // FeelEngineApi caller — resolveExpression and DmnServiceImpl.
+        org.camunda.feel.api.EvaluationResult result = feelBudget.evaluateExpression(expression, context);
+        // WO-ENG-29: failure-vs-null distinction. HARD failure (!isSuccess, e.g.
+        // syntax errors — the Zeebe fix class) always throws FeelEvaluationException
+        // (incident path). A NO_VARIABLE_FOUND suppressed failure ALSO throws —
+        // EXCEPT when the result carries a non-null VALUE (e.g. a fallback after
+        // `??`/`default()`, or a value produced before the nested error): then the
+        // failure is recorded but the expression yielded data, so callers proceed
+        // with the value as before (legacy JSR-223 returned the value, never the
+        // failure). A clean success with null result and EMPTY suppressed list is
+        // honest null (explicit =null literal, present-but-null variable) — legacy
+        // value conversion as before, no exception.
+        // Verified against feel-engine 1.19.3 native API — see report probe table:
+        // missing bare name → success/null + suppressed NO_VARIABLE_FOUND;
+        // =null literal → success/null + EMPTY suppressed; syntax error → !success.
+        boolean failed = result.isFailure()
+            || (!result.suppressedFailures().isEmpty() && result.result() == null);
+        if (failed) {
+            throw new com.zorrodev.bpm.engine.service.FeelEvaluationException(
+                "io-mapping source '" + source + "' failed to evaluate for target '"
+                    + mapping.getTarget() + "': "
+                    + (result.isFailure() ? result.failure() : result.suppressedFailures().mkString("; ")));
+        }
+        return toProcessVariable(mapping.getTarget(), result.result());
+    }
+
+    /**
+     * WO-ENG-29: FEEL variable context with real Java types (LONG → Long, DOUBLE →
+     * BigDecimal, BOOLEAN → Boolean, JSON → Map/List, else raw string) — the same
+     * conversion the legacy JSR-223 path applied in
+     * {@code ScriptServiceImpl.buildContext} and the DMN path applies in
+     * {@code DmnServiceImpl.toVariableMap}. Shared here so io-mapping evaluation
+     * through the native API sees the same values as every other FEEL caller.
+     * A variable set explicitly to a null VALUE stays a present-but-null entry
+     * (FEEL resolves the name to null — honest null, not «not found»).
+     */
+    public static Map<String, Object> toFeelContext(List<ProcessVariable> variables,
+            tools.jackson.databind.ObjectMapper mapper) {
+        Map<String, Object> map = new HashMap<>();
+        if (variables == null) {
+            return map;
+        }
+        for (ProcessVariable variable : variables) {
+            if (variable.getType() == ProcessVariableType.LONG) {
+                map.put(variable.getName(), Long.valueOf(variable.getValue()));
+            } else if (variable.getType() == ProcessVariableType.BOOLEAN) {
+                map.put(variable.getName(), Boolean.valueOf(variable.getValue()));
+            } else if (variable.getType() == ProcessVariableType.DOUBLE) {
+                map.put(variable.getName(), new java.math.BigDecimal(variable.getValue()));
+            } else if (variable.getType() == ProcessVariableType.JSON) {
+                map.put(variable.getName(), mapper.readValue(variable.getValue(), Object.class));
+            } else {
+                map.put(variable.getName(), variable.getValue());
+            }
+        }
+        return map;
     }
 
     // ─── Type conversion ────────────────────────────────────────────────
