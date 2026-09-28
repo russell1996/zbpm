@@ -58,14 +58,24 @@ public class ElementSupport {
      */
     private final ZoneId businessZone;
 
+    /**
+     * WO-ENG-30: compat flag for the WO-ENG-29 strict behaviour. Default {@code false}
+     * so already-deployed models referencing an OPTIONAL variable keep the legacy silent
+     * {@code ""} instead of parking on an incident on the first real run after rollout.
+     * Operators opt into the strict (Zeebe-closer) behaviour explicitly per installation.
+     */
+    private final boolean strictMissing;
+
     public ElementSupport(DBService dbService, ScriptService scriptService,
             FeelBudget feelBudget, tools.jackson.databind.ObjectMapper objectMapper,
-            @Value("${zorrobpm.business-timezone:Asia/Almaty}") ZoneId businessZone) {
+            @Value("${zorrobpm.business-timezone:Asia/Almaty}") ZoneId businessZone,
+            @Value("${zorrobpm.engine.io-mapping.strict-missing:false}") boolean strictMissing) {
         this.dbService = dbService;
         this.scriptService = scriptService;
         this.feelBudget = feelBudget;
         this.objectMapper = objectMapper;
         this.businessZone = businessZone;
+        this.strictMissing = strictMissing;
     }
 
     /**
@@ -517,6 +527,16 @@ public class ElementSupport {
      * the input path relies on {@code ActivityServiceImpl.execute()}'s element-failure
      * catch → {@code incidentService.raiseIncident(...)}, the output path on
      * {@code CompletionService}'s symmetric catch in the service-task tail.</p>
+     * <p>WO-ENG-30: the «variable not found» case (suppressed failures + null result)
+     * throws only when {@code zorrobpm.engine.io-mapping.strict-missing=true}. With the
+     * default {@code false} already-deployed models keep the pre-ENG-29 silent
+     * {@code ""} behaviour (plus a WARN carrying source/target for future inventory
+     * by log grep, no DB access needed). Default is {@code false} NOT because strict
+     * is wrong — it is the correct behaviour — but because rolling out strict without
+     * an inventory of live models parks them on incidents silently. A HARD evaluation
+     * failure ({@code !isSuccess}, e.g. syntax errors — the Zeebe fix class) always
+     * throws regardless of the flag: that is a genuine computation error, never an
+     * «absent optional variable».</p>
      */
     public ProcessVariable evaluateMapping(IoMappingExtensionModel.Mapping mapping, List<ProcessVariable> variables) {
         if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
@@ -547,13 +567,19 @@ public class ElementSupport {
         // Verified against feel-engine 1.19.3 native API — see report probe table:
         // missing bare name → success/null + suppressed NO_VARIABLE_FOUND;
         // =null literal → success/null + EMPTY suppressed; syntax error → !success.
-        boolean failed = result.isFailure()
-            || (!result.suppressedFailures().isEmpty() && result.result() == null);
-        if (failed) {
+        boolean hardFailure = result.isFailure();
+        boolean missingVariable = !result.suppressedFailures().isEmpty() && result.result() == null;
+        if (hardFailure || (missingVariable && strictMissing)) {
             throw new com.zorrodev.bpm.engine.service.FeelEvaluationException(
                 "io-mapping source '" + source + "' failed to evaluate for target '"
                     + mapping.getTarget() + "': "
                     + (result.isFailure() ? result.failure() : result.suppressedFailures().mkString("; ")));
+        }
+        if (missingVariable) {
+            // WO-ENG-30 lenient mode: legacy silent behaviour + WARN for log-based inventory.
+            log.warn("io-mapping source '{}' references a missing variable for target '{}'"
+                + " — legacy '' applied (zorrobpm.engine.io-mapping.strict-missing=false)",
+                source, mapping.getTarget());
         }
         return toProcessVariable(mapping.getTarget(), result.result());
     }

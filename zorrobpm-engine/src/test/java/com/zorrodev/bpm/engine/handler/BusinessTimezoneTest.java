@@ -72,7 +72,7 @@ class BusinessTimezoneTest {
     void setUp() {
         // Create a real ElementSupport with mocked dependencies
         // WO-QW-1 A-C-5e: explicit constructor, zone passed directly (no reflection needed).
-        elementSupport = new ElementSupport(dbService, scriptService, feelBudget, null, ALMATY);
+        elementSupport = new ElementSupport(dbService, scriptService, feelBudget, null, ALMATY, false);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ class BusinessTimezoneTest {
     void defaultBusinessZoneIsAsiaAlmaty() {
         // WO-QW-1 A-C-5e: final field, set through the constructor — Spring injects
         // the @Value default (Asia/Almaty); explicitly passed zones win.
-        ElementSupport fresh = new ElementSupport(dbService, scriptService, feelBudget, null, ALMATY);
+        ElementSupport fresh = new ElementSupport(dbService, scriptService, feelBudget, null, ALMATY, false);
         ZoneId zone = (ZoneId) ReflectionTestUtils.getField(fresh, "businessZone");
         assertThat(zone)
             .as("businessZone passed via constructor must stick")
