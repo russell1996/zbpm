@@ -98,7 +98,7 @@ class Sec84RegisterForgotPasswordXffBypassIT {
         // P-8/P-59: малая capacity этого класса (2) оставляет строки бакетов с
         // tokens=0 в ОБЩЕЙ таблице rate_limit_bucket (H2 mem:test делится между
         // классами в одном surefire-процессе) — следующий класс с capacity=20
-        // увидел бы отравленный бакет и упал бы 422. Чистим за собой тоже.
+        // увидел бы отравленный бакет и упал бы 429. Чистим за собой тоже.
         rateLimitFilter.reset();
         mailSender.clear();
     }
@@ -143,14 +143,14 @@ class Sec84RegisterForgotPasswordXffBypassIT {
                 .isEqualTo(200);
         }
         // Дыра: подделанный XFF после исчерпания лимита — тоже отбит.
-        // Register при исчерпанном IP-бакете отвечает 422 (EngineException
-        // сервиса, не 429 фильтра — per-IP бакет живёт в сервисе): наблюдаемый
-        // сигнал — НЕ-200, в отличие от 200 при обходе.
+        // Register при исчерпанном IP-бакете отвечает 429 + Retry-After
+        // (WO-QW-9: RegistrationRateLimitException, не общий EngineException):
+        // наблюдаемый сигнал — НЕ-200, в отличие от 200 при обходе.
         HttpResponse<String> spoofed = httpClient.send(buildRegisterRequest("10.9.9.9"),
             HttpResponse.BodyHandlers.ofString());
         assertThat(spoofed.statusCode())
             .as("register with spoofed XFF after exhaustion must still be rejected")
-            .isEqualTo(422);
+            .isEqualTo(429);
     }
 
     @Test
