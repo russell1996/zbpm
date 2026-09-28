@@ -58,7 +58,7 @@ class ServiceTaskEnqueueServiceImplTest {
     private ElementSupport realElementSupport() {
         return new ElementSupport(
             dbService, mock(ScriptService.class), mock(FeelBudget.class),
-            new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"));
+            new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"), false);
     }
 
     @Test

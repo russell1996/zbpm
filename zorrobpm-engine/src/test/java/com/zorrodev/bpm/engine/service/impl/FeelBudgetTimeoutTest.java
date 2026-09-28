@@ -98,7 +98,7 @@ class FeelBudgetTimeoutTest {
         });
         ElementSupport support = new ElementSupport(
             dbService, poolService(), budget(),
-            new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"));
+            new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"), false);
         when(dbService.getVariables(any(UUID.class))).thenReturn(List.of());
 
         assertThatThrownBy(() -> support.resolveExpression("=expensive", UUID.randomUUID()))
@@ -114,7 +114,7 @@ class FeelBudgetTimeoutTest {
         when(hangingApi.evaluateExpression(anyString(), anyMap())).thenReturn(fastOk);
         ElementSupport support = new ElementSupport(
             dbService, poolService(), budget(),
-            new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"));
+            new tools.jackson.databind.ObjectMapper(), java.time.ZoneId.of("Asia/Almaty"), false);
         when(dbService.getVariables(any(UUID.class))).thenReturn(List.of());
 
         assertThat(support.resolveExpression("=greeting", UUID.randomUUID())).isEqualTo("hello");

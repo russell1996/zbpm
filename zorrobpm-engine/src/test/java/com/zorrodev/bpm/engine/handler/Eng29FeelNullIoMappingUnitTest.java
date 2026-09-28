@@ -71,7 +71,7 @@ class Eng29FeelNullIoMappingUnitTest {
             FeelEngineBuilder.forJava().withCustomValueMapper(new FeelBigDecimalNumberMapper()).build();
         FeelBudget feelBudget = new FeelBudgetImpl(scriptService, feelEngineApi);
         elementSupport = new ElementSupport(mock(DBService.class), scriptService, feelBudget,
-            new tools.jackson.databind.ObjectMapper(), ZoneId.of("Asia/Almaty"));
+            new tools.jackson.databind.ObjectMapper(), ZoneId.of("Asia/Almaty"), true);
     }
 
     private static IoMappingExtensionModel.Mapping mapping(String source, String target) {
