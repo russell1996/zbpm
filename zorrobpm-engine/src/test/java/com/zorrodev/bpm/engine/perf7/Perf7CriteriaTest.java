@@ -74,7 +74,8 @@ class Perf7CriteriaTest {
             UiUserMapper mapper, PasswordTokenRepository passwordTokens) {
         return new UiUserServiceImpl(repository, mapper, mock(PasswordHasher.class),
             mock(TokenService.class), mock(RefreshTokenRepository.class),
-            passwordTokens, mock(PlatformTransactionManager.class));
+            passwordTokens, mock(PlatformTransactionManager.class),
+            mock(com.zorrodev.bpm.engine.service.RabbitMqProvisioningService.class));
     }
 
     private List<UiUserEntity> threeUsers() {
