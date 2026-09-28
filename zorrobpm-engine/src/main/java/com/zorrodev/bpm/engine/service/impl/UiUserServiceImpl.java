@@ -53,6 +53,8 @@ public class UiUserServiceImpl implements UiUserService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final com.zorrodev.bpm.engine.repository.PasswordTokenRepository passwordTokenRepository;
     private final PlatformTransactionManager transactionManager;
+    /** WO-SEC-83 (NEW4-04): отзыв брокер-доступа при деактивации SYSTEM-аккаунта. */
+    private final com.zorrodev.bpm.engine.service.RabbitMqProvisioningService rabbitMqProvisioningService;
 
     /**
      * WO-AUTH-1: вход по username ИЛИ email в поле {@code LoginDTO.username} (поле НЕ
@@ -361,6 +363,15 @@ public class UiUserServiceImpl implements UiUserService {
             repository.flush();
         } catch (DataAccessException e) {
             throw translateEmailConflict(entity.getEmail(), e);
+        }
+        // WO-SEC-83 (NEW4-04): деактивация SYSTEM-аккаунта отзывает и брокер-
+        // доступ (раньше учётка продолжала читать jobs и ковать completion'ы
+        // после «отключения»). Только SYSTEM (HUMAN в брокере нет) и только
+        // переход active→inactive; deprovisionUser сам no-op'ится без флага.
+        // Fail-closed: брокер недоступен → 503 → rollback и деактивации тоже
+        // (деактивация в БД при живом broker-доступе — дрейф-дыра, не отзыв).
+        if (system && previousActive && !newActive) {
+            rabbitMqProvisioningService.deprovisionUser(id);
         }
         return entity.getId();
     }

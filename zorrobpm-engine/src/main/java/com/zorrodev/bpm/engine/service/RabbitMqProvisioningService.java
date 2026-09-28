@@ -66,6 +66,16 @@ public class RabbitMqProvisioningService {
     static final String VHOST = "/";
 
     /**
+     * WO-SEC-83 (NEW4-05): маркер «аккаунт создан ZBPM» в тегах брокер-юзера.
+     * Management API ничего не знает о происхождении аккаунта — без маркера
+     * {@code PUT /api/users/{login}} молча перезаписал бы пароль и снёс бы
+     * теги ЧУЖОГО аккаунта (мониторинг, другое приложение на том же vhost,
+     * {@code guest}). Маркер ставится при каждом нашем PUT (создание и
+     * ротация), проверяется перед ним.
+     */
+    static final String MANAGED_TAG = "zbpm-managed";
+
+    /**
      * Класс символов job-типов, допустимых в permissions-regex. Совпадает с
      * тем, что реально ходит в {@code JobQueueDeclarer.queueNameFor} (тип из
      * BPMN {@code zeebe:taskDefinition type} — буквы/цифры/{@code _-.}).
@@ -133,7 +143,11 @@ public class RabbitMqProvisioningService {
         // На диске движка — только hash (соль внутри), plaintext живёт лишь
         // в этом вызове: уходит в PUT и возвращается вызывающему один раз.
         String passwordHash = rabbitPasswordHash(password);
-        upsertBrokerUser(user.getUsername(), passwordHash);
+        // WO-SEC-83 (NEW4-05): alreadyProvisioned = DB-флаг ЭТОГО userId.
+        // Флаг — источник «нашести» для grandfather-аккаунтов WO-INT-9 (у них
+        // ещё нет маркера в тегах): login уникален в нашей БД, и флаг мог
+        // выставить только успешный provisionPassword этого же userId.
+        upsertBrokerUser(user.getUsername(), passwordHash, user.isRabbitmqProvisioned());
 
         boolean firstTime = !user.isRabbitmqProvisioned();
         if (firstTime) {
@@ -292,15 +306,129 @@ public class RabbitMqProvisioningService {
         }
     }
 
-    private void upsertBrokerUser(String login, String passwordHash) {
+    private void upsertBrokerUser(String login, String passwordHash, boolean alreadyProvisioned) {
+        // WO-SEC-83 (NEW4-05): перед PUT — GET. Существующий аккаунт без
+        // маркера при первом провижининге (флаг ещё false) — ЧУЖОЙ
+        // (мониторинг, другое приложение, guest): отказываем 409, не
+        // перезаписываем пароль и не трогаем теги. Матрица:
+        //   GET 404 → создать с маркером (флаг неважен);
+        //   есть + маркер + флаг → PUT с маркером (норма: ротация своего);
+        //   есть + маркер + без флага → 409 (orphan/другая инсталляция — не наш userId);
+        //   есть + без маркера + флаг → PUT с маркером (наш до-маркерный аккаунт
+        //     WO-INT-9, self-heal маркера при ротации);
+        //   есть + без маркера + без флага → 409 (чужой).
+        BrokerUser existing = getBrokerUser(login);
+        if (existing != null && !existing.tags().contains(MANAGED_TAG) && !alreadyProvisioned) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Broker account '" + login + "' exists and is not managed by ZorroBPM — "
+                    + "refusing to overwrite (remove it on the broker first)");
+        }
+        if (existing != null && existing.tags().contains(MANAGED_TAG) && !alreadyProvisioned) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Broker account '" + login + "' is managed by ZorroBPM but belongs to "
+                    + "another user — refusing to take over");
+        }
         // PUT /api/users/{login} создаёт, если нет (критерий: первая генерация).
-        // Теги — пустые: не management, не administrator (V10-c).
+        // Теги — маркер (не management, не administrator, V10-c; маркер виден
+        // и в management UI как след происхождения).
         String body = "{\"password_hash\":" + jsonString(passwordHash)
-            + ",\"tags\":" + jsonString("") + "}";
+            + ",\"tags\":" + jsonString(MANAGED_TAG) + "}";
         HttpResponse<String> response = mgmtPut("/api/users/" + encode(login), body);
         if (response.statusCode() != 200 && response.statusCode() != 201 && response.statusCode() != 204) {
             throw brokerUnavailable("provision broker user " + login, response);
         }
+    }
+
+    /**
+     * WO-SEC-83 (NEW4-04): отзыв брокер-доступа SYSTEM-юзера (деактивация).
+     * No-op, если провижининга не было (флаг false — аккаунта нет, удалять
+     * нечего) или тип не SYSTEM. Иначе — {@code DELETE /api/users/{login)}
+     * (атомарно убивает и аутентификацию, и все permissions одним вызовом —
+     * чище, чем обнуление permissions с оставленным логином) + сброс флага.
+     * Брокер недоступен → 503 наружу: вызывающая транзакция падает целиком
+     * (fail-closed, зеркало V10-b — деактивация в БД при живом broker-доступе
+     * была бы дрейф-дырой, а не отзывом).
+     */
+    public void deprovisionUser(UUID userId) {
+        UiUserEntity user = uiUserRepository.findById(userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        if (!"SYSTEM".equals(user.getUserType())) {
+            return;
+        }
+        if (!user.isRabbitmqProvisioned()) {
+            return;
+        }
+        deleteBrokerUser(user.getUsername());
+        user.setRabbitmqProvisioned(false);
+        uiUserRepository.save(user);
+        log.info("RabbitMQ access revoked for system user={}", user.getUsername());
+    }
+
+    /** Брокер-юзер как его видит Management API (нужны только теги). */
+    record BrokerUser(Set<String> tags) {
+    }
+
+    /**
+     * WO-SEC-83 (NEW4-05): {@code GET /api/users/{login)} → теги аккаунта.
+     * 404 → null (аккаунта нет — можно создавать). Парсинг — строго tags-массив
+     * ответа (не подстрока по всему телу: base64-хэш дефиса не содержит, а login
+     * в поле name — может, подстрочный contains дал бы false-positive «наш»).
+     */
+    BrokerUser getBrokerUser(String login) {
+        try {
+            String credentials = brokerAdminUser + ":" + brokerAdminPassword;
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(normalizeBaseUrl(managementBaseUrl) + "/api/users/" + encode(login)))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                    .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)))
+                .GET()
+                .build();
+            HttpResponse<String> response =
+                client().send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() == 404) {
+                return null;
+            }
+            if (response.statusCode() != 200) {
+                throw brokerUnavailable("read broker user " + login, response);
+            }
+            return new BrokerUser(parseTags(response.body()));
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "RabbitMQ broker unavailable: " + e.getMessage());
+        }
+    }
+
+    /** Вытаскивает множество тегов из тела GET /api/users. */
+    static Set<String> parseTags(String body) {
+        Set<String> tags = new HashSet<>();
+        String src = body == null ? "" : body;
+        // Wire-формат реального брокера — СТРОКА: "tags":"monitoring",
+        // пусто — "tags":"". Array-форма ("tags":[...]) — на всякий случай.
+        java.util.regex.Matcher str =
+            Pattern.compile("\"tags\"\\s*:\\s*\"([^\"]*)\"").matcher(src);
+        if (str.find()) {
+            for (String part : str.group(1).split(",")) {
+                String tag = part.trim();
+                if (!tag.isEmpty()) {
+                    tags.add(tag);
+                }
+            }
+            return tags;
+        }
+        java.util.regex.Matcher arr =
+            Pattern.compile("\"tags\"\\s*:\\s*\\[([^\\]]*)\\]").matcher(src);
+        if (!arr.find()) {
+            return tags;
+        }
+        for (String part : arr.group(1).split(",")) {
+            String tag = part.trim();
+            if (tag.length() >= 2 && tag.startsWith("\"") && tag.endsWith("\"")) {
+                tags.add(tag.substring(1, tag.length() - 1));
+            }
+        }
+        return tags;
     }
 
     private void setBrokerPermissions(String login, Permissions permissions) {
@@ -324,7 +452,16 @@ public class RabbitMqProvisioningService {
                     .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)))
                 .DELETE()
                 .build();
-            client().send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response =
+                client().send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            // WO-SEC-83 red-team #3: 404 — идемпотентность повторной
+            // деактивации (аккаунт уже удалён — не ошибка). Любой другой
+            // не-2xx — fail-closed 503 БЕЗ сброса флага (иначе fail-open щель:
+            // флаг сброшен, аккаунт жив).
+            if (response.statusCode() != 200 && response.statusCode() != 201
+                && response.statusCode() != 204 && response.statusCode() != 404) {
+                throw brokerUnavailable("delete broker user " + login, response);
+            }
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
