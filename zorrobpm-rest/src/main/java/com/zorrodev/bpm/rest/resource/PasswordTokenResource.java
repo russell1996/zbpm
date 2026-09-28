@@ -25,20 +25,20 @@ public class PasswordTokenResource implements PasswordTokenContract {
 
     private final UserInvitationService invitationService;
     private final HttpServletRequest request;
-    private final RateLimitFilter rateLimitFilter;
 
     @Override
     public void forgotPassword(@Valid @RequestBody ForgotPasswordDTO dto) {
-        // WO-ACL-18 criterion 12: enumeration-safe — always 200, identical response
-        // regardless of whether the email maps to a real account.
-        // B5 (HOLD): use the proxy-aware client IP (honors X-Forwarded-For behind a
-        // configured trusted proxy) instead of the raw socket peer, so the per-IP
-        // reset bucket is not collapsed onto the proxy address for all users.
-        // WO-ACL-19 (P0): any internal failure (DB error, NPE, ...) MUST NOT escape as a
-        // 500 — the endpoint is enumeration-safe and must look identical to the client.
-        // We log the real exception on ERROR so the next incident has a stack trace in
-        // `docker logs`, then return normally (the client always sees the same 200).
-        String clientIp = rateLimitFilter.getClientIp(request);
+        // WO-SEC-84: IP — из атрибута RateLimitFilter (вычислен ДО
+        // ForwardedHeaderFilter-переписывания; вызов getClientIp() отсюда уже
+        // видел бы подделанный XFF). Fail-closed при отсутствии атрибута —
+        // ведём себя как при исчерпанном лимите: та же тихая enumeration-safe
+        // 200, плюс ERROR-лог для диагностики.
+        Object attr = request.getAttribute(RateLimitFilter.CLIENT_IP_ATTRIBUTE);
+        if (!(attr instanceof String clientIp)) {
+            log.error("forgotPassword without {} — RateLimitFilter did not run, treating as rate-limited",
+                RateLimitFilter.CLIENT_IP_ATTRIBUTE);
+            return;
+        }
         try {
             invitationService.requestReset(dto.getEmail(), clientIp);
         } catch (Exception e) {

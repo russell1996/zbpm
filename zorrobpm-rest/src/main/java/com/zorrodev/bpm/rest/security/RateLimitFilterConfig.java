@@ -128,6 +128,13 @@ public class RateLimitFilterConfig {
         registration.addUrlPatterns(
             "/auth/login",
             "/auth/refresh",
+            // WO-SEC-84: /auth/register + /auth/forgot-password — тот же класс
+            // публичных auth-эндпоинтов, что login/refresh: фильтр должен видеть
+            // их РАНЬШЕ ForwardedHeaderFilter, чтобы getClientIp вернул настоящий
+            // адрес (и положил его в CLIENT_IP_ATTRIBUTE для контроллеров).
+            // Без регистрации контроллеры получали уже подделанный XFF-IP.
+            "/auth/register",
+            "/auth/forgot-password",
             "/me/password",
             "/events/*",
             "/variables/*",
