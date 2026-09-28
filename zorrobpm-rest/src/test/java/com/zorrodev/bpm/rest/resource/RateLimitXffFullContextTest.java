@@ -74,7 +74,7 @@ class RateLimitXffFullContextTest {
         // must name every prefix the guard matches (bare + /* children), or the
         // filter never executes for them.
         assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder(
-            "/auth/login", "/auth/refresh", "/me/password",
+            "/auth/login", "/auth/refresh", "/auth/register", "/auth/forgot-password", "/me/password",
             "/events/*", "/variables/*",
             "/process-instances/*", "/user-tasks/*",
             "/service-tasks/*", "/incidents/*",

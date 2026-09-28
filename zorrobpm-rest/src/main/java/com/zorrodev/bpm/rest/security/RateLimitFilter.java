@@ -110,6 +110,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
     /** WO-INT-4: resolves API-key identity for per-key data quotas. */
     private ApiKeyRepository apiKeyRepository;
 
+    /**
+     * WO-SEC-84: the client IP resolved by THIS filter (before Spring's
+     * {@code ForwardedHeaderFilter} rewrites {@code getRemoteAddr()} from the
+     * untrusted {@code X-Forwarded-For}). Controllers that need the IP for
+     * their own per-IP buckets ({@code RegistrationResource},
+     * {@code PasswordTokenResource}) MUST read this attribute instead of calling
+     * {@code getClientIp(request)} themselves — by controller time the request
+     * already carries the spoofed value. Set on EVERY pass through this filter
+     * (all registered paths, allowed and 429 alike — a 429 request never reaches
+     * a controller anyway).
+     */
+    public static final String CLIENT_IP_ATTRIBUTE = "zbpm.clientIp";
+
     /** WO-SEC-58 HOLD-fix: verifies the access JWT to key /me/password per user. */
     private TokenService tokenService;
 
@@ -139,6 +152,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
         throws ServletException, IOException {
+        // WO-SEC-84: публикуем IP ДО любых ранних выходов (в т.ч. enabled=false) —
+        // это факт «какой адрес видел фильтр до XFF-переписывания», а не решение
+        // лимита. Контроллеры читают его всегда; при выключенном лимите обхода
+        // нет (нет лимита, который можно обходить), а IP всё равно настоящий.
+        // Fail-closed в контроллерах ловит только случай «фильтр физически не
+        // выполнялся для пути» (нет регистрации), а не «лимит выключен».
+        request.setAttribute(CLIENT_IP_ATTRIBUTE, getClientIp(request));
         if (!enabled) {
             chain.doFilter(request, response);
             return;
