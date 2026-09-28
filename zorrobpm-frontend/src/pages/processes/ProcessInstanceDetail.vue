@@ -14,7 +14,7 @@ import * as variableService from '@/services/variableService'
 import { cancelProcessInstance } from '@/services/instanceService'
 import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import { isTaskActive, processInstanceStatus, isProcessInstanceActive, errorMessage } from '@/shared/lib/utils'
-import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar } from 'lucide-vue-next'
+import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar, OctagonX, Copy, Check } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -347,6 +347,51 @@ async function confirmCancel() {
   }
 }
 
+// WO-UI-23: разворачиваемое полное значение переменной. Ячейка таблицы режет
+// max-w-xs + truncate (title-only страховка: hover-only, не работает на таче,
+// не даёт скопировать). Длинным считается значение длиннее видимой ячейки
+// (порог 120 символов — консервативно над ~45 видимыми) или ЛЮБОЕ JSON
+// (даже короткое — его стоит показать отформатированным). Короткие — как
+// раньше, truncate + title, без лишних кнопок.
+const VALUE_PREVIEW_LIMIT = 120
+
+function isLongVariableValue(v: { type: string; value: string }): boolean {
+  return v.type === 'JSON' || (v.value?.length ?? 0) > VALUE_PREVIEW_LIMIT
+}
+
+// JSON — красиво отформатирован, с защитой на не-валидный (fallback — сырая
+// строка, не исключение в шаблоне).
+function formatVariableValue(v: { type: string; value: string }): string {
+  if (v.type === 'JSON') {
+    try {
+      return JSON.stringify(JSON.parse(v.value), null, 2)
+    } catch {
+      return v.value
+    }
+  }
+  return v.value
+}
+
+const inspectedVariable = ref<{ name: string; type: string; value: string } | null>(null)
+const variableCopied = ref(false)
+
+function openVariableInspector(v: { name: string; type: string; value: string }) {
+  inspectedVariable.value = v
+  variableCopied.value = false
+}
+
+function closeVariableInspector() {
+  inspectedVariable.value = null
+  variableCopied.value = false
+}
+
+async function copyInspectedVariable() {
+  if (!inspectedVariable.value) return
+  await navigator.clipboard.writeText(formatVariableValue(inspectedVariable.value))
+  variableCopied.value = true
+  setTimeout(() => { variableCopied.value = false }, 1500)
+}
+
 async function loadTabData() {
   const pi = processStore.currentInstance
   if (!pi) return
@@ -478,7 +523,11 @@ watch(activeTab, onTabChange)
               <Download class="h-4 w-4" />
               {{ t('downloadDiagnostic') }}
             </Button>
-            <!-- WO-UI-21 Раунд 2: ручная отмена — только для активного instance -->
+            <!-- WO-UI-21 Раунд 2: ручная отмена — только для активного instance.
+                 WO-UI-23: иконка OctagonX — та же иконка+текст форма, что у
+                 соседей (Download/RefreshCw); variant="destructive" оставлен —
+                 это осмысленный сигнал деструктивного действия, цель была
+                 согласованность, не смена смысла. -->
             <Button
               v-if="isInstanceCancellable"
               variant="destructive"
@@ -487,6 +536,7 @@ watch(activeTab, onTabChange)
               data-testid="cancel-instance-btn"
               @click="openCancelDialog"
             >
+              <OctagonX class="h-4 w-4" />
               {{ t('cancelProcess') }}
             </Button>
             <Button variant="outline" size="sm" class="h-8 px-3 text-xs" :disabled="processStore.loading || tabLoading" @click="reloadAll">
@@ -643,7 +693,23 @@ watch(activeTab, onTabChange)
                 <td class="px-4 py-3">
                   <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted">{{ v.type }}</span>
                 </td>
-                <td class="px-4 py-3 max-w-xs truncate" :title="v.value">{{ v.value }}</td>
+                <!-- WO-UI-23: короткие — как раньше (truncate + title); у длинных —
+                     кнопка-инспектор с полным значением (модалка + копия).
+                     truncate живёт на внутреннем span, а не на td: на table-cell
+                     браузерный computed overflow остаётся visible и ellipsis не
+                     срабатывает (проверено живым Chromium — ячейка растягивалась
+                     до 718px); block-span внутри max-w-xs-ячейки клиппит честно. -->
+                <td class="px-4 py-3 max-w-xs" :title="v.value">
+                  <span class="block truncate">{{ v.value }}</span>
+                  <button
+                    v-if="isLongVariableValue(v)"
+                    class="mt-1 text-xs text-primary hover:underline shrink-0"
+                    :data-testid="`inspect-variable-${v.name}`"
+                    @click.stop="openVariableInspector(v)"
+                  >
+                    {{ t('showFullValue') }}
+                  </button>
+                </td>
               </tr>
               <tr v-if="!processStore.currentVariables.length">
                 <td colspan="3" class="px-4 py-6 text-center text-muted-foreground">{{ t('noVariables') }}</td>
@@ -915,6 +981,39 @@ watch(activeTab, onTabChange)
             @click="confirmCancel"
           >
             {{ t('cancelProcess') }}
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- WO-UI-23: инспектор полного значения переменной. Тот же page-local
+         overlay-паттерн, что cancel-dialog выше (AlertDialog-примитива в
+         components/ui нет). <pre> — стиль IncidentDetail.vue (message-блок):
+         whitespace-pre-wrap + font-mono + bg-muted. Кнопка копии — та же
+         Copy/Check-пара, что CopyableId рядом в этом же файле. -->
+    <div
+      v-if="inspectedVariable"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      data-testid="variable-inspector"
+      @click.self="closeVariableInspector"
+    >
+      <div class="bg-card rounded-lg shadow-lg w-full max-w-2xl p-6 space-y-4">
+        <div class="flex items-center justify-between gap-2 min-w-0">
+          <h2 class="text-lg font-bold font-mono truncate" data-testid="variable-inspector-title">{{ inspectedVariable.name }}</h2>
+          <button class="text-xs text-muted-foreground hover:text-foreground shrink-0" @click="closeVariableInspector">{{ t('close') }}</button>
+        </div>
+        <pre class="text-sm whitespace-pre-wrap font-mono bg-muted p-3 rounded max-h-[60vh] overflow-auto break-words" data-testid="variable-inspector-value">{{ formatVariableValue(inspectedVariable) }}</pre>
+        <div class="flex justify-end gap-2 pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 px-3 text-xs"
+            data-testid="variable-inspector-copy"
+            @click="copyInspectedVariable"
+          >
+            <Check v-if="variableCopied" class="h-4 w-4 text-green-500" />
+            <Copy v-else class="h-4 w-4" />
+            {{ t('copyToClipboard') }}
           </Button>
         </div>
       </div>
