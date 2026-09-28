@@ -98,18 +98,25 @@ public class DmnResource implements DmnContract {
         // WO-C8-17 (debt from WO-C8-15): audit every newly deployed decision version, like
         // BPMN deploy does in both its places. One record per decision version —
         // key = decisionId, target = decisionId:vN (the entity UUID is not exposed in the DTO).
-        // Only rows whose version actually advanced are recorded (the list also carries old ones).
+        // WO-QW-8: the SAME «version actually advanced» filter also scopes the response
+        // below — the list carries old catalog rows too, and returning them as «deployed»
+        // misleads callers (Location pointed at the catalog's first row, not this deploy).
+        List<DmnDecision> deployed = new java.util.ArrayList<>();
         for (DmnDecision decision : after) {
             if (decision.getVersion() > before.getOrDefault(decision.getId(), 0)) {
-                auditLogService.record(getPrincipal(), "DEPLOY", decision.getId(),
-                    decision.getId() + ":v" + decision.getVersion());
+                deployed.add(decision);
             }
         }
-        // WO-API-1: Location по первой задеплоенной decision (nullable-guard как везде).
-        if (httpResponse != null && !after.isEmpty()) {
-            httpResponse.setHeader("Location", "/dmn/" + after.get(0).getId());
+        for (DmnDecision decision : deployed) {
+            auditLogService.record(getPrincipal(), "DEPLOY", decision.getId(),
+                decision.getId() + ":v" + decision.getVersion());
         }
-        return after;
+        // WO-API-1: Location по первой задеплоенной decision (nullable-guard как везде).
+        // WO-QW-8: из реально задеплоенных этим вызовом, не из всего каталога.
+        if (httpResponse != null && !deployed.isEmpty()) {
+            httpResponse.setHeader("Location", "/dmn/" + deployed.get(0).getId());
+        }
+        return deployed;
     }
 
     private static Map<String, Integer> maxVersions(List<DmnDecision> decisions) {
