@@ -117,6 +117,28 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * WO-QW-9 (NEW4-08): троттлинг саморегистрации — временное состояние,
+     * клиент должен повторить (429 + Retry-After), а не чинить запрос (422).
+     * Тот же стиль, что {@code handleScriptOverload}: хендлер точнее
+     * {@code handleEngineError} по типу, Spring выбирает его для
+     * {@code RegistrationRateLimitException} независимо от порядка объявления.
+     */
+    @ExceptionHandler(com.zorrodev.bpm.engine.service.RegistrationRateLimitException.class)
+    public ResponseEntity<Map<String, String>> handleRegistrationRateLimit(
+            com.zorrodev.bpm.engine.service.RegistrationRateLimitException ex) {
+        String correlationId = UUID.randomUUID().toString().substring(0, 8);
+        log.warn("[{}] Registration throttled, shedding load (retry after {}s): {}",
+            correlationId, ex.getRetryAfterSeconds(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .header("Retry-After", String.valueOf(ex.getRetryAfterSeconds()))
+            .body(Map.of(
+                "code", "RATE_LIMITED",
+                "message", "Too many registration attempts, retry later",
+                "correlationId", correlationId
+            ));
+    }
+
+    /**
      * WO-ENG-24: перегрузка FEEL-пула — временное состояние, клиент должен
      * повторить (503 + Retry-After), а не считать запрос неверным (422).
      * Хендлер точнее {@code handleEngineError} по типу, Spring выбирает его

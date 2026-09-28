@@ -72,11 +72,17 @@ public class SelfRegistrationService {
         // Cheap reject first (mirrors requestReset ordering): per-email AND per-IP,
         // explicit error — registration already discloses taken names, so unlike
         // forgot-password there is nothing to hide by staying silent.
+        // WO-QW-9 (NEW4-08): throttling is 429 + Retry-After (a retryable client
+        // condition), not 422 — same handler style as ScriptOverloadException.
         if (!registrationRateLimiter.tryAcquireForEmail(dto.getEmail())) {
-            throw new EngineException("Too many registration attempts, please try again later");
+            throw new RegistrationRateLimitException(
+                "Too many registration attempts, please try again later",
+                registrationRateLimiter.getEmailWindowSeconds());
         }
         if (!registrationRateLimiter.tryAcquireForIp(clientIp)) {
-            throw new EngineException("Too many registration attempts, please try again later");
+            throw new RegistrationRateLimitException(
+                "Too many registration attempts, please try again later",
+                registrationRateLimiter.getIpWindowSeconds());
         }
         CreateUiUserDTO create = new CreateUiUserDTO();
         create.setUsername(dto.getUsername());
