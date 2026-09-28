@@ -96,6 +96,17 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- WO-OPS-21 шаг 2: forkCount=2 (НЕ parallel=classes/methods —
+                         это агрессивнее и опаснее). Failsafe (*IT) не тронут:
+                         forkCount surefire на него не влияет. 5/5 прогонов
+                         модуля чисто — см. governance/reports/WO-OPS-21.md. -->
+                    <forkCount>2</forkCount>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <executions>
                     <execution>
