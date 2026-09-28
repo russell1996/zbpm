@@ -1047,6 +1047,13 @@ public class SseEventStreamService implements SmartLifecycle {
                     // и непрерывную цепочку за ней; второй разрыв (если есть)
                     // ждёт заново через обычный arm в release.
                     closeLiveClientsForGap(maxDispatchedCursor, head.cursor);
+                    // WO-REL-58: знак — за дыру ДО входа в цикл (зеркало
+                    // saturated-ветки выше): иначе первая же итерация видит ту
+                    // же голову (h.cursor > dispatchWatermark + 1), break'ится
+                    // немедленно, знак не двигается, и releaseSequencedReady
+                    // взводит таймер заново бесконечно — realtime мёртв для всех
+                    // до рестарта JVM после первой реальной дыры.
+                    dispatchWatermark = head.cursor - 1;
                     while (!sequencer.isEmpty()) {
                         SequencedEvent h = sequencer.peek();
                         if (h.cursor == Long.MIN_VALUE) {
