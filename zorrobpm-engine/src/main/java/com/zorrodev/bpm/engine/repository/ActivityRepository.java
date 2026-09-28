@@ -35,11 +35,25 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
     List<ActivityEntity> findByTokenAndBpmnElementId(UUID token, String bpmnElementId);
 
     /**
-     * WO-REL-30 (B-3): activity + its process-instance lock in ONE statement.
-     * Theta-join keeps the {@code activities} table free of a new FK (D-1 scope!):
-     * the row lock on {@code process_instances} serialises all execution touching
-     * the instance exactly like the old read-then-lock pair, but with no race
-     * window between the read and the lock. H2 + PostgreSQL: same JPQL.
+     * WO-REL-30 (B-3) + WO-REL-59: row lock on the activity, in ONE statement
+     * together with a join to its process-instance row. Theta-join keeps the
+     * {@code activities} table free of a new FK (D-1 scope!).
+     *
+     * <p>WO-REL-59, честно: этот statement лочит ТОЛЬКО activity-строку, НЕ
+     * instance-строку, несмотря на JOIN. Живой PG-вывод
+     * ({@code Rel59SqlProbePgIT} на реальном PostgreSQL):
+     * {@code ... from activities ae1_0, process_instances pie1_0 where ... for
+     * no key update of ae1_0} — {@code OF} называет один алиас. Попытка
+     * расширить лок через {@code jakarta.persistence.query.lock.scope=EXTENDED}
+     * НЕ сработала (проверено тем же прогоном: SQL байтово тот же — EXTENDED
+     * распространяется только на жадно-подгружаемые ассоциации, а второй
+     * корень theta-join'а ассоциацией не является), хинт убран, чтобы не
+     * вводить в заблуждение. Сериализация с cancel-путём достигается НЕ этим
+     * запросом, а ЕДИНЫМ ПОРЯДКОМ ЗАХВАТА instance→activity во всех путях
+     * (см. {@code ElementSupport.lockInstanceFirst}): cancel берёт
+     * instance-lock, затем пишет activity-строки; complete берёт тот же
+     * instance-lock ПЕРВЫМ и только потом этот activity-lock — ABBA-цикла
+     * нет. H2 + PostgreSQL: same JPQL.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM ActivityEntity a, ProcessInstanceEntity p "
