@@ -513,6 +513,7 @@
   "noStartFormConfigured": "No start form configured. Process will start with default settings.",
   "taskCompleted": "Task completed",
   "cancelProcess": "Cancel process",
+  "showFullValue": "Show full value",
   "cancelProcessTitle": "Cancel this process instance?",
   "cancelProcessConfirm": "The instance will stop where it is. This cannot be undone.",
   "processCancelled": "Process instance cancelled",

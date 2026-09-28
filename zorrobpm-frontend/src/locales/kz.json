@@ -513,6 +513,7 @@
   "noStartFormConfigured": "Бастапқы форма бапталмаған. Процесс әдепкі баптаулармен іске қосылады.",
   "taskCompleted": "Тапсырма орындалды",
   "cancelProcess": "Процесті тоқтату",
+  "showFullValue": "Толық көрсету",
   "cancelProcessTitle": "Бұл процесс данасын тоқтату керек пе?",
   "cancelProcessConfirm": "Дана қазіргі орнында тоқтайды. Бұл қайтымсыз.",
   "processCancelled": "Процесс данасы тоқтатылды",
