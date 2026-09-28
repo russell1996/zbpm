@@ -1,0 +1,52 @@
+databaseChangeLog:
+  - logicalFilePath: 20260928-116
+  - changeSet:
+      id: 20260928-116-feed-position-null-pg
+      author: zorrodev
+      dbms: postgresql
+      runInTransaction: false
+      comment: >-
+        WO-OPS-23 (NEW4-04): частичный индекс под холостой тик FeedPositionAssigner
+        (каждые 2с до 6 запросов с WHERE feed_position IS NULL: COUNT/MIN в
+        publishBacklogMetrics ×2 + до 2 проходов selectEligibleSequences).
+        Единственный существующий индекс uq_events__feed_position — обратный
+        предикат (WHERE feed_position IS NOT NULL), IS NULL-запросы им не
+        обслуживаются и шли полным сканом растущей таблицы events (retention её
+        сейчас не чистит). Индекс маленький по конструкции: в нём только ещё не
+        назначенные строки, не вся таблица. CREATE INDEX CONCURRENTLY +
+        runInTransaction:false — создание не блокирует запись на проде
+        (прецедент формы: agent-to-cto, WO-PERF-8 обсуждение; CONCURRENTLY
+        структурно не выполняется внутри транзакции). PostgreSQL-only: H2 не
+        понимает ни CONCURRENTLY, ни WHERE в CREATE INDEX (тот же сплит, что
+        20260918-114). Обратный индекс uq_events__feed_position не тронут.
+      changes:
+        - sql:
+            sql: >-
+              CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_events_unassigned
+              ON events (sequence)
+              WHERE feed_position IS NULL
+      rollback:
+        - sql:
+            sql: DROP INDEX CONCURRENTLY IF EXISTS idx_events_unassigned
+
+  - changeSet:
+      id: 20260928-116-feed-position-null-h2
+      author: zorrodev
+      dbms: h2
+      comment: >-
+        WO-OPS-23: тестовый профиль. H2 не выражает ни CONCURRENTLY, ни
+        частичный предикат — обычный индекс по sequence даёт ту же форму для
+        локальных прогонов; настоящая гарантия (Seq Scan → Index Scan)
+        проверяется на PostgreSQL (EventsFeedPositionNullIndexPgIT, job
+        test:pg). Обратный индекс uq_events__feed_position не тронут.
+      changes:
+        - createIndex:
+            tableName: events
+            indexName: idx_events_unassigned
+            columns:
+              - column:
+                  name: sequence
+      rollback:
+        - dropIndex:
+            tableName: events
+            indexName: idx_events_unassigned
