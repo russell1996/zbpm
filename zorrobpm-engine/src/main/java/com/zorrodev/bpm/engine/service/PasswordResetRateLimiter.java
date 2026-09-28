@@ -9,7 +9,12 @@ import org.springframework.stereotype.Component;
  * so an attacker cannot flood reset emails to a victim (or enumerate) without burning their own
  * budget. Now backed by PostgreSQL (cluster-safe) via {@code PgRateLimiter}, replacing the
  * per-instance Caffeine caches that were also used by the original {@code RateLimitFilter}.
- * Configurable capacities/windows via setters (used by tests to shrink the window).
+ * Configurable capacities/windows via constructor (WO-QW-9/NEW4-07: property
+ * injection lives on constructor parameters — resolved exactly once, by whoever
+ * calls the constructor. The previous field-level {@code @Value} was re-applied
+ * by Spring to EVERY managed bean post-construction, silently overwriting the
+ * registration bean's {@code register-*}-tuned values back to the
+ * {@code reset-*}-properties/defaults).
  *
  * <p>WO-SCALE-2: both beans of this class (the {@code @Primary} forgot-password
  * one and the {@code registrationRateLimiter} one) share a single
@@ -30,19 +35,32 @@ public class PasswordResetRateLimiter {
 
     private final PgRateLimiter pgRateLimiter;
 
-    @Value("${zorrobpm.security.rate-limit.reset-email-capacity:5}")
-    private int emailCapacity = 5;
-    @Value("${zorrobpm.security.rate-limit.reset-email-window-seconds:3600}")
-    private int emailWindowSeconds = 3600;
-    @Value("${zorrobpm.security.rate-limit.reset-ip-capacity:20}")
-    private int ipCapacity = 20;
-    @Value("${zorrobpm.security.rate-limit.reset-ip-window-seconds:3600}")
-    private int ipWindowSeconds = 3600;
+    private int emailCapacity;
+    private int emailWindowSeconds;
+    private int ipCapacity;
+    private int ipWindowSeconds;
 
     private String keyPrefix = "reset:";
 
-    public PasswordResetRateLimiter(PgRateLimiter pgRateLimiter) {
+    /**
+     * WO-QW-9 (NEW4-07): {@code @Value} on constructor parameters, not on
+     * fields. The {@code @Component @Primary} default ("reset") bean is built
+     * by component-scan with THESE {@code reset-*}-properties; the
+     * {@code registrationRateLimiter} bean is built by
+     * {@code RegistrationRateLimitConfiguration} with ITS {@code register-*}
+     * values passed straight into this constructor — Spring never re-applies
+     * anything post-construction, so the factory's tuning survives.
+     */
+    public PasswordResetRateLimiter(PgRateLimiter pgRateLimiter,
+            @Value("${zorrobpm.security.rate-limit.reset-email-capacity:5}") int emailCapacity,
+            @Value("${zorrobpm.security.rate-limit.reset-email-window-seconds:3600}") int emailWindowSeconds,
+            @Value("${zorrobpm.security.rate-limit.reset-ip-capacity:20}") int ipCapacity,
+            @Value("${zorrobpm.security.rate-limit.reset-ip-window-seconds:3600}") int ipWindowSeconds) {
         this.pgRateLimiter = pgRateLimiter;
+        this.emailCapacity = emailCapacity;
+        this.emailWindowSeconds = emailWindowSeconds;
+        this.ipCapacity = ipCapacity;
+        this.ipWindowSeconds = ipWindowSeconds;
     }
 
     public void setEmailCapacity(int capacity) { this.emailCapacity = capacity; }
@@ -50,6 +68,11 @@ public class PasswordResetRateLimiter {
     public void setIpCapacity(int capacity) { this.ipCapacity = capacity; }
     public void setIpWindowSeconds(int windowSeconds) { this.ipWindowSeconds = windowSeconds; }
     public void setKeyPrefix(String keyPrefix) { this.keyPrefix = keyPrefix; }
+
+    /** WO-QW-9 (NEW4-08): окно истощённого бакета — значение для Retry-After. */
+    public int getEmailWindowSeconds() { return emailWindowSeconds; }
+    /** WO-QW-9 (NEW4-08): окно истощённого бакета — значение для Retry-After. */
+    public int getIpWindowSeconds() { return ipWindowSeconds; }
 
     public boolean tryAcquireForEmail(String email) {
         if (email == null) return true;

@@ -96,13 +96,9 @@ class PgRateLimiterTest {
         // the forgot-password bean and the registration bean share one
         // PgRateLimiter/table but must not share bucket rows.
         PgRateLimiter shared = new PgRateLimiter(jdbc);
-        PasswordResetRateLimiter reset = new PasswordResetRateLimiter(shared);
-        reset.setEmailCapacity(1);
-        reset.setEmailWindowSeconds(3600);
-        PasswordResetRateLimiter register = new PasswordResetRateLimiter(shared);
+        PasswordResetRateLimiter reset = new PasswordResetRateLimiter(shared, 1, 3600, 20, 3600);
+        PasswordResetRateLimiter register = new PasswordResetRateLimiter(shared, 1, 3600, 20, 3600);
         register.setKeyPrefix("register:");
-        register.setEmailCapacity(1);
-        register.setEmailWindowSeconds(3600);
 
         String victim = "victim-" + UUID.randomUUID() + "@x.y";
         assertThat(reset.tryAcquireForEmail(victim)).isTrue();
