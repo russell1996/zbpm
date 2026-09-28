@@ -312,8 +312,21 @@ class IdempotencyFilterTest {
         // A re-execution would create version 2 — identical bytes prove version 1 served twice.
         assertThat(second.getResponse().getContentAsString())
             .isEqualTo(first.getResponse().getContentAsString());
-        assertThat(mapper.readTree(first.getResponse().getContentAsString()).get(0).get("version").asInt())
-            .isEqualTo(1);
+        // WO-QW-8: ищем задеплоенное решение по id, а не get(0) — в общем
+        // Spring-контексте другой тест мог раньше задеплоить решение, которое
+        // сортируется раньше (порядочная зависимость, красила master на раннере).
+        JsonNode decisions = mapper.readTree(first.getResponse().getContentAsString());
+        JsonNode deployed = null;
+        for (JsonNode node : decisions) {
+            if (decision.equals(node.get("id").asText())) {
+                deployed = node;
+                break;
+            }
+        }
+        assertThat(deployed)
+            .as("response must contain the decision deployed by THIS call")
+            .isNotNull();
+        assertThat(deployed.get("version").asInt()).isEqualTo(1);
     }
 
     // ==================== POST /forms ====================
