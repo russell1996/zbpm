@@ -16,6 +16,7 @@ import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.awaitility.core.ConditionTimeoutException;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -28,6 +29,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-TEST-10 scenario 1 (WB-002): kill -9 воркера посреди job — реальный инжект.
@@ -146,16 +148,19 @@ class WorkerKillChaosIT {
         }
     }
 
-    private static void await(String what, Duration timeout, java.util.function.BooleanSupplier cond)
-            throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            if (cond.getAsBoolean()) {
-                return;
-            }
-            Thread.sleep(200);
+    // WO-QW-7: ручной deadline-цикл со sleep(200) заменён на Awaitility с тем же
+    // условием и той же каденцией опроса. Имя — awaitCondition, чтобы не
+    // затенять Awaitility.await.
+    private static void awaitCondition(String what, Duration timeout,
+            java.util.function.BooleanSupplier cond) {
+        try {
+            await(what)
+                .atMost(timeout)
+                .pollInterval(Duration.ofMillis(200))
+                .until(cond::getAsBoolean);
+        } catch (ConditionTimeoutException e) {
+            throw new IllegalStateException("timed out waiting for: " + what, e);
         }
-        throw new IllegalStateException("timed out waiting for: " + what);
     }
 
     /**
@@ -230,7 +235,7 @@ class WorkerKillChaosIT {
             victimId = startVictim(victimName, latchDir);
 
             // 3. Ждём: victim ЗАБРАЛ сообщение (unacked — ready=0) и вошёл в handler.
-            await("victim took the message", Duration.ofSeconds(60), () -> {
+            awaitCondition("victim took the message", Duration.ofSeconds(60), () -> {
                 try {
                     return serverMessageCount(JOB_QUEUE) == 0
                         && Files.exists(latchDir.resolve("entered"));
@@ -241,7 +246,7 @@ class WorkerKillChaosIT {
 
             // 4. ИНЖЕКТ: kill -9 живого процесса посреди handler'а (не graceful).
             docker.kill9(victimName);
-            await("victim dead by SIGKILL", Duration.ofSeconds(30), () -> {
+            awaitCondition("victim dead by SIGKILL", Duration.ofSeconds(30), () -> {
                 try {
                     String inspect = docker.inspect(victimName);
                     Integer code = ChaosDocker.exitCodeOf(inspect);
@@ -287,7 +292,7 @@ class WorkerKillChaosIT {
                 // его инкремент жил только в убитом процессе). Наблюдатель потребляет
                 // СРАЗУ — drain-await вместо sleep+count (гонка «недочитал»).
                 awaitCompletionForTask(taskId, Duration.ofSeconds(45));
-                await("complete queue drained by observer", Duration.ofSeconds(15), () -> {
+                awaitCondition("complete queue drained by observer", Duration.ofSeconds(15), () -> {
                     try {
                         return serverMessageCount(COMPLETE_QUEUE) == 0;
                     } catch (Exception e) {
@@ -336,7 +341,7 @@ class WorkerKillChaosIT {
         String victimId = null;
         try {
             victimId = startVictim(victimName, latchDir);
-            await("victim took the message", Duration.ofSeconds(60), () -> {
+            awaitCondition("victim took the message", Duration.ofSeconds(60), () -> {
                 try {
                     return serverMessageCount(JOB_QUEUE) == 0
                         && Files.exists(latchDir.resolve("entered"));
@@ -346,7 +351,7 @@ class WorkerKillChaosIT {
             });
 
             docker.kill9(victimName);
-            await("victim dead by SIGKILL", Duration.ofSeconds(30), () -> {
+            awaitCondition("victim dead by SIGKILL", Duration.ofSeconds(30), () -> {
                 try {
                     Integer code = ChaosDocker.exitCodeOf(docker.inspect(victimName));
                     return code != null && code == 137;
@@ -369,7 +374,7 @@ class WorkerKillChaosIT {
             assertThat(arrived).as("без survivor'а completion невозможен — обязано RED").isFalse();
 
             // …но сообщение НЕ потеряно: брокер requeue'ил его после смерти victim'а.
-            await("requeued message visible", Duration.ofSeconds(15), () -> {
+            awaitCondition("requeued message visible", Duration.ofSeconds(15), () -> {
                 try {
                     return serverMessageCount(JOB_QUEUE) == 1;
                 } catch (Exception e) {
@@ -394,7 +399,12 @@ class WorkerKillChaosIT {
     private void awaitCompletionForTask(UUID taskId, Duration timeout) throws Exception {
         // Наблюдатель идёт НАПРЯМУЮ в брокер (raw ConnectionFactory): соединения пула
         // приложения могут висеть в partition — наблюдатель обязан оставаться независимым.
-        long deadline = System.nanoTime() + timeout.toNanos();
+        // WO-QW-7: ручной deadline-цикл заменён на Awaitility. Одна попытка — одно
+        // соединение (открытие внутри условия, как раньше в цикле); ошибка
+        // соединения = false (ретрай следующим опросом, как раньше catch+sleep(500)),
+        // пустой basicGet = false (каденция опроса 200мс, как раньше sleep(200)).
+        // Сигнатура отказа сохранена (IllegalStateException с тем же текстом) —
+        // absence-ветка выше ловит именно его.
         ConnectionFactory f = new ConnectionFactory();
         f.setConnectionTimeout(5000);
         f.setHandshakeTimeout(5000);
@@ -403,30 +413,34 @@ class WorkerKillChaosIT {
         f.setPort(port);
         f.setUsername(user);
         f.setPassword(password);
-        while (System.nanoTime() < deadline) {
-            try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
-                ch.basicQos(1);
-                com.rabbitmq.client.GetResponse resp = ch.basicGet(COMPLETE_QUEUE, true);
-                if (resp != null) {
-                    String body = new String(resp.getBody(), StandardCharsets.UTF_8);
-                    try {
-                        com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
-                            objectMapper.readValue(body,
-                                com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
-                        if (taskId.equals(data.getServiceTaskId())
-                            && "SUCCESS".equals(data.getStatus())) {
-                            return;
+        try {
+            await("completion of task " + taskId)
+                .atMost(timeout)
+                .pollInterval(Duration.ofMillis(200))
+                .until(() -> {
+                    try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
+                        ch.basicQos(1);
+                        com.rabbitmq.client.GetResponse resp = ch.basicGet(COMPLETE_QUEUE, true);
+                        if (resp == null) {
+                            return false;
                         }
-                    } catch (Exception ignored) {
+                        String body = new String(resp.getBody(), StandardCharsets.UTF_8);
+                        try {
+                            com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
+                                objectMapper.readValue(body,
+                                    com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
+                            return taskId.equals(data.getServiceTaskId())
+                                && "SUCCESS".equals(data.getStatus());
+                        } catch (Exception ignored) {
+                            return false;
+                        }
+                    } catch (Exception e) {
+                        return false;
                     }
-                } else {
-                    Thread.sleep(200);
-                }
-            } catch (Exception e) {
-                Thread.sleep(500);
-            }
+                });
+        } catch (ConditionTimeoutException e) {
+            throw new IllegalStateException("timed out waiting for completion of task " + taskId, e);
         }
-        throw new IllegalStateException("timed out waiting for completion of task " + taskId);
     }
 
     private static void deleteRecursively(Path dir) {

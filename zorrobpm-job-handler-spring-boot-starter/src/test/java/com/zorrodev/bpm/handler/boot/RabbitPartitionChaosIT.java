@@ -16,6 +16,7 @@ import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.awaitility.core.ConditionTimeoutException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -27,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-TEST-10 scenario 3 (WB-002): обрыв сети к RabbitMQ посреди processing — реальный инжект.
@@ -289,6 +291,9 @@ class RabbitPartitionChaosIT {
             try {
                 // Окно partition: канал мёртв, handler висит. Держим достаточно, чтобы
                 // обрыв был реальным (heartbeat-дефолты — обрыв виден не мгновенно).
+                // WO-QW-7: намеренно Thread.sleep, не Awaitility — это длительность
+                // fault-инжекта, а не ожидание условия (нечего опрашивать: разрыв
+                // считается состоявшимся по истечении окна; heal — в finally).
                 Thread.sleep(12000);
             } finally {
                 healQuietly(TOXIC_A);
@@ -377,6 +382,12 @@ class RabbitPartitionChaosIT {
                 m.getMessageProperties().setCorrelationId("chaos-never-" + UUID.randomUUID());
                 return m;
             });
+            // WO-QW-7: намеренно Thread.sleep, не Awaitility — head-start
+            // sequencing: сообщение обязано дойти до брокера ДО разрыва прокси,
+            // иначе send упрётся в мёртвый прокси и сценарий станет другим
+            // (ошибка отправки вместо negative-proof доставки). Условие вида
+            // «queue>=1» здесь ложно-отрицательно (сообщение могут мгновенно
+            // потребить — счётчик вернётся в 0), опрашивать нечего.
             Thread.sleep(1500);
             toxi("POST", "/proxies/chaos-rabbit/toxics",
                 "{\"name\":\"" + TOXIC_PERM + "\",\"type\":\"timeout\",\"stream\":\"upstream\",\"toxicity\":1.0,\"attributes\":{\"timeout\":0}}");
@@ -411,7 +422,6 @@ class RabbitPartitionChaosIT {
         // Наблюдатель идёт НАПРЯМУЮ в брокер (raw ConnectionFactory, не через cf):
         // соединения пула приложения могут висеть в partition, наблюдатель обязан
         // оставаться независимым (урок run4: TimeoutException наблюдателя вместо RED).
-        long deadline = System.nanoTime() + timeout.toNanos();
         ConnectionFactory f = new ConnectionFactory();
         // Короткие таймауты рукопожатия: при мёртвой связи basicGet падает быстро,
         // а не висит весь timeout одной попытки.
@@ -422,34 +432,45 @@ class RabbitPartitionChaosIT {
         f.setPort(port);
         f.setUsername(user);
         f.setPassword(password);
-        // Одна попытка — одно соединение: try-with-resources закрывает его сразу,
-        // полуоткрытые сокеты не копятся между итерациями.
-        while (System.nanoTime() < deadline) {
-            try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
-                ch.basicQos(1);
-                com.rabbitmq.client.GetResponse resp = ch.basicGet(COMPLETE_QUEUE, true);
-                if (resp != null) {
-                    String body = new String(resp.getBody(), StandardCharsets.UTF_8);
-                    try {
-                        com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
-                            objectMapper.readValue(body,
-                                com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
-                        if (taskId.equals(data.getServiceTaskId())
-                            && "SUCCESS".equals(data.getStatus())) {
-                            return;
+        // WO-QW-7: ручной deadline-цикл заменён на Awaitility. Одна попытка — одно
+        // соединение (try-with-resources внутри условия, полуоткрытые сокеты не
+        // копятся — инвариант комментария ниже сохранён); ошибка соединения =
+        // false (ретрай следующим опросом, как раньше catch+sleep(500)), пустой
+        // basicGet = false (каденция опроса 200мс, как раньше sleep(200)).
+        // Сигнатура отказа сохранена (IllegalStateException с тем же текстом) —
+        // absence-ветка выше ловит именно его.
+        try {
+            await("completion of task " + taskId)
+                .atMost(timeout)
+                .pollInterval(Duration.ofMillis(200))
+                .until(() -> {
+                    // Одна попытка — одно соединение: try-with-resources закрывает его сразу,
+                    // полуоткрытые сокеты не копятся между итерациями.
+                    try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
+                        ch.basicQos(1);
+                        com.rabbitmq.client.GetResponse resp = ch.basicGet(COMPLETE_QUEUE, true);
+                        if (resp == null) {
+                            return false;
                         }
-                    } catch (Exception ignored) {
+                        String body = new String(resp.getBody(), StandardCharsets.UTF_8);
+                        try {
+                            com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
+                                objectMapper.readValue(body,
+                                    com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
+                            return taskId.equals(data.getServiceTaskId())
+                                && "SUCCESS".equals(data.getStatus());
+                        } catch (Exception ignored) {
+                            return false;
+                        }
+                    } catch (Exception e) {
+                        // Связи нет (partition) или брокер ещё не вернулся — ждём дальше в
+                        // пределах дедлайна, а не падаем первой же ошибкой соединения.
+                        return false;
                     }
-                } else {
-                    Thread.sleep(200);
-                }
-            } catch (Exception e) {
-                // Связи нет (partition) или брокер ещё не вернулся — ждём дальше в
-                // пределах дедлайна, а не падаем первой же ошибкой соединения.
-                Thread.sleep(500);
-            }
+                });
+        } catch (ConditionTimeoutException e) {
+            throw new IllegalStateException("timed out waiting for completion of task " + taskId, e);
         }
-        throw new IllegalStateException("timed out waiting for completion of task " + taskId);
     }
 
     /**
@@ -458,7 +479,6 @@ class RabbitPartitionChaosIT {
      * одиночный пустой ответ посреди redelivery-хвоста нулём не считается.
      */
     private void drainCompletely(String queue, Duration timeout) throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
         ConnectionFactory f = new ConnectionFactory();
         f.setConnectionTimeout(5000);
         f.setHandshakeTimeout(5000);
@@ -467,20 +487,26 @@ class RabbitPartitionChaosIT {
         f.setPort(port);
         f.setUsername(user);
         f.setPassword(password);
-        int quiet = 0;
+        // WO-QW-7: ручной deadline-цикл заменён на Awaitility. Правило «5 подряд
+        // пустых basicGet (~1с тишины)» — внутри условия на AtomicInteger, каденция
+        // опроса 200мс — та же, что раньше sleep(200).
+        java.util.concurrent.atomic.AtomicInteger quiet = new java.util.concurrent.atomic.AtomicInteger(0);
         try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
-            while (System.nanoTime() < deadline) {
-                com.rabbitmq.client.GetResponse resp = ch.basicGet(queue, true);
-                if (resp == null) {
-                    if (++quiet >= 5) {
-                        return;
-                    }
-                    Thread.sleep(200);
-                } else {
-                    quiet = 0;
-                }
+            try {
+                await("drain queue " + queue)
+                    .atMost(timeout)
+                    .pollInterval(Duration.ofMillis(200))
+                    .until(() -> {
+                        com.rabbitmq.client.GetResponse resp = ch.basicGet(queue, true);
+                        if (resp == null) {
+                            return quiet.incrementAndGet() >= 5;
+                        }
+                        quiet.set(0);
+                        return false;
+                    });
+            } catch (ConditionTimeoutException e) {
+                throw new IllegalStateException("timed out draining queue " + queue, e);
             }
         }
-        throw new IllegalStateException("timed out draining queue " + queue);
     }
 }
