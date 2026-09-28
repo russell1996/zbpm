@@ -74,6 +74,10 @@ public final class ChaosWorkerMain {
                     System.out.flush();
                     // Висеть, пока не убьют (kill -9). Никакого завершения работы —
                     // эффект НЕ коммитится, сообщение остаётся unacked.
+                    // WO-QW-7: намеренно Thread.sleep, не Awaitility — это
+                    // вспомогательный процесс для chaos-тестов (фикстура, не
+                    // проверка условия): висеть 10 минут до SIGKILL снаружи —
+                    // сам предмет сценария WorkerKillChaosIT, ждать нечего.
                     Thread.sleep(600_000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();

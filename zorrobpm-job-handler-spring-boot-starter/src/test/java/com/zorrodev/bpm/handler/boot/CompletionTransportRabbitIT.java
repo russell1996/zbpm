@@ -18,6 +18,7 @@ import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.awaitility.core.ConditionTimeoutException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -29,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-REL-36 критерий 1: РЕАЛЬНЫЙ broker (не мок).
@@ -158,17 +160,9 @@ class CompletionTransportRabbitIT {
         return detail;
     }
 
-    private static void await(String what, Duration timeout, java.util.function.BooleanSupplier cond)
-            throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            if (cond.getAsBoolean()) {
-                return;
-            }
-            Thread.sleep(100);
-        }
-        throw new IllegalStateException("timed out waiting for: " + what);
-    }
+    // WO-QW-7: мёртвый хелпер ручного deadline-цикла удалён (вызывающих не было —
+    // все ожидания в файле идут через latch'и и awaitCompletionForTask ниже).
+    // Ручные poll-циклы вида while+Thread.sleep заменяются на Awaitility.
 
     @Test
     void brokenConnectionBeforeCompletionPublish_resultDeliveredAfterRecovery_effectOnce()
@@ -256,6 +250,10 @@ class CompletionTransportRabbitIT {
             // Дискриминатор swallow-vs-throw — ФИНАЛЬНЫЙ completion с content-check
             // ниже: при старом swallow вход подтверждён и после recovery нечего
             // переотправлять (таймаут), при новом throw — completion приходит.
+            // WO-QW-7: намеренно Thread.sleep, не Awaitility — условие инвертировано
+            // (hot-loop redelivery обязан ПРОДОЛЖАТЬСЯ без видимого эффекта;
+            // тишина 3с = доказательство однократности). Awaitility ждёт наступления
+            // события, здесь наступление = провал теста.
             Thread.sleep(3000);
             assertThat(handlerCalls.get())
                 .as("эффект ровно один раз (все redelivery идут из кэша)")
@@ -283,6 +281,9 @@ class CompletionTransportRabbitIT {
                 // со статусом SUCCESS (счётчик ловил бы и чужой stale).
                 awaitCompletionForTask(taskId, Duration.ofSeconds(20));
                 // Даём redelivery докатиться, затем проверяем однократность эффекта.
+                // WO-QW-7: намеренно Thread.sleep, не Awaitility — условие
+                // инвертировано (повторный handler-вызов НЕ должен произойти;
+                // тишина 2с = доказательство). См. комментарий выше.
                 Thread.sleep(2000);
                 assertThat(handlerCalls.get())
                     .as("бизнес-эффект ровно один раз (переотправка — только completion)")
@@ -329,6 +330,10 @@ class CompletionTransportRabbitIT {
         container.start();
         try {
             senderTemplate.convertAndSend(JOB_QUEUE, (Object) "not-json{{{");
+            // WO-QW-7: намеренно Thread.sleep, не Awaitility — negative-контроль
+            // (malformed обязан НЕ породить ни handler-вызова, ни completion;
+            // тишина 3с = доказательство отсутствия). Условие инвертировано,
+            // ждать наступлением нечего.
             Thread.sleep(3000);
             assertThat(handlerCalls.get()).as("malformed не доходит до handler'а").isZero();
             assertThat(serverMessageCount(COMPLETE_QUEUE))
@@ -358,36 +363,44 @@ class CompletionTransportRabbitIT {
      * Чужие сообщения ack'аются и отбрасываются (очереди приватны тесту).
      */
     private void awaitCompletionForTask(UUID taskId, Duration timeout) throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
         ConnectionFactory f = new ConnectionFactory();
         f.setHost(host);
         f.setPort(port);
         f.setUsername(user);
         f.setPassword(password);
         try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
-            while (System.nanoTime() < deadline) {
-                com.rabbitmq.client.GetResponse resp =
-                    ch.basicGet(COMPLETE_QUEUE, true);
-                if (resp != null) {
-                    String body = new String(resp.getBody(), StandardCharsets.UTF_8);
-                    try {
-                        com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
-                            objectMapper.readValue(body,
-                                com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
-                        if (taskId.equals(data.getServiceTaskId())
-                            && "SUCCESS".equals(data.getStatus())) {
-                            return;
+            // WO-QW-7: ручной deadline-цикл со sleep(200) заменён на Awaitility с тем
+            // же условием (content-check нашего taskId, чужой мусор ack'ается и
+            // отбрасывается) и той же каденцией опроса 200мс. Сигнатура отказа
+            // сохранена (IllegalStateException с тем же текстом) — absence-ветки,
+            // ловящие именно его, работают byte-identical.
+            try {
+                await("completion of task " + taskId)
+                    .atMost(timeout)
+                    .pollInterval(Duration.ofMillis(200))
+                    .until(() -> {
+                        com.rabbitmq.client.GetResponse resp =
+                            ch.basicGet(COMPLETE_QUEUE, true);
+                        if (resp == null) {
+                            return false;
                         }
-                    } catch (Exception ignored) {
-                        // Чужой мусор — отброшен ack'ом выше, ждём дальше.
-                    }
-                } else {
-                    Thread.sleep(200);
-                }
+                        String body = new String(resp.getBody(), StandardCharsets.UTF_8);
+                        try {
+                            com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
+                                objectMapper.readValue(body,
+                                    com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
+                            return taskId.equals(data.getServiceTaskId())
+                                && "SUCCESS".equals(data.getStatus());
+                        } catch (Exception ignored) {
+                            // Чужой мусор — отброшен ack'ом выше, ждём дальше.
+                            return false;
+                        }
+                    });
+            } catch (ConditionTimeoutException e) {
+                throw new IllegalStateException(
+                    "timed out waiting for completion of task " + taskId, e);
             }
         }
-        throw new IllegalStateException(
-            "timed out waiting for completion of task " + taskId);
     }
 
     /** Прямой вызов listener'а для отладки ветвлений без брокера (не критерий 1). */

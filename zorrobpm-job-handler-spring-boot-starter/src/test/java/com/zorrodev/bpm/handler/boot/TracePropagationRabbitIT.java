@@ -16,6 +16,7 @@ import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.awaitility.core.ConditionTimeoutException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -24,6 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-OBS-8 criterion 1 (broker half, LIVE broker): a job published with W3C
@@ -188,32 +190,46 @@ class TracePropagationRabbitIT {
     }
 
     private CompletionObserved awaitCompletion(UUID taskId, Duration timeout) throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
         ConnectionFactory f = new ConnectionFactory();
         f.setHost(host);
         f.setPort(port);
         f.setUsername(user);
         f.setPassword(password);
+        // WO-QW-7: ручной deadline-цикл со sleep(200) заменён на Awaitility с той же
+        // каденцией опроса. Найденное значение выносится через AtomicReference
+        // (until возвращает boolean, не значение). Сигнатура отказа сохранена
+        // (IllegalStateException с тем же текстом).
+        java.util.concurrent.atomic.AtomicReference<CompletionObserved> found =
+            new java.util.concurrent.atomic.AtomicReference<>();
         try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
-            while (System.nanoTime() < deadline) {
-                com.rabbitmq.client.GetResponse resp = ch.basicGet(COMPLETE_QUEUE, true);
-                if (resp != null) {
-                    String body = new String(resp.getBody(), StandardCharsets.UTF_8);
-                    try {
-                        ServiceTaskCompleteData data =
-                            objectMapper.readValue(body, ServiceTaskCompleteData.class);
-                        if (taskId.equals(data.getServiceTaskId()) && "SUCCESS".equals(data.getStatus())) {
-                            return new CompletionObserved(data, resp.getProps().getHeaders());
+            try {
+                await("completion of task " + taskId)
+                    .atMost(timeout)
+                    .pollInterval(Duration.ofMillis(200))
+                    .until(() -> {
+                        com.rabbitmq.client.GetResponse resp = ch.basicGet(COMPLETE_QUEUE, true);
+                        if (resp == null) {
+                            return false;
                         }
-                    } catch (Exception ignored) {
-                        // Чужой мусор — отброшен ack'ом выше, ждём дальше.
-                    }
-                } else {
-                    Thread.sleep(200);
-                }
+                        String body = new String(resp.getBody(), StandardCharsets.UTF_8);
+                        try {
+                            ServiceTaskCompleteData data =
+                                objectMapper.readValue(body, ServiceTaskCompleteData.class);
+                            if (taskId.equals(data.getServiceTaskId()) && "SUCCESS".equals(data.getStatus())) {
+                                found.set(new CompletionObserved(data, resp.getProps().getHeaders()));
+                                return true;
+                            }
+                            return false;
+                        } catch (Exception ignored) {
+                            // Чужой мусор — отброшен ack'ом выше, ждём дальше.
+                            return false;
+                        }
+                    });
+            } catch (ConditionTimeoutException e) {
+                throw new IllegalStateException("timed out waiting for completion of task " + taskId, e);
             }
         }
-        throw new IllegalStateException("timed out waiting for completion of task " + taskId);
+        return found.get();
     }
 
     private int serverMessageCount(String queue) throws Exception {
