@@ -79,14 +79,19 @@ TEST_EXIT=0
 E2E_APP_LOG_TAIL="${E2E_APP_LOG_TAIL:-$ROOT/e2e-app-tail.log}"
 
 cleanup() {
+  # WO-OPS-22 (NEW4-02): сохраняем код ПЕРВОЙ строкой — в `trap ... EXIT`
+  # $? несёт код, из-за которого произошёл выход. Без этого упавшая сборка
+  # (set -e убивает скрипт ДО того, как TEST_EXIT хоть раз тронут) выходила
+  # через trap с TEST_EXIT=0 = фейковый success в CI (живой кейс 26.09).
+  rc=$?
   # P-42: teardown не должен маскировать exit-код теста — чистим с || true,
   # выходим с запомненным кодом. KEEP_E2E_UP=1 — оставить стек для отладки.
   if [ "${KEEP_E2E_UP:-0}" = "1" ]; then
     echo "[e2e] KEEP_E2E_UP=1 — стек оставлен (down вручную: $COMPOSE down -v)"
-    exit "$TEST_EXIT"
+    exit $(( TEST_EXIT != 0 ? TEST_EXIT : rc ))
   fi
   $COMPOSE down -v || true
-  exit "$TEST_EXIT"
+  exit $(( TEST_EXIT != 0 ? TEST_EXIT : rc ))
 }
 trap cleanup EXIT
 
@@ -184,7 +189,26 @@ echo "[e2e] playwright: login → tasks → live SSE → complete…"
 # checkout node_modules нет и `npx playwright test` падает
 # `Cannot find package 'playwright'` (раньше работало только за счёт
 # унаследованного состояния раннера). `npm ci` — детерминированно по lock'у.
-if ! (cd zorrobpm-frontend && npm ci && npx playwright test); then
+# WO-OPS-22 (NEW4-03): на раннере НЕТ npm на хосте (живой красный 27.09:
+# `npm: command not found`) — спек едет в контейнере mcr.microsoft.com/playwright,
+# а не на голом хосте. Тег — v<playwright из package-lock.json>-noble (та же
+# дисциплина версионирования, что node:22-alpine у cve:npm-джобы;
+# переопределение — E2E_PLAYWRIGHT_IMAGE). `--network host`: стенд поднят на
+# хосте раннера, контейнер обязан видеть его localhost-порты
+# (E2E_FRONTEND_URL=http://localhost:...) — на Linux-раннере самый простой
+# путь без изобретения сети. `--user` + HOME/CACHE в /tmp — та же гигиена, что
+# у cve:npm (образ по умолчанию пишет от root). PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:
+# браузеры уже в образе (/ms-playwright), качать их npm-postinstall'ом на
+# каждый прогон не надо.
+E2E_PLAYWRIGHT_IMAGE="${E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.62.1-noble}"
+if ! docker run --rm --network host \
+  --user "$(id -u):$(id -g)" \
+  -v "$ROOT/zorrobpm-frontend":/build -w /build \
+  -e E2E_FRONTEND_URL -e E2E_ADMIN_PASSWORD -e E2E_ADMIN_NEW_PASSWORD \
+  -e HOME=/tmp -e NPM_CONFIG_CACHE=/tmp/npm-cache \
+  -e PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+  "$E2E_PLAYWRIGHT_IMAGE" \
+  sh -c "mkdir -p /tmp/npm-cache && npm ci && npx playwright test"; then
   TEST_EXIT=1
   echo "[e2e] FAIL: спек красный — хвост логов app → $E2E_APP_LOG_TAIL" >&2
   $COMPOSE logs --tail=80 app > "$E2E_APP_LOG_TAIL" 2>&1 || true
