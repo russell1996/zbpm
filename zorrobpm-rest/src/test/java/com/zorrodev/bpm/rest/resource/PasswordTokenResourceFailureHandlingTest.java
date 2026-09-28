@@ -18,7 +18,6 @@ import ch.qos.logback.core.read.ListAppender;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
@@ -33,8 +32,6 @@ class PasswordTokenResourceFailureHandlingTest {
     @Mock
     private UserInvitationService invitationService;
     @Mock
-    private RateLimitFilter rateLimitFilter;
-    @Mock
     private HttpServletRequest request;
 
     @InjectMocks
@@ -44,7 +41,7 @@ class PasswordTokenResourceFailureHandlingTest {
     void forgotPassword_swallowsInternalFailure_andLogsError_not500() {
         ForgotPasswordDTO dto = new ForgotPasswordDTO();
         dto.setEmail("user@example.com");
-        when(rateLimitFilter.getClientIp(any(HttpServletRequest.class))).thenReturn("203.0.113.7");
+        when(request.getAttribute(RateLimitFilter.CLIENT_IP_ATTRIBUTE)).thenReturn("203.0.113.7");
         doThrow(new RuntimeException("simulated DB / outbox failure"))
             .when(invitationService).requestReset("user@example.com", "203.0.113.7");
 
