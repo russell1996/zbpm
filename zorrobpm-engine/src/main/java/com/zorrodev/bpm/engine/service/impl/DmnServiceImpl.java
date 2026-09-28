@@ -6,7 +6,6 @@ import com.zorrodev.bpm.contract.model.DmnInput;
 import com.zorrodev.bpm.contract.model.DmnOutput;
 import com.zorrodev.bpm.contract.model.DmnRule;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
-import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionExtensionModel;
 import com.zorrodev.bpm.engine.dmn.xml.DmnDecisionTableModel;
@@ -669,26 +668,8 @@ public class DmnServiceImpl implements DmnService {
     }
 
     private Map<String, Object> toVariableMap(List<ProcessVariable> variables) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        if (variables == null) {
-            return map;
-        }
-        for (ProcessVariable variable : variables) {
-            ProcessVariableType type = variable.getType();
-            if (type == ProcessVariableType.LONG) {
-                map.put(variable.getName(), Long.valueOf(variable.getValue()));
-            } else if (type == ProcessVariableType.BOOLEAN) {
-                map.put(variable.getName(), Boolean.valueOf(variable.getValue()));
-            } else if (type == ProcessVariableType.DOUBLE) {
-                // FEEL numbers are BigDecimal — decimals must enter the decision table as numbers
-                map.put(variable.getName(), new java.math.BigDecimal(variable.getValue()));
-            } else if (type == ProcessVariableType.JSON) {
-                // JSON object/list -> Java Map/List so FEEL can read nested properties and iterate
-                map.put(variable.getName(), objectMapper.readValue(variable.getValue(), Object.class));
-            } else {
-                map.put(variable.getName(), variable.getValue());
-            }
-        }
-        return map;
+        // WO-ENG-29: single typed-conversion with ElementSupport.evaluateMapping —
+        // was a verbatim duplicate of the legacy JSR-223 buildContext conversion.
+        return com.zorrodev.bpm.engine.handler.ElementSupport.toFeelContext(variables, objectMapper);
     }
 }
