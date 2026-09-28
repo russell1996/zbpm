@@ -113,6 +113,14 @@ class RabbitMqProvisioningIT {
         if (!expected.equals(auth)) {
             status = 401;
             response = "auth required".getBytes(StandardCharsets.UTF_8);
+        } else if ("GET".equals(exchange.getRequestMethod())
+            && exchange.getRequestURI().getRawPath().startsWith("/api/users/")) {
+            // WO-SEC-83 (NEW4-05): stub отдаёт GET /api/users/{login} —
+            // несуществующего аккаунта (404), иначе GET-guard сервиса нечего
+            // проверять и provision всегда падал бы 503.
+            status = 404;
+            response = "{\"error\":\"Object Not Found\",\"reason\":\"Not Found\"}"
+                .getBytes(StandardCharsets.UTF_8);
         } else if (!"PUT".equals(exchange.getRequestMethod())) {
             status = 405;
             response = "method not allowed".getBytes(StandardCharsets.UTF_8);
@@ -172,7 +180,7 @@ class RabbitMqProvisioningIT {
             .isNotBlank()
             .isNotEqualTo(password);
         assertThat(putBody.get("tags").asText())
-            .as("no management/administrator tags").isEmpty();
+            .as("managed marker, not empty (WO-SEC-83 NEW4-05)").isEqualTo("zbpm-managed");
         assertThat(putUser.authHeader()).as("service authenticates as the broker admin").isNotBlank();
 
         // DB-флаг выставлен — источник истины для no-op правила.
