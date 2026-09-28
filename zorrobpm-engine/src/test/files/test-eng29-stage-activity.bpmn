@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_eng29_chain" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-ENG-29: mirrors the live report (srvStageCreate → srvActivityCreate):
+       the first service task's output mapping reads a job-result variable the
+       worker did not return; the second task's input mapping reads the same name. -->
+  <bpmn:process id="test-eng29-stage-activity" name="test-eng29-stage-activity" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="srvStageCreate" />
+
+    <bpmn:serviceTask id="srvStageCreate" name="srvStageCreate">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="eng29-stage" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=routeStageUuid" target="routeStageUuid"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="srvStageCreate" targetRef="srvActivityCreate" />
+
+    <bpmn:serviceTask id="srvActivityCreate" name="srvActivityCreate">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="eng29-activity" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=routeStageUuid" target="stageCopy"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="srvActivityCreate" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
