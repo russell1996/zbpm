@@ -239,6 +239,35 @@ class DmnDeployIntegrationTest {
         assertThat(mapper.readTree(pi.getResponse().getContentAsString()).hasNonNull("completedAt")).isTrue();
     }
 
+    // ==================== WO-QW-8: ответ содержит только задеплоенное ====================
+
+    @Test
+    void deployDmn_nonEmptyCatalog_returnsOnlyNewlyDeployed() throws Exception {
+        // Каталог заведомо непуст ДО деплоя (первое решение — чужое для этого теста).
+        String first = "qw8first" + UUID.randomUUID().toString().substring(0, 8);
+        deployDmn(DMN_DISCOUNT
+            .replace("Definitions_discount", "Definitions_" + first)
+            .replace("id=\"discount\"", "id=\"" + first + "\""), null);
+
+        String second = "qw8second" + UUID.randomUUID().toString().substring(0, 8);
+        MvcResult deploy = mockMvc.perform(post("/dmn")
+                .header("Authorization", "Bearer " + adminToken)
+                .content("{\"dmn\":" + mapper.writeValueAsString(DMN_DISCOUNT
+                    .replace("Definitions_discount", "Definitions_" + second)
+                    .replace("id=\"discount\"", "id=\"" + second + "\"")) + "}")
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isCreated())
+            .andReturn();
+
+        // Ответ — только реально задеплоенное этим вызовом, не весь каталог.
+        JsonNode arr = mapper.readTree(deploy.getResponse().getContentAsString());
+        assertThat(arr).hasSize(1);
+        assertThat(arr.get(0).get("id").asText()).isEqualTo(second);
+        assertThat(arr.get(0).get("version").asInt()).isEqualTo(1);
+        // Location — на задеплоенное решение, не на первую строку каталога.
+        assertThat(deploy.getResponse().getHeader("Location")).isEqualTo("/dmn/" + second);
+    }
+
     // ==================== Helpers ====================
 
     private void deployDmn(String dmnXml, UUID processDefinitionId) throws Exception {
