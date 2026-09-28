@@ -10,7 +10,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -20,24 +19,22 @@ class PasswordTokenResourceIpResolutionTest {
     @Mock
     private UserInvitationService invitationService;
     @Mock
-    private RateLimitFilter rateLimitFilter;
-    @Mock
     private HttpServletRequest request;
 
     @InjectMocks
     private PasswordTokenResource resource;
 
     @Test
-    void forgotPasswordUsesProxyAwareClientIp_notRawRemoteAddr() {
+    void forgotPasswordUsesPreFilterClientIpAttribute_notPostRewriteLookup() {
         ForgotPasswordDTO dto = new ForgotPasswordDTO();
         dto.setEmail("user@example.com");
-        when(rateLimitFilter.getClientIp(any(HttpServletRequest.class))).thenReturn("203.0.113.7");
+        // WO-SEC-84: IP приходит из атрибута, который RateLimitFilter положил ДО
+        // ForwardedHeaderFilter-переписывания — ресурс больше не зовёт
+        // getClientIp() из контроллера (там уже подделанное значение).
+        when(request.getAttribute(RateLimitFilter.CLIENT_IP_ATTRIBUTE)).thenReturn("203.0.113.7");
 
         resource.forgotPassword(dto);
 
-        // B5 (HOLD): the resource must delegate IP resolution to the proxy-aware
-        // RateLimitFilter.getClientIp, NOT call request.getRemoteAddr() directly.
-        verify(rateLimitFilter).getClientIp(request);
         verify(invitationService).requestReset("user@example.com", "203.0.113.7");
     }
 }

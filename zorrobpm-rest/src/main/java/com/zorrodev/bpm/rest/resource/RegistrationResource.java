@@ -28,13 +28,21 @@ public class RegistrationResource implements RegistrationContract {
 
     private final SelfRegistrationService registrationService;
     private final HttpServletRequest request;
-    private final RateLimitFilter rateLimitFilter;
 
     @Override
     public void register(@Valid @RequestBody RegisterDTO dto) {
-        // B5 (HOLD precedent from forgot-password): proxy-aware client IP so the
-        // per-IP register bucket is not collapsed onto the proxy address.
-        String clientIp = rateLimitFilter.getClientIp(request);
+        // WO-SEC-84: IP — из атрибута RateLimitFilter (вычислен ДО
+        // ForwardedHeaderFilter-переписывания remoteAddr из недоверенного XFF).
+        // Вызов getClientIp() отсюда, из контроллера, уже видел бы подделанное
+        // значение. Нет атрибута (путь почему-то не прошёл через фильтр) —
+        // fail-closed: отказываем, а не угадываем IP по-другому.
+        Object attr = request.getAttribute(RateLimitFilter.CLIENT_IP_ATTRIBUTE);
+        if (!(attr instanceof String clientIp)) {
+            log.warn("register without {} — RateLimitFilter did not run, rejecting fail-closed",
+                RateLimitFilter.CLIENT_IP_ATTRIBUTE);
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Rate limit exceeded");
+        }
         registrationService.register(dto, clientIp);
     }
 
