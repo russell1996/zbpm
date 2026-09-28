@@ -117,12 +117,24 @@ public class ActivityServiceImplTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        // Stub lockAndReload to delegate to the mock dbService (WO-REL-30: single
-        // getActivityForUpdate — one SELECT FOR UPDATE, same as the real method).
+        // Stub lockInstanceFirst to delegate to the mock dbService in the real
+        // order (WO-REL-59: instance-lock first, then the single
+        // getActivityForUpdate — one SELECT FOR UPDATE, same as the real
+        // method; WO-REL-30 invariant kept).
         // PLUS the fixture's tokens: finishBranch reads them via findToken — a
         // Mockito mock returns empty by default, which would (correctly) take the
         // new stale-token branch on every test. Reproduce the DB those fixtures
         // describe instead: any token the test created exists.
+        org.mockito.Mockito.lenient().when(elementSupport.lockInstanceFirst(any(java.util.UUID.class))).thenAnswer(invocation -> {
+            java.util.UUID id = invocation.getArgument(0);
+            com.zorrodev.bpm.engine.dto.Activity seen = dbService.getActivity(id);
+            if (seen != null) {
+                dbService.lockProcessInstance(seen.getProcessInstanceId());
+            }
+            return dbService.getActivityForUpdate(id);
+        });
+        // fireBoundary/signal-пути по-прежнему идут через lockAndReload
+        // (WO-REL-59 их не трогал) — та же делегация без instance-lock.
         org.mockito.Mockito.lenient().when(elementSupport.lockAndReload(any(java.util.UUID.class))).thenAnswer(invocation ->
             dbService.getActivityForUpdate(invocation.getArgument(0)));
         org.mockito.Mockito.lenient().when(dbService.findToken(any(java.util.UUID.class))).thenAnswer(invocation -> {
