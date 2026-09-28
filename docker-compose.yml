@@ -98,6 +98,12 @@ services:
     image: zorrobpm-app:${APP_TAG:-latest}
     container_name: zorrobpm-app
     restart: unless-stopped
+    # WO-QW-9 (NEW4-09): graceful shutdown просит до 25с
+    # (spring.lifecycle.timeout-per-shutdown-phase), дефолт Docker — 10с до
+    # SIGKILL. Без этого активные HTTP/SSE-запросы убиваются раньше, чем
+    # приложение успевает их корректно завершить (инвариант WO-REL-23).
+    # 35с = 25с graceful + запас на завершение самого entrypoint'а.
+    stop_grace_period: 35s
     depends_on:
       postgres:
         condition: service_healthy

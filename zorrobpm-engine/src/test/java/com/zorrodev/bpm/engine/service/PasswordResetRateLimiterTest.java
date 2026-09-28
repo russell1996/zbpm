@@ -18,12 +18,9 @@ class PasswordResetRateLimiterTest {
     @Mock PgRateLimiter pgRateLimiter;
 
     private PasswordResetRateLimiter limiter(int emailCap, int emailWin, int ipCap, int ipWin) {
-        PasswordResetRateLimiter r = new PasswordResetRateLimiter(pgRateLimiter);
-        r.setEmailCapacity(emailCap);
-        r.setEmailWindowSeconds(emailWin);
-        r.setIpCapacity(ipCap);
-        r.setIpWindowSeconds(ipWin);
-        return r;
+        // WO-QW-9 (NEW4-07): capacities travel via the constructor now —
+        // setters stay only for keyPrefix (namespace), not for tuning.
+        return new PasswordResetRateLimiter(pgRateLimiter, emailCap, emailWin, ipCap, ipWin);
     }
 
 
