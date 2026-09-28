@@ -167,6 +167,9 @@ services:
       RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-}
       OUTBOX_METRICS_SAMPLE_EVERY: ${OUTBOX_METRICS_SAMPLE_EVERY:-}
+      # WO-ENG-30: strict io-mapping compat flag (default false in
+      # application.properties; empty = property default applies).
+      IO_MAPPING_STRICT_MISSING: ${IO_MAPPING_STRICT_MISSING:-}
       TZ: Asia/Almaty
     volumes:
       - app-files:/app/files
