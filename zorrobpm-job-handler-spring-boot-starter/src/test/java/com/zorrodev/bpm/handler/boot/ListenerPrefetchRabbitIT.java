@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * WO-REL-42 criteria 1-2: prefetch actually bounds a slow consumer, on a REAL broker.
@@ -104,16 +105,19 @@ class ListenerPrefetchRabbitIT {
         }
     }
 
-    private static void await(String what, Duration timeout, java.util.function.BooleanSupplier cond)
-            throws Exception {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            if (cond.getAsBoolean()) {
-                return;
-            }
-            Thread.sleep(100);
+    // WO-QW-7: ручной deadline-цикл со sleep(100) заменён на Awaitility с тем же
+    // условием и той же каденцией опроса. Имя — awaitCondition, чтобы не
+    // затенять Awaitility.await (вызовы ниже — все на настоящем Awaitility).
+    private static void awaitCondition(String what, Duration timeout,
+            java.util.function.BooleanSupplier cond) {
+        try {
+            await(what)
+                .atMost(timeout)
+                .pollInterval(Duration.ofMillis(100))
+                .until(cond::getAsBoolean);
+        } catch (org.awaitility.core.ConditionTimeoutException e) {
+            throw new IllegalStateException("timed out waiting for: " + what, e);
         }
-        throw new IllegalStateException("timed out waiting for: " + what);
     }
 
     /** prefetch=1 container on the real broker, through the production wiring shape. */
@@ -153,6 +157,10 @@ class ListenerPrefetchRabbitIT {
             slowCount.incrementAndGet();
             slowFirstTaken.countDown();
             try {
+                // WO-QW-7: намеренно Thread.sleep, не Awaitility — это НЕ ожидание
+                // условия, а симуляция медленного consumer'а (предмет критерия 1:
+                // slow-C держит первое сообщение 3с unacked, fast-C дренирует
+                // остальное). Без сна стимул исчезает и тест бессмысленен.
                 Thread.sleep(3000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -172,7 +180,7 @@ class ListenerPrefetchRabbitIT {
             // delivered exactly 1). Fast starts and must drain everything else.
             fast.start();
             try {
-                await("fast drains " + (total - 1), Duration.ofSeconds(25),
+                awaitCondition("fast drains " + (total - 1), Duration.ofSeconds(25),
                     () -> fastCount.get() >= total - 1);
             } finally {
                 fast.stop();
@@ -209,6 +217,10 @@ class ListenerPrefetchRabbitIT {
             taken.countDown();
             try {
                 // Parked essentially forever — only transport death ends this.
+                // WO-QW-7: намеренно Thread.sleep, не Awaitility — parked-состояние
+                // unacked-сообщения (предмет критерия 2: redelivery ровно одного
+                // сообщения после смерти транспорта). Завершение — извне
+                // (cf.destroy() ниже), ждать условием нечего.
                 Thread.sleep(60000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -218,7 +230,7 @@ class ListenerPrefetchRabbitIT {
         try {
             assertThat(taken.await(20, TimeUnit.SECONDS)).isTrue();
             // While held: 0 ready (1 unacked) — nothing else to redeliver.
-            await("message unacked", Duration.ofSeconds(10),
+            awaitCondition("message unacked", Duration.ofSeconds(10),
                 () -> {
                     try {
                         return serverMessageCount(QUEUE) == 0;
@@ -232,7 +244,7 @@ class ListenerPrefetchRabbitIT {
             cf.destroy();
         }
 
-        await("exactly the held message requeued", Duration.ofSeconds(15),
+        awaitCondition("exactly the held message requeued", Duration.ofSeconds(15),
             () -> {
                 try {
                     return serverMessageCount(QUEUE) == 1;

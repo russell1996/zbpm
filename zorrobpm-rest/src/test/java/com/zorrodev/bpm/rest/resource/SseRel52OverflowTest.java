@@ -106,6 +106,11 @@ class SseRel52OverflowTest {
         @SuppressWarnings("unchecked")
         public void send(SseEventBuilder builder) {
             try {
+                // WO-QW-7: намеренно Thread.sleep, не Awaitility — это НЕ ожидание
+                // условия, а симуляция медленного клиента (часть тестируемого
+                // поведения: переполнение/close-on-overflow наступает только если
+                // send() реально занимает время; тот же паттерн, что
+                // SsePerf6IntegrationTest.SlowEmitter из WO-OPS-14).
                 Thread.sleep(50);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
