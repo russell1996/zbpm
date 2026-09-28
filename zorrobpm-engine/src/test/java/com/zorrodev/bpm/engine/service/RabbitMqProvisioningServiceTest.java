@@ -170,6 +170,75 @@ class RabbitMqProvisioningServiceTest {
                 .isEqualTo(HttpStatus.NOT_FOUND));
     }
 
+    // ==================== WO-SEC-83 (NEW4-05): парсер тегов ====================
+
+    @Test
+    void parseTags_managedAndForeignArrays() {
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"u\",\"tags\":[\"zbpm-managed\"],\"limits\":{}}"))
+            .containsExactly("zbpm-managed");
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"m\",\"tags\":[\"monitoring\"],\"limits\":{}}"))
+            .containsExactly("monitoring");
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"g\",\"tags\":[],\"limits\":{}}"))
+            .isEmpty();
+    }
+
+    @Test
+    void parseTags_realBrokerStringWireFormat() {
+        // WO-SEC-83 red-team #2: реальный брокер отдаёт теги СТРОКОЙ
+        // ("tags":"monitoring", пусто — ""), не массивом. Array-only парсер
+        // молча давал пустое множество на живом ответе.
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"zorrodev\",\"tags\":\"administrator\",\"limits\":{}}"))
+            .containsExactly("administrator");
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"extmonitor\",\"tags\":\"monitoring\",\"limits\":{}}"))
+            .containsExactly("monitoring");
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"zbpmprobe\",\"tags\":\"\",\"limits\":{}}"))
+            .isEmpty();
+        // Несколько тегов через запятую — в одном множестве.
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"x\",\"tags\":\"zbpm-managed,monitoring\",\"limits\":{}}"))
+            .containsExactlyInAnyOrder("zbpm-managed", "monitoring");
+    }
+
+    @Test
+    void parseTags_ignoresNameFieldContainingMarker() {
+        // P-67: login в поле name может содержать маркерную подстроку —
+        // строгость «только tags-массив», не contains по всему телу.
+        assertThat(RabbitMqProvisioningService.parseTags(
+            "{\"name\":\"zbpm-managed-attacker\",\"tags\":[],\"limits\":{}}"))
+            .as("маркер в name — не маркер: чужой аккаунт с хитрым логином не станет своим")
+            .isEmpty();
+        assertThat(RabbitMqProvisioningService.parseTags(null)).isEmpty();
+    }
+
+    // ==================== WO-SEC-83 (NEW4-04): deprovision no-op'ы ====================
+
+    @Test
+    void deprovision_humanUser_noop() {
+        UiUserEntity user = systemUser("humandeact", "HUMAN");
+        when(uiUserRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        service.deprovisionUser(user.getId());
+
+        verify(uiUserRepository, never()).save(any());
+    }
+
+    @Test
+    void deprovision_neverProvisioned_noop() {
+        UiUserEntity user = systemUser("sysdeact", "SYSTEM");
+        user.setRabbitmqProvisioned(false);
+        when(uiUserRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        service.deprovisionUser(user.getId());
+
+        verify(uiUserRepository, never()).save(any());
+    }
+
     // ==================== Union версий + no-op ====================
 
     @Test
