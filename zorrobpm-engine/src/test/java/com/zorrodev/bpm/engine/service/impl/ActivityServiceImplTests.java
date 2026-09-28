@@ -144,12 +144,15 @@ public class ActivityServiceImplTests {
         // CompleteServiceTask phase-first branch, covered by ITs, not here).
         // WO-C8-33: 11th arg — mocked ad-hoc handler, 12th — mocked mapper (ad-hoc
         // scope-job completions go through completeAdHocScopeJob, covered by ITs, not here).
+        // WO-ENG-29: 12th arg — mocked IncidentService (output-mapping FEEL failure →
+        // incident in the service-task tail; covered by Eng29 ITs, not here).
         var completionService = new com.zorrodev.bpm.engine.handler.CompletionService(
             dbService, bpmnService, serviceTaskEnqueueService, elementSupport, multiInstanceExecutor,
             flowNavigator, eventTrigger, executionContext,
             new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.ElementListenerPhaseService.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.AdHocSubProcessHandler.class),
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.IncidentService.class),
             org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.metrics.BpmMetrics.class));
         try {

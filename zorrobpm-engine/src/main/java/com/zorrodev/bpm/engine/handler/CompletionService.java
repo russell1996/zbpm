@@ -51,6 +51,7 @@ public class CompletionService {
     private final UserTaskHandler userTaskHandler;
     private final ElementListenerPhaseService elementListenerPhaseService;
     private final AdHocSubProcessHandler adHocSubProcessHandler;
+    private final IncidentService incidentService;
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final BpmMetrics bpmMetrics;
 
@@ -949,7 +950,19 @@ public class CompletionService {
             return;
         }
 
-        elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
+        // WO-ENG-29, путь (a): output-маппинг, чей source не вычислился (FEEL
+        // failure — например, переменная, которую воркер не вернул в результате
+        // джобы), паркует токен как инцидент через ТОТ ЖЕ IncidentService, что и
+        // input-путь в ActivityServiceImpl.execute() — не молча глотается и не
+        // катит транзакцию без следа. ScriptOverloadException (временная
+        // перегрузка пула) сюда НЕ попадает — он EngineException-наследник и
+        // идёт прежним путём (контейнерный retry, см. ServiceTaskCompleteListener).
+        try {
+            elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
+        } catch (com.zorrodev.bpm.engine.service.FeelEvaluationException e) {
+            incidentService.raiseIncident(processInstanceId, tokenId, bpmnElement, e);
+            return;
+        }
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, serviceTaskId);
         if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId)) {
