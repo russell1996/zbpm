@@ -69,18 +69,48 @@ public class ElementSupport {
     }
 
     /**
-     * Locks the activity's process instance and returns the activity in ONE
-     * {@code SELECT ... FOR UPDATE} ({@code DBService.getActivityForUpdate}).
+     * Locks the activity row ({@code SELECT ... FOR UPDATE} via
+     * {@code DBService.getActivityForUpdate}).
      * Serialises all execution touching one instance so concurrent async
      * branches cannot race on joins or double-advance a token; the row read
      * under the lock is consistent with it (a competing transaction has already
      * committed by the time we hold it).
      * <p>WO-REL-30 (B-3): single statement, no read/lock race window
      * (was: get + lock + get = 3 statements).
+     * <p>WO-REL-59, честно: этот метод лочит ТОЛЬКО activity-строку — НЕ
+     * instance-строку (JOIN в {@code findByIdForUpdate} даёт {@code FOR UPDATE
+     * OF} с одним алиасом на PG, см. javadoc репозитория и
+     * {@code Rel59SqlProbePgIT}). Путь, которому нужна сериализация с cancel
+     * (complete user/service task), обязан брать instance-lock ПЕРВЫМ — через
+     * {@link #lockInstanceFirst}, а не через этот метод.
      * <p>Shared by {@link CompletionService}, {@link EventTrigger} and
      * {@link IncidentService} (WO-AUD-24 / P-24 dedup).
      */
     public Activity lockAndReload(UUID activityId) {
+        return dbService.getActivityForUpdate(activityId);
+    }
+
+    /**
+     * WO-REL-59: единый порядок захвата instance→activity — тот же, что у
+     * cancel-пути ({@code ProcessInstanceRuntimeOperationsImpl}:
+     * {@code lockProcessInstance} → {@code cancelActiveActivities}).
+     * До фикса complete-пути брали activity→instance, cancel — наоборот:
+     * на PostgreSQL это ABBA-deadlock под конкурентной нагрузкой
+     * (проигравший — {@code ERROR: deadlock detected}, SQLState 40P01;
+     * воспроизведено {@code Rel59CompleteCancelDeadlockPgIT} на дереве до
+     * фикса). После фикса второй участник просто ждёт коммита первого —
+     * сериализация вместо deadlock.
+     *
+     * <p>Механика — прецедент {@code IncidentService.resolveIncident}:
+     * plain read (нужен только processInstanceId) → instance-lock →
+     * {@code getActivityForUpdate} (свежесть даёт сам захват: cancel пишет
+     * activity-строки только под instance-lock; row-lock держится до коммита
+     * той же транзакции — паттерн WO-ENG-19). Инвариант WO-REL-30 (ровно один
+     * SELECT FOR UPDATE) сохранён.
+     */
+    public Activity lockInstanceFirst(UUID activityId) {
+        Activity activity = dbService.getActivity(activityId);
+        dbService.lockProcessInstance(activity.getProcessInstanceId());
         return dbService.getActivityForUpdate(activityId);
     }
 
