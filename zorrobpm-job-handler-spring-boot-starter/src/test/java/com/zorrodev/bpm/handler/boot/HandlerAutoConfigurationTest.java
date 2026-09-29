@@ -237,4 +237,24 @@ class HandlerAutoConfigurationTest {
         assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> listener.onMessage(message)))
                 .isInstanceOf(org.springframework.amqp.AmqpException.class);
     }
+
+    @Test
+    @DisplayName("WO-ENG-31: broker unreachable at startup — init survives, subscription skipped")
+    void brokerUnreachableAtStartup_skipsSubscription() {
+        when(applicationContext.getBeansOfType(JobHandler.class))
+                .thenReturn(Map.of("handlerA", handlerA));
+        when(handlerA.getJob()).thenReturn("taskA");
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
+        // Брокер недоступен: getQueueInfo бросает, а не возвращает null.
+        when(amqpAdmin.getQueueInfo(anyString()))
+                .thenThrow(new org.springframework.amqp.AmqpConnectException(
+                    new java.net.ConnectException("Connection refused")));
+
+        // When: init НЕ бросает — приложение стартует без брокера.
+        configuration.init();
+
+        // Then: подписка пропущена (контейнер не стартует), declare'ов нет.
+        verify(container, times(0)).start();
+        verify(amqpAdmin, times(0)).declareQueue(any());
+    }
 }
