@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260621-038
+  - changeSet:
+      id: 20260621-038
+      author: zorrodev
+      changes:
+        # The old unique key (process_instance_id, name) forbids two same-named variables in different
+        # scopes — which a parallel multi-instance needs (each instance has its own inputElement/loopCounter).
+        # Replace it with (process_instance_id, name, scope_id). Root-scope (scope_id NULL) uniqueness is kept
+        # by the application upsert (find-by-scope-null before insert); per-scope uniqueness is enforced here.
+        - dropUniqueConstraint:
+            tableName: variables
+            constraintName: uk_variables__process_instance_id_name
+        - addUniqueConstraint:
+            tableName: variables
+            columnNames: process_instance_id, name, scope_id
+            constraintName: uk_variables__pi_name_scope

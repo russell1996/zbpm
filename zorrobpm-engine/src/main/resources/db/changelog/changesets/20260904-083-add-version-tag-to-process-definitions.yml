@@ -1,0 +1,14 @@
+databaseChangeLog:
+  - logicalFilePath: 20260904-083
+  - changeSet:
+      id: 20260904-083
+      author: zorrodev
+      changes:
+        # WO-C8-3: zeebe:versionTag на процессе — для bindingType="versionTag" на call activity.
+        # Nullable — старые версии без тега не матчатся ни на один запрос по тегу (ожидаемо).
+        - addColumn:
+            tableName: process_definitions
+            columns:
+              - column:
+                  name: version_tag
+                  type: varchar(255)

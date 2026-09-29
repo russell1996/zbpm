@@ -1,0 +1,13 @@
+databaseChangeLog:
+  - logicalFilePath: 20260714-055
+  - changeSet:
+      id: 20260714-055
+      author: mimo
+      changes:
+        - addColumn:
+            tableName: audit_log
+            columns:
+              - column:
+                  name: on_behalf_of
+                  type: varchar(255)
+                  remarks: External user ID when acting via API key (WO-INT-2)

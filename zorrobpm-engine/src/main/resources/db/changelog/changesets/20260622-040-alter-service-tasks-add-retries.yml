@@ -1,0 +1,15 @@
+databaseChangeLog:
+  - logicalFilePath: 20260622-040
+  - changeSet:
+      id: 20260622-040
+      author: zorrodev
+      changes:
+        # Engine-owned retries for a service task (Camunda-style): a worker failure decrements it; when it
+        # reaches 0 the engine raises an incident instead of re-dispatching the job. Initialised from
+        # zeebe:taskDefinition retries (default 3).
+        - addColumn:
+            tableName: service_tasks
+            columns:
+              - column:
+                  name: retries_remaining
+                  type: int

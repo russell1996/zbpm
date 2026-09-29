@@ -1,0 +1,152 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260719-063-pg
+      author: mimo
+      dbms: postgresql
+      changes:
+        - createTable:
+            tableName: events
+            columns:
+              - column:
+                  name: sequence
+                  type: bigint
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: type
+                  type: varchar(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: version
+                  type: int
+                  defaultValueNumeric: 1
+                  constraints:
+                    nullable: false
+              - column:
+                  name: occurred_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_definition_id
+                  type: uuid
+              - column:
+                  name: process_instance_id
+                  type: uuid
+              - column:
+                  name: element_id
+                  type: varchar(255)
+              - column:
+                  name: owner_scope
+                  type: varchar(255)
+              - column:
+                  name: data
+                  type: jsonb
+        - createIndex:
+            tableName: events
+            indexName: idx_events_type
+            columns:
+              - column:
+                  name: type
+        - createIndex:
+            tableName: events
+            indexName: idx_events_process_instance_id
+            columns:
+              - column:
+                  name: process_instance_id
+        - createIndex:
+            tableName: events
+            indexName: idx_events_process_definition_id
+            columns:
+              - column:
+                  name: process_definition_id
+        - createIndex:
+            tableName: events
+            indexName: idx_events_occurred_at
+            columns:
+              - column:
+                  name: occurred_at
+
+  - changeSet:
+      id: 20260719-063-h2
+      author: mimo
+      dbms: h2
+      changes:
+        - createTable:
+            tableName: events
+            columns:
+              - column:
+                  name: sequence
+                  type: bigint
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: type
+                  type: varchar(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: version
+                  type: int
+                  defaultValueNumeric: 1
+                  constraints:
+                    nullable: false
+              - column:
+                  name: occurred_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: process_definition_id
+                  type: uuid
+              - column:
+                  name: process_instance_id
+                  type: uuid
+              - column:
+                  name: element_id
+                  type: varchar(255)
+              - column:
+                  name: owner_scope
+                  type: varchar(255)
+              - column:
+                  name: data
+                  type: text
+        - createIndex:
+            tableName: events
+            indexName: idx_events_type
+            columns:
+              - column:
+                  name: type
+        - createIndex:
+            tableName: events
+            indexName: idx_events_process_instance_id
+            columns:
+              - column:
+                  name: process_instance_id
+        - createIndex:
+            tableName: events
+            indexName: idx_events_process_definition_id
+            columns:
+              - column:
+                  name: process_definition_id
+        - createIndex:
+            tableName: events
+            indexName: idx_events_occurred_at
+            columns:
+              - column:
+                  name: occurred_at

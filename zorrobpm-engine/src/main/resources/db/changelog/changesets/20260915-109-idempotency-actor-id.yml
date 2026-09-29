@@ -1,0 +1,63 @@
+databaseChangeLog:
+  - logicalFilePath: 20260915-109
+  - changeSet:
+      id: 20260915-109
+      author: zorrodev
+      comment: "WO-REL-32 F05: PK (idem_key, endpoint, credential_hash) → (idem_key, endpoint, actor_id) — стабильный субъект, не hash токена; F04/F06 требуют тех же шагов."
+      changes:
+        # Старые записи TTL 24ч — безопасно подчистить перед сменой PK, иначе два
+        # разных credential_hash под одним (key, endpoint) сколлапсят в один actor_id "".
+        - sql:
+            dbms: postgresql, h2
+            sql: DELETE FROM idempotency_record
+        - dropPrimaryKey:
+            tableName: idempotency_record
+        - addColumn:
+            tableName: idempotency_record
+            columns:
+              - column:
+                  name: actor_id
+                  type: varchar(64)
+                  defaultValue: ""
+                  constraints:
+                    nullable: false
+        # credential_hash остаётся обычной колонкой (deprecated, TTL смоет старые строки)
+        - addPrimaryKey:
+            tableName: idempotency_record
+            columnNames: idem_key, endpoint, actor_id
+            constraintName: pk_idempotency_record
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON TABLE idempotency_record IS 'Идемпотентность мутаций (WO-REL-21/32): сохранённые ответы по ключу клиента, скоуп — actor_id (стабильный субъект), не hash токена';
+              COMMENT ON COLUMN idempotency_record.actor_id IS 'Стабильный actor_id: UUID userId (JWT/ServicePrincipal) или "" для анонима (/auth/register); часть PK — ротация токена не плодит дубли';
+              COMMENT ON COLUMN idempotency_record.credential_hash IS 'DEPRECATED: SHA-256 сырых байт Authorization (оставлен для совместимости, не входит в PK с 109)';
+              COMMENT ON COLUMN idempotency_record.request_hash IS 'SHA-256 тела запроса (hex), защита от переиспользования ключа';
+              COMMENT ON COLUMN idempotency_record.response_status IS 'Сохранённый HTTP-статус для replay';
+              COMMENT ON COLUMN idempotency_record.response_body IS 'Сохранённое тело ответа для replay';
+              COMMENT ON COLUMN idempotency_record.response_content_type IS 'Content-Type сохранённого ответа';
+              COMMENT ON COLUMN idempotency_record.created_at IS 'Момент сохранения (TTL-очистка по нему)';
+        - sql:
+            dbms: h2
+            sql: CREATE INDEX IF NOT EXISTS idx_idempotency_record_created_at ON idempotency_record (created_at)
+      rollback:
+        # WO-OPS-15: restores the pre-109 PK (auto-named, as 105 created it).
+        # The TTL wipe (DELETE) and the credential_hash→actor_id rescope have no
+        # inverse (expired rows are gone; old hashes were TTL data) — accepted,
+        # documented. TABLE + credential_hash COMMENTs restored to their exact
+        # 105 wordings (not NULL — 105 had set them); actor_id COMMENT dies with
+        # the column. The h2 re-CREATE INDEX is a no-op (105 already created the
+        # index on both DBs), so its inverse is intentionally no inverse.
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON TABLE idempotency_record IS 'Идемпотентность create-мутаций (WO-REL-21): сохранённые ответы по ключу клиента';
+              COMMENT ON COLUMN idempotency_record.credential_hash IS 'SHA-256 сырых байтов Authorization-заголовка (пусто для анонимных; часть PK, раунд 2: replay скоупирован на credential)';
+        - dropPrimaryKey:
+            tableName: idempotency_record
+        - dropColumn:
+            tableName: idempotency_record
+            columnName: actor_id
+        - addPrimaryKey:
+            tableName: idempotency_record
+            columnNames: idem_key, endpoint, credential_hash

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8subcomp" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-sub-compensation" name="c8-sub-compensation" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow1" name="subFlow1" sourceRef="subStart" targetRef="taskA" />
+      <bpmn:scriptTask id="taskA" name="taskA" scriptFormat="feel" resultVariable="tmpA">
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:outgoing>subFlow2</bpmn:outgoing>
+        <bpmn:script>1</bpmn:script>
+      </bpmn:scriptTask>
+      <bpmn:boundaryEvent id="bA" name="bA" attachedToRef="taskA">
+        <bpmn:compensateEventDefinition id="ced_a" />
+      </bpmn:boundaryEvent>
+      <bpmn:association id="assocA" sourceRef="bA" targetRef="handlerA" />
+      <bpmn:scriptTask id="handlerA" name="handlerA" scriptFormat="feel" resultVariable="log" isForCompensation="true">
+        <bpmn:script>log * 10 + 1</bpmn:script>
+      </bpmn:scriptTask>
+      <bpmn:sequenceFlow id="subFlow2" name="subFlow2" sourceRef="taskA" targetRef="compThrow" />
+      <bpmn:intermediateThrowEvent id="compThrow" name="compThrow">
+        <bpmn:incoming>subFlow2</bpmn:incoming>
+        <bpmn:outgoing>subFlow3</bpmn:outgoing>
+        <bpmn:compensateEventDefinition id="ced_throw" />
+      </bpmn:intermediateThrowEvent>
+      <bpmn:sequenceFlow id="subFlow3" name="subFlow3" sourceRef="compThrow" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subFlow3</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

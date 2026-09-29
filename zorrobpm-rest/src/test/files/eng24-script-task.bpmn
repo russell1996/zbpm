@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng24rest" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="eng24-script-task" name="eng24-script-task" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="scriptSum" />
+
+    <!-- WO-ENG-24: script-task со значением по умолчанию из стартовых
+         переменных (a=1, b=2 из CompleteTaskIntegrationTest) — старт гоняет
+         FEEL через общий пул; при насыщенном пуле старт отвечает 503. -->
+    <bpmn:scriptTask id="scriptSum" name="scriptSum" scriptFormat="feel" resultVariable="sum">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+      <bpmn:script>a + b</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="scriptSum" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

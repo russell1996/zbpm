@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_c8comp" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.40.1" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.8.0">
+  <bpmn:process id="c8-composite" name="c8-composite" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="charge" />
+    <bpmn:serviceTask id="charge" name="charge">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="payment-charge" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="charge" targetRef="split" />
+    <bpmn:exclusiveGateway id="split" name="split">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>fBig</bpmn:outgoing>
+      <bpmn:outgoing>fSmall</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="fBig" name="big orders" sourceRef="split" targetRef="review">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=amount &gt; 100</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="fSmall" name="small orders" sourceRef="split" targetRef="ship">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=amount &lt;= 100</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="review" name="review">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="manager" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fBig</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="reviewTimer" name="reviewTimer" attachedToRef="review" cancelActivity="true">
+      <bpmn:outgoing>fTimeout</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerDef_review">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT10M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fTimeout" name="fTimeout" sourceRef="reviewTimer" targetRef="timedOut" />
+    <bpmn:endEvent id="timedOut" name="timedOut">
+      <bpmn:incoming>fTimeout</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="review" targetRef="ship" />
+    <bpmn:serviceTask id="ship" name="ship">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="shipment-create" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f4" name="f4" sourceRef="ship" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f4</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

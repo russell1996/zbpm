@@ -1,0 +1,30 @@
+databaseChangeLog:
+  - logicalFilePath: 20260813-072
+  - changeSet:
+      id: 20260813-072-index
+      author: zorrodev
+      comment: WO-PERF-3 — index for the boundary timer re-arm query (activity_id, boundary_element_id, fired, created_at DESC)
+      changes:
+        - createIndex:
+            tableName: timer_jobs
+            indexName: idx_timer_jobs__activity_boundary_fired_created
+            columns:
+              - column:
+                  name: activity_id
+              - column:
+                  name: boundary_element_id
+              - column:
+                  name: fired
+              - column:
+                  name: created_at
+                  descending: true
+      rollback:
+        - dropIndex:
+            tableName: timer_jobs
+            indexName: idx_timer_jobs__activity_boundary_fired_created
+
+  # WO-PERF-3 — orphaned fired boundary jobs (NULL process_instance_id, pre-fix rows) are NOT
+  # deleted here. A migration-time DELETE would run one irreversible statement over the whole
+  # growing table under the changelog lock, blocking startup. The cleanup lives in
+  # RetentionBatchProcessor.deleteOrphanedBoundaryTimers(): batched (LIMIT), TTL-gated
+  # (created_at < cutoff), inside the existing scheduled retention job.

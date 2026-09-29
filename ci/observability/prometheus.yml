@@ -1,0 +1,42 @@
+# WO-OBS-2: Prometheus scrape config — 5 jobs, 15s interval.
+# Scrape token for zorrobpm-app is read from /etc/prometheus/scrape-token
+# (credentials_file). Create the token file before starting the stack:
+#   1) create a service API key as SUPER_ADMIN (UI or curl /api/auth),
+#   2) echo -n "zbpm_sk_..." > ci/observability/scrape-token && chmod 600 ci/observability/scrape-token
+# For docker-compose.multi.yml (soak rig, 3 replicas app1/app2/app3) add those
+# 3 targets to the zorrobpm-app job's static_configs below (app1/app2/app3:8080).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # --web.route-prefix=/prometheus/ (docker-compose.observability.yml) moves ALL of
+  # Prometheus's own served paths under that prefix, including its self-scrape target's
+  # metrics endpoint -- without the prefix here this job 404s against itself every scrape.
+  - job_name: 'prometheus'
+    metrics_path: '/prometheus/metrics'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'zorrobpm-app'
+    metrics_path: '/actuator/prometheus'
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape-token
+    static_configs:
+      - targets: ['app:8080']
+        # For multi-instance soak (docker-compose.multi.yml):
+        # - targets: ['app1:8080', 'app2:8080', 'app3:8080']
+
+  - job_name: 'rabbitmq'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['rabbitmq:15692']
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']

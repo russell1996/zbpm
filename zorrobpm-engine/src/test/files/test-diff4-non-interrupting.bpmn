@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-DIFF-4: mirrors Raxon S-036 (non-interrupting timer boundary on serviceTask).
+     cancelActivity="false" — the guarded task is NOT cancelled, the boundary
+     path forks in parallel and both branches converge in a 2-way join. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_diff4_noninterrupting"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-diff4-non-interrupting" name="test-diff4-non-interrupting" isExecutable="true">
+    <bpmn:startEvent id="start" name="Start">
+      <bpmn:outgoing>flow-start-work</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow-start-work" sourceRef="start" targetRef="work" />
+    <bpmn:serviceTask id="work" name="Work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="diff4-ni-work" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-start-work</bpmn:incoming>
+      <bpmn:outgoing>flow-work-join</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="timeout" name="Timeout" attachedToRef="work" cancelActivity="false">
+      <bpmn:outgoing>flow-timeout-escape</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration>PT2S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flow-work-join" sourceRef="work" targetRef="join" />
+    <bpmn:sequenceFlow id="flow-timeout-escape" sourceRef="timeout" targetRef="escape" />
+    <bpmn:serviceTask id="escape" name="Escape">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="diff4-ni-escape" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-timeout-escape</bpmn:incoming>
+      <bpmn:outgoing>flow-escape-join</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flow-escape-join" sourceRef="escape" targetRef="join" />
+    <bpmn:parallelGateway id="join" name="Join">
+      <bpmn:incoming>flow-work-join</bpmn:incoming>
+      <bpmn:incoming>flow-escape-join</bpmn:incoming>
+      <bpmn:outgoing>flow-join-after</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flow-join-after" sourceRef="join" targetRef="after" />
+    <bpmn:serviceTask id="after" name="After">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="diff4-ni-after" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow-join-after</bpmn:incoming>
+      <bpmn:outgoing>flow-after-end</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flow-after-end" sourceRef="after" targetRef="end" />
+    <bpmn:endEvent id="end" name="End">
+      <bpmn:incoming>flow-after-end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

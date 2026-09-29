@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c8subbt" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c8-sub-boundary-timer" name="c8-sub-boundary-timer" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow1" name="subFlow1" sourceRef="subStart" targetRef="work" />
+      <bpmn:userTask id="work" name="work">
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:outgoing>subFlow2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:boundaryEvent id="timeout" name="timeout" attachedToRef="work" cancelActivity="true">
+        <bpmn:outgoing>subFlowTimeout</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="ted1">
+          <bpmn:timeDuration>PT10S</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="subFlowTimeout" name="subFlowTimeout" sourceRef="timeout" targetRef="endTimeout" />
+      <bpmn:endEvent id="endTimeout" name="endTimeout">
+        <bpmn:incoming>subFlowTimeout</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="subFlow2" name="subFlow2" sourceRef="work" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subFlow2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

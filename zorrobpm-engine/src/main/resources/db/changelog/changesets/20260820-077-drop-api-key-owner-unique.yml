@@ -1,0 +1,31 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260820-077-drop-api-key-owner-unique
+      author: mimo
+      changes:
+        # WO-INT-4 criterion 7: a SYSTEM account may hold several concurrent API keys
+        # (zero-downtime rotation). The one-key-per-user invariant for HUMAN accounts
+        # is enforced in application code (ApiKeyManagementResource.issueKeyForUser),
+        # so the DB unique constraint on owner_user_id is dropped and replaced with a
+        # plain index that keeps owner lookups fast.
+        # H2 reuses the unique constraint's index for the FK (fk_api_key_user), so the
+        # FK is dropped first, the unique constraint removed, a plain index created,
+        # and the FK re-added — it then binds to the plain index.
+        - dropForeignKeyConstraint:
+            baseTableName: api_key
+            constraintName: fk_api_key_user
+        - dropUniqueConstraint:
+            tableName: api_key
+            constraintName: uq_api_key_owner
+        - createIndex:
+            tableName: api_key
+            indexName: idx_api_key_owner_user_id
+            columns:
+              - column:
+                  name: owner_user_id
+        - addForeignKeyConstraint:
+            baseTableName: api_key
+            baseColumnNames: owner_user_id
+            referencedTableName: ui_users
+            referencedColumnNames: id
+            constraintName: fk_api_key_user

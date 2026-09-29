@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_collect_null" name="collect-null-test" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="collectNullSumDecision" name="Collect Null Sum Decision">
+    <decisionTable id="DecisionTable_collectnullsum" hitPolicy="COLLECT" aggregation="SUM">
+      <input id="Input_1" label="Score">
+        <inputExpression id="InputExpression_1" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Points" name="points" typeRef="number" />
+      <!-- WO-ENG-25 (NEW-06, критерий 3): правило матчится, но output пуст —
+           агрегат обязан вернуть null по DMN-семантике, а не 0 и не NPE -->
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>&gt;= 0</text></inputEntry>
+        <outputEntry id="Out_1"><text></text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <decision id="collectNullMinDecision" name="Collect Null Min Decision">
+    <decisionTable id="DecisionTable_collectnullmin" hitPolicy="COLLECT" aggregation="MIN">
+      <input id="Input_2" label="Score">
+        <inputExpression id="InputExpression_2" typeRef="number" expressionLanguage="feel">
+          <text>score</text>
+        </inputExpression>
+      </input>
+      <output id="Output_2" label="Points" name="points" typeRef="number" />
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>&gt;= 0</text></inputEntry>
+        <outputEntry id="Out_2"><text></text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

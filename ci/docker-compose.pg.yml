@@ -1,0 +1,30 @@
+# WO-PROC-8: minimal postgres:16 for PG-IT in CI.
+# Separate from the root docker-compose.yml so `up` does NOT interpolate the `app`
+# service (which requires ZORROBPM_JWT_SECRET / ADMIN_PASSWORD with no default and
+# aborts `docker compose up postgres` before postgres even starts).
+# Ephemeral: no named volume — every CI run gets a clean database.
+name: zbpm-pgci
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    # WO-REL-38: commit-timestamps для порядка ленты (FeedPositionAssigner
+    # читает pg_xact_commit_timestamp(xmin); контекст postmaster — только
+    # через командную строку, SET после старта не работает).
+    command: ["postgres", "-c", "track_commit_timestamp=on"]
+    environment:
+      POSTGRES_DB: ${PG_DB:-zorrobpm-db}
+      POSTGRES_USER: ${PG_USER:-zorrodev}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-zorrodev}
+      TZ: Asia/Almaty
+    # Publish on a NON-STANDARD host port by default (55432) so `up` never collides with a
+    # host-installed PostgreSQL on 5432/5433 (dev machines often run local postgres — P-23).
+    # The containerised test connects via the compose network to postgres:5432 (internal), so
+    # this published port only matters for the CI runner's --network host path.
+    ports:
+      - "${PG_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-zorrodev} -d ${PG_DB:-zorrobpm-db}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20

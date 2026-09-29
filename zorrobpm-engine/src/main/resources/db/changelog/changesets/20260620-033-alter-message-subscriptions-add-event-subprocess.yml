@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - logicalFilePath: 20260620-033
+  - changeSet:
+      id: 20260620-033
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: message_subscriptions
+            columns:
+              - column:
+                  name: event_subprocess_id
+                  type: varchar(255)
+        # event-subprocess subscriptions have no host activity, so activity_id becomes nullable
+        - dropNotNullConstraint:
+            tableName: message_subscriptions
+            columnName: activity_id
+            columnDataType: uuid

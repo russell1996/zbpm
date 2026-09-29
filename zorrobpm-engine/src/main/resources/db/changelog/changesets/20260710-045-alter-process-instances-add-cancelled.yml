@@ -1,0 +1,15 @@
+databaseChangeLog:
+  - logicalFilePath: 20260710-045
+  - changeSet:
+      id: 20260710-045
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: process_instances
+            columns:
+              - column:
+                  name: cancelled
+                  type: boolean
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false

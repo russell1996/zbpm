@@ -1,0 +1,131 @@
+{
+  "id": null,
+  "uid": "bpm-domain",
+  "title": "ZorroBPM — BPM Domain",
+  "tags": ["zorrobpm"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "query": "label_values(instance)",
+        "datasource": "Prometheus",
+        "current": {"text": "All", "value": "$__all"},
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Processes — started / completed / failed (rate 5m)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "rate(zbpm_process_started_total[5m])", "legendFormat": "started"},
+        {"expr": "rate(zbpm_process_completed_total[5m])", "legendFormat": "completed"},
+        {"expr": "rate(zbpm_process_failed_total[5m])", "legendFormat": "failed"}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []}
+    },
+    {
+      "id": 2,
+      "title": "Active process instances",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [{"expr": "zbpm_process_instances_active", "legendFormat": "active"}]
+    },
+    {
+      "id": 3,
+      "title": "Incidents — open stuck tokens",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "zbpm_tokens_stuck", "legendFormat": "open"},
+        {"expr": "rate(zbpm_process_failed_total[5m])", "legendFormat": "rate"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Timers — lag p50/p95/max + backlog",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "histogram_quantile(0.5, rate(zbpm_timer_lag_seconds_bucket[5m]))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, rate(zbpm_timer_lag_seconds_bucket[5m]))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, rate(zbpm_timer_lag_seconds_bucket[5m]))", "legendFormat": "max"},
+        {"expr": "pg_stat_activity_count{datname=\"zorrobpm-db\"}", "legendFormat": "pg activity"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Outbox — backlog / published / failed / quarantine",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "zbpm_outbox_backlog", "legendFormat": "backlog"},
+        {"expr": "rate(zbpm_outbox_published_total[5m])", "legendFormat": "published"},
+        {"expr": "rate(zbpm_outbox_failed_total[5m])", "legendFormat": "failed"},
+        {"expr": "zbpm_outbox_quarantine", "legendFormat": "quarantine"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "DLQ — rabbit queue depth",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "rabbitmq_queue_messages{queue=\"zorrobpm.complete-service-task.dlq\"}", "legendFormat": "dlq"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Service tasks — stuck + dispatch rate",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "zbpm_servicetask_stuck", "legendFormat": "stuck"},
+        {"expr": "rate(zbpm_process_started_total[5m])", "legendFormat": "dispatch rate"}
+      ]
+    },
+    {
+      "id": 8,
+      "title": "User tasks — oldest open age (max)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "zbpm_usertask_age_max", "legendFormat": "age max (s)"}
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

@@ -1,0 +1,21 @@
+databaseChangeLog:
+  - logicalFilePath: 20260908-101
+  - changeSet:
+      id: 20260908-101
+      author: zorrodev
+      dbms: postgresql
+      changes:
+        # WO-REG-1: case-insensitive уникальность email — фундамент всего эпика
+        # регистрации. Функциональный индекс по lower(email): Foo@Bar.com и
+        # foo@bar.com — один адрес. Частичный (WHERE email IS NOT NULL):
+        # у SYSTEM-аккаунтов email отсутствует законно, их не трогаем.
+        # H2-варианта НЕТ сознательно: H2 2.4.240 не тянет function+partial
+        # вместе (проверено вживую: syntax error), а plain-UNIQUE на H2 ломал бы
+        # чужие фикстуры с shared email (Sec58*) — H2 проверяет только сервисный
+        # уровень, уникальность доказывает отдельный PG-тест. NULL дублируются
+        # свободно (SYSTEM-аккаунты в порядке) — проверено вживую на обеих СУБД.
+        - sql:
+            sql: CREATE UNIQUE INDEX idx_ui_users__email_lower ON ui_users (lower(email)) WHERE email IS NOT NULL
+      rollback:
+        - sql:
+            sql: DROP INDEX IF EXISTS idx_ui_users__email_lower

@@ -1,0 +1,28 @@
+databaseChangeLog:
+  - changeSet:
+      id: 20260711-050-backfill-tenant-data
+      author: mimo
+      changes:
+        # Promote existing admin users (role='ADMIN') to SUPER_ADMIN
+        - sql:
+            sql: >
+              UPDATE ui_users SET role = 'SUPER_ADMIN' WHERE role = 'ADMIN';
+        # For every admin user, make them OWNER of every process in the registry
+        - sql:
+            sql: >
+              INSERT INTO process_member (process_id, user_id, role, added_at)
+              SELECT pr.id, ui.id, 'OWNER', CURRENT_TIMESTAMP
+              FROM process pr, ui_users ui
+              WHERE ui.role = 'SUPER_ADMIN'
+              AND NOT EXISTS (
+                SELECT 1 FROM process_member pm
+                WHERE pm.process_id = pr.id AND pm.user_id = ui.id
+              );
+      rollback:
+        # WO-OPS-15: data backfill is intentionally forward-only — promoted
+        # ADMIN→SUPER_ADMIN rows and backfilled OWNER memberships are
+        # indistinguishable from native ones, so no faithful inverse exists
+        # (an eager inverse would demote live super-admins). Explicit no-op
+        # so rollback-count succeeds instead of RollbackImpossibleException.
+        - sql:
+            sql: SELECT 1

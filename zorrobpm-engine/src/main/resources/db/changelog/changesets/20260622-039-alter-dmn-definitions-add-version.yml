@@ -1,0 +1,61 @@
+databaseChangeLog:
+  - logicalFilePath: 20260622-039
+  - changeSet:
+      id: 20260622-039
+      author: zorrodev
+      changes:
+        # Version DMN decisions instead of overwriting by decision_id: a surrogate id becomes the PK and a
+        # version column is added; (decision_id, version) is unique. The latest version is used at evaluation.
+        - addColumn:
+            tableName: dmn_definitions
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+              - column:
+                  name: version
+                  type: int
+        - sql:
+            dbms: postgresql
+            sql: UPDATE dmn_definitions SET id = gen_random_uuid(), version = 1 WHERE id IS NULL
+        - sql:
+            dbms: h2
+            sql: UPDATE dmn_definitions SET id = random_uuid(), version = 1 WHERE id IS NULL
+        - addNotNullConstraint:
+            tableName: dmn_definitions
+            columnName: id
+            columnDataType: uuid
+        - addNotNullConstraint:
+            tableName: dmn_definitions
+            columnName: version
+            columnDataType: int
+        - dropPrimaryKey:
+            tableName: dmn_definitions
+            constraintName: pk_dmn_definitions
+        - addPrimaryKey:
+            tableName: dmn_definitions
+            columnNames: id
+            constraintName: pk_dmn_definitions
+        - addUniqueConstraint:
+            tableName: dmn_definitions
+            columnNames: decision_id, version
+            constraintName: uk_dmn_definitions__decision_id_version
+      rollback:
+        # WO-OPS-15: full reverse. Pre-039 PK was (decision_id) — see
+        # 20260620-034. Backfill UPDATE has no inverse (values vanish with
+        # the dropped columns).
+        - dropUniqueConstraint:
+            tableName: dmn_definitions
+            constraintName: uk_dmn_definitions__decision_id_version
+        - dropPrimaryKey:
+            tableName: dmn_definitions
+        - addPrimaryKey:
+            tableName: dmn_definitions
+            columnNames: decision_id
+            constraintName: pk_dmn_definitions
+        - dropColumn:
+            tableName: dmn_definitions
+            columnName: version
+        - dropColumn:
+            tableName: dmn_definitions
+            columnName: id

@@ -1,0 +1,71 @@
+# WO-TEST-12: override для E2E-стенда (использовать ТОЛЬКО вместе с
+# базовым docker-compose.yml — сам по себе ничего не поднимает).
+#
+# Отличия от прод-топологии:
+#  1. Куки без Secure-флага, потому что E2E идёт по plain http://localhost
+#     (браузер не хранит Secure-куки без TLS). Флаг env-конфигурируем (P-13):
+#     прод-дефолт `true` в AuthResource не тронут, здесь — явный override
+#     тестового стенда, не хардкод.
+#  2. WO-QW-5 (NEW2-13): project-scoped имена. Базовый compose задаёт
+#     фиксированные `container_name: zorrobpm-*` — с COMPOSE_PROJECT_NAME они
+#     несовместимы, поэтому здесь container_name СНИМАЕМ (`!reset`:
+#     compose сгенерирует `<project>-<service>-1`), а сеть именуем от проекта
+#     явно. Итог: E2E-стенд (`zorrobpm-e2e-*`) и dev-стек (`zorrobpm-*`) живут
+#     рядом без конфликта имён, портов (см. ports ниже) и volumes
+#     (`<project>_<volume>`).
+#  3. E2E-стенд — dev-профиль БД/брокера: дефолтные `zorrodev`-креды
+services:
+  postgres:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
+    # Сброс базовых публикаций: compose APPEND'ит ports из override к базовым —
+    # без сброса базовые 5432/5672/8080/8081 остаются и конфликтуют с чужими
+    # стеками на том же хосте (проверено живой ошибкой bind 5432). Пустой
+    # список + override-доктрина compose: `!override` заменяет целиком.
+    ports: !override
+      - "127.0.0.1:${E2E_DB_PORT:-55432}:5432"
+  rabbitmq:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
+    ports: !override
+      - "${E2E_RABBITMQ_PORT:-55672}:5672"
+      - "${E2E_RABBITMQ_MGMT_PORT:-59300}:15672"
+  app:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
+    environment:
+      ZORROBPM_SECURITY_COOKIE_SECURE: "false"
+      # E2E идёт с http://localhost:<порт> — origin обязан быть в allowlist.
+      # ДВА разных свойства читают ДВА разных места (поймано живым 403):
+      #  - `zorrobpm.cors.allowed-origins` → Spring WebConfiguration (CORS),
+      #  - `ZORROBPM_CORS_ORIGINS` → application-prod.yml → тот же ключ
+      #    (но в dev-профиле prod-yml не грузится — нужен прямой env-алиас
+      #    relaxed-binding'а: ZORROBPM_CORS_ALLOWED_ORIGINS).
+      ZORROBPM_CORS_ORIGINS: "http://localhost:${E2E_FRONTEND_PORT:-58081}"
+      ZORROBPM_CORS_ALLOWED_ORIGINS: "http://localhost:${E2E_FRONTEND_PORT:-58081}"
+      # E2E-стенд — тестовый, дефолтные креды БД/брокера легитимны (п.3 выше).
+      # Профиль `dev` — из SAFE_PROFILES обоих fail-fast валидаторов
+      # (AdminPasswordValidator + SEC-80 DbRabbitPasswordValidator): guard'ы
+      # его пропускают по построению, прод (профиль prod) — под защитой.
+      # `dev`, не `test`: test-профиль переопределяет datasource на shared
+      # H2 `mem:test` (application.properties тестов) и уводит стенд мимо
+      # реального postgres.
+      SPRING_PROFILES_ACTIVE: "dev"
+      # В dev-профиле application-prod.yml НЕ грузится, а дефолтный
+      # properties знает только DB/Rabbit-ключи — admin-пароль и JWT-секрет
+      # идут ПРЯМЫМИ env-алиасами relaxed binding (поймано живым 401:
+      # ZORROBPM_DEFAULT_ADMIN_PASSWORD без prod-yml маппится в корень
+      # `zorrobpm.*`, а @Value ждёт `zorrobpm.security.*`).
+      ZORROBPM_SECURITY_DEFAULT_ADMIN_PASSWORD: "${ZORROBPM_DEFAULT_ADMIN_PASSWORD:?ZORROBPM_DEFAULT_ADMIN_PASSWORD must be set in .env}"
+      ZORROBPM_SECURITY_JWT_SECRET: "${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}"
+      # E2E-стенд за одним IP делит ОДИН data-бакет (per-IP, 300/мин): сам
+      # сценарий + любой ручной дебаг против поднятого стенда жрут его вместе
+      # (поймано живьём: data:<ip>=299/300 → 429 на /events/stream, SSE
+      # выглядел «сломанным», а был задушен моими же пробами). На тестовом
+      # стенде бакет щедрый — rate-limit доказывают его собственные IT
+      # (Sec52/RateLimitPerKey/Api4/Diff6), не этот спек. Прод-дефолт 300
+      # в коде не тронут.
+      ZORROBPM_SECURITY_RATE_LIMIT_DATA_CAPACITY: "10000"
+    ports: !override
+      - "${E2E_APP_PORT:-58080}:8080"
+  frontend:
+    container_name: !reset null # сброс: compose сгенерирует <project>-<service>-1
+    ports: !override
+      - "${E2E_FRONTEND_PORT:-58081}:80"

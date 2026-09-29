@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - logicalFilePath: 20260619-029
+  - changeSet:
+      id: 20260619-029
+      author: zorrodev
+      changes:
+        - addColumn:
+            tableName: signal_subscriptions
+            columns:
+              - column:
+                  name: boundary_element_id
+                  type: varchar(255)

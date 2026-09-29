@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_pe" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-parallel-end" isExecutable="true">
+    <bpmn:startEvent id="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="startEvent" targetRef="parallel1"/>
+    <bpmn:parallelGateway id="parallel1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" sourceRef="parallel1" targetRef="endA"/>
+    <bpmn:endEvent id="endA">
+      <bpmn:incoming>fA</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="fB" sourceRef="parallel1" targetRef="userTask1"/>
+    <bpmn:userTask id="userTask1">
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fC</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fC" sourceRef="userTask1" targetRef="endB"/>
+    <bpmn:endEvent id="endB">
+      <bpmn:incoming>fC</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
