@@ -76,6 +76,15 @@
             <version>0.8.0-SNAPSHOT</version>
         </dependency>
 
+        <!-- WO-ENG-31 Фаза 2: built-in воркер HTTP-коннектора — встроен в app-сборку
+             по умолчанию (решение CTO п.8: отдельный деплой — только если потребует
+             нагрузка; starter уже на classpath через zorrobpm-rabbitmq/engine). -->
+        <dependency>
+            <groupId>com.zorrodev.bpm</groupId>
+            <artifactId>zorrobpm-http-connector</artifactId>
+            <version>0.8.0-SNAPSHOT</version>
+        </dependency>
+
         <!-- WO-AUDIT-1: first test in this module (prometheus exposure on the app
              context) — mirrors zorrobpm-rest test deps -->
         <dependency>
