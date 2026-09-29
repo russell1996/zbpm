@@ -81,10 +81,10 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
       GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
       # WO-REL-61: the %(protocol)s/%(domain)s placeholders above resolve from THESE two
-      # settings — without them Grafana defaulted to http://localhost/grafana/ while browsers
-      # reach it as https://<prod-domain>/grafana/, and Grafana 11's Origin-vs-root_url check
-      # 403'd every POST /api/ds/query + the live websocket ("all dashboards no data", prod
-      # 2026-09-29). Dev-safe defaults (NOT :?required — same pattern as the neighbors below):
+      # settings — without them Grafana believed itself to be http://localhost/grafana/
+      # (proven live: GET / redirects to Location: http://localhost/grafana/) while browsers
+      # reach it as https://<prod-domain>/grafana/, and every POST /api/ds/query + the live
+      # websocket 403'd ("origin not allowed" — all dashboards no data, prod 2026-09-29). Dev-safe defaults (NOT :?required — same pattern as the neighbors below):
       # unset → the old http://localhost value, byte-identical to before; prod .env sets
       # GF_SERVER_PROTOCOL=https + GRAFANA_DOMAIN=<public domain>.
       GF_SERVER_PROTOCOL: ${GF_SERVER_PROTOCOL:-http}
