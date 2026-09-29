@@ -101,4 +101,27 @@ class Sec86GetClientIpTest {
             .as("X-Forwarded-For is never a source, even from a trusted peer (SEC-4)")
             .isEqualTo(PROXY);
     }
+
+    @Test
+    void trustedPeer_commaListRealIp_fallsBackToRemoteAddr() {
+        // Red-team WO-SEC-86 (п.3): список через запятую — не IP, fail-closed.
+        filter.setTrustedProxies(Set.of(PROXY));
+        assertThat(filter.getClientIp(request(PROXY, "203.0.113.66, 10.0.0.1", null)))
+            .isEqualTo(PROXY);
+    }
+
+    @Test
+    void trustedPeer_garbageRealIp_fallsBackToRemoteAddr() {
+        filter.setTrustedProxies(Set.of(PROXY));
+        assertThat(filter.getClientIp(request(PROXY, "not-an-ip", null)))
+            .isEqualTo(PROXY);
+    }
+
+    @Test
+    void matchesCidr_invalidPrefix_failClosed() {
+        // Red-team WO-SEC-86 (п.2): /33 и отрицательный — не доверять никому.
+        assertThat(RateLimitFilter.matchesCidr("10.0.0.1", "10.0.0.0/33")).isFalse();
+        assertThat(RateLimitFilter.matchesCidr("10.0.0.1", "10.0.0.0/-1")).isFalse();
+        assertThat(RateLimitFilter.matchesCidr("10.0.0.1", "10.0.0.0/24")).isTrue();
+    }
 }

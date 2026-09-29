@@ -409,7 +409,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String remoteAddr = request.getRemoteAddr();
         if (!trustedProxies.isEmpty() && isTrustedProxy(remoteAddr)) {
             String realIp = request.getHeader("X-Real-IP");
-            if (realIp != null && !realIp.isBlank()) {
+            // Red-team WO-SEC-86 (п.3): значение обязано быть одиночным IP —
+            // список через запятую / мусор ротацией давал бы свежие бакеты +
+            // раздувал таблицу. Не-IP → fallback на remoteAddr (fail-closed).
+            if (realIp != null && !realIp.isBlank() && isSingleIpAddress(realIp.trim())) {
                 return realIp.trim();
             }
         }
@@ -431,6 +434,20 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     /**
+     * Red-team WO-SEC-86 (п.3): строгая проверка «одиночный IP-адрес» (v4/v6) —
+     * без неё список/мусор в X-Real-IP становился ключом бакета дословно.
+     */
+    static boolean isSingleIpAddress(String value) {
+        if (value.contains(",") || value.contains(" ") || value.contains("\t")) return false;
+        try {
+            java.net.InetAddress.getByName(value);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Simple CIDR match for IPv4. Supports /8, /16, /24, /32 masks.
      */
     static boolean matchesCidr(String ip, String cidr) {
@@ -438,6 +455,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
             String[] parts = cidr.split("/");
             String network = parts[0];
             int prefixLen = Integer.parseInt(parts[1]);
+            // Red-team WO-SEC-86 (п.2): prefix вне 0..32 — fail-closed. Без
+            // этого сдвиг Java (mod 64) давал маску Long.MIN_VALUE и match
+            // ЛЮБОГО пира (fail-open на опечатке в env).
+            if (prefixLen < 0 || prefixLen > 32) return false;
 
             long ipNum = ipToLong(ip);
             long networkNum = ipToLong(network);
