@@ -29,7 +29,17 @@ export const useTaskStore = defineStore('task', () => {
   let userTasksRequest = 0
   let serviceTasksRequest = 0
 
+  // WO-REL-60: последний query каждого списка. handleEvent (SSE live-refetch)
+  // обязан повторять ТЕКУЩИЙ фильтр страницы, а не голый fetch:
+  // TaskList грузит с completed:false, а fetchUserTasks() без query сносил
+  // фильтр — completed-задача возвращалась в список и строка не исчезала
+  // (ночной E2E красный 27–28.09, user-task.completed долетал, refetch
+  // отвечал без completed=false — доказано CDP-кадром + network-логом).
+  let lastUserTasksQuery: UserTaskQuery = {}
+  let lastServiceTasksQuery: ServiceTaskQuery = {}
+
   async function fetchUserTasks(query: UserTaskQuery = {}) {
+    lastUserTasksQuery = query
     const myRequest = ++userTasksRequest
     loading.value = true
     error.value = null
@@ -84,6 +94,7 @@ export const useTaskStore = defineStore('task', () => {
   }
 
   async function fetchServiceTasks(query: ServiceTaskQuery = {}) {
+    lastServiceTasksQuery = query
     const myRequest = ++serviceTasksRequest
     loading.value = true
     error.value = null
@@ -138,10 +149,10 @@ export const useTaskStore = defineStore('task', () => {
     switch (envelope.type) {
       case 'user-task.created':
       case 'user-task.completed':
-        fetchUserTasks()
+        fetchUserTasks(lastUserTasksQuery)
         break
       case 'service-task.created':
-        fetchServiceTasks()
+        fetchServiceTasks(lastServiceTasksQuery)
         break
     }
   }
