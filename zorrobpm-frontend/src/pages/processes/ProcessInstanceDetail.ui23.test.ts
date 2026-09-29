@@ -68,12 +68,25 @@ vi.mock('@/services/variableService', () => ({
   getVariables: mockGetVariables,
 }))
 
+// WO-ACL-22: кнопка отмены теперь требует право (SUPER_ADMIN либо
+// OWNER/DESIGNER из listMembers) — мокаем оба источника как OWNER.
+const mockListMembers = vi.hoisted(() => vi.fn())
+vi.mock('@/services/adminService', () => ({
+  listMembers: mockListMembers,
+}))
+const mockAuthUser = vi.hoisted(() => ({ id: 'u-1' }))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ user: mockAuthUser, isSuperAdmin: false }),
+}))
+
 const stubs = { teleport: true, BpmnViewer: { template: '<div class="bpmn-stub" />' } }
 
 describe('WO-UI-23: variable inspector + cancel button icon', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    mockAuthUser.id = 'u-1'
+    mockListMembers.mockResolvedValue([{ userId: 'u-1', role: 'OWNER' }])
     mockGetVariables.mockResolvedValue({
       data: [
         { name: 'steps', type: 'JSON', value: LONG_JSON },

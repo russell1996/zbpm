@@ -505,7 +505,12 @@ async function init(id: string) {
   if (pi) {
     await processStore.fetchStructure(pi.processDefinitionId)
   }
-  await loadMembers()
+  // WO-ACL-22: членство грузим НЕ дожидаясь (fire-and-forget): отдельный
+  // запрос вне критического пути страницы — await сериализовал бы за ним и
+  // loadBpmnXml, а в jsdom-тестах без мока adminService реальный XHR вообще
+  // не резолвится, вешая весь init. Кнопка отмены реактивно появится, когда
+  // членство приедет (до этого — скрыта, fail-closed).
+  void loadMembers()
   await loadBpmnXml()
 }
 
@@ -513,11 +518,16 @@ async function init(id: string) {
 // ProcessDefinitionDetail.loadMembers — GET /processes/{key}/members).
 // Ключ — из уже загруженного инстанса; тихий пропуск при отсутствии ключа:
 // кнопка просто не показывается без подтвержденного членства (fail-closed).
+// Протухший ответ чужого инстанса (быстрая навигация) не применяется —
+// сверяем ключ на момент ответа, а не только на момент запроса.
 async function loadMembers() {
-  const pi = processStore.currentInstance
-  if (!pi?.processKey) return
+  const key = processStore.currentInstance?.processKey
+  if (!key) return
   try {
-    members.value = await listMembers(pi.processKey)
+    const loaded = await listMembers(key)
+    if (processStore.currentInstance?.processKey === key) {
+      members.value = loaded
+    }
   } catch {
     members.value = []
   }
