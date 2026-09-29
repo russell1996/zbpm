@@ -47,3 +47,6 @@ ci/soak/out/
 
 # WO-OBS-2: scrape token for prometheus (bearer, created via SUPER_ADMIN API key)
 ci/observability/scrape-token
+
+# WO-ENG-31: app runtime log dir (logback rolling file) — machine-local, never commit.
+zorrobpm-app/logs/

@@ -67,7 +67,21 @@ public class HandlerAutoConfiguration {
             JobHandler handler = entry.getValue();
             SimpleMessageListenerContainer container = connectionFactory.createListenerContainer();
             String queueName = "zorrobpm.jobs." + handler.getJob();
-            if (amqpAdmin.getQueueInfo(queueName) == null) {
+            // WO-ENG-31: declare-блок обязан переживать недоступный брокер на старте.
+            // До built-in воркеров в app-контексте не было НИ ОДНОГО JobHandler —
+            // getQueueInfo падал только в теории; первый же встроенный хендлер вскрыл:
+            // Connection refused в @PostConstruct роняет ВЕСЬ контекст (app-тесты красные).
+            // Без брокера подписка пропускается (задачи копятся в outbox/очереди до рестарта),
+            // приложение стартует и обслуживает остальное.
+            final boolean brokerReachable;
+            try {
+                brokerReachable = amqpAdmin.getQueueInfo(queueName) != null;
+            } catch (RuntimeException e) {
+                log.warn("RabbitMQ unreachable at startup, skipping subscription to {} "
+                    + "(will subscribe on restart): {}", queueName, e.getMessage());
+                continue;
+            }
+            if (!brokerReachable) {
                 // WO-REL-45: mirror the engine-side JobQueueDeclarer — DLX/DLQ
                 // arguments identical, so whichever side declares first wins and
                 // the second declare is a no-op (same args, no 406). A worker
