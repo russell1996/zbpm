@@ -10,7 +10,16 @@ import type {
 } from '@/types/api'
 
 function toQueryString(params: Record<string, unknown>): string {
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
+  // WO-REL-60: `false`/`0` — ЛЕГИТИМНЫЕ значения фильтров (completed=false =
+  // "только активные", pageIndex=0 = первая страница), их НЕЛЬЗЯ отбрасывать
+  // как "пустые". Отбрасываются только реально отсутствующие значения
+  // (undefined/null) и пустая строка. Раньше здесь было `v !== ''`, и
+  // `false` падало молча: бэкенд возвращал задачи БЕЗ фильтра completed,
+  // включая только что завершённые — live-строка не исчезала после SSE
+  // `user-task.completed` (ночной E2E красный 27–28.09).
+  const entries = Object.entries(params).filter(
+    ([, v]) => v !== undefined && v !== null && v !== '',
+  )
   return entries.length > 0 ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : ''
 }
 
