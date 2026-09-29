@@ -27,6 +27,16 @@ zorrobpm:
       enabled: ${ZORROBPM_RATE_LIMIT_ENABLED:true}
       capacity: ${ZORROBPM_RATE_LIMIT_CAPACITY:5}
       window-seconds: ${ZORROBPM_RATE_LIMIT_WINDOW:60}
+      # WO-SEC-86: доверенные прокси для per-IP бакетов. Когда TCP-пир входит в
+      # этот список (IP/CIDR через запятую), IP клиента берётся из X-Real-IP,
+      # который frontend-nginx перезаписывает своим post-real_ip $remote_addr
+      # (подделать клиентом нельзя). Пир вне списка — используется raw remoteAddr.
+      # Дефолт 172.16.0.0/12 покрывает стандартные пулы Docker bridge (контейнер
+      # frontend получает IP оттуда; пинить subnet в compose НЕЛЬЗЯ — прод-инцидент
+      # 2026-09-14, Pool overlaps). Пусто = никому не доверять (прежнее поведение,
+      # общий бакет за прокси). Переопределить в .env, если daemon использует
+      # кастомные пулы (сверить: docker network inspect <сеть>).
+      trusted-proxies: ${ZORROBPM_RATE_LIMIT_TRUSTED_PROXIES:172.16.0.0/12}
   cors:
     allowed-origins: ${ZORROBPM_CORS_ORIGINS:http://localhost:5173}
 

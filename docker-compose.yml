@@ -127,6 +127,15 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-zorrodev}
       # WO-INT-9: Management API для per-system провижининга (внутри сети — имя сервиса).
       RABBITMQ_MGMT_BASE_URL: ${RABBITMQ_MGMT_BASE_URL:-http://rabbitmq:15672}
+      # WO-SEC-86: кому приложение доверяет заголовок X-Real-IP для per-IP
+      # rate-limit бакетов (иначе все «per-IP» бюджеты — один общий бакет на всю
+      # инсталляцию: TCP-пир app всегда frontend-контейнер). Класс WO-INT-6: var
+      # из host-.env доходит до контейнера ТОЛЬКО если перечислена здесь явно.
+      # Дефолт 172.16.0.0/12 — стандартные пулы Docker bridge (IP frontend оттуда;
+      # сверка: docker network inspect zorrobpm_zorrobpm). Явный subnet/ipam-пин
+      # в compose НЕ ставить — прод-инцидент 2026-09-14 (Pool overlaps). Если
+      # daemon использует кастомные пулы — задать в .env точный CIDR/IP frontend.
+      ZORROBPM_RATE_LIMIT_TRUSTED_PROXIES: ${ZORROBPM_RATE_LIMIT_TRUSTED_PROXIES:-172.16.0.0/12}
       APP_FILES_DIR: /app/files
       # REQUIRED in prod: strong secret, else the app refuses to start (WO-SEC-9). Generate: openssl rand -base64 48
       ZORROBPM_JWT_SECRET: ${ZORROBPM_JWT_SECRET:?ZORROBPM_JWT_SECRET must be set in .env}
