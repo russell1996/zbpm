@@ -91,7 +91,13 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
+  // WO-REL-60: тот же lastQuery-паттерн, что в task.ts — live-refetch
+  // повторяет текущий фильтр страницы (processDefinitionKey), иначе
+  // событие сбрасывает выбранный фильтр ключом.
+  let lastInstancesQuery: ProcessInstanceQuery = {}
+
   async function fetchInstances(query: ProcessInstanceQuery = {}) {
+    lastInstancesQuery = query
     const myRequest = ++instancesRequest
     loading.value = true
     error.value = null
@@ -208,7 +214,7 @@ export const useProcessStore = defineStore('process', () => {
       case 'process-instance.started':
       case 'process-instance.completed':
       case 'process-instance.cancelled':
-        fetchInstances()
+        fetchInstances(lastInstancesQuery)
         break
     }
   }
