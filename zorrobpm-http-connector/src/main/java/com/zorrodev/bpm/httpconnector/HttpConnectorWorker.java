@@ -75,14 +75,17 @@ public class HttpConnectorWorker implements JobHandler {
     private final HttpConnectorProperties properties;
     private final HttpSsrfGate ssrfGate;
     private final ActivityService activityService;
-    private final ObjectMapper objectMapper;
+    // Свой инстанс, не контейнерный бин: engine отдаёт tools.jackson (Jackson 3),
+    // а обмену со стартером нужен com.fasterxml (Jackson 2) — бина Jackson 2 в
+    // app-контексте нет (ловил полный verify: NoSuchBeanDefinitionException).
+    // Прецедент — TokenService/JsonSchemaValidator (свой MAPPER, не бин).
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public HttpConnectorWorker(HttpConnectorProperties properties, HttpSsrfGate ssrfGate,
-            ActivityService activityService, ObjectMapper objectMapper) {
+            ActivityService activityService) {
         this.properties = properties;
         this.ssrfGate = ssrfGate;
         this.activityService = activityService;
-        this.objectMapper = objectMapper;
     }
 
     @Override

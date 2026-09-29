@@ -1,6 +1,5 @@
 package com.zorrodev.bpm.httpconnector;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.exchange.JobDetailModel;
@@ -45,7 +44,6 @@ class HttpConnectorWorkerTest {
     private volatile String lastRequestMethod;
 
     private final ActivityService activityService = mock(ActivityService.class);
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void startServer() throws IOException {
@@ -122,7 +120,7 @@ class HttpConnectorWorkerTest {
         props.setAllowPrivateNetworks(allowPrivate);
         props.setMaxResponseBytes(maxResponseBytes);
         props.setMaxRedirects(maxRedirects);
-        return new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService, objectMapper);
+        return new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService);
     }
 
     private HttpConnectorWorker localWorker() {
@@ -202,7 +200,7 @@ class HttpConnectorWorkerTest {
         props.setAllowPrivateNetworks(true);
         props.getSecrets().put("svc", "{\"type\":\"bearer\",\"token\":\"tok123\"}");
         HttpConnectorWorker worker =
-            new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService, objectMapper);
+            new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService);
 
         worker.handleJob(job(
             pv("http.url", baseUrl + "/ok", "STRING"),
@@ -220,7 +218,7 @@ class HttpConnectorWorkerTest {
         props.setAllowPrivateNetworks(true);
         props.getSecrets().put("k", "{\"type\":\"apiKey\",\"name\":\"api_key\",\"value\":\"v1\",\"in\":\"query\"}");
         HttpConnectorWorker worker =
-            new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService, objectMapper);
+            new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService);
 
         worker.handleJob(job(
             pv("http.url", baseUrl + "/ok", "STRING"),
