@@ -15,6 +15,7 @@ COPY zorrobpm-job-handler-spring-boot-starter/pom.xml zorrobpm-job-handler-sprin
 COPY zorrobpm-test/pom.xml zorrobpm-test/pom.xml
 COPY zorrobpm-exchange/pom.xml zorrobpm-exchange/pom.xml
 COPY zorrobpm-rabbitmq/pom.xml zorrobpm-rabbitmq/pom.xml
+COPY zorrobpm-http-connector/pom.xml zorrobpm-http-connector/pom.xml
 COPY zorrobpm-app/pom.xml zorrobpm-app/pom.xml
 RUN mvn -B -ntp dependency:go-offline
 
@@ -40,6 +41,7 @@ COPY zorrobpm-job-handler-spring-boot-starter/pom.xml zorrobpm-job-handler-sprin
 COPY zorrobpm-test/pom.xml zorrobpm-test/pom.xml
 COPY zorrobpm-exchange/pom.xml zorrobpm-exchange/pom.xml
 COPY zorrobpm-rabbitmq/pom.xml zorrobpm-rabbitmq/pom.xml
+COPY zorrobpm-http-connector/pom.xml zorrobpm-http-connector/pom.xml
 COPY zorrobpm-app/pom.xml zorrobpm-app/pom.xml
 RUN mvn -B -ntp dependency:go-offline
 
