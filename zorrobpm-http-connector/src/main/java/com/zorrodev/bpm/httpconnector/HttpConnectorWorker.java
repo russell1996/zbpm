@@ -104,6 +104,15 @@ public class HttpConnectorWorker implements JobHandler {
             activityService.throwServiceTaskError(model.getServiceTaskId(), code,
                 List.of(contractErrorVar(e.getMessage())));
             return List.of();
+        } catch (IllegalArgumentException e) {
+            // Red-team (G-H): URI.create/resolve/header-builder кидают unchecked IAE
+            // (внутренний пробел в URL, кривой Location с allowlisted-сервера) — это
+            // детерминированный невалидный вход, а не транзиент: та же BPMN-ошибка,
+            // иначе пустые FAILED-ретраи вопреки решению CTO п.3.
+            log.warn("HTTP connector invalid input for task {}: {}", model.getServiceTaskId(), e.getMessage());
+            activityService.throwServiceTaskError(model.getServiceTaskId(), ERR_CONFIG,
+                List.of(contractErrorVar("invalid URL or redirect location: " + e.getMessage())));
+            return List.of();
         } catch (IOException | InterruptedException e) {
             // Транзиентно: проброс → FAILED → failServiceTask (ретраи/инцидент — engine).
             // kill воркера между HTTP-эффектом и completion — задокументированное at-least-once

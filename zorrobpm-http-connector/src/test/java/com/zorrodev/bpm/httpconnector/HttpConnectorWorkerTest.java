@@ -425,6 +425,32 @@ class HttpConnectorWorkerTest {
     }
 
     @Test
+    void malformedUrlWithInnerSpace_deterministicError_noRetries() {
+        // Red-team (G-H находка 1): внутренний пробел — URI.create бросает unchecked IAE,
+        // обязан уйти в BPMN-ошибку ERR_CONFIG, а не в FAILED-ретраи.
+        JobDetailModel model = job(pv("http.url", "http://exa mple.com/", "STRING"));
+
+        List<ProcessVariable> result = localWorker().handleJob(model);
+
+        assertThat(result).isEmpty();
+        verify(activityService).throwServiceTaskError(eq(model.getServiceTaskId()),
+            eq(HttpConnectorWorker.ERR_CONFIG), any());
+    }
+
+    @Test
+    void timeoutEdgeValues_rejected_deterministically() {
+        // Red-team (G-H находка 2): 0/отрицательное/NaN/Infinity — детерминированный reject.
+        for (String bad : new String[]{"0", "-5", "NaN", "Infinity"}) {
+            JobDetailModel model = job(
+                pv("http.url", baseUrl + "/ok", "STRING"),
+                pv("http.readTimeout", bad, "STRING"));
+            localWorker().handleJob(model);
+            verify(activityService).throwServiceTaskError(eq(model.getServiceTaskId()),
+                eq(HttpConnectorWorker.ERR_CONFIG), any());
+        }
+    }
+
+    @Test
     void jobType_isReservedHttp() {
         assertThat(localWorker().getJob()).isEqualTo("zorrobpm:http");
     }

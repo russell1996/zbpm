@@ -124,6 +124,29 @@ class HttpSsrfGateTest {
             .hasMessageContaining("not in zorrobpm.http-connector.allowed-hosts");
     }
 
+    @Test
+    void dnsSuffix_classicBypass_evilExample_rejected() {
+        // Red-team (G-H): канонический allowlist-bypass — "evil-example.com" НЕ суффикс "example.com".
+        // Ловля — только через точку-якорь, не через endsWith голой строки.
+        HttpSsrfGate gate = gate("example.com", true);
+        assertThatThrownBy(() -> gate.validate(URI.create("http://evil-example.com/")))
+            .isInstanceOf(HttpSsrfGate.SsrfRejectedException.class)
+            .hasMessageContaining("not in zorrobpm.http-connector.allowed-hosts");
+        assertThatThrownBy(() -> gate.validate(URI.create("http://example.com.evil.com/")))
+            .isInstanceOf(HttpSsrfGate.SsrfRejectedException.class)
+            .hasMessageContaining("not in zorrobpm.http-connector.allowed-hosts");
+    }
+
+    @Test
+    void uppercaseScheme_accepted_notABypass() {
+        // Red-team (G-H): "HTTP://8.8.8.8" — та же схема после lowercase, не обход.
+        try {
+            gate("8.8.8.8", false).validate(URI.create("HTTP://8.8.8.8/"));
+        } catch (Exception e) {
+            throw new AssertionError("uppercase HTTP scheme must pass the scheme check", e);
+        }
+    }
+
     // --- Побайтовые проверки диапазонов (без DNS) ---
 
     @Test
