@@ -20,7 +20,13 @@ export const useIncidentStore = defineStore('incident', () => {
   // переключением фильтра показывает устаревшие данные.
   let incidentsRequest = 0
 
+  // WO-REL-60: тот же lastQuery-паттерн, что в task.ts — live-refetch
+  // повторяет текущий фильтр страницы (resolved:false), иначе resolved-
+  // инцидент возвращается в список после incident.resolved.
+  let lastIncidentsQuery: IncidentQuery = {}
+
   async function fetchIncidents(query: IncidentQuery = {}) {
+    lastIncidentsQuery = query
     const myRequest = ++incidentsRequest
     loading.value = true
     error.value = null
@@ -69,7 +75,7 @@ export const useIncidentStore = defineStore('incident', () => {
     switch (envelope.type) {
       case 'incident.raised':
       case 'incident.resolved':
-        fetchIncidents()
+        fetchIncidents(lastIncidentsQuery)
         break
     }
   }
