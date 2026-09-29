@@ -48,19 +48,26 @@ public class AuthorizationService {
     /**
      * Process role → allowed actions (ADR-8 п.4: fixed mapping, defined in code).
      * <ul>
-     *   <li>OWNER — everything process-scoped: runtime, DEPLOY (model update, ADR-8 п.3), MANAGE_MEMBERS (п.7).</li>
-     *   <li>DESIGNER — runtime + DEPLOY (model update, ADR-8 п.3); members are managed by OWNER only (п.7).</li>
+     *   <li>OWNER — everything process-scoped: runtime, DEPLOY (model update, ADR-8 п.3), MANAGE_MEMBERS (п.7),
+     *       DELETE_PROCESS (cancel of own instances, WO-ACL-22).</li>
+     *   <li>DESIGNER — runtime + DEPLOY (model update, ADR-8 п.3) + DELETE_PROCESS (WO-ACL-22: same
+     *       runtime tier as OWNER — START/FETCH_LOCK/COMPLETE_SERVICE_TASK/CORRELATE_MESSAGE);
+     *       members are managed by OWNER only (п.7).</li>
      *   <li>VIEWER — read-only: may see members and their roles (ADR-8 п.4).</li>
      * </ul>
      */
     private static final Map<ProcessRole, Set<Action>> ROLE_RIGHTS = Map.of(
         ProcessRole.OWNER, EnumSet.of(Action.DEPLOY, Action.MANAGE_MEMBERS, Action.VIEW_MEMBERS,
             Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE,
+            // WO-ACL-22: OWNER cancels instances of his own process (no SUPER_ADMIN round-trip).
+            Action.DELETE_PROCESS,
             // WO-INT-4 criterion 4: a system key owned by an OWNER completes/claims user tasks
             // on behalf of a verified user — "runtime" rights of the owner role.
             Action.COMPLETE_USER_TASK),
         ProcessRole.DESIGNER, EnumSet.of(Action.DEPLOY, Action.VIEW_MEMBERS,
-            Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE),
+            Action.START, Action.FETCH_LOCK, Action.COMPLETE_SERVICE_TASK, Action.CORRELATE_MESSAGE,
+            // WO-ACL-22: DESIGNER rides the same runtime tier as OWNER (explicit CTO default).
+            Action.DELETE_PROCESS),
         ProcessRole.VIEWER, EnumSet.of(Action.VIEW_MEMBERS)
     );
 

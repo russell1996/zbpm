@@ -6,6 +6,8 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { useTaskStore } from '@/stores/task'
 import { useIncidentStore } from '@/stores/incident'
+import { useAuthStore } from '@/stores/auth'
+import { listMembers, type Member } from '@/services/adminService'
 import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import { useToast } from '@/composables/useToast'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
@@ -28,6 +30,7 @@ const router = useRouter()
 const processStore = useProcessStore()
 const taskStore = useTaskStore()
 const incidentStore = useIncidentStore()
+const auth = useAuthStore()
 const toast = useToast()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
@@ -289,14 +292,28 @@ async function confirmComplete() {
   }
 }
 
-// WO-UI-21 Раунд 2: ручная отмена instance. Кнопка видна только пока
-// instance активен (тот же паттерн, что isTaskActive для тасков рядом).
-// Прав НЕ проверяем заранее — паттерн проекта для action-кнопок
-// (archive в ProcessDefinitionList): кнопка видна всем, 403 от бэкенда
-// превращается в понятный тост в confirmCancel ниже (критерий 5).
+// WO-ACL-22: кнопка отмены видна только пока instance активен И у пользователя
+// есть право DELETE_PROCESS (SUPER_ADMIN либо OWNER/DESIGNER текущего процесса).
+// Паттерн — как myMembership в ProcessDefinitionDetail (WO-ACL-6/8): роль берём
+// из уже загруженного списка членов процесса (listMembers), не хардкодим;
+// VIEWER кнопку не видит (раньше видел и получал 403+тост — найдено CTO живьём).
+const members = ref<Member[]>([])
+
+const myMembership = computed(() => {
+  if (!auth.user) return null
+  return members.value.find((m) => m.userId === auth.user?.id) || null
+})
+
+const canCancelInstance = computed(
+  () =>
+    auth.isSuperAdmin ||
+    myMembership.value?.role === 'OWNER' ||
+    myMembership.value?.role === 'DESIGNER',
+)
+
 const isInstanceCancellable = computed(() => {
   const pi = processStore.currentInstance
-  return !!pi && isProcessInstanceActive(pi)
+  return !!pi && isProcessInstanceActive(pi) && canCancelInstance.value
 })
 
 // WO-UI-21 Раунд 2: ключ подписи статуса шапки — computed в script, а не
@@ -479,6 +496,7 @@ function downloadDiagnostic() {
 async function init(id: string) {
   bpmnXml.value = ''
   selectedElement.value = null
+  members.value = []
   await processStore.fetchInstance(id)
   // load tasks/service-tasks/incidents/activities/subprocesses up-front so the BPMN element
   // panel can offer cross-links and highlighting immediately
@@ -487,7 +505,22 @@ async function init(id: string) {
   if (pi) {
     await processStore.fetchStructure(pi.processDefinitionId)
   }
+  await loadMembers()
   await loadBpmnXml()
+}
+
+// WO-ACL-22: члены процесса для проверки права отмены (тот же источник, что
+// ProcessDefinitionDetail.loadMembers — GET /processes/{key}/members).
+// Ключ — из уже загруженного инстанса; тихий пропуск при отсутствии ключа:
+// кнопка просто не показывается без подтвержденного членства (fail-closed).
+async function loadMembers() {
+  const pi = processStore.currentInstance
+  if (!pi?.processKey) return
+  try {
+    members.value = await listMembers(pi.processKey)
+  } catch {
+    members.value = []
+  }
 }
 
 onMounted(() => init(route.params.id as string))

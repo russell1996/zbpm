@@ -75,6 +75,19 @@ vi.mock('@/services/variableService', () => ({
   getVariables: vi.fn().mockResolvedValue({ data: [] }),
 }))
 
+// WO-ACL-22: роль — из списка членов процесса (тот же источник, что
+// ProcessDefinitionDetail.myMembership). mutable: тесты ниже переключают
+// OWNER → DESIGNER → VIEWER → outsider.
+const mockListMembers = vi.hoisted(() => vi.fn())
+const mockAuthUser = vi.hoisted(() => ({ id: 'u-1' }))
+const mockSuperAdmin = vi.hoisted(() => ({ value: false }))
+vi.mock('@/services/adminService', () => ({
+  listMembers: mockListMembers,
+}))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ user: mockAuthUser, isSuperAdmin: mockSuperAdmin.value }),
+}))
+
 const stubs = { teleport: true, BpmnViewer: { template: '<div class="bpmn-stub" />' } }
 
 function activeInstance() {
@@ -95,6 +108,11 @@ describe('WO-UI-21 Round 2: ProcessInstanceDetail manual cancel', () => {
     vi.clearAllMocks()
     mockGetInstance.mockResolvedValue(activeInstance())
     mockCancel.mockResolvedValue({ id: 'pi-1' })
+    // Дефолт — текущий юзер OWNER процесса (кнопка видна; старые CRIT-2..CRIT-4
+    // и обновлённый CRIT-5 идут по этому пути).
+    mockAuthUser.id = 'u-1'
+    mockSuperAdmin.value = false
+    mockListMembers.mockResolvedValue([{ userId: 'u-1', role: 'OWNER' }])
   })
 
   async function mountDetail() {
@@ -171,11 +189,14 @@ describe('WO-UI-21 Round 2: ProcessInstanceDetail manual cancel', () => {
   })
 
   it('CRIT-5: 403 (no DELETE_PROCESS) shows an explicit error; button is NOT pre-hidden by rights', async () => {
+    // WO-ACL-22: поведение намеренно ИЗМЕНЕНО — кнопка заранее скрыта по правам
+    // (VIEWER её не видит, см. новые тесты ниже); 403-ветка confirmCancel
+    // оставлена как defense-in-depth (протухшее членство между loadMembers и
+    // кликом всё ещё может дать 403 от бэкенда).
     mockCancel.mockRejectedValueOnce({ response: { status: 403, data: { message: 'Forbidden' } } })
     const wrapper = await mountDetail()
 
-    // Паттерн проекта (как archive в ProcessDefinitionList): кнопка видна,
-    // права проверяет бэкенд, 403 превращается в понятную ошибку.
+    // OWNER (мок members ниже) видит кнопку даже при грядущем 403.
     expect(wrapper.find('[data-testid="cancel-instance-btn"]').exists()).toBe(true)
 
     await wrapper.find('[data-testid="cancel-instance-btn"]').trigger('click')
@@ -195,5 +216,65 @@ describe('WO-UI-21 Round 2: ProcessInstanceDetail manual cancel', () => {
     await flushPromises()
 
     expect(mockToastError).toHaveBeenCalledWith('boom')
+  })
+})
+
+describe('WO-ACL-22: cancel button follows DELETE_PROCESS right', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockGetInstance.mockResolvedValue(activeInstance())
+    mockCancel.mockResolvedValue({ id: 'pi-1' })
+    mockSuperAdmin.value = false
+  })
+
+  async function mountDetailAcl() {
+    const wrapper = mount(ProcessInstanceDetail, {
+      global: { stubs, plugins: [createPinia()] },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  function btn(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('[data-testid="cancel-instance-btn"]')
+  }
+
+  it('OWNER sees the button on the active instance', async () => {
+    mockAuthUser.id = 'u-owner'
+    mockListMembers.mockResolvedValue([{ userId: 'u-owner', role: 'OWNER' }])
+    expect(btn(await mountDetailAcl()).exists()).toBe(true)
+  })
+
+  it('DESIGNER sees the button on the active instance', async () => {
+    mockAuthUser.id = 'u-designer'
+    mockListMembers.mockResolvedValue([{ userId: 'u-designer', role: 'DESIGNER' }])
+    expect(btn(await mountDetailAcl()).exists()).toBe(true)
+  })
+
+  it('VIEWER does NOT see the button (was visible before ACL-22)', async () => {
+    mockAuthUser.id = 'u-viewer'
+    mockListMembers.mockResolvedValue([{ userId: 'u-viewer', role: 'VIEWER' }])
+    expect(btn(await mountDetailAcl()).exists()).toBe(false)
+  })
+
+  it('non-member does NOT see the button', async () => {
+    mockAuthUser.id = 'u-outsider'
+    mockListMembers.mockResolvedValue([{ userId: 'u-someone-else', role: 'OWNER' }])
+    expect(btn(await mountDetailAcl()).exists()).toBe(false)
+  })
+
+  it('SUPER_ADMIN sees the button without membership', async () => {
+    mockAuthUser.id = 'u-sa'
+    mockSuperAdmin.value = true
+    mockListMembers.mockResolvedValue([])
+    expect(btn(await mountDetailAcl()).exists()).toBe(true)
+  })
+
+  it('OWNER does NOT see the button on a finished instance (status gate stays)', async () => {
+    mockAuthUser.id = 'u-owner'
+    mockListMembers.mockResolvedValue([{ userId: 'u-owner', role: 'OWNER' }])
+    mockGetInstance.mockResolvedValue(completedInstance())
+    expect(btn(await mountDetailAcl()).exists()).toBe(false)
   })
 })
