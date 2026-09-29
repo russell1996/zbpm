@@ -12,6 +12,8 @@ import org.slf4j.LoggerFactory;
     "com.zorrodev.bpm.engine",
     "com.zorrodev.bpm.rest",
     "com.zorrodev.bpm.rabbitmq",
+    // WO-ENG-31 Фаза 2: built-in HTTP-коннектор (properties + SSRF-гейт + воркер).
+    "com.zorrodev.bpm.httpconnector",
 })
 public class APP implements CommandLineRunner {
 

@@ -94,6 +94,9 @@
         <module>zorrobpm-test</module>
         <module>zorrobpm-exchange</module>
         <module>zorrobpm-rabbitmq</module>
+        <!-- WO-ENG-31 Фаза 2: built-in воркер HTTP/REST outbound-коннектора
+             (вариант (b) — движок не тронут; app подключает зависимостью). -->
+        <module>zorrobpm-http-connector</module>
         <module>zorrobpm-app</module>
     </modules>
 
