@@ -63,4 +63,27 @@ public class HttpConnectorProperties {
      * Биндится из {@code zorrobpm.http-connector.secrets.<name>} (env/properties).
      */
     private Map<String, String> secrets = new HashMap<>();
+
+    /**
+     * NEW5-07 (WO-QW-10): те же секреты одним JSON-объектом в одной переменной —
+     * {@code ZORROBPM_HTTP_CONNECTOR_SECRETS_JSON='{"svc":{"type":"bearer","token":"…"}}'}.
+     *
+     * <p>Зачем вторая ручка, если есть {@link #secrets}: произвольные имена секретов
+     * невозможно перечислить в статическом {@code application.properties}
+     * ({@code zorrobpm.http-connector.secrets.<name>}), а список из 7 скаляров в
+     * {@code docker-compose.yml} оставлял {@code authType != none} физически
+     * недостижимым в штатном compose-деплое — ручная правка compose была единственным
+     * способом. Имена с дефисом в env-переменной тоже не выражаются (Spring склеит
+     * {@code _} в путь), поэтому поштучный паттерн {@code SECRETS_<NAME>} не годится.
+     *
+     * <p>Приоритет: явный {@link #secrets} перекрывает значение отсюда (прямая
+     * настройка важнее блоба). Разбирается один раз в конструкторе воркера; битый
+     * JSON валит старт (fail-fast), а не первый HTTP-вызов в проде.
+     *
+     * <p>Осознанная граница: секрет в переменной окружения виден в {@code docker inspect}.
+     * Это ровно так же, как все остальные секреты проекта (JWT, пароль почты), и смена
+     * модели на смонтированный файл — отдельное решение (файл/том меняет топологию
+     * деплоя), не молчаливый побочный эффект этого фикса.
+     */
+    private String secretsJson = "";
 }
