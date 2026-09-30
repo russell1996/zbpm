@@ -61,6 +61,7 @@ class DomainTransactionalBoundaryIT {
     @Autowired QueryService queryService;
     @Autowired com.zorrodev.bpm.engine.repository.DomainEventRepository domainEventRepository;
     @Autowired com.zorrodev.bpm.engine.repository.OutboxRepository outboxRepository;
+    @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
 
     private UUID deployServiceTaskProcess() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/integration/process1.bpmn"));
@@ -105,7 +106,7 @@ class DomainTransactionalBoundaryIT {
     // ── T2: критерий 2 ──────────────────────────────────────────────
 
     @Test
-    void lockAndReload_singleSelectForUpdate() throws Exception {
+    void lockInstanceFirst_instanceLockBeforeActivityLock() throws Exception {
         UUID pdId = deployServiceTaskProcess();
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(pdId);
@@ -113,8 +114,11 @@ class DomainTransactionalBoundaryIT {
         UUID piId = runtimeService.startProcessInstance(dto).getId();
         UUID activityId = activeServiceTaskActivityId(piId);
 
-        // lockAndReload без внешней Tx открывает свою (join-аннотация на
-        // DBServiceImpl.getActivityForUpdate) — как любой прямой вызов домена.
+        // WO-REL-59/63: доменный захват — составной (instance→activity) и требует
+        // внешней транзакции: getActivity/lockProcessInstance свои не открывают,
+        // JOIN-аннотация стоит на getActivityForUpdate. Все живые вызывающие —
+        // доменные методы с классовым @Transactional либо TimerJobExecutor.fire
+        // (REQUIRES_NEW), т.е. в бою транзакция всегда есть.
         Logger sqlLogger = (Logger) LoggerFactory.getLogger("org.hibernate.SQL");
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
@@ -122,22 +126,37 @@ class DomainTransactionalBoundaryIT {
         sqlLogger.setLevel(Level.DEBUG);
         sqlLogger.addAppender(appender);
         try {
-            elementSupport.lockAndReload(activityId);
+            new org.springframework.transaction.support.TransactionTemplate(txManager)
+                .execute(status -> elementSupport.lockInstanceFirst(activityId));
         } finally {
             sqlLogger.detachAppender(appender);
             sqlLogger.setLevel(prev == null ? Level.INFO : prev);
         }
 
-        List<String> activitySelects = appender.list.stream()
+        // Инвариант WO-REL-30 (B-3) сохранён: ровно один FOR UPDATE на activities
+        // (простое чтение, нужное лишь ради processInstanceId, локом не является).
+        List<String> sql = appender.list.stream()
             .map(ILoggingEvent::getFormattedMessage)
-            .filter(m -> m.toLowerCase().contains("activit"))
             .toList();
-        assertThat(activitySelects)
-            .as("lockAndReload обязан читать activities ровно одним стейтментом, держащим FOR UPDATE")
+        // Фильтр по таблице в FROM, а не по подстроке: колонка
+        // parent_activity_id тоже содержит "activit".
+        List<String> instanceLocks = sql.stream()
+            .filter(m -> m.toLowerCase().contains("from process_instances") && m.toLowerCase().contains("for update"))
+            .toList();
+        List<String> activityLocks = sql.stream()
+            .filter(m -> m.toLowerCase().contains("from activities") && m.toLowerCase().contains("for update"))
+            .toList();
+        assertThat(activityLocks)
+            .as("lockInstanceFirst обязан читать activities ровно одним ЛОЧИМ стейтментом (WO-REL-30 B-3)")
             .hasSize(1);
-        assertThat(activitySelects.get(0).toLowerCase())
-            .as("единственный стейтмент обязан нести FOR UPDATE (атомарно лочит и PI)")
-            .contains("for update");
+        assertThat(instanceLocks)
+            .as("и ровно одним FOR UPDATE на process_instances — это и есть первая половина порядка")
+            .hasSize(1);
+        // WO-REL-59/63: порядок, а не только наличие. Activity-first здесь — та
+        // самая дыра, что ловила ABBA-дедлок с отменой на PG.
+        assertThat(sql.indexOf(instanceLocks.get(0)))
+            .as("instance-lock ПЕРЕД activity-lock — иначе ABBA с отменой (Rel59/Rel63 PG-IT)")
+            .isLessThan(sql.indexOf(activityLocks.get(0)));
     }
 
     // ── T3: критерий 3 ──────────────────────────────────────────────

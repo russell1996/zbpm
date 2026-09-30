@@ -100,7 +100,12 @@ public class EventTrigger {
      */
     public boolean fireBoundary(UUID hostActivityId, String boundaryElementId, List<ProcessVariable> variables,
                          TokenExecutor executor) {
-        Activity host = elementSupport.lockAndReload(hostActivityId);
+        // WO-REL-63: instance-lock ПЕРВЫМ (единый порядок захвата, см.
+        // ElementSupport.lockInstanceFirst). Сюда приходят и boundary-таймер
+        // (TimerJobExecutor.fire), и корреляция сообщения (ActivityServiceImpl
+        // → fireBoundary) — оба раньше начинали с activity-lock и ловили ABBA
+        // с отменой (Rel63RemainingAbbaDeadlockPgIT, реальный PG).
+        Activity host = elementSupport.lockInstanceFirst(hostActivityId);
         if (host.getStatus() == ActivityStatus.COMPLETED || host.getStatus() == ActivityStatus.CANCELLED) {
             log.info("Boundary {} fired but host activity {} is {}, ignoring", boundaryElementId, hostActivityId, host.getStatus());
             return false;

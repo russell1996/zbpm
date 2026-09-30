@@ -21,6 +21,8 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -71,7 +73,7 @@ class CompletionServiceTest {
         activity.setToken(UUID.randomUUID());
         activity.setBpmnElementId("serviceTask1");
 
-        when(elementSupport.lockAndReload(serviceTaskId)).thenReturn(activity);
+        when(elementSupport.lockInstanceFirst(serviceTaskId)).thenReturn(activity);
 
         // When
         completionService.failServiceTask(serviceTaskId, errorMessage, retries);
@@ -97,7 +99,7 @@ class CompletionServiceTest {
         activity.setToken(UUID.randomUUID());
         activity.setBpmnElementId("serviceTask1");
 
-        when(elementSupport.lockAndReload(serviceTaskId)).thenReturn(activity);
+        when(elementSupport.lockInstanceFirst(serviceTaskId)).thenReturn(activity);
 
         // When
         completionService.failServiceTask(serviceTaskId, errorMessage, retries);
@@ -118,7 +120,7 @@ class CompletionServiceTest {
         activity.setId(serviceTaskId);
         activity.setStatus(ActivityStatus.COMPLETED); // Already completed
 
-        when(elementSupport.lockAndReload(serviceTaskId)).thenReturn(activity);
+        when(elementSupport.lockInstanceFirst(serviceTaskId)).thenReturn(activity);
 
         // When
         completionService.failServiceTask(serviceTaskId, "error", 0);
@@ -159,8 +161,9 @@ class CompletionServiceTest {
      * WO-REL-59 criterion 2 (direct POF anchor): complete-пути берут
      * instance-lock ПЕРВЫМ, через {@code ElementSupport.lockInstanceFirst}
      * (единый порядок instance→activity с cancel-путём). POF-мутация —
-     * вернуть в complete-путях прямой {@code lockAndReload} + поздний
-     * {@code dbService.lockProcessInstance} (activity-first): эти тесты
+     * вызвать в complete-пути activity-lock напрямую ({@code
+     * dbService.getActivityForUpdate}) + поздний {@code
+     * dbService.lockProcessInstance} (activity-first): эти тесты
      * краснеют ({@code Wanted but not invoked} на lockInstanceFirst +
      * {@code NeverWanted} на прямых локах), остальные — нет. Сам ПОРЯДОК
      * внутри lockInstanceFirst фиксирует PG-IT
@@ -225,6 +228,102 @@ class CompletionServiceTest {
         verify(elementSupport, org.mockito.Mockito.times(1)).lockInstanceFirst(userTaskId);
         verify(dbService, never()).lockProcessInstance(any());
         verify(dbService, never()).getActivity(any());
+        verify(dbService, never()).getActivityForUpdate(any());
+    }
+
+    // ── WO-REL-63: P-46 anchors — каждый переведённый путь берёт instance-lock ПЕРВЫМ ──
+    //
+    // По одному якорю на потребителя, а не только на центральный lockInstanceFirst:
+    // возврат ЛЮБОГО из этих путей на activity-only лок валит ровно его тест
+    // (Wanted but not invoked на lockInstanceFirst + NeverWanted на прямом
+    // getActivityForUpdate). Порядок захватов внутри самого lockInstanceFirst
+    // фиксирует Rel63RemainingAbbaDeadlockPgIT на реальном PostgreSQL.
+    //
+    // Вызовы ниже доходят ровно до захвата и дальше уходят в исключение —
+    // Collaborator'ы после лока в unit-скоупе не стабаются намеренно (как в
+    // completeServiceTask_takesInstanceLock выше); важен факт и вид захвата.
+
+    @Test
+    void failServiceTask_takesInstanceLock() {
+        UUID serviceTaskId = UUID.randomUUID();
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setStatus(ActivityStatus.COMPLETED); // early return right after the lock
+        when(elementSupport.lockInstanceFirst(serviceTaskId)).thenReturn(activity);
+
+        completionService.failServiceTask(serviceTaskId, "boom", 0);
+
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockInstanceFirst(serviceTaskId);
+        verify(dbService, never()).getActivityForUpdate(any());
+    }
+
+    @Test
+    void assignUserTask_takesInstanceLock() {
+        UUID taskId = UUID.randomUUID();
+        Activity activity = new Activity();
+        activity.setId(taskId);
+        activity.setStatus(ActivityStatus.CREATED);
+        activity.setProcessInstanceId(UUID.randomUUID());
+        when(elementSupport.lockInstanceFirst(taskId)).thenReturn(activity);
+
+        try {
+            completionService.assignUserTask(taskId, "someone");
+        } catch (Exception ignored) {
+            // дальше лока: bpmn-lookup в unit-скоупе не стабаем
+        }
+
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockInstanceFirst(taskId);
+        verify(dbService, never()).getActivityForUpdate(any());
+    }
+
+    @Test
+    void claimUserTask_takesInstanceLock() {
+        UUID taskId = UUID.randomUUID();
+        Activity activity = new Activity();
+        activity.setId(taskId);
+        activity.setStatus(ActivityStatus.CREATED);
+        activity.setProcessInstanceId(UUID.randomUUID());
+        when(elementSupport.lockInstanceFirst(taskId)).thenReturn(activity);
+
+        try {
+            completionService.claimUserTask(taskId, "someone");
+        } catch (Exception ignored) {
+            // дальше лока: bpmn-lookup в unit-скоупе не стабаем
+        }
+
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockInstanceFirst(taskId);
+        verify(dbService, never()).getActivityForUpdate(any());
+    }
+
+    @Test
+    void completeAdHocScopeJob_takesInstanceLock() {
+        UUID scopeId = UUID.randomUUID();
+        Activity scope = new Activity();
+        scope.setId(scopeId);
+        scope.setType(BpmnElementType.AD_HOC_SUB_PROCESS);
+        scope.setStatus(ActivityStatus.CANCELLED); // stale scope → 409 сразу после лока
+        when(elementSupport.lockInstanceFirst(scopeId)).thenReturn(scope);
+
+        assertThatThrownBy(() -> completionService.completeAdHocScopeJob(scopeId,
+            new com.zorrodev.bpm.contract.dto.AdHocJobResultDTO(),
+            org.mockito.Mockito.mock(TokenExecutor.class)))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.ApiException.class);
+
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockInstanceFirst(scopeId);
+        verify(dbService, never()).getActivityForUpdate(any());
+    }
+
+    @Test
+    void signal_takesInstanceLock() {
+        UUID activityId = UUID.randomUUID();
+        Activity activity = new Activity();
+        activity.setId(activityId);
+        activity.setStatus(ActivityStatus.CANCELLED); // early return right after the lock
+        when(elementSupport.lockInstanceFirst(activityId)).thenReturn(activity);
+
+        completionService.signal(activityId, List.of(), org.mockito.Mockito.mock(TokenExecutor.class));
+
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockInstanceFirst(activityId);
         verify(dbService, never()).getActivityForUpdate(any());
     }
 }
