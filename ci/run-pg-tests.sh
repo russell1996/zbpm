@@ -107,6 +107,7 @@ run_pg_suite() {
     -e PG_USER="$PG_USER" \
     -e PG_PASSWORD="$PG_PASSWORD" \
     -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
+    -e TZ=Asia/Almaty \
     maven:3.9.9-eclipse-temurin-21 \
     mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
       -pl "$module" \
@@ -146,6 +147,7 @@ run_rest_suite() {
     -e PG_USER="$PG_USER" \
     -e PG_PASSWORD="$PG_PASSWORD" \
     -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
+    -e TZ=Asia/Almaty \
     maven:3.9.9-eclipse-temurin-21 \
     bash -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -pl zorrobpm-rest -am -DskipTests -q \
       && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \

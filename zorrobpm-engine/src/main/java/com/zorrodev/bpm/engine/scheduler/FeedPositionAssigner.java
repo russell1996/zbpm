@@ -146,14 +146,28 @@ public class FeedPositionAssigner {
             Long pending = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM events WHERE feed_position IS NULL", Long.class);
             bpmMetrics.setFeedBacklog(pending != null ? pending : 0);
-            Long ageSeconds = jdbcTemplate.queryForObject(
-                "SELECT COALESCE(EXTRACT(EPOCH FROM (now() - MIN(occurred_at)))::bigint, 0) "
-                + "FROM events WHERE feed_position IS NULL", Long.class);
-            bpmMetrics.setFeedAgeMaxSeconds(ageSeconds != null ? ageSeconds : 0);
+            // NEW5-04 (WO-QW-10): возраст считаем в Java, а не нативным
+            // `now() - MIN(occurred_at)`. Колонка `events.occurred_at` на
+            // PostgreSQL — `timestamp WITHOUT time zone` (сверено с живой БД:
+            // changelog пишет `datetime with timezone`, а Liquibase кладёт
+            // without-tz), а `now()` возвращает timestamptz. Смешение в
+            // SQL заставляет PG трактовать значение как СЕССИОННОЕ локальное
+            // время, поэтому одна и та же строка даёт 120s при session TZ=UTC и
+            // 18120s при Asia/Almaty — ровно +5 часов (замерено на реальном PG).
+            // Значение записано этим же JVM в его зоне, поэтому и читаем его в
+            // зоне JVM — метрика тогда отражает часы приложения, а не настройку
+            // БД. Побочный плюс: запрос стал H2-совместимым (EXTRACT/EPOCH был
+            // PG-only, H2 молча отдавал ноль).
+            java.time.LocalDateTime oldest = jdbcTemplate.queryForObject(
+                "SELECT MIN(occurred_at) FROM events WHERE feed_position IS NULL",
+                java.time.LocalDateTime.class);
+            long ageSeconds = oldest == null ? 0 : Math.max(0,
+                java.time.Duration.between(
+                    oldest.atZone(java.time.ZoneId.systemDefault()).toInstant(),
+                    java.time.Instant.now()).getSeconds());
+            bpmMetrics.setFeedAgeMaxSeconds(ageSeconds);
         } catch (Exception e) {
-            // Metrics must never break the assign tick (H2-test profile
-            // included — EXTRACT(EPOCH...) is PG-only; on H2 this falls back
-            // to silent zero, the tick itself is unaffected).
+            // Метрики не должны ронять тик ассигнера (в т.ч. H2-профиль).
             log.debug("Feed backlog metrics skipped: {}", e.getMessage());
         }
     }

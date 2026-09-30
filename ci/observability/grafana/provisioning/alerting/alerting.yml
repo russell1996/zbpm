@@ -345,6 +345,42 @@ groups:
           summary: "FEEL pool saturated — active == size for 5m"
           description: "zbpm_script_pool_active >= zbpm_script_pool_size for 5m: non-cooperative stuck workers may be pinning slots (WO-REL-46)"
 
+      # NEW5-09 (WO-QW-10): всплеск 429. Метрики отказов до этого WO не существовало
+      # вообще (заведена zbpm.ratelimit.rejected в RateLimitFilter), поэтому правила
+      # на «клиентов душит лимитом» просто не на чем было построить. Порог — резкий
+      # рост отказов, а не абсолютное число: легитимный SPA-клиент тоже упирается
+      # в бакет, и 5/мин у одного пользователя — норма, а не инцидент.
+      - uid: zbpm-ratelimit-429-spike
+        title: Rate-limit 429 spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: sum(rate(zbpm_ratelimit_rejected_total[5m]))
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: {params: [1], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              expression: A
+        for: 10m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate-limit 429 spike — >1 rejection/s over 5m"
+          description: "sum(rate(zbpm_ratelimit_rejected_total[5m])) > 1 for 10m: mass throttling. Check nginx limit_req and whether clients are stuck in a retry loop (WO-REL-57/WO-UI-22)"
+
 templates:
   - orgId: 1
     name: zbpm-default

@@ -72,6 +72,39 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private PgRateLimiter pgRateLimiter;
 
+    /**
+     * NEW5-09 (WO-QW-10): счётчик отказов 429 — до него всплеск rate-limit нечем было
+     * заметить: метрик отказов не существовало вообще. Регистрируется лениво и
+     * только если реестр в контексте (в тестах фильтра его может не быть — отсюда
+     * required=false), поэтому НИКАК не влияет на решение о пропуске/отказе: это
+     * чистое наблюдение, не участие в логике лимита.
+     *
+     * <p>Без тега «бакет»: различение login/data/sse/refresh потребовало бы прокинуть
+     * метку через 8 мест вызова в security-классе, а клиенту и так уходит код
+     * RATE_LIMITED с Retry-After. Если различение понадобится для разбора инцидента —
+     * отдельная задача, а не побочный эффект этого счётчика.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
+    private volatile io.micrometer.core.instrument.Counter rateLimitRejectedCounter;
+
+    /**
+     * Регистрируем СРАЗУ, а не лениво по первому 429: Grafana-правило построено на
+     * {@code rate(...[5m])}, а по несуществующей серии rate() не вернёт ничего —
+     * до первого отказа метрика была бы дырой в графике, и «всплеск» нельзя
+     * отличить от «метрики ещё нет». Ноль — честное значение «отказов не было».
+     */
+    @jakarta.annotation.PostConstruct
+    void registerRateLimitRejectedCounter() {
+        if (meterRegistry == null) {
+            return;
+        }
+        rateLimitRejectedCounter = io.micrometer.core.instrument.Counter
+            .builder("zbpm.ratelimit.rejected")
+            .description("HTTP 429 responses issued by the rate-limit filter")
+            .register(meterRegistry);
+    }
+
     private boolean enabled;
     private int capacity;
     private int windowSeconds;
@@ -366,11 +399,20 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private void send429(HttpServletResponse response, long retryAfter) throws IOException {
+        countRateLimitRejection();
         response.setStatus(429);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setHeader("Retry-After", String.valueOf(retryAfter));
         response.getWriter().write(
             "{\"code\":\"RATE_LIMITED\",\"message\":\"Too many attempts, retry after " + retryAfter + "s\"}");
+    }
+
+    /** NEW5-09: единственная точка учёта — воронка {@link #send429}, все 8 вызовов идут в неё. */
+    private void countRateLimitRejection() {
+        io.micrometer.core.instrument.Counter counter = rateLimitRejectedCounter;
+        if (counter != null) {
+            counter.increment();
+        }
     }
 
     private void send413(HttpServletResponse response) throws IOException {
