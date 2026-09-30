@@ -185,6 +185,10 @@ services:
       ZORROBPM_HTTP_CONNECTOR_CONNECTION_TIMEOUT: ${ZORROBPM_HTTP_CONNECTOR_CONNECTION_TIMEOUT:-20}
       ZORROBPM_HTTP_CONNECTOR_READ_TIMEOUT: ${ZORROBPM_HTTP_CONNECTOR_READ_TIMEOUT:-20}
       ZORROBPM_HTTP_CONNECTOR_MAX_REDIRECTS: ${ZORROBPM_HTTP_CONNECTOR_MAX_REDIRECTS:-0}
+      ZORROBPM_HTTP_CONNECTOR_SECRETS_JSON: ${ZORROBPM_HTTP_CONNECTOR_SECRETS_JSON:-}
+      # NEW5-07: секреты коннектора (authType != none) — одним JSON-объектом:
+      # ZORROBPM_HTTP_CONNECTOR_SECRETS_JSON='{"svc":{"type":"bearer","token":"..."}}'.
+      # Пусто = секретов нет (authType=none). Подробности — docs/guides/http-connector.md
       TZ: Asia/Almaty
     volumes:
       - app-files:/app/files
