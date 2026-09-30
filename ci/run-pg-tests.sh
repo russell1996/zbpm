@@ -92,6 +92,17 @@ echo "=== postgres is ready ==="
 #
 # set +e so a test failure doesn't abort before we capture the exit code; the EXIT
 # trap still tears postgres down.
+# NEW5-04 (WO-QW-10) — ЧАСТИЧНО, см. отчёт: переключать TZ сюиты на Asia/Almaty
+# целиком НЕЛЬЗЯ. Замер: с -e TZ=Asia/Almaty краснеют 8 классов
+# (TimerBatchProcessorPgIT, TimerBatchIsolationPgIT, FeelTimerPgIT,
+# RepeatingTimerSemanticsPgIT, StuckServiceTaskWatchdog*PgIT,
+# RepeatingBoundaryTimerPgIT, DeploymentAtomicityPgIT) — их фикстуры сеют
+# due_at через DB-side now(), а читают драйвером (в зоне JVM), и при не-UTC JVM
+# таймер уезжает в будущее ("Expected size: 50 but was: 0"). Прод этим не сломан:
+# запись и чтение идут через драйвер в одной зоне JVM. Починка 8 фикстур — вне
+# объёма этого WO; TZ-независимость метрики закрыта точечно в Java
+# (FeedPositionAssigner) и отдельнымPgIT, который сам фиксирует и зону JVM, и
+# SET TIME ZONE сессии БД.
 run_pg_suite() {
   local module="$1"
   ensure_m2_ownership
@@ -107,7 +118,6 @@ run_pg_suite() {
     -e PG_USER="$PG_USER" \
     -e PG_PASSWORD="$PG_PASSWORD" \
     -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
-    -e TZ=Asia/Almaty \
     maven:3.9.9-eclipse-temurin-21 \
     mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
       -pl "$module" \
@@ -147,7 +157,6 @@ run_rest_suite() {
     -e PG_USER="$PG_USER" \
     -e PG_PASSWORD="$PG_PASSWORD" \
     -e MAVEN_OPTS="${MAVEN_OPTS:--Xmx1g}" \
-    -e TZ=Asia/Almaty \
     maven:3.9.9-eclipse-temurin-21 \
     bash -c "mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository install -pl zorrobpm-rest -am -DskipTests -q \
       && mvn -B -ntp -Dmaven.repo.local=/tmp/.m2/repository clean verify \
