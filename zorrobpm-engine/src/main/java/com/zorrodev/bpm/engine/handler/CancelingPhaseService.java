@@ -112,7 +112,12 @@ public class CancelingPhaseService {
      * false: the phase runs once, a second cancel must not re-enqueue its job).
      */
     public boolean openForActivity(UUID activityId, String boundaryElementId) {
-        Activity activity = elementSupport.lockAndReload(activityId);
+        // WO-REL-63: instance-lock ПЕРВЫМ. Сегодня оба вызывающих (cancel-путь и
+        // fireBoundary) уже держат его, поэтому для них это повторный захват
+        // своей же строки — поведение не меняется; смысл в том, чтобы ни один
+        // будущий вызов этого метода не принёс обратно activity-first (WO-REL-59
+        // и WO-REL-63 — одна и та же мина, два раза).
+        Activity activity = elementSupport.lockInstanceFirst(activityId);
         if (activity.getStatus() != ActivityStatus.CANCELLED) {
             return false;
         }

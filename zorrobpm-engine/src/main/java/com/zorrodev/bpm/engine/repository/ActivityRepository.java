@@ -51,9 +51,12 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
      * вводить в заблуждение. Сериализация с cancel-путём достигается НЕ этим
      * запросом, а ЕДИНЫМ ПОРЯДКОМ ЗАХВАТА instance→activity во всех путях
      * (см. {@code ElementSupport.lockInstanceFirst}): cancel берёт
-     * instance-lock, затем пишет activity-строки; complete берёт тот же
-     * instance-lock ПЕРВЫМ и только потом этот activity-lock — ABBA-цикла
-     * нет. H2 + PostgreSQL: same JPQL.
+     * instance-lock, затем пишет activity-строки; любой путь исполнения берёт тот
+     * же instance-lock ПЕРВЫМ и только потом этот activity-lock — ABBA-цикла
+     * нет. WO-REL-59 перевёл на этот порядок complete-пути, WO-REL-63 — остальные
+     * восемь (таймер/сообщение/граничное событие/fail/ad-hoc/assign/claim/throw);
+     * до WO-REL-63 формулировка «во всех путях» была неверной — activity-first
+     * оставался в восьми местах. H2 + PostgreSQL: same JPQL.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM ActivityEntity a, ProcessInstanceEntity p "

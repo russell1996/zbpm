@@ -263,7 +263,10 @@ public class CompletionService {
      * only wait for its listeners, never be vetoed through this path.
      */
     public void assignUserTask(UUID taskId, String assignee) {
-        Activity activity = elementSupport.lockAndReload(taskId);
+        // WO-REL-63: instance-lock ПЕРВЫМ — единый порядок захвата, см.
+        // ElementSupport.lockInstanceFirst (обоснование и почему activity-first
+        // ловил ABBA с отменой — там же).
+        Activity activity = elementSupport.lockInstanceFirst(taskId);
         BpmnElementModel bpmnElement = bpmnElementOf(activity);
         List<ListenerModel> assigningListeners = elementSupport.userTaskAssigningListeners(bpmnElement);
         if (assigningListeners.isEmpty()
@@ -296,7 +299,8 @@ public class CompletionService {
      * applies the parked assignee with the plain write (already serialized).
      */
     public void claimUserTask(UUID taskId, String assignee) {
-        Activity activity = elementSupport.lockAndReload(taskId);
+        // WO-REL-63: instance-lock ПЕРВЫМ (см. assignUserTask).
+        Activity activity = elementSupport.lockInstanceFirst(taskId);
         BpmnElementModel bpmnElement = bpmnElementOf(activity);
         List<ListenerModel> assigningListeners = elementSupport.userTaskAssigningListeners(bpmnElement);
         if (assigningListeners.isEmpty()
@@ -982,7 +986,9 @@ public class CompletionService {
      */
     public void completeAdHocScopeJob(UUID scopeActivityId,
             com.zorrodev.bpm.contract.dto.AdHocJobResultDTO result, TokenExecutor executor) {
-        Activity scope = elementSupport.lockAndReload(scopeActivityId);
+        // WO-REL-63: instance-lock ПЕРВЫМ (единый порядок захвата, см.
+        // ElementSupport.lockInstanceFirst).
+        Activity scope = elementSupport.lockInstanceFirst(scopeActivityId);
         if (scope.getType() != BpmnElementType.AD_HOC_SUB_PROCESS) {
             throw new com.zorrodev.bpm.contract.exception.ApiException(
                 org.springframework.http.HttpStatus.BAD_REQUEST, "AD_HOC_SCOPE_EXPECTED",
@@ -1073,7 +1079,9 @@ public class CompletionService {
         if (failElementListenerPhase(serviceTaskId, errorMessage, retries)) {
             return;
         }
-        Activity activity = elementSupport.lockAndReload(serviceTaskId);
+        // WO-REL-63: instance-lock ПЕРВЫМ (единый порядок захвата, см.
+        // ElementSupport.lockInstanceFirst).
+        Activity activity = elementSupport.lockInstanceFirst(serviceTaskId);
         if (!isFailureProcessable(serviceTaskId, activity)) {
             return;
         }
@@ -1345,7 +1353,13 @@ public class CompletionService {
      * Called by the timer scheduler and message-correlation subsystems.
      */
     public void signal(UUID activityId, List<ProcessVariable> variables, TokenExecutor executor) {
-        Activity activity = elementSupport.lockAndReload(activityId);
+        // WO-REL-63: instance-lock ПЕРВЫМ (единый порядок захвата, см.
+        // ElementSupport.lockInstanceFirst). Этот путь — ровно то, что зовёт
+        // TimerJobExecutor.fire для промежуточного таймера; без instance-lock
+        // первым он держал activity-lock и затем просил instance-row-lock в
+        // completeProcessInstance — ABBA с отменой, воспроизведено на реальном
+        // PG в Rel63RemainingAbbaDeadlockPgIT (5/5 раундов до фикса).
+        Activity activity = elementSupport.lockInstanceFirst(activityId);
         if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
             // only an active waiting element may be resumed — ignore a timer that fired twice, a
             // concurrently-correlated message, or an element superseded by incident-resolve (ERROR)

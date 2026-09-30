@@ -196,7 +196,7 @@ class EventTriggerTest {
         host.setProcessInstanceId(processInstanceId);
         host.setToken(tokenId);
         host.setBpmnElementId("host");
-        when(elementSupport.lockAndReload(hostActivityId)).thenReturn(host);
+        when(elementSupport.lockInstanceFirst(hostActivityId)).thenReturn(host);
 
         ProcessInstance processInstance = new ProcessInstance();
         processInstance.setProcessDefinitionId(processDefinitionId);
@@ -243,5 +243,27 @@ class EventTriggerTest {
         verify(timerJobRepository).findFirstByActivityIdAndBoundaryElementIdAndFiredTrueOrderByCreatedAtDesc(
             hostActivityId, "tmrCheck");
         verify(dbService, never()).createTimerJob(any(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * WO-REL-63 P-46 anchor: {@code fireBoundary} — один из путей, которые
+     * гоняются с отменой — берёт instance-lock ПЕРВЫМ. Отдельный RED на
+     * каждого потребителя: возврат этого пути на activity-only лок валит
+     * РОВНО этот тест (порядок внутри lockInstanceFirst фиксирует
+     * {@code Rel63RemainingAbbaDeadlockPgIT} на реальном PG).
+     */
+    @Test
+    void fireBoundary_takesInstanceLock() {
+        UUID hostActivityId = UUID.randomUUID();
+        Activity host = new Activity();
+        host.setStatus(ActivityStatus.CANCELLED); // early return right after the lock
+        when(elementSupport.lockInstanceFirst(hostActivityId)).thenReturn(host);
+
+        boolean fired = eventTrigger.fireBoundary(hostActivityId, "b1", List.of(),
+            org.mockito.Mockito.mock(TokenExecutor.class));
+
+        assertThat(fired).as("хост уже отменён — продолжения нет").isFalse();
+        verify(elementSupport, org.mockito.Mockito.times(1)).lockInstanceFirst(hostActivityId);
+        verify(dbService, never()).getActivityForUpdate(any());
     }
 }
