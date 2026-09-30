@@ -31,7 +31,7 @@ import java.util.UUID;
 /**
  * Collaborator extracted from ActivityServiceImpl (WO-AUD-24).
  * Owns the completion/signal logic: completeUserTask, completeServiceTask, failServiceTask, signal,
- * triggerConditionalEvents, and the shared lockAndReload/isBehindEventBasedGateway helpers.
+ * triggerConditionalEvents, and the shared lockInstanceFirst/isBehindEventBasedGateway helpers.
  * TokenExecutor is passed as a parameter (port) to avoid circular bean dependencies.
  */
 @Slf4j
