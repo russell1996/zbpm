@@ -1,7 +1,6 @@
 package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
-import com.zorrodev.bpm.engine.configuration.UserTaskEvents;
 import com.zorrodev.bpm.engine.entity.UserTaskCandidateEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskCandidateType;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
@@ -13,6 +12,7 @@ import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.UserTaskEventRecorder;
 import com.zorrodev.bpm.event.UserTaskEventType;
 import com.zorrodev.bpm.event.UserTaskLifecycleEvent;
+import com.zorrodev.bpm.exchange.UserTaskEvents;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.IllegalTransactionStateException;

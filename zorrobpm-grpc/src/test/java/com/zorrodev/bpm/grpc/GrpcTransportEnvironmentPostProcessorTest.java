@@ -27,6 +27,30 @@ class GrpcTransportEnvironmentPostProcessorTest {
     }
 
     @Test
+    void grpcKeepsRabbitMqForUserTaskEvents() {
+        MockEnvironment environment = new MockEnvironment()
+            .withProperty("zorrobpm.transport", "grpc")
+            .withProperty("zorrobpm.events.user-task.enabled", "true");
+
+        processor.postProcessEnvironment(environment, new SpringApplication());
+
+        assertThat(environment.getProperty("spring.grpc.server.enabled")).isEqualTo("true");
+        assertThat(environment.getProperty("spring.autoconfigure.exclude")).isNull();
+    }
+
+    @Test
+    void grpcExcludesRabbitMqWhenUserTaskEventsAreOff() {
+        MockEnvironment environment = new MockEnvironment()
+            .withProperty("zorrobpm.transport", "grpc")
+            .withProperty("zorrobpm.events.user-task.enabled", "false");
+
+        processor.postProcessEnvironment(environment, new SpringApplication());
+
+        assertThat(environment.getProperty("spring.autoconfigure.exclude"))
+            .contains(GrpcTransportEnvironmentPostProcessor.RABBIT_AUTO_CONFIGURATIONS);
+    }
+
+    @Test
     void grpcPortDefaultsTo9090AndAnExplicitServerPortWins() {
         MockEnvironment defaults = new MockEnvironment().withProperty("zorrobpm.transport", "grpc");
         processor.postProcessEnvironment(defaults, new SpringApplication());

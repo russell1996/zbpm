@@ -43,7 +43,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * User task lifecycle events written to the outbox, end to end on the engine. Not @Transactional:
  * every command runs in a transaction of its own, as in production. Nothing publishes the outbox here.
  */
-@SpringBootTest(classes = TestMain.class, properties = "zorrobpm.events.user-task.enabled=true")
+@SpringBootTest(classes = TestMain.class, properties = {
+    "zorrobpm.events.user-task.enabled=true",
+    "zorrobpm.events.user-task.relay-enabled=false",
+})
 @ActiveProfiles("test")
 public class UserTaskEventsIntegrationTests {
 

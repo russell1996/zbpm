@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.grpc;
 
 import com.zorrodev.bpm.engine.configuration.ZorroTransport;
+import com.zorrodev.bpm.exchange.UserTaskEvents;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -18,7 +19,9 @@ import java.util.Set;
  * Switches the gRPC server and RabbitMQ by {@code zorrobpm.transport}. On {@code grpc} the server is
  * on, listens on {@code zorrobpm.grpc.port} (9090 by default) unless {@code spring.grpc.server.port}
  * is set, and the RabbitMQ auto-configuration is excluded, so that the engine neither connects to a
- * broker nor reports its health. On {@code rabbitmq} (the default) the gRPC server is off.
+ * broker nor reports its health, unless the user task events are on
+ * ({@code zorrobpm.events.user-task.enabled=true}): they are published to RabbitMQ whatever the
+ * transport, while the job queues stay off. On {@code rabbitmq} (the default) the gRPC server is off.
  * <p>
  * An unknown value is left alone here: the engine stops the start with a message that names it.
  */
@@ -45,10 +48,12 @@ public class GrpcTransportEnvironmentPostProcessor implements EnvironmentPostPro
         Map<String, Object> enforced = new HashMap<>();
         if (transport == ZorroTransport.GRPC) {
             enforced.put("spring.grpc.server.enabled", "true");
-            Set<String> excludes = new LinkedHashSet<>(Arrays.asList(
-                Binder.get(environment).bind(EXCLUDE, String[].class).orElse(new String[0])));
-            excludes.addAll(Arrays.asList(RABBIT_AUTO_CONFIGURATIONS));
-            enforced.put(EXCLUDE, String.join(",", excludes));
+            if (!UserTaskEvents.enabled(environment.getProperty(UserTaskEvents.ENABLED_PROPERTY))) {
+                Set<String> excludes = new LinkedHashSet<>(Arrays.asList(
+                    Binder.get(environment).bind(EXCLUDE, String[].class).orElse(new String[0])));
+                excludes.addAll(Arrays.asList(RABBIT_AUTO_CONFIGURATIONS));
+                enforced.put(EXCLUDE, String.join(",", excludes));
+            }
 
             Map<String, Object> defaults = new HashMap<>();
             defaults.put("spring.grpc.server.port", "${zorrobpm.grpc.port:9090}");
