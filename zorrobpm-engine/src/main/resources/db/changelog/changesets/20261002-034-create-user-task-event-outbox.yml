@@ -1,0 +1,71 @@
+databaseChangeLog:
+  - logicalFilePath: 20261002-034
+  - changeSet:
+      id: 20261002-034
+      author: zorrodev
+      comment: >
+        Outbox of user task lifecycle events: a row is written in the transaction of the change of
+        the task and deleted once the broker confirmed its message. seq is the order of publication.
+        The one-row lock table lets a single engine node publish at a time.
+      changes:
+        - createTable:
+            tableName: user_task_event_outbox
+            columns:
+              - column:
+                  name: seq
+                  type: bigint
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    primaryKeyName: pk_user_task_event_outbox
+              - column:
+                  name: event_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                    unique: true
+                    uniqueConstraintName: uq_user_task_event_outbox__event_id
+              - column:
+                  name: event_type
+                  type: varchar(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: user_task_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: payload
+                  type: text
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: datetime with timezone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: attempts
+                  type: int
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_error
+                  type: text
+        - createTable:
+            tableName: user_task_event_relay_lock
+            columns:
+              - column:
+                  name: id
+                  type: int
+                  constraints:
+                    primaryKey: true
+                    primaryKeyName: pk_user_task_event_relay_lock
+        - insert:
+            tableName: user_task_event_relay_lock
+            columns:
+              - column:
+                  name: id
+                  valueNumeric: 1
