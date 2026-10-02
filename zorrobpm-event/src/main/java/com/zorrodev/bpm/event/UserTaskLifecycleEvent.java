@@ -15,8 +15,6 @@ import java.util.UUID;
 @Getter
 @Setter
 public class UserTaskLifecycleEvent {
-    public static final String EXCHANGE = "zorrobpm.user-task-events";
-
     private UUID eventId;
     private UserTaskEventType type;
     private Instant occurredAt;
