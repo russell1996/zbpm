@@ -45,7 +45,9 @@ import com.zorrodev.bpm.engine.repository.UserTaskCandidateRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.UserTaskEventRecorder;
 import com.zorrodev.bpm.exchange.ErrorReport;
+import com.zorrodev.bpm.event.UserTaskEventType;
 import com.zorrodev.bpm.event.UserTaskInstanceCreatedEvent;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
@@ -82,6 +84,7 @@ public class DBServiceImpl implements DBService {
     private final IncidentMapper incidentMapper;
     private final ApplicationEventPublisher publisher;
     private final Clock clock;
+    private final UserTaskEventRecorder userTaskEventRecorder;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -242,6 +245,7 @@ public class DBServiceImpl implements DBService {
             userTaskCandidateRepository.saveAll(candidates);
         }
 
+        userTaskEventRecorder.record(entity, UserTaskEventType.CREATED, entity.getCreatedAt());
         publishUserTaskInstanceCreatedEvent(entity, element);
     }
 
@@ -278,7 +282,13 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeUserTask(UUID userTaskId) {
-        userTaskRepository.setCompletedAt(userTaskId, Instant.now());
+        UserTaskEntity entity = userTaskRepository.findById(userTaskId).orElseThrow();
+        if (!isOpen(entity)) {
+            return;
+        }
+        entity.setCompletedAt(Instant.now());
+        userTaskRepository.save(entity);
+        userTaskEventRecorder.record(entity, UserTaskEventType.COMPLETED, entity.getCompletedAt());
     }
 
     @Override
@@ -295,6 +305,7 @@ public class DBServiceImpl implements DBService {
         }
         entity.setAssignee(assignee);
         userTaskRepository.save(entity);
+        userTaskEventRecorder.record(entity, UserTaskEventType.ASSIGNED, Instant.now());
     }
 
     @Override
@@ -302,15 +313,23 @@ public class DBServiceImpl implements DBService {
         Instant now = Instant.now();
         for (ActivityEntity child : activityRepository.findByParentActivityIdAndStatus(parentActivityId, ActivityStatus.CREATED)) {
             activityRepository.setStatusAndCompletedAt(child.getId(), ActivityStatus.TERMINATED, now);
-            userTaskRepository.setCanceledAt(child.getId(), now);
+            cancelUserTask(child.getId(), now);
         }
     }
 
     @Override
     public void unclaimUserTask(UUID userTaskId) {
         UserTaskEntity entity = userTaskRepository.findById(userTaskId).orElseThrow();
+        boolean unassigned = isOpen(entity) && entity.getAssignee() != null;
         entity.setAssignee(null);
         userTaskRepository.save(entity);
+        if (unassigned) {
+            userTaskEventRecorder.record(entity, UserTaskEventType.UNASSIGNED, Instant.now());
+        }
+    }
+
+    private static boolean isOpen(UserTaskEntity entity) {
+        return entity.getCompletedAt() == null && entity.getCanceledAt() == null;
     }
 
     @Override
@@ -534,7 +553,18 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void cancelUserTask(UUID userTaskId) {
-        userTaskRepository.setCanceledAt(userTaskId, Instant.now());
+        cancelUserTask(userTaskId, Instant.now());
+    }
+
+    /** Cancels an open task and reports it; a task that has already ended is left as it is. */
+    private void cancelUserTask(UUID userTaskId, Instant now) {
+        UserTaskEntity entity = userTaskRepository.findById(userTaskId).orElse(null);
+        if (entity == null || !isOpen(entity)) {
+            return;
+        }
+        entity.setCanceledAt(now);
+        userTaskRepository.save(entity);
+        userTaskEventRecorder.record(entity, UserTaskEventType.CANCELED, now);
     }
 
     @Override

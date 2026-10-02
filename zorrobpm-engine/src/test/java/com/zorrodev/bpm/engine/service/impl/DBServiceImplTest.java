@@ -1,5 +1,7 @@
 package com.zorrodev.bpm.engine.service.impl;
 
+import com.zorrodev.bpm.engine.service.UserTaskEventRecorder;
+import com.zorrodev.bpm.event.UserTaskEventType;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
@@ -60,6 +62,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -79,6 +82,7 @@ class DBServiceImplTest {
     @Mock private ProcessInstanceMapper processInstanceMapper;
     @Mock private IncidentMapper incidentMapper;
     @Mock private ApplicationEventPublisher publisher;
+    @Mock private UserTaskEventRecorder userTaskEventRecorder;
 
     @InjectMocks
     private DBServiceImpl dbService;
@@ -287,6 +291,9 @@ class DBServiceImplTest {
         assertThat(event.getProcessDefinitionId()).isEqualTo(processDefinitionId);
         assertThat(event.getProcessDefinitionKey()).isEqualTo("order");
         assertThat(event.getProcessDefinitionVersion()).isEqualTo(2);
+        ArgumentCaptor<UserTaskEntity> task = ArgumentCaptor.forClass(UserTaskEntity.class);
+        verify(userTaskEventRecorder).record(task.capture(), eq(UserTaskEventType.CREATED), eq(createdAt));
+        assertThat(task.getValue().getId()).isEqualTo(activityId);
     }
 
     @Test
@@ -423,13 +430,50 @@ class DBServiceImplTest {
         ActivityEntity child2 = new ActivityEntity();
         child2.setId(UUID.randomUUID());
         when(activityRepository.findByParentActivityIdAndStatus(scopeId, ActivityStatus.CREATED)).thenReturn(List.of(child1, child2));
+        UserTaskEntity task1 = new UserTaskEntity();
+        task1.setId(child1.getId());
+        UserTaskEntity task2 = new UserTaskEntity();
+        task2.setId(child2.getId());
+        when(userTaskRepository.findById(child1.getId())).thenReturn(Optional.of(task1));
+        when(userTaskRepository.findById(child2.getId())).thenReturn(Optional.of(task2));
 
         dbService.cancelOpenChildUserTasks(scopeId);
 
         verify(activityRepository).setStatusAndCompletedAt(eq(child1.getId()), eq(ActivityStatus.TERMINATED), any());
         verify(activityRepository).setStatusAndCompletedAt(eq(child2.getId()), eq(ActivityStatus.TERMINATED), any());
-        verify(userTaskRepository).setCanceledAt(eq(child1.getId()), any());
-        verify(userTaskRepository).setCanceledAt(eq(child2.getId()), any());
+        assertThat(task1.getCanceledAt()).isNotNull();
+        assertThat(task2.getCanceledAt()).isEqualTo(task1.getCanceledAt());
+        verify(userTaskEventRecorder).record(task1, UserTaskEventType.CANCELED, task1.getCanceledAt());
+        verify(userTaskEventRecorder).record(task2, UserTaskEventType.CANCELED, task2.getCanceledAt());
+    }
+
+    @Test
+    void cancelUserTask_openTask_setsCanceledAtAndRecordsEvent() {
+        UUID id = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        dbService.cancelUserTask(id);
+
+        verify(userTaskRepository).save(task);
+        assertThat(task.getCanceledAt()).isNotNull();
+        verify(userTaskEventRecorder).record(task, UserTaskEventType.CANCELED, task.getCanceledAt());
+    }
+
+    @Test
+    void cancelUserTask_completedTask_isLeftAsItIs() {
+        UUID id = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        task.setCompletedAt(Instant.now());
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        dbService.cancelUserTask(id);
+
+        assertThat(task.getCanceledAt()).isNull();
+        verify(userTaskRepository, never()).save(any(UserTaskEntity.class));
+        verifyNoInteractions(userTaskEventRecorder);
     }
 
     @Test
@@ -442,6 +486,7 @@ class DBServiceImplTest {
 
         assertThatThrownBy(() -> dbService.claimUserTask(id, "alice"))
             .isInstanceOf(UserTaskAlreadyAssignedException.class);
+        verifyNoInteractions(userTaskEventRecorder);
     }
 
     @Test
@@ -529,10 +574,31 @@ class DBServiceImplTest {
     }
 
     @Test
-    void completeUserTask_callsRepository() {
+    void completeUserTask_setsCompletedAtAndRecordsEvent() {
         UUID id = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+
         dbService.completeUserTask(id);
-        verify(userTaskRepository).setCompletedAt(eq(id), any(Instant.class));
+
+        verify(userTaskRepository).save(task);
+        assertThat(task.getCompletedAt()).isNotNull();
+        verify(userTaskEventRecorder).record(task, UserTaskEventType.COMPLETED, task.getCompletedAt());
+    }
+
+    @Test
+    void completeUserTask_canceledTask_isLeftAsItIs() {
+        UUID id = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        task.setCanceledAt(Instant.now());
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        dbService.completeUserTask(id);
+
+        assertThat(task.getCompletedAt()).isNull();
+        verifyNoInteractions(userTaskEventRecorder);
     }
 
     @Test
@@ -547,6 +613,7 @@ class DBServiceImplTest {
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());
         assertThat(captor.getValue().getAssignee()).isEqualTo("alice");
+        verify(userTaskEventRecorder).record(eq(task), eq(UserTaskEventType.ASSIGNED), any(Instant.class));
     }
 
     @Test
@@ -560,6 +627,7 @@ class DBServiceImplTest {
         assertThatThrownBy(() -> dbService.claimUserTask(id, "bob"))
             .isInstanceOf(UserTaskAlreadyAssignedException.class)
             .hasMessageContaining("alice");
+        verifyNoInteractions(userTaskEventRecorder);
     }
 
     @Test
@@ -595,6 +663,33 @@ class DBServiceImplTest {
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());
         assertThat(captor.getValue().getAssignee()).isNull();
+        verify(userTaskEventRecorder).record(eq(task), eq(UserTaskEventType.UNASSIGNED), any(Instant.class));
+    }
+
+    @Test
+    void unclaimUserTask_withoutAssignee_recordsNoEvent() {
+        UUID id = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        dbService.unclaimUserTask(id);
+
+        verifyNoInteractions(userTaskEventRecorder);
+    }
+
+    @Test
+    void unclaimUserTask_completedTask_recordsNoEvent() {
+        UUID id = UUID.randomUUID();
+        UserTaskEntity task = new UserTaskEntity();
+        task.setId(id);
+        task.setAssignee("alice");
+        task.setCompletedAt(Instant.now());
+        when(userTaskRepository.findById(id)).thenReturn(Optional.of(task));
+
+        dbService.unclaimUserTask(id);
+
+        verifyNoInteractions(userTaskEventRecorder);
     }
 
     @Test
