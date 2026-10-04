@@ -6,6 +6,7 @@ import com.zorrodev.bpm.client.resolver.ProcessInstanceQueryParameterArgumentRes
 import com.zorrodev.bpm.client.resolver.ServiceTaskQueryParametersArgumentResolver;
 import com.zorrodev.bpm.client.resolver.UserTaskQueryParametersArgumentResolver;
 import com.zorrodev.bpm.client.resolver.VariableQueryParametersArgumentResolver;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,6 +22,11 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
  * {@code app.m11s.zorrodev.bpm.token} is set, it is sent as {@code Authorization: Bearer} - the API
  * token an enterprise installation issues in its admin UI. Left empty, the requests carry no
  * authorization, which is what the open API of the community application expects.
+ *
+ * <p>The clients are built from the application's {@link RestClient.Builder} when it has one (Spring
+ * Boot provides a prototype bean), so whatever the application customises on it - tracing headers,
+ * timeouts, observations - applies to the engine calls too. Without such a bean a plain builder is
+ * used.
  */
 @Configuration
 @PropertySource("classpath:zorrobpm-client.properties")
@@ -28,11 +34,14 @@ public class ClientConfiguration {
 
     private final String baseUrl;
     private final String token;
+    private final ObjectProvider<RestClient.Builder> builders;
 
     public ClientConfiguration(@Value("${app.m11s.zorrodev.bpm.url}") String baseUrl,
-                               @Value("${app.m11s.zorrodev.bpm.token:}") String token) {
+                               @Value("${app.m11s.zorrodev.bpm.token:}") String token,
+                               ObjectProvider<RestClient.Builder> builders) {
         this.baseUrl = baseUrl;
         this.token = token;
+        this.builders = builders;
     }
 
     @Bean
@@ -66,7 +75,16 @@ public class ClientConfiguration {
     }
 
     private RestClientAdapter adapter() {
-        return RestClientAdapter.create(configure(RestClient.builder(), baseUrl, token).build());
+        return RestClientAdapter.create(configure(applicationBuilder(), baseUrl, token).build());
+    }
+
+    /**
+     * A builder of its own for every client: the application's bean is cloned, because an application
+     * may declare it as a singleton and the default headers must not pile up across the clients.
+     */
+    private RestClient.Builder applicationBuilder() {
+        RestClient.Builder builder = builders.getIfAvailable();
+        return builder != null ? builder.clone() : RestClient.builder();
     }
 
     /** Applies the base URL, the JSON headers and, when there is one, the bearer token. */

@@ -100,6 +100,31 @@ topic exchange `zorrobpm.user-task-events` (off by default, `zorrobpm.events.use
 See [docs/user-task-events.md](docs/user-task-events.md) for the routing keys, the message format and the
 delivery guarantees.
 
+## Sentry
+
+The `zorrobpm-ce` application reports errors and traces to [Sentry](https://sentry.io) (SaaS or
+self-hosted). It is configured with environment variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SENTRY_DSN` | empty | DSN of the Sentry project. Empty or unset: the SDK stays off and nothing is sent. |
+| `SENTRY_ENVIRONMENT` | empty | Environment of the events, e.g. `prod`, `staging`. |
+| `SENTRY_RELEASE` | version of the build | Release of the events. |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Share of HTTP requests recorded as traces, `0`..`1`. `0` turns tracing off; errors are still sent. |
+
+Sentry receives:
+
+- exceptions that end an HTTP request with a 5xx response;
+- log records of level `ERROR`, including timers, queue listeners and gRPC handlers. Records of level `INFO`
+  and above travel along as breadcrumbs.
+
+Refusals the API makes on purpose (404, 409, 400 on a rejected query and other 4xx) are not reported. An
+incoming `sentry-trace` header continues the caller's trace.
+
+No personal data is sent: no user, IP address, cookies, `Authorization` header, request or response bodies,
+process variables. Turning on "Prevent Storing of IP Addresses" in the Sentry project settings is still
+recommended. Unreachable Sentry does not affect request processing.
+
 ## For maintainers
 
 Publishing is done by GitHub Actions:
