@@ -706,44 +706,19 @@ backup:pg:
 # ---------------------------------------------------------------------------
 
 mirror:github:
+  # 2026-10-05: публикуем code-only ИСТОРИЮ (а не плоский снимок) в ветку `internal` форка, с общим
+  # предком в upstream CE — владелец CE сам забирает нужное. Вся логика и защитные проверки — в
+  # ci/mirror-public-history.sh (ничего не публикуется, если внутренний адрес/путь/почта просочились,
+  # и НИКОГДА не force-push). allow_failure: сбой зеркала не должен краснить деплой-пайплайн, но он виден.
   stage: mirror
   tags: [zbpm]
   needs: []
+  allow_failure: true
+  resource_group: mirror-github
   variables:
     GIT_STRATEGY: clone
+    GIT_DEPTH: "0"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
   script:
-    - |
-      set -euo pipefail
-      WORKDIR=$(mktemp -d)
-      git archive HEAD | tar -x -C "$WORKDIR"
-      cd "$WORKDIR"
-      rm -rf governance docs/audit AGENTS.md .opencode .claude opencode.json
-      rm -f ci/cto-commit-guard.sh ci/cto-push-after-merge.sh ci/cto-verify-pipeline.sh \
-            ci/claude-hook-dispatch-check.sh \
-            ci/test-gate.sh ci/test-gate-selftest.sh ci/wo-report-gate.sh ci/sync-dispatch.sh \
-            ci/deploy-wait.sh
-      # 2026-10-05: подмена внутренних адресов — по ВСЕМ текстовым файлам, не только docker-compose.yml
-      # (раньше nginx.conf, nginx.cidr.test.ts и README светили подсеть/хосты в публичном форке).
-      # Подсеть/хосты -> адреса документации RFC 5737 (192.0.2.0/24), внутренний GitLab -> плейсхолдер.
-      grep -rIl . --exclude-dir=.git . | xargs sed -i \
-        -e 's#10\.189\.131\.0/24#192.0.2.0/24#g' \
-        -e 's#10\.189\.131\.111#192.0.2.111#g' \
-        -e 's#10\.189\.131\.242#192.0.2.242#g' \
-        -e 's#https://git\.itte\.kz/[A-Za-z0-9_./-]*#https://github.com/russell1996/zbpm.git#g' \
-        -e 's#git\.itte\.kz#<internal-git-host>#g' \
-        -e 's#<prod-host>#<prod-host>#g'
-      # Fail-closed: не публикуем, если внутренний адрес/хост остался (новый формат, новый файл).
-      if grep -rInE '10\.189\.|git\.itte\.kz|<prod-host>|92\.46\.186' --exclude-dir=.git . ; then
-        echo "ABORT: internal address survived sanitization, mirror NOT pushed" >&2
-        exit 1
-      fi
-      git init -q
-      git checkout -q -b main
-      git add -A
-      git -c user.name="zbpm-mirror" -c user.email="rasul.amirhan@gmail.com" \
-        commit -q -m "sync: code-only mirror from internal repo ($CI_COMMIT_SHORT_SHA)"
-      git remote add origin "https://x-access-token:${GITHUB_SYNC_TOKEN}@github.com/russell1996/zbpm.git"
-      git push --force origin main
-    - echo "Mirrored $CI_COMMIT_SHORT_SHA to github.com/russell1996/zbpm"
+    - bash ci/mirror-public-history.sh push
