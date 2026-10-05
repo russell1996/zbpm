@@ -76,6 +76,9 @@ default:
       - "zorrobpm-frontend/**/*"
       - "pom.xml"
       - "Dockerfile"
+      # 2026-10-05: .dockerignore определяет, какие файлы видит test-стадия docker build
+      # (его правка и уронила test:backend) — без него в якоре такой коммит ничего не проверяет.
+      - ".dockerignore"
       - "entrypoint.sh"
       - "docker-compose.yml"
       - "docker-compose.observability.yml"
