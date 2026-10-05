@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835_nonevsub" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="msgPing" name="ping" />
+  <bpmn:process id="test-c835-nonevsub-incl-join" name="test-c835-nonevsub-incl-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+
+    <!-- Main flow: two branches converging on an INCLUSIVE join in the TOP-LEVEL scope. -->
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fc</bpmn:outgoing>
+      <bpmn:outgoing>fd</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fc" name="fc" sourceRef="pfork" targetRef="taskMain" />
+    <bpmn:sequenceFlow id="fd" name="fd" sourceRef="pfork" targetRef="taskHold" />
+
+    <bpmn:userTask id="taskMain" name="taskMain">
+      <bpmn:incoming>fc</bpmn:incoming>
+      <bpmn:outgoing>fC</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fC" name="fC" sourceRef="taskMain" targetRef="join" />
+
+    <bpmn:userTask id="taskHold" name="taskHold">
+      <bpmn:incoming>fd</bpmn:incoming>
+      <bpmn:outgoing>fHold</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fHold" name="fHold" sourceRef="taskHold" targetRef="join" />
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>fC</bpmn:incoming>
+      <bpmn:incoming>fHold</bpmn:incoming>
+      <bpmn:outgoing>fNotify</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fNotify" name="fNotify" sourceRef="join" targetRef="taskNotify" />
+    <bpmn:userTask id="taskNotify" name="taskNotify">
+      <bpmn:incoming>fNotify</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskNotify" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- NON-INTERRUPTING event sub-process: its subscription is never consumed, so this trigger
+         stays armed until the instance ends. Per WO-C8-35 Решение 2 it must NOT count as a pending
+         deliverer for the top-level join above: it runs in its OWN scope token and never delivers a
+         branch into the parent scope. -->
+    <bpmn:subProcess id="pingHandler" name="pingHandler" triggeredByEvent="true">
+      <bpmn:startEvent id="evStart" name="evStart" isInterrupting="false">
+        <bpmn:outgoing>flowE1</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="med1" messageRef="msgPing" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowE1" name="flowE1" sourceRef="evStart" targetRef="evEnd" />
+      <bpmn:endEvent id="evEnd" name="evEnd">
+        <bpmn:incoming>flowE1</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>
