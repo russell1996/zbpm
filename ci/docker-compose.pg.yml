@@ -11,7 +11,13 @@ services:
     # WO-REL-38: commit-timestamps для порядка ленты (FeedPositionAssigner
     # читает pg_xact_commit_timestamp(xmin); контекст postmaster — только
     # через командную строку, SET после старта не работает).
-    command: ["postgres", "-c", "track_commit_timestamp=on"]
+    # 2026-10-05: max_connections поднят с дефолтных 100. Каждый закэшированный
+    # @SpringBootTest-контекст держит свой Hikari-пул (до 10 соединений), PgIT-классов
+    # с разными контекстами уже несколько десятков — сюита стояла у потолка и падала
+    # `FATAL: sorry, too many clients already` недетерминированно (порядок/нагрузка),
+    # в т.ч. на чистом master и в реальном CI (пайплайн 175584). Эфемерный тестовый PG,
+    # на прод не влияет.
+    command: ["postgres", "-c", "track_commit_timestamp=on", "-c", "max_connections=400"]
     environment:
       POSTGRES_DB: ${PG_DB:-zorrobpm-db}
       POSTGRES_USER: ${PG_USER:-zorrodev}
