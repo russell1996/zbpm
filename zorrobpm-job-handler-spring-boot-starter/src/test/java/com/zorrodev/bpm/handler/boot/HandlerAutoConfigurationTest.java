@@ -13,6 +13,9 @@ import org.springframework.amqp.core.AmqpAdmin;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueInformation;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
+import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
+import org.springframework.amqp.rabbit.connection.Connection;
+import org.springframework.amqp.rabbit.connection.ConnectionListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
@@ -44,6 +47,9 @@ class HandlerAutoConfigurationTest {
 
     @Mock
     private AmqpAdmin amqpAdmin;
+
+    @Mock
+    private CachingConnectionFactory cachingConnectionFactory;
 
     @Mock
     private SimpleMessageListenerContainer container;
@@ -239,22 +245,92 @@ class HandlerAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("WO-ENG-31: broker unreachable at startup — init survives, subscription skipped")
-    void brokerUnreachableAtStartup_skipsSubscription() {
+    @DisplayName("WO-REL-62 (бывший brokerUnreachableAtStartup_skipsSubscription): "
+        + "брокер недоступен на старте — контейнер СТАРТУЕТ (reconnect-цикл), "
+        + "declare переносится на переподключение; встроенный и внешний воркеры одинаково")
+    void brokerUnreachableAtStartup_startsContainerAndDeclaresOnReconnect() {
+        // Встроенный zorrobpm:http + внешний воркер — один и тот же стартер-код (критерий 4).
         when(applicationContext.getBeansOfType(JobHandler.class))
-                .thenReturn(Map.of("handlerA", handlerA));
-        when(handlerA.getJob()).thenReturn("taskA");
+                .thenReturn(Map.of("handlerA", handlerA, "handlerB", handlerB));
+        when(handlerA.getJob()).thenReturn("zorrobpm:http");
+        when(handlerB.getJob()).thenReturn("ext-billing");
         when(connectionFactory.createListenerContainer()).thenReturn(container);
+        when(container.getConnectionFactory()).thenReturn(cachingConnectionFactory);
         // Брокер недоступен: getQueueInfo бросает, а не возвращает null.
         when(amqpAdmin.getQueueInfo(anyString()))
                 .thenThrow(new org.springframework.amqp.AmqpConnectException(
                     new java.net.ConnectException("Connection refused")));
 
-        // When: init НЕ бросает — приложение стартует без брокера.
+        // When: init НЕ бросает — приложение стартует без брокера (критерий 1: не "healthy и глухой").
         configuration.init();
 
-        // Then: подписка пропущена (контейнер не стартует), declare'ов нет.
-        verify(container, times(0)).start();
+        // Then: ОБА контейнера созданы, привязаны и СТАРТОВАНЫ (reconnect-цикл подхватит брокер).
+        ArgumentCaptor<String> queueNames = ArgumentCaptor.forClass(String.class);
+        verify(container, times(2)).setQueueNames(queueNames.capture());
+        assertThat(queueNames.getAllValues()).containsExactlyInAnyOrder(
+            "zorrobpm.jobs.zorrobpm:http", "zorrobpm.jobs.ext-billing");
+        ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
+                ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
+        verify(container, times(2)).setMessageListener(listenerCaptor.capture());
+        assertThat(listenerCaptor.getAllValues()).allMatch(JobCompletionListener.class::isInstance);
+        // Очередь может появиться позже (declare на reconnect) — контейнер не умирает, а ждёт.
+        verify(container, times(2)).setMissingQueuesFatal(false);
+        verify(container, times(2)).start();
+        // Стартовых declare'ов не было (брокер лежал), но redeclare запланирован на reconnect.
         verify(amqpAdmin, times(0)).declareQueue(any());
+        ArgumentCaptor<ConnectionListener> reconnectCaptor =
+                ArgumentCaptor.forClass(ConnectionListener.class);
+        verify(cachingConnectionFactory, times(2)).addConnectionListener(reconnectCaptor.capture());
+
+        // When: брокер вернулся (новое физическое соединение) — declare срабатывает без рестарта.
+        // (onCreate объявляет безусловно, без getQueueInfo-check — пере-заглушка не нужна.)
+        for (ConnectionListener l : reconnectCaptor.getAllValues()) {
+            l.onCreate(mock(Connection.class));
+        }
+
+        // Then: обе очереди объявлены (рабочая + DLQ на каждую — см. existingQueueNotRedeclared-счёт).
+        verify(amqpAdmin).declareQueue(argThat(q -> q.getName().equals("zorrobpm.jobs.zorrobpm:http")));
+        verify(amqpAdmin).declareQueue(argThat(q -> q.getName().equals("zorrobpm.jobs.ext-billing")));
+        // Успешный declare снимает одноразовый слушатель.
+        verify(cachingConnectionFactory, times(2)).removeConnectionListener(any(ConnectionListener.class));
+    }
+
+    @Test
+    @DisplayName("WO-REL-62: declare упал на старте (брокер умер между check и declare) — "
+        + "контейнер всё равно стартует, повтор запланирован на reconnect")
+    void startupDeclareFailure_stillStartsContainerAndSchedulesRetry() {
+        when(applicationContext.getBeansOfType(JobHandler.class))
+                .thenReturn(Map.of("handlerA", handlerA));
+        when(handlerA.getJob()).thenReturn("taskA");
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
+        when(container.getConnectionFactory()).thenReturn(cachingConnectionFactory);
+        when(amqpAdmin.getQueueInfo(anyString())).thenReturn(null);
+        // Брокер умер посреди стартового declare: падает именно DLQ-declare
+        // (первый declareQueue в цепочке), до рабочей очереди старт не доходит.
+        // declareQueue НЕ void (возвращает имя очереди) — doNothing() неприменим.
+        org.mockito.Mockito.doThrow(new RuntimeException("broker died mid-declare"))
+                .doReturn("zorrobpm.jobs.taskA.dlq")
+                .when(amqpAdmin).declareQueue(argThat(
+                    q -> q != null && q.getName().equals("zorrobpm.jobs.taskA.dlq")));
+
+        // When: init НЕ бросает.
+        configuration.init();
+
+        // Then: контейнер стартован, redeclare запланирован.
+        verify(container, times(1)).start();
+        ArgumentCaptor<ConnectionListener> reconnectCaptor =
+                ArgumentCaptor.forClass(ConnectionListener.class);
+        verify(cachingConnectionFactory, times(1)).addConnectionListener(reconnectCaptor.capture());
+
+        // When: reconnect — declare проходит, слушатель снимается.
+        reconnectCaptor.getValue().onCreate(mock(Connection.class));
+
+        // Then: старт внёс 0 рабочих declare (умер на DLQ), reconnect — ровно 1 полный
+        // declare (DLQ + рабочая). DLQ суммарно: 1 падение + 1 успех.
+        verify(amqpAdmin, times(1)).declareQueue(
+            argThat(q -> q.getName().equals("zorrobpm.jobs.taskA")));
+        verify(amqpAdmin, times(2)).declareQueue(
+            argThat(q -> q.getName().equals("zorrobpm.jobs.taskA.dlq")));
+        verify(cachingConnectionFactory, times(1)).removeConnectionListener(any(ConnectionListener.class));
     }
 }
