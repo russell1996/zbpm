@@ -730,28 +730,57 @@ public class DBServiceImpl implements DBService {
      * event-subprocess-триггеры. Наружу отдаётся только МНОЖЕСТВО element id выходов \u2014
      * сколько именно там строк, движку знать не надо: решает {@code canReach}.
      */
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1): element ids of this instance's still-ARMED triggers that
+     * continue somewhere else — boundary timer/message/signal and event-subprocess triggers.
+     * Наружу отдаётся только МНОЖЕСТВО element id выходов: сколько именно там строк, движку
+     * знать не надо, решает {@code canReach}.
+     *
+     * <p>Три источника: взведённые timer jobs, взведённые message/signal boundary-подписки и
+     * event-subprocess-триггеры. Catch-события (message/signal/timer catch) сюда НЕ попадают:
+     * у них есть строка activity хоста, их покрывает вселенная живых исполнений.
+     */
     @Override
     public java.util.Set<String> getArmedTriggerElementIds(UUID processInstanceId) {
-        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        // outlet element id -> host activity id (null = instance-scoped event-subprocess trigger)
+        java.util.Map<String, UUID> armed = new java.util.LinkedHashMap<>();
         for (com.zorrodev.bpm.engine.entity.TimerJobEntity job : timerDbOperations.findArmedTimerJobs(processInstanceId)) {
-            addIfPresent(ids, job.getBoundaryElementId());
-            addIfPresent(ids, job.getEventSubprocessId());
+            putArmed(armed, job.getBoundaryElementId(), job.getActivityId());
+            putArmed(armed, job.getEventSubprocessId(), null);
         }
         for (com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity sub : messageSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
-            addIfPresent(ids, sub.getBoundaryElementId());
-            addIfPresent(ids, sub.getEventSubprocessId());
+            putArmed(armed, sub.getBoundaryElementId(), sub.getActivityId());
+            putArmed(armed, sub.getEventSubprocessId(), null);
         }
         for (com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity sub : signalSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
-            addIfPresent(ids, sub.getBoundaryElementId());
-            addIfPresent(ids, sub.getEventSubprocessId());
+            putArmed(armed, sub.getBoundaryElementId(), sub.getActivityId());
+            putArmed(armed, sub.getEventSubprocessId(), null);
+        }
+        // A trigger armed on a host that is NO LONGER ACTIVE can never fire: EventTrigger skips a
+        // boundary whose host is COMPLETED/CANCELLED ("Boundary ... fired but host activity ... is
+        // ..., ignoring"), so counting it would hold every join it could reach forever — the
+        // over-conservative twin of BLOCKER-2, and it bit the B1 test the moment taskWait
+        // completed (the join then waited for a PT10H timer on a dead host — i.e. for ten hours).
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (java.util.Map.Entry<String, UUID> e : armed.entrySet()) {
+            if (e.getValue() == null || isActivityActive(e.getValue())) {
+                ids.add(e.getKey());
+            }
         }
         return ids;
     }
 
-    private static void addIfPresent(java.util.Set<String> ids, String id) {
-        if (id != null && !id.isEmpty()) {
-            ids.add(id);
+    private static void putArmed(java.util.Map<String, UUID> armed, String outletElementId, UUID hostActivityId) {
+        if (outletElementId != null && !outletElementId.isEmpty()) {
+            armed.putIfAbsent(outletElementId, hostActivityId);
         }
+    }
+
+    private boolean isActivityActive(UUID activityId) {
+        Activity activity = getActivity(activityId);
+        return activity != null
+            && (activity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
+                || activity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS);
     }
 
     @Override
