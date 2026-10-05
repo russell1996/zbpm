@@ -73,11 +73,6 @@ public class SignalSubscriptionDbOperationsImpl implements SignalSubscriptionDbO
     }
 
     @Override
-    public List<SignalSubscriptionEntity> findPendingSubscriptions(UUID processInstanceId) {
-        return signalSubscriptionRepository.findByProcessInstanceIdAndConsumedFalse(processInstanceId);
-    }
-
-    @Override
     public void deleteSignalStartSubscriptionsByKey(String processKey) {
         signalStartSubscriptionRepository.deleteByProcessKey(processKey);
     }
