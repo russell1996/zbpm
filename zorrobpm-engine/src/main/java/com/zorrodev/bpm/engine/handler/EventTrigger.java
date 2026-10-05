@@ -393,11 +393,14 @@ public class EventTrigger {
 
         if (ext.isInterrupting()) {
             dbService.cancelActiveActivities(processInstanceId);
-            // WO-C8-35 (CR-09, ШАГ 3): прерывающий event-subprocess только что ПОГАСИЛ все живые
-            // activity инстанса — после этого ни один join не может получить ветвь ниоткуда.
-            // Перепроверка припаркованных join'ов обязана быть здесь же (@verifier раунда 3,
-            // находка 2): иначе токен, припаркованный на join'е, остаётся ждать вечно.
-            inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, null, bpmn, executor);
+            // ЗДЕСЬ НЕТ перепроверки припаркованных inclusive-join'ов, и это НЕ пропуск, а откат
+            // моей собственной правки раунда 3-bis: @verifier (второй проход, sha 14f5d71a) доказал
+            // живьём, что вызов с токеном припаркованной ветви здесь недоступен (в arrived-строках
+            // нет колонки token, а схема — СТОП-лист), а передача null роняет весь путь:
+            // completeInclusiveJoin → getToken(null) → InvalidDataAccessApiUsageException, плюс
+            // рождается инцидент и прерывающее event-sub-process НЕ стартует — то есть тихий
+            // висящий join был заменён на регресс рабочего поведения. Раунд 3-bis так и отдан
+            // в мерж не готов: см. governance/reports/WO-C8-35.md §14.14 и agent-to-cto.md.
             Token token = dbService.createToken(null);
             log.info("{}/{}: Interrupting event sub-process {} starting at {}", processInstanceId, token.getId(), eventSubprocessId, ext.getStartEventId());
             executor.execute(processInstanceId, token.getId(), ext.getStartEventId());
