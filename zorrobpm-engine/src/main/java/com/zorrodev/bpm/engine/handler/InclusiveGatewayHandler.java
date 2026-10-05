@@ -89,10 +89,15 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
             Integer expected = dbService.getInclusiveExpected(processInstanceId, bpmnElement.getId());
             Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, bpmnElement.getId());
 
-            // WO-C8-35 (CR-09): readiness without a static counter. `expected` is written
-            // by only three branchers (inclusive split, MI, ad-hoc), so from an XOR /
-            // parallel fork / implicit AND-fork / subprocess exit it is null and the old
-            // `expected != null && …` was false forever — a silent wait-forever. The join is
+            // WO-C8-35 (CR-09): readiness without a static counter. Read under THIS
+            // element's id, `expected` is written by an INCLUSIVE SPLIT and nothing else:
+            // multi-instance and ad-hoc do write counters, but under composite keys
+            // (`miId::batchUuid`, `AdHocJoin.joinKey(...)`) resolved on their own paths,
+            // not here — naming them as writers of this counter is exactly the wrong
+            // inference (first version of this comment made it; @verifier caught it).
+            // So from an XOR / parallel fork / implicit AND-fork / subprocess exit it is
+            // null, and the old `expected != null && …` was false forever — a silent
+            // wait-forever. The join is
             // ready when nobody else in the instance can still deliver a branch to it
             // (ElementSupport.hasOtherLiveExecutionReaching). NOT the tempting `expected=1`:
             // that would fire a neighbouring join early under any other topology.
