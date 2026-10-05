@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835_pass" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c835-passthrough-fanout" name="test-c835-passthrough-fanout" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="isplit" />
+
+    <!-- WO-C8-35 (M1+M2): a PASS-THROUGH fan-out — both branches run through the join
+         with no wait state in between, so when the FIRST branch reaches the join its
+         sibling has no activity row yet. Static `expected` is gone (CTO decision), so the
+         join's readiness must still not fire on arrival #1: the join has to pass through
+         EXACTLY ONCE. -->
+    <bpmn:inclusiveGateway id="isplit" name="isplit">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="isplit" targetRef="join" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="isplit" targetRef="join" />
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
