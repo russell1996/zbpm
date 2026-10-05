@@ -7,7 +7,9 @@
 .env
 .env.*
 !.env.example
-docker-compose.yml
+# 2026-10-05: docker-compose.yml НЕ игнорируем — HttpConnectorComposeWiringTest (WO-QW-11) читает
+# ../docker-compose.yml в test-стадии `docker build`; без файла 3 теста красные. В runtime-образ
+# он не попадает (runtime копирует только jar).
 README.md
 # The frontend builds from its own context (zorrobpm-frontend/Dockerfile); keep it out of the backend image
 zorrobpm-frontend
