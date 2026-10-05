@@ -134,6 +134,11 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public java.util.List<UUID> findRunningChildInstanceIds(UUID parentActivityId) {
+        return processInstanceDbOperations.findRunningChildInstanceIds(parentActivityId);
+    }
+
+    @Override
     public void createServiceTask(UUID activityId) {
         serviceTaskDbOperations.createServiceTask(activityId);
     }

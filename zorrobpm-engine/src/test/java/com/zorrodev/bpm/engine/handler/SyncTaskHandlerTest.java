@@ -34,6 +34,7 @@ class SyncTaskHandlerTest {
     @Mock private ActivityServiceImpl activityService;
     @Mock private ElementSupport elementSupport;
     @Mock private FlowNavigator flowNavigator;
+    @Mock private BoundaryScheduler boundaryScheduler;
 
     private SyncTaskHandler.ScriptTask scriptTask;
     private SyncTaskHandler.BusinessRuleTask businessRuleTask;
@@ -41,7 +42,7 @@ class SyncTaskHandlerTest {
     @BeforeEach
     void setUp() {
         scriptTask = new SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNavigator, activityService);
-        businessRuleTask = new SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNavigator);
+        businessRuleTask = new SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNavigator, boundaryScheduler);
     }
 
     @Test

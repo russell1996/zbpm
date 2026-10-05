@@ -64,6 +64,12 @@ public interface DBService {
      */
     void lockProcessInstance(UUID processInstanceId);
 
+    /**
+     * WO-C8-34 (CR-04): ids of still-running child instances started by one call
+     * activity row (passthrough to {@code ProcessInstanceDbOperations}).
+     */
+    List<UUID> findRunningChildInstanceIds(UUID parentActivityId);
+
     void createServiceTask(UUID activityId);
 
     /** Creates the service-task job with an explicit retry budget (from {@code zeebe:taskDefinition retries}) and a stable job id (from {@code zeebe:taskDefinition type}). */

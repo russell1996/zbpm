@@ -92,6 +92,7 @@ public class SyncTaskHandler {
         private final DBService dbService;
         private final FlowNavigator flowNavigator;
         private final ActivityService activityService;
+        private final BoundaryScheduler boundaryScheduler;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.MANUAL_TASK; }
@@ -105,6 +106,12 @@ public class SyncTaskHandler {
             UUID tokenId = ctx.tokenId();
 
             UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
+            // WO-C8-34 (CR-04): boundaries attach to manual hosts too (same trio as
+            // task hosts; the host completes in the same call, so a later fire
+            // self-skips on host status — registration is the semantic, not the wait).
+            boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, el);
+            boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, el);
+            boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, el);
             dbService.completeActivity(activityId);
             flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, el, ctx.executor());
             activityService.triggerConditionalEvents(processInstanceId);
@@ -150,6 +157,7 @@ public class SyncTaskHandler {
         private final DmnService dmnService;
         private final ElementSupport elementSupport;
         private final FlowNavigator flowNavigator;
+        private final BoundaryScheduler boundaryScheduler;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.BUSINESS_RULE_TASK; }
@@ -163,6 +171,12 @@ public class SyncTaskHandler {
             UUID tokenId = ctx.tokenId();
 
             UUID activityId = dbService.createActivity(processInstanceId, tokenId, el);
+
+            // WO-C8-34 (CR-04): boundaries attach to business-rule hosts too (same
+            // trio, same rationale as ManualTask above).
+            boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, el);
+            boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, el);
+            boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, el);
 
             BusinessRuleExtensionModel ext = Optional.ofNullable(el.getExtensions())
                 .map(BpmnElementExtensionModel::getBusinessRuleExtension)
