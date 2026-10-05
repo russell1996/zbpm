@@ -1180,11 +1180,13 @@ public class ElementSupport {
     //                                               разветвления (его activity остаётся живой
     //                                               весь фанаут — см. InclusiveGatewayHandler).
     //
-    // Раунд 5 удалил множество «взведённых триггеров» (armed timer/message/signal + индекс под
-    // них): строка armed есть только у этих трёх типов, а CONDITIONAL/ERROR/ESCALATION границы её
-    // не имеют ВООБЩЕ, поэтому во вселенной их не было — и join срабатывал на первом приходе, а
-    // по границе ВТОРЫМ (BLOCKER-3 red-team, живой прогон). Свойство «живой хост ⇒ граница может
-    // выстрелить» теперь получается структурно, без единого запроса, и покрывает ЛЮБОЙ тип границы.
+    // Раунд 5: множество «взведённых триггеров» осталось, но перестало быть САМОСТОЯТЕЛЬНЫМ
+    // правилом. Раньше оно и было вселенной — и потому не видело CONDITIONAL/ERROR/ESCALATION-границ
+    // (строки armed у них нет никогда): join срабатывал на первом приходе, а по границе ВТОРЫМ
+    // (BLOCKER-3 red-team, живой прогон). Теперь structural-ребро границы проходится для ЛЮБОГО типа,
+    // а armed-набор используется ровно там, где он единственный источник знания: «эта граница уже
+    // сработала, второй выстрел невозможен» (timer/message/signal). На определениях без таких
+    // границ запросов не делается вовсе.
     //
     // Намеренная асимметрия: консервативность (b) может заставить join ЖДАТ лишнего, но
     // никогда не срабатывает раньше времени. Обратную сторону — «последний доставщик умер» —
@@ -1224,6 +1226,29 @@ public class ElementSupport {
      * of what the code did.
      */
     public boolean canReach(BpmnProcessDefinitionModel bpmn, String fromElementId, String targetElementId) {
+        return canReachWithArmedBoundaries(bpmn, fromElementId, targetElementId, null);
+    }
+
+    /**
+     * То же обход, но ребро границы проходится только для границ, которые ещё МОГУТ выстрелить.
+     *
+     * <p><b>ЭСКАЛАЦИЯ раунда 5 (отчёт §15).</b> «Пока хост жив — граница может выстрелить» верно для
+     * границ БЕЗ персистентной armed-записи: у conditional/error/escalation/cancel такой записи нет
+     * НИКОГДА, и движок действительно может перевыстрелить их при следующей смене переменных. У
+     * timer/message/signal запись ЕСТЬ, и в ней видно, что граница уже сработала: одноразовый таймер
+     * после {@code claimTimerJob} больше не выстрелит. Поэтому для этих трёх типов ребро проходится
+     * только если граница ещё взведена ({@code armedBoundaryElementIds}). Живой прогон без этого
+     * правила ронял {@code ArmedBoundaryTimerJoinPgIT} (шаг 3: после реального выстрела
+     * непрерывающего таймера на ЖИВОМ хосте join обязан пройти, а ждал смерти хоста) — то есть
+     * буквальное «хост жив ⇒ граница может выстрелить» несовместимо с этим тестом. Без запросов
+     * отличить «сработавшую» границу нечем: альтернатива — новая колонка/таблица (G-C).
+     *
+     * @param armedBoundaryElementIds element id ещё взведённых границ; {@code null} — «armed-записи
+     *                                нет ни у одной границы в этом определении» (тогда все границы
+     *                                проходят, и ни одного запроса не делается)
+     */
+    public boolean canReachWithArmedBoundaries(BpmnProcessDefinitionModel bpmn, String fromElementId,
+            String targetElementId, java.util.Set<String> armedBoundaryElementIds) {
         if (fromElementId == null || targetElementId == null || fromElementId.equals(targetElementId)) {
             return fromElementId != null && fromElementId.equals(targetElementId);
         }
@@ -1246,6 +1271,14 @@ public class ElementSupport {
             // Ребро границы: у хоста может быть взведённая граница, у которой НЕТ строки
             // activity, но есть исходящий поток в сторону join'а.
             for (BpmnElementModel boundary : bpmn.getBoundaryEventsAttachedTo(current)) {
+                if (armedBoundaryElementIds != null
+                        && boundary.getType() != null
+                        && boundary.getType().isRowBackedBoundaryEvent()
+                        && !armedBoundaryElementIds.contains(boundary.getId())) {
+                    // armed-запись есть и говорит, что граница УЖЕ сработала: повторного выстрела
+                    // не будет, поэтому хост больше не возможный доставщик ветви.
+                    continue;
+                }
                 enqueueOutgoingTargets(bpmn, boundary.getOutgoing(), queue);
             }
         }
@@ -1278,16 +1311,32 @@ public class ElementSupport {
      */
     public boolean hasOtherLiveExecutionReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel join) {
+        return hasOtherLiveExecutionReaching(processInstanceId, bpmn, join, armedBoundaryIds(processInstanceId, bpmn));
+    }
+
+    /**
+     * Раунд 5, эскалация: {@code armedBoundaryElementIds} — element id ещё взведённых границ
+     * инстанса, либо {@code null}, если в определении НЕТ ни одной границы с персистентной
+     * armed-записью. Тогда запросов не делается вовсе (обычный случай), а structural-ребра границ
+     * для conditional/error/escalation всё равно работают.
+     */
+    public boolean hasOtherLiveExecutionReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel join, java.util.Set<String> armedBoundaryElementIds) {
         for (Activity activity : dbService.getActiveActivities(processInstanceId)) {
             String elementId = activity.getBpmnElementId();
             if (elementId == null || elementId.equals(join.getId())) {
                 continue;
             }
-            if (canReach(bpmn, elementId, join.getId())) {
+            if (canReachWithArmedBoundaries(bpmn, elementId, join.getId(), armedBoundaryElementIds)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Ленивое чтение armed-множества: только если в определении есть границы с такой записью. */
+    private java.util.Set<String> armedBoundaryIds(UUID processInstanceId, BpmnProcessDefinitionModel bpmn) {
+        return bpmn.hasRowBackedBoundaryEvent() ? dbService.getArmedTriggerElementIds(processInstanceId) : null;
     }
 
     /**
@@ -1325,7 +1374,8 @@ public class ElementSupport {
      */
     public boolean isInclusiveJoinReady(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel join) {
-        return !hasOtherLiveExecutionReaching(processInstanceId, bpmn, join)
+        return !hasOtherLiveExecutionReaching(processInstanceId, bpmn, join,
+                armedBoundaryIds(processInstanceId, bpmn))
             && !hasParkedJoinReaching(processInstanceId, bpmn, join);
     }
 

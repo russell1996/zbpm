@@ -724,6 +724,83 @@ public class DBServiceImpl implements DBService {
         parallelGatewayDbOperations.recordInclusiveExpected(processInstanceId, gatewayElementId, expectedCount);
     }
 
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1): element ids of this instance's still-ARMED triggers that
+     * continue somewhere else — boundary timer/message/signal triggers.
+     * Наружу отдаётся только МНОЖЕСТВО element id выходов: сколько именно там строк, движку
+     * знать не надо, решает {@code canReach}.
+     *
+     * <p>Два источника: взведённые timer jobs и взведённые message/signal boundary-подписки.
+     * Catch-события (message/signal/timer catch) сюда НЕ попадают: у них есть строка activity хоста,
+     * их покрывает вселенная живых исполнений.
+     *
+     * <p><b>Стартовый триггер event-subprocess СЮДА НЕ ВХОДИТ (Решение CTO 2, раунд 4).</b> Подписка
+     * непрерывающего event-subprocess не consume'ится никогда, поэтому её outlet висел бы в
+     * armed-множестве до конца инстанса. Проверено условие решения: запуск event-subprocess создаёт
+     * СВОЙ scope-экземпляр ({@code EventTrigger.triggerEventSubprocess} — свой корневой токен плюс
+     * scope-токен на контейнере), то есть ни в join родительского scope, ни в уже идущий
+     * scope-экземпляр он токен не доставляет. Новый запуск — это новый scope, а не «ещё одна ветвь
+     * того же join'а».
+     *
+     * <p>Замечание честности: пока эта запись была в множестве, она была и оставалась ИНЕРТНОЙ —
+     * элемент-контейнер event-subprocess по BPMN не имеет исходящих потоков (ни один из 10
+     * event-subprocess в фикстурах репозитория не объявляет {@code <outgoing>}), а {@code canReach}
+     * идёт ровно по исходящим потокам, поэтому такой outlet не мог повлиять на решение ни одного
+     * join'а. Проверено мутацией: возврат этих трёх вызовов не меняет ни одного ПОВЕДЕНЧЕСКОГО
+     * ассерта тестов (a)/(b) — только прямую проверку самого множества (POF-4 в отчёте). Запись удалена не ради поведения, а ради правды: во вселенной «ещё может доставить»
+     * старт event-subprocess доставщиком ветви НЕ является, и оставлять его там — значит оставлять
+     * в коде ложь, на которую уже ушло три раунда ревью.
+     */
+    @Override
+    public java.util.Set<String> getArmedTriggerElementIds(UUID processInstanceId) {
+        // outlet element id -> the host activity ids it is armed on. NOT a single value and NOT
+        // putIfAbsent: the same outlet element id can be armed on SEVERAL live hosts (multi-instance
+        // hosts, a loop re-entering the same task), and first-wins silently dropped the outlet the
+        // moment the first host died — a second, still-armed host could then deliver a branch into a
+        // join that had already fired. Correct rule: the outlet stays armed while ANY of its hosts is
+        // active (WO-C8-35 раунд 4, ШАГ D).
+        java.util.Map<String, java.util.Set<UUID>> armed = new java.util.LinkedHashMap<>();
+        for (com.zorrodev.bpm.engine.entity.TimerJobEntity job : timerDbOperations.findArmedTimerJobs(processInstanceId)) {
+            putArmed(armed, job.getBoundaryElementId(), job.getActivityId());
+        }
+        for (com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity sub : messageSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
+            putArmed(armed, sub.getBoundaryElementId(), sub.getActivityId());
+        }
+        for (com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity sub : signalSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
+            putArmed(armed, sub.getBoundaryElementId(), sub.getActivityId());
+        }
+        // A trigger armed on a host that is NO LONGER ACTIVE can never fire: EventTrigger skips a
+        // boundary whose host is COMPLETED/CANCELLED ("Boundary ... fired but host activity ... is
+        // ..., ignoring"), so counting it would hold every join it could reach forever — the
+        // over-conservative twin of BLOCKER-2, and it bit the B1 test the moment taskWait
+        // completed (the join then waited for a PT10H timer on a dead host — i.e. for ten hours).
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (java.util.Map.Entry<String, java.util.Set<UUID>> e : armed.entrySet()) {
+            if (e.getValue().isEmpty() || e.getValue().stream().anyMatch(this::isActivityActive)) {
+                ids.add(e.getKey());
+            }
+        }
+        return ids;
+    }
+
+    private static void putArmed(java.util.Map<String, java.util.Set<UUID>> armed,
+                                 String outletElementId, UUID hostActivityId) {
+        if (outletElementId != null && !outletElementId.isEmpty()) {
+            armed.computeIfAbsent(outletElementId, k -> new java.util.LinkedHashSet<>())
+                .add(hostActivityId);
+        }
+    }
+
+    private boolean isActivityActive(UUID activityId) {
+        if (activityId == null) {
+            return false;
+        }
+        Activity activity = getActivity(activityId);
+        return activity != null
+            && (activity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
+                || activity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS);
+    }
+
     @Override
     public java.util.Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId) {
         return parallelGatewayDbOperations.getGatewaysWithOpenArrivals(processInstanceId);

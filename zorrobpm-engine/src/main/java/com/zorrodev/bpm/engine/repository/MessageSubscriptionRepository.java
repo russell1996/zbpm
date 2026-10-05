@@ -48,6 +48,16 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
         return (root, query, cb) -> cb.equal(root.get("consumed"), consumed);
     }
 
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1; раунд 4 — контракт уточнён): this instance's unconsumed
+     * message subscriptions, UNFILTERED — the query returns EVERY pending row of the instance
+     * (boundary trigger, event-sub-process trigger and plain catch alike). Callers narrow it: only
+     * a row with a non-null boundary element id is an armed trigger, and the event-sub-process start
+     * trigger is deliberately not counted as a branch deliverer (Решение 2). A plain message catch needs
+     * no entry here because its host activity row already covers it in the live-execution universe.
+     */
+    List<MessageSubscriptionEntity> findByProcessInstanceIdAndConsumedFalse(UUID processInstanceId);
+
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("DELETE FROM MessageSubscriptionEntity m WHERE m.processInstanceId = :processInstanceId")
     void deleteByProcessInstanceId(@org.springframework.data.repository.query.Param("processInstanceId") UUID processInstanceId);
