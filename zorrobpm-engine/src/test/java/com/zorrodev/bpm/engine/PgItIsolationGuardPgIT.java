@@ -11,6 +11,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.time.temporal.ChronoUnit;
 
@@ -60,6 +62,9 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         AtomicBoolean writerRunning = new AtomicBoolean(true);
         AtomicReference<Throwable> writerError = new AtomicReference<>();
         List<UUID> writtenByWriter = new java.util.ArrayList<>();
+        // WO-OPS-11 pattern: coordinate by FACT, never by a fixed sleep — the writer signals after its
+        // first committed insert, so the assertion below can never lose a race with thread start-up.
+        CountDownLatch firstWrite = new CountDownLatch(1);
         UUID ownFuture = UUID.randomUUID();
         UUID ownDue = UUID.randomUUID();
 
@@ -70,6 +75,7 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
                 while (writerRunning.get()) {
                     writtenByWriter.add(PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
                         Instant.now().minusSeconds(5)));
+                    firstWrite.countDown();
                     Thread.sleep(2);
                 }
             } catch (InterruptedException e) {
@@ -82,14 +88,18 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         writer.start();
 
         try {
+            // The foreign rows must ALREADY be committed when the claim query runs — otherwise the
+            // claim set would be trivially clean and the guard would prove nothing.
+            assertThat(firstWrite.await(10, TimeUnit.SECONDS))
+                .as("the concurrent writer must have committed at least one row").isTrue();
+            assertThat(writerError.get()).as("concurrent writer must not have failed").isNull();
+            assertThat(writtenByWriter).as("the writer really did write concurrently").isNotEmpty();
+
             Instant now = Instant.now();
             PgItIsolation.insertCatchTimerJob(jdbc, ownFuture, UUID.randomUUID(), now.plusSeconds(3600));
             PgItIsolation.insertCatchTimerJob(jdbc, ownDue, UUID.randomUUID(), now.minusSeconds(10));
 
             List<UUID> claimed = PgItIsolation.dueTimerIdsAmong(jdbc, List.of(ownFuture, ownDue));
-
-            assertThat(writerError.get()).as("concurrent writer must not have failed").isNull();
-            assertThat(writtenByWriter).as("the writer really did write concurrently").isNotEmpty();
             assertThat(claimed).as("only this test's own due row is a claim candidate")
                 .containsExactly(ownDue);
 
