@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.handler.boot;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.handler.JobHandler;
 import jakarta.annotation.PostConstruct;
@@ -72,9 +73,26 @@ public class HandlerAutoConfiguration {
         }
     }
 
+    /**
+     * Reader тела входящего задания.
+     *
+     * <p>WO-C8-36 (H-1): {@code FAIL_ON_UNKNOWN_PROPERTIES} по умолчанию true,
+     * то есть СТАРЫЙ воркер роняет десериализацию на любом поле, добавленном
+     * движком в новой версии, а {@code onMessage} на этой ошибке делает чистый
+     * возврат — то есть AUTO-ack: задание теряется навсегда, без redelivery.
+     * Апгрейд движка раньше воркеров (штатный rolling order) превращался в
+     * ПОТЕРЮ ВСЕХ заданий. Поэтому reader толерантен к незнакомым полям, а
+     * второй слой — {@code @JsonIgnoreProperties(ignoreUnknown=true)} на DTO
+     * exchange — спасает даже чужой строгий reader.
+     */
+    static ObjectMapper createJobBodyReader() {
+        return new ObjectMapper()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    }
+
     @PostConstruct
     public void init() {
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = createJobBodyReader();
         Map<String, JobHandler> handlersMap = applicationContext.getBeansOfType(JobHandler.class);
         log.info("Found {} handlers", handlersMap.size());
 
