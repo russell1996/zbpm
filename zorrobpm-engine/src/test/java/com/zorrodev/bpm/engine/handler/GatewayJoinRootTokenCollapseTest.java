@@ -114,7 +114,9 @@ class GatewayJoinRootTokenCollapseTest {
         BpmnElementModel join = bpmn.getElement("join");
         join.setType(BpmnElementType.INCLUSIVE_GATEWAY);
 
-        when(dbService.getInclusiveExpected(pi, "join")).thenReturn(2);
+        // WO-C8-35 (CR-09 раунд 3): the join is ready by the reachability rule now
+        // ("nobody in the instance can still deliver a branch") — the static `expected` stub this test
+        // used is gone with the counter, and the readiness reads the live/armed/parked sets instead.
         when(dbService.getParallelGatewayArrivedFlows(pi, "join")).thenReturn(Set.of("f1", "f2"));
         when(dbService.getToken(rootId)).thenReturn(rootToken(rootId));
         when(dbService.createActivity(eq(pi), any(UUID.class), any(BpmnElementModel.class))).thenReturn(UUID.randomUUID());

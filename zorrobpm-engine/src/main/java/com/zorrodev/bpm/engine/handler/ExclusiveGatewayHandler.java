@@ -115,6 +115,14 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
             // нет") and pinned by
             // ExclusiveGatewayUnsupportedShapeIntegrationTests.degenerateExclusiveGateway_
             // oneInOneOut_withFalseCondition_stillPassesThrough.
+            //
+            // WO-C8-35 (CR-10 ч.1, MINOR-1 красного red-team — зафиксировано, дефекта НЕТ):
+            // этот ветк связан с depth-guard'ом асимметрией у ParallelGatewayHandler
+            // (тот способно отказывает isSelfLoop и разбора pass-through только для одного
+            // исхода): здесь executor.execute вызывается ВНУТРИ счётчика guard'а, а там — через
+            // proceedToOutgoing, те ниже счётчика. Разница работает чисто (EngineException по границе
+            // 1000, а не StackOverflow), редкировано верификацией red-team самоповерка
+            // xor1 с 1/1 self-loop — но расхождение невидимо и при чуже бы обратно внимание.
             String outgoing = outgoings.get(0);
             flowNavigator.processFlow(processInstanceId, token, outgoing, false, null);
             dbService.completeActivity(activityId);
