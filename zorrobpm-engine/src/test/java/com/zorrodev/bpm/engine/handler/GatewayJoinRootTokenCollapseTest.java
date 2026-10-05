@@ -14,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -118,7 +119,10 @@ class GatewayJoinRootTokenCollapseTest {
         // ("nobody in the instance can still deliver a branch") — the static `expected` stub this test
         // used is gone with the counter, and the readiness reads the live/armed/parked sets instead.
         when(dbService.getParallelGatewayArrivedFlows(pi, "join")).thenReturn(Set.of("f1", "f2"));
-        when(dbService.getToken(rootId)).thenReturn(rootToken(rootId));
+        // WO-C8-35 раунд 4: prod резолвит токен через findToken (Optional), а не через getToken
+        // (= findToken().orElseThrow()) — иначе исчезнувший токен роняет хвост вызывающего.
+        // Мок переведён на тот метод, который зовёт прод; ассерты не ослаблены.
+        when(dbService.findToken(rootId)).thenReturn(Optional.of(rootToken(rootId)));
         when(dbService.createActivity(eq(pi), any(UUID.class), any(BpmnElementModel.class))).thenReturn(UUID.randomUUID());
 
         new InclusiveGatewayHandler(dbService, flowNavigator, scriptService, realElementSupport())
