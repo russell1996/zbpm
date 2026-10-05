@@ -2,7 +2,9 @@ package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
+import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
+import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.dto.IdDTO;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
@@ -26,12 +28,16 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-SEC-59 #1: an exclusive gateway with an unsupported shape (exactly 1 incoming and 1 outgoing,
- * with no default flow) used to be silently "handled" by falling through all branches — the process
- * neither routed nor failed, it just hung (or, in the 2-outgoing no-default case, NPE'd). The fix
- * makes handleExclusive throw a clear IllegalStateException for any non-2-outgoing / no-default shape,
- * which the engine records as an INCIDENT. This test proves the degenerate 1-in/1-out case now raises
- * an incident instead of hanging.
+ * WO-SEC-59 #1 introduced the clear IllegalStateException for a degenerate 1-in/1-out
+ * exclusive gateway (an incident instead of a silent hang).
+ *
+ * <p><b>REWRITTEN by WO-C8-35 (CR-10 ч.1)</b>: the incident was the wrong call. With
+ * one incoming and one outgoing there is nothing to evaluate and nothing to merge — the
+ * gateway is a no-op in the model, so the engine must behave like one. The shape is
+ * now an unconditional pass-through, and this test pins THAT instead of the incident.
+ * The genuinely unsupported shapes (0/0, 1/2, 2/2 …) still raise the exception; the
+ * sibling test below keeps that half of WO-SEC-59 alive so the rewrite is not a
+ * silent loss of coverage.
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
@@ -45,7 +51,7 @@ public class ExclusiveGatewayUnsupportedShapeIntegrationTests {
 
     @Transactional
     @Test
-    void degenerateExclusiveGateway_oneInOneOut_raisesIncidentInsteadOfHang() throws Exception {
+    void degenerateExclusiveGateway_oneInOneOut_passesThroughWithoutIncident() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/test-exclusive-gateway-degenerate.bpmn"));
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
 
@@ -54,13 +60,63 @@ public class ExclusiveGatewayUnsupportedShapeIntegrationTests {
         IdDTO startResult = runtimeService.startProcessInstance(dto);
         UUID processInstanceId = startResult.getId();
 
-        // instance must be parked (never silently completed, never hangs forever)
+        // pass-through: the single outgoing flow is taken and the instance completes
+        ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
+        assertThat(pi.getCompletedAt())
+            .as("1-in/1-out gateway is a no-op: the flow goes straight through")
+            .isNotNull();
+
+        ActivityEntity gateway = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> a.getBpmnElementId().equals("xor"))
+            .findFirst().orElseThrow();
+        assertThat(gateway.getStatus())
+            .as("the gateway row exists and completed, like any pass-through element")
+            .isEqualTo(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
+
+        assertThat(activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
+            .filter(a -> "endEvent".equals(a.getBpmnElementId()))
+            .findFirst().orElseThrow().getStatus())
+            .as("the end event behind the gateway was reached")
+            .isEqualTo(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
+
+        assertThat(incidentRepository.findAll().stream()
+            .filter(i -> i.getActivityId().equals(gateway.getId()))
+            .toList())
+            .as("no incident for a legal (if pointless) diagram")
+            .isEmpty();
+    }
+
+    /**
+     * WO-SEC-59 coverage that WO-C8-35 must NOT lose: a shape with no routing
+     * meaning (two incomings AND two outgoings — neither a split nor a merge) still
+     * raises the exception the engine records as an incident, instead of guessing.
+     */
+    @Transactional
+    @Test
+    void exclusiveGateway_twoInTwoOut_stillRaisesIncidentInsteadOfGuessing() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-exclusive-gateway-ambiguous-shape.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        // the fork's tasks park first — the gateway is only entered when a branch
+        // delivers into it, so the test has to complete them
+        UserTaskQuery q = new UserTaskQuery();
+        q.setProcessInstanceId(processInstanceId);
+        for (UserTask t : queryService.findUserTasks(q, null).getData()) {
+            runtimeService.completeUserTask(t.getId(), List.of());
+        }
+
         ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
         assertThat(pi.getCompletedAt()).isNull();
 
         ActivityEntity gateway = activityRepository.findAll().stream()
             .filter(a -> a.getProcessInstanceId().equals(processInstanceId))
-            .filter(a -> a.getBpmnElementId().equals("xor"))
+            .filter(a -> a.getBpmnElementId().equals("xor2"))
             .findFirst().orElseThrow();
 
         List<IncidentEntity> incidents = incidentRepository.findAll().stream()

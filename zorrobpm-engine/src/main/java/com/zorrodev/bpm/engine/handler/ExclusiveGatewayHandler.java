@@ -58,6 +58,15 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
             // (reverse document order — тот же механизм, что fork-take в parallel gateway,
             // Raxon WO-013). Список outgoings идёт в документном порядке (JAXB сохраняет
             // порядок повторяющихся <outgoing>), поэтому оцениваем его с конца.
+            // WO-C8-35 (CR-10 ч.2), решение CTO: этот reverse-document-order оставлен
+            // СОЗНАТЕЛЬНО и не является ошибкой. Camunda 8.9 в письменной документации
+            // обещает «первый истинный поток в порядке XML», наш код расходится с ней в
+            // пользу эмпирического diff-прогона против ЖИВОГО Zeebe (Raxon, WO-DIFF-2) —
+            // для этого проекта источник истины при расхождении с документацией: прогон,
+            // а не доки (исторически документация Camunda неточна в деталях порядка).
+            // Проверено Diff2ExclusiveGatewayOrderTest с POF. Если появится доступ к живому
+            // Zeebe для повторной сверки — переоткрыть ОТДЕЛЬНЫМ WO с новым прогоном,
+            // не «починить» по документации.
             // Переиспользуемой утилиты порядка в Zorro нет (ParallelGatewayHandler идёт
             // вперёд; fork-take WO-013 — код Raxon-трека, не этого репозитория), копия
             // обязательна: модель парса кэшируется, разворот на месте отравил бы кэш.
@@ -88,6 +97,19 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
             BpmnFlowModel flow = bpmn.getFlow(matchedOutgoing);
             String targetRef = flow.getTargetRef();
             BpmnElementModel target = bpmn.getElement(targetRef);
+            executor.execute(processInstanceId, token, bpmn, target);
+        } else if (outgoings.size() == 1 && incoming.size() == 1) {
+            // WO-C8-35 (CR-10 ч.1): degenerate 1-in/1-out is an unconditional
+            // pass-through — with nothing to evaluate and nothing to merge, the gateway
+            // is a no-op in the model and must behave like one in the engine. Before this
+            // it fell into the `else` and threw IllegalStateException, i.e. an incident on
+            // a legal (if pointless) diagram. Same shape as the PGW 1/1 pass-through
+            // (WO-C8-34 crit 7) and the inclusive handler's fallthrough.
+            String outgoing = outgoings.get(0);
+            flowNavigator.processFlow(processInstanceId, token, outgoing, false, null);
+            dbService.completeActivity(activityId);
+            BpmnFlowModel flow = bpmn.getFlow(outgoing);
+            BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
             executor.execute(processInstanceId, token, bpmn, target);
         } else if (outgoings.size() == 1 && incoming.size() > 1) {
             String outgoing = outgoings.get(0);
