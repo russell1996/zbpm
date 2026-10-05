@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-35 (CR-10 ч.1): a 2-in/2-out exclusive gateway — neither a split nor a
+     merge, so there is NO correct routing to guess. Two branches of a parallel
+     fork deliver into it. The engine must keep refusing the shape with the
+     WO-SEC-59 exception (recorded as an incident). This is the coverage the 1/1
+     pass-through rewrite must not take with it. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_amb" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-exclusive-gateway-ambiguous-shape" name="test-exclusive-gateway-ambiguous-shape" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="fork1" />
+    <bpmn:parallelGateway id="fork1" name="fork1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>p1</bpmn:outgoing>
+      <bpmn:outgoing>p2</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="p1" name="p1" sourceRef="fork1" targetRef="taskA" />
+    <bpmn:sequenceFlow id="p2" name="p2" sourceRef="fork1" targetRef="taskB" />
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>p1</bpmn:incoming>
+      <bpmn:outgoing>a1</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="taskB" name="taskB">
+      <bpmn:incoming>p2</bpmn:incoming>
+      <bpmn:outgoing>a2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="a1" name="a1" sourceRef="taskA" targetRef="xor2" />
+    <bpmn:sequenceFlow id="a2" name="a2" sourceRef="taskB" targetRef="xor2" />
+    <bpmn:exclusiveGateway id="xor2" name="xor2">
+      <bpmn:incoming>a1</bpmn:incoming>
+      <bpmn:incoming>a2</bpmn:incoming>
+      <bpmn:outgoing>o1</bpmn:outgoing>
+      <bpmn:outgoing>o2</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="o1" name="o1" sourceRef="xor2" targetRef="endA" />
+    <bpmn:sequenceFlow id="o2" name="o2" sourceRef="xor2" targetRef="endB" />
+    <bpmn:endEvent id="endA" name="endA">
+      <bpmn:incoming>o1</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endB" name="endB">
+      <bpmn:incoming>o2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
