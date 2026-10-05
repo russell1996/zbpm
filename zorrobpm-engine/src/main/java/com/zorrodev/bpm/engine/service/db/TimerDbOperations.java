@@ -20,6 +20,12 @@ public interface TimerDbOperations {
 
     void createTimerStartJob(String processKey, UUID processDefinitionId, String elementId, Instant dueAt, Integer remainingCount);
 
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1): this instance's still-ARMED timer triggers (fired = false) that
+     * continue elsewhere \u2014 boundary timer / event-sub-process timer. Catch timers excluded.
+     */
+    List<com.zorrodev.bpm.engine.entity.TimerJobEntity> findArmedTimerJobs(UUID processInstanceId);
+
     void deleteTimerJobsByProcessInstanceId(UUID processInstanceId);
 
     void deleteTimerStartJobsByKey(String processKey);

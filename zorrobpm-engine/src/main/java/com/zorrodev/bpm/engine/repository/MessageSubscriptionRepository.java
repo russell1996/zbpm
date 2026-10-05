@@ -48,6 +48,13 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
         return (root, query, cb) -> cb.equal(root.get("consumed"), consumed);
     }
 
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1): unconsumed message subscriptions of this instance that are a
+     * BOUNDARY event or an event-sub-process trigger (the two forms that continue somewhere
+     * else). A plain message catch is excluded \u2014 its activity row already covers it.
+     */
+    List<MessageSubscriptionEntity> findByProcessInstanceIdAndConsumedFalse(UUID processInstanceId);
+
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("DELETE FROM MessageSubscriptionEntity m WHERE m.processInstanceId = :processInstanceId")
     void deleteByProcessInstanceId(@org.springframework.data.repository.query.Param("processInstanceId") UUID processInstanceId);
