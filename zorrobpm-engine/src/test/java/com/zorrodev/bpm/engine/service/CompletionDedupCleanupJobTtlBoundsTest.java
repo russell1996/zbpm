@@ -25,7 +25,9 @@ import static org.mockito.Mockito.when;
  *
  * <p>Дефект, который закрывается: «TTL должен быть длиннее окна confirm-loss»
  * было написано только в комментарии свойства, и ничего этого не зажимало.
- * {@code ZORROBPM_COMPLETION_DEDUP_TTL_SECONDS=60} → ежечасная чистка удаляет
+ * {@code ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS=60} (раунд 4, F-7:
+ * переменная названа relaxed-формой ключа, иначе в контейнере она вообще не
+ * разрешается) → ежечасная чистка удаляет
  * всё старше минуты, переотдача на t=5 мин (тот же completionId, всё ещё в
  * 10-минутном resultCache воркера) принимается как новая, и бюджет ретраев
  * списывается ВТОРОЙ раз за один логический сбой. При {@code ttl<=0} таблица
@@ -41,6 +43,14 @@ import static org.mockito.Mockito.when;
  * наблюдаемое поведение.
  */
 class CompletionDedupCleanupJobTtlBoundsTest {
+
+    /**
+     * Окно {@code resultCache} воркера, из которого публикуется переигранный
+     * результат при подтверждённой потере: 10 минут. TTL дедупа обязан быть
+     * строго длиннее него — иначе переотдача в пределах окна принимается как
+     * новая отправка. Литерал (а не константа прод-кода) — см. P-67.
+     */
+    private static final int WORKER_RESULT_CACHE_WINDOW_SECONDS = 600;
 
     private CompletionDedupStore store;
     private CompletionDedupCleanupJob job;
@@ -73,6 +83,35 @@ class CompletionDedupCleanupJobTtlBoundsTest {
             org.mockito.ArgumentCaptor.forClass(Timestamp.class);
         verify(store).deleteExpiredBefore(captor.capture());
         return captor.getValue().toInstant();
+    }
+
+    /**
+     * Границы закреплены ЗНАЧЕНИЕМ, а не только символом.
+     *
+     * <p>Почему это отдельный тест, а не ещё одна проверка clamp'а: остальные семь
+     * ассертов этого класса ссылаются на {@code MIN_TTL_SECONDS}/
+     * {@code MAX_TTL_SECONDS} символически, поэтому мутация «пол = 60»
+     * (буквальный дефект F-3 — TTL короче окна воркера) проходила мимо них
+     * незамеченной: менялось обе части равенства одновременно (класс P-67 —
+     * ассерт стоит рядом с утверждением, но само значение не закреплено).
+     *
+     * <p>Ниже — ЛИТЕРАЛЫ, а не константы: 600с — окно {@code resultCache} воркера
+     * (10 минут, из которого публикуется переигранный результат), 1800с — пол
+     * «втрое больше окна», 30 суток — потолок, ограничивающий рост таблицы.
+     */
+    @Test
+    void ttlBounds_arePinnedByLiteralValue_notOnlyBySymbol() {
+        assertThat(CompletionDedupCleanupJob.MIN_TTL_SECONDS)
+            .as("пол TTL обязан быть не меньше 1800с: окно resultCache воркера — %dс, "
+                + "и удалённый раньше маркер разрешает повторно списать бюджет ретраев "
+                + "на одном логическом сбое", WORKER_RESULT_CACHE_WINDOW_SECONDS)
+            .isGreaterThanOrEqualTo(1_800)
+            .isGreaterThan(WORKER_RESULT_CACHE_WINDOW_SECONDS);
+
+        assertThat(CompletionDedupCleanupJob.MAX_TTL_SECONDS)
+            .as("потолок TTL — 30 суток: таблица маркеров растёт со скоростью отправок, "
+                + "и слишком длинный TTL это не лечит, а маскирует")
+            .isEqualTo(2_592_000);
     }
 
     @Test

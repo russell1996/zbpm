@@ -113,7 +113,11 @@ services:
       # счётчике на каждый completion.
       ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING: ${ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING:-true}
       # WO-C8-36 (F-2/F-3): окно жизни durable-маркера дедупа отправок результата.
-      ZORROBPM_COMPLETION_DEDUP_TTL_SECONDS: ${ZORROBPM_COMPLETION_DEDUP_TTL_SECONDS:-3600}
+      # Раунд 4, F-7: имя — relaxed-binding форма ключа
+      # `zorrobpm.engine.completion-dedup.ttl-seconds` (с префиксом ENGINE_), как и
+      # флаг выше; прежнее ZORROBPM_COMPLETION_DEDUP_TTL_SECONDS в контейнере не
+      # разрешалось (см. комментарий в docker-compose.yml).
+      ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS: ${ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS:-3600}
       TZ: Asia/Almaty
     volumes:
       # Shared app-files volume across all three — same as prod's single

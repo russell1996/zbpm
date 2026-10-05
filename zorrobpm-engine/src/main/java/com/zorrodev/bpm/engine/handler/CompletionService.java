@@ -63,14 +63,11 @@ public class CompletionService {
      */
     private final com.zorrodev.bpm.engine.service.CompletionDedupStore completionDedupStore;
 
-    /**
-     * WO-C8-36 (H-2): окно жизни маркера дедупа. Совпадает с TTL-очисткой
-     * ({@code CompletionDedupCleanupJob}) — иначе маркер мог бы быть удалён
-     * раньше, чем брокер переотдаст ту же отправку.
-     */
-    @org.springframework.beans.factory.annotation.Value(
-        "${zorrobpm.engine.completion-dedup.ttl-seconds:3600}")
-    private long completionDedupTtlSeconds = 3600L;
+    // Раунд 4 (F-8): поля completionDedupTtlSeconds здесь больше НЕТ. Оно
+    // передавалось в claim(completionId, ttlSeconds), а параметр не читался —
+    // время жизни маркера задаёт порасписание CompletionDedupCleanupJob. Поле с
+    // javadoc «совпадает с TTL-очисткой» выглядело как носительство инварианта,
+    // которого нет; оставлять его — мина под следующую правку захвата (P-14).
 
     /**
      * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
@@ -1603,7 +1600,7 @@ public class CompletionService {
         // WO-C8-36 (H-2): захват решает БД (INSERT в ЭТОЙ транзакции), поэтому
         // откат транзакции убирает маркер сам — ручного remove не осталось
         // (это же и закрывало «red-team 1.4»).
-        if (!completionDedupStore.claim(completionId, completionDedupTtlSeconds)) {
+        if (!completionDedupStore.claim(completionId)) {
             log.info("Ignoring duplicate failure of service task {} (completionId={} already processed)",
                 serviceTaskId, completionId);
             bpmMetrics.activityTransitionIgnored("duplicate_completion");
