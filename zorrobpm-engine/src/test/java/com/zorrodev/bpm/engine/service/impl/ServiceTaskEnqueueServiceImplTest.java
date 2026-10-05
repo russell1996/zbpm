@@ -717,4 +717,105 @@ class ServiceTaskEnqueueServiceImplTest {
 
         verify(dbService, never()).getServiceTaskPendingEndListenerIndex(any());
     }
+
+    @Test
+    void enqueueAfterCommit_listenerInFlight_stampsStartPhaseAndIndex() throws Exception {
+        // WO-C8-36 (CR-01, п.1): отправка listener-вызова штампуется фазой start/0 —
+        // assert на КОНКРЕТНЫЕ значения штампа (P-67: job "listener-job" сам по
+        // себе штамп не доказывает, его проверяет соседний тест выше).
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskListenerStamp";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(0);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getDispatchPhase()).isEqualTo("start");
+        assertThat(detailCaptor.getValue().getDispatchIndex()).isEqualTo(0);
+    }
+
+    @Test
+    void enqueueAfterCommit_listenersDone_stampsRealPhase() throws Exception {
+        // WO-C8-36 (CR-01, п.1): отправка реального задания штампуется real/null.
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskRealStamp";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(null);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getJob()).isEqualTo("real-job");
+        assertThat(detailCaptor.getValue().getDispatchPhase()).isEqualTo("real");
+        assertThat(detailCaptor.getValue().getDispatchIndex()).isNull();
+    }
 }

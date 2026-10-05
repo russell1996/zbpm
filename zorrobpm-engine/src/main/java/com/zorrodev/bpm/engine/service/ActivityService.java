@@ -14,6 +14,13 @@ public interface ActivityService {
     void completeServiceTask(UUID activityId, List<ProcessVariable> variables);
 
     /**
+     * WO-C8-36 (CR-01): тот же complete с идентификатором вызова
+     * ({@code dispatchPhase}/{@code dispatchIndex}, оба nullable;
+     * null-фаза = legacy без проверки).
+     */
+    void completeServiceTask(UUID activityId, List<ProcessVariable> variables, String dispatchPhase, Integer dispatchIndex);
+
+    /**
      * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result
      * (the typed counterpart of {@link #completeServiceTask} — flat variables cannot
      * carry activateElements[] + flags).
@@ -27,6 +34,13 @@ public interface ActivityService {
      * is marked ERROR and an incident carrying {@code errorMessage} is raised. The token stays parked.
      */
     void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries);
+
+    /**
+     * WO-C8-36 (CR-01): тот же fail с идентификатором вызова (оба nullable;
+     * null-фаза = legacy без проверки).
+     */
+    void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, String dispatchPhase,
+        Integer dispatchIndex);
 
     void completeUserTask(UUID activityId, List<ProcessVariable> variables);
 

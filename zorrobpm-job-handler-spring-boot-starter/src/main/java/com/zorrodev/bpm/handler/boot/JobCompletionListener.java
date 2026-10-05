@@ -13,11 +13,16 @@ import org.slf4j.MDC;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageListener;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WO-REL-36 (F10): слушатель worker-очереди с разделённой обработкой ошибок.
@@ -68,6 +73,73 @@ public class JobCompletionListener implements MessageListener {
         .maximumSize(10_000)
         .expireAfterAccess(Duration.ofMinutes(10))
         .build();
+
+    /**
+     * WO-C8-36 (CR-13): ACK входящего задания связан с надёжной публикацией
+     * результата. Отправка идёт с per-send {@code CorrelationData} + mandatory;
+     * после send — синхронное ожидание брокерского confirm
+     * ({@code waitForConfirmsOrDie}, требует confirm-type CORRELATED — ставит
+     * {@code HandlerAutoConfiguration} при {@code ensurePublisherConfirms}).
+     * NACK/timeout/return → исключение → вход НЕ подтверждается (retry/NACK
+     * контейнера), результат уже в resultCache — восстанавливаем без повторного
+     * бизнес-эффекта. Выключатель — {@code ensurePublisherConfirms=false}
+     * (тогда только синхронные исключения, как до WO).
+     */
+    private boolean ensurePublisherConfirms = true;
+    private long confirmTimeoutMs = 5_000L;
+
+    /**
+     * WO-C8-36: ids немаршрутизируемых completion'ов (basic.return приходит раньше
+     * confirm с ack=true — см. engine-side {@code RabbitConfiguration}: голый
+     * confirm врёт про доставку). Запись — в returns-callback (connection-thread),
+     * чтение — после wait (happens-before через confirm-latch, гонки нет).
+     */
+    private volatile Set<String> returnedCompletionIds = ConcurrentHashMap.newKeySet();
+
+    /** WO-C8-36: ставит {@code HandlerAutoConfiguration} из пропертей (тесты — дефолт). */
+    public void setEnsurePublisherConfirms(boolean ensurePublisherConfirms) {
+        this.ensurePublisherConfirms = ensurePublisherConfirms;
+    }
+
+    /** WO-C8-36: ставит {@code HandlerAutoConfiguration} из пропертей (тесты — дефолт). */
+    public void setConfirmTimeoutMs(long confirmTimeoutMs) {
+        this.confirmTimeoutMs = confirmTimeoutMs;
+    }
+
+    /**
+     * WO-C8-36: общий сет с конфигурацией (returns-callback — один на шаблон,
+     * listener'ов — по одному на хендлер; у каждого свой сет return потерялся бы
+     * для всех, кроме последнего). Ids уникальны на отправку — чужое не трогаем
+     * (remove только своего completionId). До вызова — локальный сет (тесты).
+     */
+    public void setReturnedCompletionIds(Set<String> shared) {
+        this.returnedCompletionIds = shared;
+    }
+
+    /** WO-C8-36: тест-хук — ids, увиденные в returns-callback. */
+    Set<String> returnedCompletionIdsForTest() {
+        return returnedCompletionIds;
+    }
+
+    private final java.util.concurrent.atomic.AtomicBoolean confirmsUnavailableLogged =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * WO-C8-36: доступны ли publisher confirms на фабрике шаблона.
+     * {@code waitForConfirmsOrDie} на канале без confirms кидает ПОСЛЕ успешной
+     * публикации → каждый redelivery публиковал бы ещё один дубликат (поймано
+     * живьём: 14k сообщений в очереди — см. отчёт). Поэтому wait — только при
+     * реальных confirms (прод-стартер ставит CORRELATED); прямое использование
+     * без confirms — старое поведение (sync-исключения) + один warn.
+     */
+    private boolean confirmsAvailable() {
+        try {
+            ConnectionFactory cf = rabbitTemplate.getConnectionFactory();
+            return cf != null && cf.isPublisherConfirms();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
 
     public JobCompletionListener(JobHandler handler, RabbitTemplate rabbitTemplate,
             ObjectMapper objectMapper, String queueName) {
@@ -144,6 +216,12 @@ public class JobCompletionListener implements MessageListener {
 
         ServiceTaskCompleteData completeData = new ServiceTaskCompleteData();
         completeData.setServiceTaskId(model.getServiceTaskId());
+        // WO-C8-36 (CR-01): эхо идентификатора вызова — движок принимает ТОЛЬКО
+        // результат ожидаемой фазы (exact-match); дубликаты/устаревшие игнорит.
+        // Null (старый движок) — эхо null, движок идёт legacy-путём без проверки.
+        // Кэшированная переотправка переигрывает ТОТ ЖЕ объект — фаза при нём.
+        completeData.setDispatchPhase(model.getDispatchPhase());
+        completeData.setDispatchIndex(model.getDispatchIndex());
         // WO-OBS-8: verbatim-forward (see onMessage) — set BEFORE the resultCache.put
         // below so redeliveries replay the same trace linkage, not a blank one.
         completeData.setTraceParent(incomingTraceParent);
@@ -173,6 +251,11 @@ public class JobCompletionListener implements MessageListener {
     }
 
     private void sendCompletion(ServiceTaskCompleteData completeData) {
+        // WO-C8-36 (CR-13): per-send CorrelationData — confirm/return маппятся на
+        // ЭТУ отправку (общий confirm-callback движка без correlation data их
+        // игнорировал — та же дыра, что чиним).
+        String completionId = "completion-" + UUID.randomUUID();
+        CorrelationData correlationData = new CorrelationData(completionId);
         try {
             // WO-OBS-8: the completion hop carries the forwarded trace context as AMQP
             // headers (the engine-side @RabbitListener reads them via @Headers) AND
@@ -180,6 +263,7 @@ public class JobCompletionListener implements MessageListener {
             // engine-internal Spring event when headers are stripped by an
             // intermediate). Tolerant: absent when the job arrived untraced.
             rabbitTemplate.convertAndSend(completeQueueName, completeData, m -> {
+                m.getMessageProperties().setCorrelationId(completionId);
                 if (completeData.getTraceParent() != null) {
                     m.getMessageProperties().setHeader(TraceHeaders.TRACE_PARENT_HEADER,
                         completeData.getTraceParent());
@@ -189,7 +273,23 @@ public class JobCompletionListener implements MessageListener {
                         completeData.getProcessInstanceId());
                 }
                 return m;
-            });
+            }, correlationData);
+            if (ensurePublisherConfirms && confirmsAvailable()) {
+                // Синхронный confirm: NACK/timeout/разрыв до confirm → исключение
+                // (тот же transport-проброс, что выше — вход не подтверждается).
+                // Unroutable даёт confirm ack=true ПОСЛЕ basic.return — возврат
+                // ловится отдельно ниже (голый ack доставке не равен).
+                rabbitTemplate.waitForConfirmsOrDie(confirmTimeoutMs);
+                if (returnedCompletionIds.remove(completionId)) {
+                    throw new AmqpException("Completion " + completionId
+                        + " returned as unroutable by broker (mandatory) — will be redelivered");
+                }
+            } else if (ensurePublisherConfirms
+                && confirmsUnavailableLogged.compareAndSet(false, true)) {
+                log.warn("Publisher confirms unavailable on worker connection factory "
+                    + "(HandlerAutoConfiguration sets CORRELATED in prod) — completions "
+                    + "fall back to sync-exceptions-only until confirms appear");
+            }
         } catch (AmqpException e) {
             // Transport failure: проброс наружу — контейнер NACK'ает/ретраит вход,
             // результат (уже в resultCache) не теряется. НЕ логируем как deserialize.

@@ -212,4 +212,30 @@ class ServiceTaskListenerTest {
         v.setValue(value);
         return v;
     }
+
+    @Test
+    void c836_completion_propagatesDispatchPhaseIntoEngineEvent() {
+        // WO-C8-36 (CR-01, engine-hop): идентификатор вызова из AMQP-сообщения
+        // воркера доходит до engine-internal события без изменений (assert на
+        // КОНКРЕТНЫЕ значения; null по умолчанию не доказывает проброс).
+        com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
+            new com.zorrodev.bpm.exchange.ServiceTaskCompleteData();
+        data.setServiceTaskId(UUID.randomUUID());
+        data.setStatus("SUCCESS");
+        data.setDispatchPhase("start");
+        data.setDispatchIndex(0);
+
+        var seenEvent = new com.zorrodev.bpm.exchange.ServiceTaskCompleted[1];
+        ApplicationEventPublisher capturingPublisher = event -> {
+            if (event instanceof com.zorrodev.bpm.exchange.ServiceTaskCompleted c) {
+                seenEvent[0] = c;
+            }
+        };
+        var listenerWithCapture = new ServiceTaskListener(jobQueueDeclarer, rabbitTemplate, capturingPublisher);
+        listenerWithCapture.on(data, Map.of());
+
+        assertThat(seenEvent[0]).isNotNull();
+        assertThat(seenEvent[0].getDispatchPhase()).isEqualTo("start");
+        assertThat(seenEvent[0].getDispatchIndex()).isEqualTo(0);
+    }
 }

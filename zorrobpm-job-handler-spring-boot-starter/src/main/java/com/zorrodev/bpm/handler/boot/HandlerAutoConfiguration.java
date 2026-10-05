@@ -15,6 +15,7 @@ import org.springframework.amqp.rabbit.connection.ConnectionListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Configuration;
 
@@ -30,6 +31,38 @@ public class HandlerAutoConfiguration {
     private final SimpleRabbitListenerContainerFactory connectionFactory;
     private final RabbitTemplate rabbitTemplate;
     private final AmqpAdmin amqpAdmin;
+
+    /**
+     * WO-C8-36 (CR-13): дотянуть фабрику до publisher confirms + returns.
+     * Дефолт true — воркер подтверждает вход только после надёжной публикации
+     * результата. Выключение — осознанный opt-out (старая семантика «синхронные
+     * исключения наружу, confirm не ждём»). Новых required-env нет.
+     */
+    @Value("${zorrobpm.worker.ensure-publisher-confirms:true}")
+    private boolean ensurePublisherConfirms = true;
+
+    /** WO-C8-36 (CR-13): deadline ожидания брокерского confirm на completion. */
+    @Value("${zorrobpm.worker.completion-confirm-timeout:5000}")
+    private long completionConfirmTimeoutMs = 5_000L;
+
+    /**
+     * WO-C8-36: общий сет немаршрутизируемых completion-ids (см.
+     * {@code JobCompletionListener.setReturnedCompletionIds}: callback — один на
+     * шаблон, listener'ов много). Живёт пока жив бин конфигурации (весь uptime).
+     */
+    private final java.util.Set<String> returnedCompletionIds =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * WO-C8-36: ReturnsCallback — один на шаблон (повторный set на ТОМ ЖЕ
+     * шаблоне = IllegalState). Сет уже настроенных шаблонов СЛАБЫЙ: повторный
+     * init() на том же шаблоне — no-op; новый шаблон (новый контекст) — ставим
+     * свой. Static, т.к. три контекста одной JVM делят бин-класс (поймано
+     * живьём: два app-теста + третий контекст); weak — закрытые контексты не
+     * текут (их шаблоны уходят со сборщиком, сет не держит).
+     */
+    private static final java.util.Set<RabbitTemplate> returnsCallbackInstalledOn =
+        java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     private ObjectMapper objectMapper;  // shared instance (CRIT-5)
 
@@ -76,6 +109,64 @@ public class HandlerAutoConfiguration {
         connectionFactory.setMessageConverter(converter);
         rabbitTemplate.setMessageConverter(converter);
 
+        // WO-C8-36 (CR-13): ACK входа завязывается на confirm публикации
+        // результата (см. JobCompletionListener.sendCompletion): фабрика — в
+        // CORRELATED + returns, шаблон — mandatory + returns-callback движка
+        // воркера (unroutable → исключение, не тихий confirm ack=true).
+        // Действует только на mandatory-публикации этого стартера (completion);
+        // чужие sends через тот же бин семантически не меняются (returns без
+        // callback раньше тоже никуда не девались — их просто никто не читал).
+        if (ensurePublisherConfirms) {
+            // CF — из шаблона (у фабрики контейнеров публичного геттера нет),
+            // шаблон и контейнеры делят одну и ту же фабрику соединения.
+            org.springframework.amqp.rabbit.connection.ConnectionFactory cf =
+                rabbitTemplate.getConnectionFactory();
+            if (cf instanceof CachingConnectionFactory cachingCf) {
+                cachingCf.setPublisherConfirmType(CachingConnectionFactory.ConfirmType.CORRELATED);
+                cachingCf.setPublisherReturns(true);
+            } else {
+                log.warn("WO-C8-36: publisher confirms requested but connection factory is {} "
+                    + "(not caching) — completions fall back to sync-exceptions-only",
+                    cf == null ? "null" : cf.getClass().getSimpleName());
+            }
+            rabbitTemplate.setMandatory(true);
+            // ReturnsCallback — ОДИН на шаблон (spring-amqp: повторный set =
+            // IllegalState). В составных контекстах init() может вызываться
+            // повторно (поймано живьём: app-модуль ронял контекст полным verify)
+            // — повторный set пропускаем (первый callback уже пишет в тот же
+            // общий сет; чужие callback'и этот стартер не затирает никогда).
+            // Второй контур поверх weak-сета: чужой callback на шаблоне (не наш,
+            // уже стоявший до нас — составной контекст) — не затираем и не
+            // падаем, только mandatory (возврат тогда ловит чужой callback,
+            // наш wait всё равно увидит confirm; unroutable-check деградирует
+            // до старого поведения — честно, без IllegalState).
+            boolean alreadyOurs;
+            synchronized (returnsCallbackInstalledOn) {
+                alreadyOurs = !returnsCallbackInstalledOn.add(rabbitTemplate);
+            }
+            if (!alreadyOurs) {
+                try {
+                    rabbitTemplate.setReturnsCallback(returned -> {
+                        String cid = returned.getMessage() != null
+                            ? returned.getMessage().getMessageProperties().getCorrelationId()
+                            : null;
+                        log.warn("Completion returned as unroutable: replyCode={}, replyText={}, correlationId={}",
+                            returned.getReplyCode(), returned.getReplyText(), cid);
+                        if (cid != null) {
+                            returnedCompletionIds.add(cid);
+                        }
+                    });
+                } catch (IllegalStateException someoneElsesCallback) {
+                    synchronized (returnsCallbackInstalledOn) {
+                        returnsCallbackInstalledOn.remove(rabbitTemplate);
+                    }
+                    log.warn("WO-C8-36: RabbitTemplate already has a returns callback "
+                        + "(not ours) — keeping it, unroutable completions rely on its owner: {}",
+                        someoneElsesCallback.getMessage());
+                }
+            }
+        }
+
         for (Map.Entry<String, JobHandler> entry : handlersMap.entrySet()) {
             JobHandler handler = entry.getValue();
             SimpleMessageListenerContainer container = connectionFactory.createListenerContainer();
@@ -105,8 +196,13 @@ public class HandlerAutoConfiguration {
             log.info("Subscribing to {}", queueName);
             // WO-REL-36: вся логика — в JobCompletionListener (разделение ошибок +
             // идемпотентная переотправка); здесь только wiring.
-            container.setMessageListener(
-                new JobCompletionListener(handler, rabbitTemplate, objectMapper, queueName));
+            // WO-C8-36: confirm-настройки listener'а — из тех же пропертей, что выше.
+            JobCompletionListener jobListener =
+                new JobCompletionListener(handler, rabbitTemplate, objectMapper, queueName);
+            jobListener.setEnsurePublisherConfirms(ensurePublisherConfirms);
+            jobListener.setConfirmTimeoutMs(completionConfirmTimeoutMs);
+            jobListener.setReturnedCompletionIds(returnedCompletionIds);
+            container.setMessageListener(jobListener);
             container.start();
         }
 

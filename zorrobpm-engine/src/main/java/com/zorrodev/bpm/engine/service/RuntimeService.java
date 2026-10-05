@@ -24,6 +24,13 @@ public interface RuntimeService {
     IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables);
 
     /**
+     * WO-C8-36 (CR-01): тот же complete, но с идентификатором вызова из сообщения
+     * воркера ({@code dispatchPhase}/{@code dispatchIndex}, оба nullable).
+     * Null-фаза = legacy без проверки (старый плоский метод — сюда с null/null).
+     */
+    IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables, String dispatchPhase, Integer dispatchIndex);
+
+    /**
      * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result.
      * Additive (the flat {@link #completeServiceTask} is untouched).
      */
@@ -32,6 +39,12 @@ public interface RuntimeService {
     /** Reports a service-task failure (retries → incident); see {@link ActivityService#failServiceTask}.
      *  {@code retries} is optional (Camunda {@code failJob} semantics): null decrements by one. */
     IdDTO failServiceTask(UUID id, String errorMessage, Integer retries);
+
+    /**
+     * WO-C8-36 (CR-01): тот же fail, но с идентификатором вызова из сообщения
+     * воркера (оба nullable; null-фаза = legacy без проверки).
+     */
+    IdDTO failServiceTask(UUID id, String errorMessage, Integer retries, String dispatchPhase, Integer dispatchIndex);
 
     /**
      * WO-DIFF-5: throws a BPMN error from a service task (boundary matching, not generic failure);

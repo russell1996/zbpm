@@ -19,4 +19,17 @@ public class JobDetailModel {
     private Map<String, String> taskHeaders;
     /** Job priority from {@code zeebe:jobPriorityDefinition} (WO-C8-9, corrected WO-C8-13/A-1 — activation order hint) — null when absent or unresolvable. */
     private Integer priority;
+    /**
+     * WO-C8-36 (CR-01): фаза отправки этого вызова (словарь
+     * {@link ServiceTaskDispatchPhase}; nullable — null у старых продюсеров,
+     * движок трактует как legacy без проверки). Воркер обязан вернуть В
+     * сообщении о завершении без изменений.
+     */
+    private String dispatchPhase;
+    /**
+     * WO-C8-36 (CR-01): индекс внутри фазы (позиция слушателя; null для
+     * {@code real} и для legacy). Пара (dispatchPhase, dispatchIndex) —
+     * идентификатор конкретного вызова.
+     */
+    private Integer dispatchIndex;
 }
