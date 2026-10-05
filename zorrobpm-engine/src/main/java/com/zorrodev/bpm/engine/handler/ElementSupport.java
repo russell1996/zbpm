@@ -513,6 +513,30 @@ public class ElementSupport {
     }
 
     /**
+     * WO-C8-34 (CR-02/CR-07): narrows an activity list to one execution scope.
+     * An activity belongs to {@code scopeActivityId} when the scope container is
+     * on its enclosing chain — i.e. its token is the scope token or a descendant
+     * of it (parallel branches inside the scope fork child tokens, so a plain
+     * token-equality check would miss the siblings; the chain walk covers them).
+     * The container activity itself is NOT included (its own scope is the parent).
+     * Used by terminate-in-subprocess (cancel only this scope) and by
+     * compensation-throw candidate filtering (compensate only this scope).
+     */
+    public List<Activity> filterActivitiesInScope(
+            UUID processInstanceId, List<Activity> activities, UUID scopeActivityId) {
+        List<Activity> inScope = new ArrayList<>();
+        for (Activity activity : activities) {
+            if (activity == null || activity.getId() == null) {
+                continue;
+            }
+            if (enclosingScopeChain(processInstanceId, activity.getId()).contains(scopeActivityId)) {
+                inScope.add(activity);
+            }
+        }
+        return inScope;
+    }
+
+    /**
      * Evaluates one io-mapping {@code source} (FEEL, optional leading '=') against the given
      * variables and converts the result into a {@link ProcessVariable} named {@code target}.
      * Returns {@code null} for a malformed mapping (missing source/target) — callers skip it.
