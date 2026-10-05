@@ -86,7 +86,11 @@ class ServiceTaskCompleteListenerTraceTest {
 
         listener.on(completed);
 
-        verify(runtimeService).failServiceTask(any(), any(), any(), any(), any());
+        // WO-C8-36: 6-арная перегрузка (serviceTaskId, errorMessage, retries,
+        // dispatchPhase, dispatchIndex, completionId) — именно её зовёт listener
+        // на FAILED. Пять матчеров проверяли 5-арную и падали бы на mismatch
+        // арности (поймано полным clean verify, не точечным прогоном).
+        verify(runtimeService).failServiceTask(any(), any(), any(), any(), any(), any());
         assertThat(exporter.getFinishedSpanItems())
             .filteredOn(span -> span.getName().equals("completion.process"))
             .hasSize(1);
