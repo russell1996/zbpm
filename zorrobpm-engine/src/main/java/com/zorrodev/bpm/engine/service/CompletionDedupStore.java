@@ -73,7 +73,8 @@ public class CompletionDedupStore {
      * 1 (вставили) или 0 (дубль), и НЕ переводит транзакцию в aborted.
      */
     private static final String INSERT_MARKER_PG =
-        "INSERT INTO completion_dedup (completion_id, created_at) VALUES (?, ?)";
+        "INSERT INTO completion_dedup (completion_id, created_at) VALUES (?, ?) "
+            + "ON CONFLICT (completion_id) DO NOTHING";
     /** H2: {@code ON CONFLICT} нет, конфликт ловится исключением (транзакция выживает). */
     private static final String INSERT_MARKER_H2 =
         "INSERT INTO completion_dedup (completion_id, created_at) VALUES (?, ?)";
@@ -105,7 +106,7 @@ public class CompletionDedupStore {
                 return true;
             }
         }
-        return false; // POF-M1 mutation
+        return "PostgreSQL".equals(cached);
     }
 
     /**
