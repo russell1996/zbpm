@@ -143,42 +143,32 @@ class InclusiveJoinWithoutExpectedIntegrationTests {
     }
 
     /**
-     * Criterion 2: {@code findInclusiveJoin}'s old first-match BFS wrote the counter
-     * onto a DECOY join lying on one branch's path (a legal inclusive gateway with
-     * several incomings), leaving the real partner with {@code expected == null} and
-     * the process hanging. Now the counter follows the branch mask: the real join is
-     * the one both branches reach.
-     *
-     * <p>taskX's branch into the decoy is left open on purpose — the decoy is a real
-     * merge of two live branches, so waiting for taskX is correct; what matters here
-     * is that the REAL join got its counter and the tail after it completed.
+     * Criterion 2: {@code findInclusiveJoin}'s old first-match BFS wrote the counter onto
+     * a DECOY join lying on one branch's path. The topology is built so that misplacing
+     * the counter is fatal rather than cosmetic: the decoy's own second incoming belongs
+     * to a task that never runs (it hangs off an XOR that picked the other branch), so a
+     * counter of 2 on the decoy makes it wait for a delivery that cannot happen — d1
+     * never reaches the real join, the real join never gets its counter, and the process
+     * hangs. With the convergent-join rule the counter lands on the join both split
+     * branches actually reach, and the tail completes.
      */
     @Transactional
     @Test
     void inclusiveSplit_counterGoesToTheConvergingJoin_notToADecoyOnOneBranchPath() throws Exception {
-        UUID pi = start("test-c835-decoy-incl-join.bpmn", List.of());
+        UUID pi = start("test-c835-decoy-incl-join.bpmn", List.of(var("pick", "B")));
 
         UserTask taskA = userTask(pi, "taskA");
         UserTask taskB = userTask(pi, "taskB");
-        UserTask taskX = userTask(pi, "taskX");
-        assertThat(taskA).isNotNull();
-        assertThat(taskB).isNotNull();
-        // the decoy's second branch MUST be live — otherwise the decoy is a 1-arrival merge
-        // and firing it would be correct, and this topology would prove nothing
-        assertThat(taskX).as("decoy's other branch (taskX) is live").isNotNull();
+        assertThat(taskA).as("split branch A parked").isNotNull();
+        assertThat(taskB).as("XOR on branch B took taskB").isNotNull();
+        assertThat(userTask(pi, "taskC"))
+            .as("the decoy's other incoming (taskC) must NOT run, else the topology proves nothing")
+            .isNull();
 
         runtimeService.completeUserTask(taskA.getId(), List.of());
         assertThat(statusOf(pi, "decoyJoin"))
-            .as("decoy must WAIT: taskX can still deliver x1 into it")
-            .isNull();
-
-        // taskX completes -> the decoy is now a satisfied merge of its own two live
-        // branches and fires, delivering d1 into the real join
-        runtimeService.completeUserTask(taskX.getId(), List.of());
-        assertThat(statusOf(pi, "decoyJoin")).isEqualTo(ActivityStatus.COMPLETED);
-        assertThat(statusOf(pi, "join"))
-            .as("only one of the split's two branches has delivered so far")
-            .isNull();
+            .as("decoy has no counter and nobody can still reach it -> it fires")
+            .isEqualTo(ActivityStatus.COMPLETED);
 
         runtimeService.completeUserTask(taskB.getId(), List.of());
 
@@ -186,5 +176,6 @@ class InclusiveJoinWithoutExpectedIntegrationTests {
             .as("the REAL convergent join fired: expected=2 was written to it, not to the decoy")
             .isEqualTo(ActivityStatus.COMPLETED);
         assertThat(statusOf(pi, "endEvent")).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
     }
 }
