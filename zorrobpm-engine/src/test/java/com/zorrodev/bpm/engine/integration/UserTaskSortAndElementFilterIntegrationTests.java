@@ -330,6 +330,58 @@ public class UserTaskSortAndElementFilterIntegrationTests {
 
     @Transactional
     @Test
+    void relatesTo_matchesWholeTokens_only() throws Exception {
+        // @verifier finding 3: the relatesTo fixture had no "name is a prefix of another name" pair,
+        // so a token-exactness regression inside relatesTo would stay GREEN. Mutation: remove the
+        // comma delimiters from the shared matcher → a member of `sales` would receive the tasks
+        // of `sales-east`, which they are not a candidate of (and cannot even claim).
+        UiUserEntity alice = createUser("in2Alice");
+        addToGroup(alice.getId(), "in2Sales");
+        UserTaskEntity salesEast = taskWith("bob", "in2Sales-east", null);
+        UserTaskEntity salesOnly = taskWith("bob", "in2Sales", null);
+
+        UserTaskQuery q = new UserTaskQuery();
+        q.setPageSize(50);
+        q.setRelatesTo(alice.getId());
+
+        List<UUID> found = ids(q);
+        assertThat(found).containsExactly(salesOnly.getId());
+        assertThat(found).doesNotContain(salesEast.getId());
+    }
+
+    /**
+     * @verifier finding 4 (untested {@code ", "} branch) and finding 6 (space BEFORE the comma):
+     * {@code AuthorizationService.parseCandidateGroups} trims every element, so a hand-written
+     * {@code candidateGroups="sales , east"} makes the user a candidate of {@code east} on the
+     * authorization side. The query must answer the SAME question, otherwise a person misses a task
+     * they may really claim.
+     */
+    @Transactional
+    @Test
+    void relatesTo_toleratesSpacesAroundTheCommas() throws Exception {
+        UiUserEntity alice = createUser("in2Alice");
+        addToGroup(alice.getId(), "east");
+        UserTaskEntity spaced = taskWith("bob", "sales , east", null);
+
+        UserTaskQuery q = new UserTaskQuery();
+        q.setPageSize(50);
+        q.setRelatesTo(alice.getId());
+
+        assertThat(ids(q)).containsExactly(spaced.getId());
+    }
+
+    @Transactional
+    @Test
+    void candidateGroupFilter_toleratesSpacesAroundTheCommas() throws Exception {
+        UserTaskEntity spaced = taskWith("bob", "sales , east", null);
+        UserTaskQuery q = new UserTaskQuery();
+        q.setPageSize(50);
+        q.setCandidateGroup("east");
+        assertThat(ids(q)).containsExactly(spaced.getId());
+    }
+
+    @Transactional
+    @Test
     void relatesTo_unknownUser_returnsNothing() throws Exception {
         taskWith("alice", "sales", null);
 

@@ -4,7 +4,9 @@ import com.zorrodev.bpm.contract.model.BpmnElementStatistics;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -66,25 +68,11 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
      * over a normalized candidates relation; see escalation E-IN2-1/E-IN2-3. A JOIN is not an
      * option either: it multiplies task rows and breaks pagination.
      *
-     * <p>Token-exact on purpose: both sides are wrapped in the {@code ,} delimiter, so group
-     * {@code sales} does NOT match a task whose list holds {@code sales-east}. The delimiter is
-     * also what keeps the filter consistent with the write path (the engine stores
-     * {@code "a,b"}, see {@code DomainEventEmitterTest}); the {@code ", "} variant tolerates a
-     * human-written comma list with a space, which {@code AuthorizationService.parseCandidateGroups}
-     * already trims away on the authorization side.
-     *
-     * <p>LIKE metacharacters in the group name are escaped with the same backslash convention as
-     * {@code UiUserRepository.byUsernameContains} (WO-SEC-17) — a group literally called
-     * {@code sales%} must stay a literal, never a wildcard.
+     * <p>The matching itself lives in {@link #candidateGroupToken} and is shared with
+     * {@link #relatesTo} — one implementation, so the two filters cannot drift apart.
      */
     static Specification<UserTaskEntity> byCandidateGroup(String group) {
-        String escaped = escapeLike(group);
-        String tight = "%," + escaped + ",%";
-        String spaced = "%, " + escaped + ",%";
-        return (root, query, cb) -> {
-            var padded = cb.concat(cb.concat(",", root.get("candidateGroups")), ",");
-            return cb.or(cb.like(padded, tight, '\\'), cb.like(padded, spaced, '\\'));
-        };
+        return (root, query, cb) -> candidateGroupToken(root, cb, group);
     }
 
     static Specification<UserTaskEntity> byBpmnElementId(String bpmnElementId) {
@@ -116,11 +104,8 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
             if (username != null && !username.isBlank()) {
                 roles.add(cb.equal(root.get("assignee"), username));
             }
-            var padded = cb.concat(cb.concat(",", root.get("candidateGroups")), ",");
             for (String group : groups == null ? List.<String>of() : groups) {
-                String escaped = escapeLike(group);
-                roles.add(cb.like(padded, "%," + escaped + ",%", '\\'));
-                roles.add(cb.like(padded, "%, " + escaped + ",%", '\\'));
+                roles.add(candidateGroupToken(root, cb, group));
             }
             if (roles.isEmpty()) {
                 // never `disjunction()` here — an empty OR is TRUE, which would answer
@@ -129,6 +114,36 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
             }
             return cb.or(roles.toArray(Predicate[]::new));
         };
+    }
+
+    /**
+     * The ONE candidate-group matcher, used by both {@link #byCandidateGroup} and
+     * {@link #relatesTo} (P-24: a shared guard must be shared, not re-implemented — a copy is a
+     * second thing that silently keeps the bug it was written to fix).
+     *
+     * <p>Token-exact, twice over:
+     * <ul>
+     *   <li>delimiters — the stored list is wrapped in {@code ,} and the pattern carries the same
+     *       delimiters, so group {@code sales} does NOT match a task holding {@code sales-east};</li>
+     *   <li>whitespace — spaces are stripped from BOTH sides before comparing, because
+     *       {@code AuthorizationService.parseCandidateGroups} TRIMS each element: a hand-written
+     *       {@code candidateGroups="sales ,east"} makes the user a candidate of {@code east} for
+     *       authorization, so a filter that did not match it would hide a task the person may
+     *       really claim (the two must not answer different questions).</li>
+     * </ul>
+     *
+     * <p>LIKE metacharacters in the group name are escaped with the same backslash convention as
+     * {@code UiUserRepository.byUsernameContains} (WO-SEC-17) — a group literally called
+     * {@code sales%} stays a literal, never a wildcard. Case is left alone on purpose:
+     * {@code parseCandidateGroups} compares group names case-SENSITIVELY.
+     */
+    private static Predicate candidateGroupToken(Root<UserTaskEntity> root, CriteriaBuilder cb, String group) {
+        String token = escapeLike(group.replace(" ", ""));
+        // replace(x,' ','') keeps NULL NULL, so a task without candidate groups stays excluded
+        var normalized = cb.function("replace", String.class,
+            root.get("candidateGroups"), cb.literal(" "), cb.literal(""));
+        var padded = cb.concat(cb.concat(",", normalized), ",");
+        return cb.like(padded, "%," + token + ",%", '\\');
     }
 
     /**
