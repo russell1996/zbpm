@@ -125,11 +125,18 @@ class CompletionDedupClusterPgIT extends PostgresIT {
             int deleted = storeA.deleteExpiredBefore(
                 java.sql.Timestamp.from(java.time.Instant.now().minusSeconds(1800)));
 
-            assertThat(deleted).as("очистка удаляет протухшие маркеры").isEqualTo(1);
-            assertThat(jdbc.queryForObject(
-                "SELECT count(*) FROM completion_dedup WHERE completion_id = ?",
-                Integer.class, fresh))
-                .as("свежий маркер не трогаем").isEqualTo(1);
+            // Ассертим СВОИ ключи, а не общее число удалённых строк: база PG общая
+            // на весь набор PG-тестов, и «ровно 1» здесь ловило бы чужие
+            // протухшие маркеры (первая версия теста так и падала: expected 1,
+            // but was 3 — чужие строки от других прогонов того же класса).
+            assertThat(storeA.isClaimed(stale))
+                .as("протухший маркер удалён очисткой").isFalse();
+            assertThat(storeA.isClaimed(fresh))
+                .as("свежий маркер очистка не трогает — иначе переотправка старого "
+                    + "результата снова прошла бы как новая").isTrue();
+            assertThat(deleted)
+                .as("очистка что-то удалила (наши протухшие маркеры в счёт входят)")
+                .isGreaterThanOrEqualTo(1);
         } finally {
             cleanup(stale);
             cleanup(fresh);
