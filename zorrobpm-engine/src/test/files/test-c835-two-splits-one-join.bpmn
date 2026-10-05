@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835_m2" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c835-two-splits-one-join" name="test-c835-two-splits-one-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+
+    <!-- WO-C8-35 (MAJOR-2): two inclusive splits under one parallel fork, all four branches
+         converging on ONE join. The old recordInclusiveExpected was a blind INSERT keyed
+         (instance, gatewayElementId, enteredFlowId), so the second split violated
+         UK_PARALLEL_GATEWAYS__ARRIVAL \u2192 DataIntegrityViolation incident on isplit2 and the
+         task completion that triggered it failed. Also note the old counter was not accumulated
+         (last-writer-wins would be wrong for 4 arrivals). -->
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fs1</bpmn:outgoing>
+      <bpmn:outgoing>fs2</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fs1" name="fs1" sourceRef="pfork" targetRef="isplit1" />
+    <bpmn:sequenceFlow id="fs2" name="fs2" sourceRef="pfork" targetRef="isplit2" />
+
+    <bpmn:inclusiveGateway id="isplit1" name="isplit1">
+      <bpmn:incoming>fs1</bpmn:incoming>
+      <bpmn:outgoing>a1</bpmn:outgoing>
+      <bpmn:outgoing>b1</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="a1" name="a1" sourceRef="isplit1" targetRef="taskA" />
+    <bpmn:sequenceFlow id="b1" name="b1" sourceRef="isplit1" targetRef="taskB" />
+
+    <bpmn:inclusiveGateway id="isplit2" name="isplit2">
+      <bpmn:incoming>fs2</bpmn:incoming>
+      <bpmn:outgoing>c1</bpmn:outgoing>
+      <bpmn:outgoing>d1</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="c1" name="c1" sourceRef="isplit2" targetRef="taskC" />
+    <bpmn:sequenceFlow id="d1" name="d1" sourceRef="isplit2" targetRef="taskD" />
+
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>a1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="taskB" name="taskB">
+      <bpmn:incoming>b1</bpmn:incoming>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="taskC" name="taskC">
+      <bpmn:incoming>c1</bpmn:incoming>
+      <bpmn:outgoing>fC</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="taskD" name="taskD">
+      <bpmn:incoming>d1</bpmn:incoming>
+      <bpmn:outgoing>fD</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="taskA" targetRef="join" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="taskB" targetRef="join" />
+    <bpmn:sequenceFlow id="fC" name="fC" sourceRef="taskC" targetRef="join" />
+    <bpmn:sequenceFlow id="fD" name="fD" sourceRef="taskD" targetRef="join" />
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:incoming>fC</bpmn:incoming>
+      <bpmn:incoming>fD</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
