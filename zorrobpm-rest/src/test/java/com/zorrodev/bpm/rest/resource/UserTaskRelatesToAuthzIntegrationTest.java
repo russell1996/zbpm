@@ -82,6 +82,11 @@ class UserTaskRelatesToAuthzIntegrationTest {
     private String bobToken;
     private String strangerToken;
 
+    private String aliceName;
+    private String bobName;
+    private String strangerName;
+    private String groupName;
+
     private UUID aliceId;
     private UUID bobId;
     private UUID strangerId;
@@ -99,23 +104,33 @@ class UserTaskRelatesToAuthzIntegrationTest {
     void setup() throws Exception {
         adminToken = login("admin", "admin");
 
-        aliceId = createUser("in2RestAlice").getId();
-        bobId = createUser("in2RestBob").getId();
-        strangerId = createUser("in2RestStranger").getId();
-        aliceToken = login("in2RestAlice", "secret-in2");
-        bobToken = login("in2RestBob", "secret-in2");
-        strangerToken = login("in2RestStranger", "secret-in2");
+        // ui_users.username is UNIQUE and the PG database survives between local runs, so the
+        // names carry a per-run suffix; the assignee strings on the task rows must match it.
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        aliceName = "in2RestAlice-" + suffix;
+        bobName = "in2RestBob-" + suffix;
+        strangerName = "in2RestStranger-" + suffix;
+        aliceId = createUser(aliceName).getId();
+        bobId = createUser(bobName).getId();
+        strangerId = createUser(strangerName).getId();
+        aliceToken = login(aliceName, "secret-in2");
+        bobToken = login(bobName, "secret-in2");
+        strangerToken = login(strangerName, "secret-in2");
 
         // alice is a candidate of group "in2RestSales" — the group leg of relatesTo
+        groupName = "in2RestSales-" + suffix;
         UserGroupEntity aliceGroup = new UserGroupEntity();
         aliceGroup.setUserId(aliceId);
-        aliceGroup.setGroupName("in2RestSales");
+        aliceGroup.setGroupName(groupName);
         userGroupRepository.save(aliceGroup);
 
-        pdVisible = deploy("in2-rest-visible");
-        pdBobOnly = deploy("in2-rest-bob-only");
-        pdForeign = deploy("in2-rest-foreign");
-        for (String key : List.of("in2-rest-visible", "in2-rest-bob-only", "in2-rest-foreign")) {
+        String visibleKey = "in2-rest-visible-" + suffix;
+        String bobOnlyKey = "in2-rest-bob-only-" + suffix;
+        String foreignKey = "in2-rest-foreign-" + suffix;
+        pdVisible = deploy(visibleKey);
+        pdBobOnly = deploy(bobOnlyKey);
+        pdForeign = deploy(foreignKey);
+        for (String key : List.of(visibleKey, bobOnlyKey, foreignKey)) {
             addMember(aliceId, key);
             addMember(bobId, key);
             addMember(strangerId, key);
@@ -123,13 +138,12 @@ class UserTaskRelatesToAuthzIntegrationTest {
         // stranger loses membership in the other two — allowedPdIds must then hide those tasks
         processMemberRepository.deleteAll(processMemberRepository
             .findByProcessIdInAndUserId(
-                List.of(processIdOf("in2-rest-bob-only"), processIdOf("in2-rest-foreign")),
-                strangerId));
+                List.of(processIdOf(bobOnlyKey), processIdOf(foreignKey)), strangerId));
 
-        aliceTaskInVisible = task(pdVisible, "in2RestAlice", null);
-        aliceTaskViaGroupInVisible = task(pdVisible, "in2RestBob", "in2RestSales");
-        strangerTaskInBobOnly = task(pdBobOnly, "in2RestStranger", null);
-        strangerTaskInForeign = task(pdForeign, "in2RestStranger", null);
+        aliceTaskInVisible = task(pdVisible, aliceName, null);
+        aliceTaskViaGroupInVisible = task(pdVisible, bobName, groupName);
+        strangerTaskInBobOnly = task(pdBobOnly, strangerName, null);
+        strangerTaskInForeign = task(pdForeign, strangerName, null);
     }
 
     // ===== criterion 1: a user may always ask about their OWN tasks =====
@@ -206,7 +220,7 @@ class UserTaskRelatesToAuthzIntegrationTest {
     void candidateGroupParam_overHttp_filtersRows() throws Exception {
         mockMvc.perform(get("/user-tasks")
                         .header("Authorization", "Bearer " + adminToken)
-                        .param("candidateGroup", "in2RestSales")
+                        .param("candidateGroup", groupName)
                         .param("processInstanceId", instanceOf(aliceTaskViaGroupInVisible).toString()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.totalElements").value(1));
