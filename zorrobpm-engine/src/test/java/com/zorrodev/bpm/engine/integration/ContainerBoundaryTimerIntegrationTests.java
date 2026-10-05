@@ -27,6 +27,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.ArrayList;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
@@ -57,8 +58,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 class ContainerBoundaryTimerIntegrationTests {
 
-    private static final List<String> OWN_BOUNDARIES =
-        List.of("subTimeoutNi", "callTimeout", "manualTimeout", "brTimeout", "adhocTimeout");
+    /**
+     * Process instances started by THIS class. Boundary timer rows survive the
+     * test and are visible to every later class in the shared H2 — a leftover
+     * PT1H row broke {@code TimerMessageQueryIntegrationTests.pendingTimerJobIsListed}
+     * ("expecting empty") and {@code EventSubProcessIntegrationTests}' time-window
+     * cleanup (WO-REL-13 pattern, which NPEs once it sees any row). Cleanup is
+     * therefore scoped to OUR OWN instance ids, never by boundary id: the
+     * interrupting subprocess fixture ({@code subTimeout}) is shared with
+     * {@code SubprocessBoundaryTimerIntegrationTests}, and deleting by boundary
+     * id would reach into a foreign class's rows.
+     */
+    private final List<UUID> ownInstances = new ArrayList<>();
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;
@@ -83,16 +94,18 @@ class ContainerBoundaryTimerIntegrationTests {
 
     @AfterEach
     void cleanOwnTimerState() {
-        // Same leak class as ServiceTaskBoundaryTimerIntegrationTests.cleanOwnTimerState:
-        // this class fires timers explicitly, so fired=true rows linger in the shared
-        // H2 and break TimerMessageQueryIntegrationTests' "no fired rows" assertion.
-        // Scoped to THIS class's own boundary ids, never global.
+        // Same leak class as ServiceTaskBoundaryTimerIntegrationTests.cleanOwnTimerState,
+        // but scoped by OUR OWN instance ids instead of boundary ids: the
+        // interrupting-subprocess fixture's boundary id (subTimeout) is shared
+        // with SubprocessBoundaryTimerIntegrationTests, so deleting by boundary
+        // id would delete a foreign class's rows.
         new TransactionTemplate(txManager).execute(s -> {
             timerJobRepository.findAll().stream()
-                .filter(r -> OWN_BOUNDARIES.contains(r.getBoundaryElementId()))
+                .filter(r -> ownInstances.contains(r.getProcessInstanceId()))
                 .forEach(r -> timerJobRepository.deleteById(r.getId()));
             return null;
         });
+        ownInstances.clear();
     }
 
     private UUID deployAndStart(String bpmnFile) throws Exception {
@@ -100,7 +113,9 @@ class ContainerBoundaryTimerIntegrationTests {
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(model.getId());
-        return runtimeService.startProcessInstance(dto).getId();
+        UUID pi = runtimeService.startProcessInstance(dto).getId();
+        ownInstances.add(pi);
+        return pi;
     }
 
     private ActivityEntity hostActivity(UUID pi, String bpmnElementId) {
@@ -288,6 +303,7 @@ class ContainerBoundaryTimerIntegrationTests {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(model.getId());
         UUID pi = runtimeService.startProcessInstance(dto).getId();
+        ownInstances.add(pi);
 
         ActivityEntity host = hostActivity(pi, "call1");
         assertThat(pendingTimers(host.getId(), "callTimeout"))
