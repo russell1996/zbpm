@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-35 (CR-09, criterion 1, second half): a PARALLEL fork feeding an
+     inclusive join. A parallel fork does NOT write `expected` either — but here
+     the second branch is genuinely still live, so the join must NOT fire on the
+     first arrival. This is the case the forbidden "expected=1" shortcut would
+     have broken (early fire while taskB is still open). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835forkjoin" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c835-fork-incl-join" name="c835-fork-incl-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="fork1" />
+    <bpmn:parallelGateway id="fork1" name="fork1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="fork1" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="fork1" targetRef="taskB" />
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>gA</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="taskB" name="taskB">
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>gB</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="gA" name="gA" sourceRef="taskA" targetRef="join" />
+    <bpmn:sequenceFlow id="gB" name="gB" sourceRef="taskB" targetRef="join" />
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>gA</bpmn:incoming>
+      <bpmn:incoming>gB</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="join" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-35 (CR-09, criterion 1): an inclusive JOIN reached from an XOR split.
+     The XOR takes exactly one branch (condition true for A only), so nothing can
+     ever arrive on flowB. `expected` is written only by an inclusive split, so
+     before the fix the join had expected=null on every arrival and waited
+     forever — silently, without an incident. The instance must now complete. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835xorjoin" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c835-xor-incl-join" name="c835-xor-incl-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="xor1" />
+    <bpmn:exclusiveGateway id="xor1" name="xor1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>flowA</bpmn:outgoing>
+      <bpmn:outgoing>flowB</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="flowA" name="flowA" sourceRef="xor1" targetRef="taskA">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=go = "A"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="xor1" targetRef="join">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=go = "B"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>flowA</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="taskA" targetRef="join" />
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:incoming>flowB</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="join" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

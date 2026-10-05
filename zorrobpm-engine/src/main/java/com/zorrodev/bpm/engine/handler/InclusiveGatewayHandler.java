@@ -24,6 +24,7 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
     private final DBService dbService;
     private final FlowNavigator flowNavigator;
     private final ScriptService scriptService;
+    private final ElementSupport elementSupport;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.INCLUSIVE_GATEWAY; }
@@ -65,7 +66,10 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
 
             log.info("{}/{}: Entering and completing {}: {}/{} (activating {} of {} branches)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), activated.size(), outgoings.size());
 
-            String joinId = findInclusiveJoin(bpmn, bpmnElement);
+            // WO-C8-35 (CR-09): the partner must CONVERGE this split's branches — the old
+            // BFS took the first inclusive with several incomings it happened to walk into,
+            // so an unrelated join on one branch's path swallowed the counter (criterion 2).
+            String joinId = elementSupport.findConvergentInclusiveJoin(bpmn, bpmnElement);
             if (joinId != null) {
                 dbService.recordInclusiveExpected(processInstanceId, joinId, activated.size());
             }
@@ -85,7 +89,17 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
             Integer expected = dbService.getInclusiveExpected(processInstanceId, bpmnElement.getId());
             Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, bpmnElement.getId());
 
-            if (expected != null && arrived.size() >= expected) {
+            // WO-C8-35 (CR-09): readiness without a static counter. `expected` is written
+            // by only three branchers (inclusive split, MI, ad-hoc), so from an XOR /
+            // parallel fork / implicit AND-fork / subprocess exit it is null and the old
+            // `expected != null && …` was false forever — a silent wait-forever. The join is
+            // ready when nobody else in the instance can still deliver a branch to it
+            // (ElementSupport.hasOtherLiveExecutionReaching). NOT the tempting `expected=1`:
+            // that would fire a neighbouring join early under any other topology.
+            boolean ready = expected != null
+                ? arrived.size() >= expected
+                : !elementSupport.hasOtherLiveExecutionReaching(processInstanceId, bpmn, bpmnElement);
+            if (ready) {
                 dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
                 Token token = dbService.getToken(tokenId);
                 // WO-DIFF-4: same null-parent guard as ParallelGatewayHandler — a
@@ -94,7 +108,10 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
                 UUID oldTokenId = token.getParentId() != null ? token.getParentId() : tokenId;
                 UUID activityId = dbService.createActivity(processInstanceId, oldTokenId, bpmnElement);
                 dbService.completeActivity(activityId);
-                log.info("{}/{}: Entering and completing {}: {}/{} (all {} branches arrived)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), expected);
+                log.info("{}/{}: Entering and completing {}: {}/{} (all branches arrived: {} of {} expected)"
+                        + (expected == null ? ", no counter — decided by live reachability" : ""),
+                    processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(),
+                    arrived.size(), expected == null ? "?" : String.valueOf(expected));
                 for (String outgoing : outgoings) {
                     flowNavigator.processFlow(processInstanceId, oldTokenId, outgoing, false, null);
                     BpmnFlowModel flow = bpmn.getFlow(outgoing);
@@ -102,7 +119,10 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
                     executor.execute(processInstanceId, oldTokenId, bpmn, target);
                 }
             } else {
-                log.info("{}/{}: Inclusive gateway join not ready yet {}: {} of {} branches arrived", processInstanceId, tokenId, bpmnElement.getId(), arrived.size(), expected);
+                log.info("{}/{}: Inclusive gateway join not ready yet {}: {} of {} branches arrived"
+                        + (expected == null ? " (no counter; another live execution can still reach it)" : ""),
+                    processInstanceId, tokenId, bpmnElement.getId(), arrived.size(),
+                    expected == null ? "?" : String.valueOf(expected));
             }
         } else {
             UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
@@ -127,37 +147,4 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
         return Boolean.TRUE.equals(test);
     }
 
-    private String findInclusiveJoin(BpmnProcessDefinitionModel bpmn, BpmnElementModel split) {
-        Set<String> visited = new HashSet<>();
-        Deque<String> queue = new ArrayDeque<>();
-        for (String outgoing : split.getOutgoing()) {
-            BpmnFlowModel flow = bpmn.getFlow(outgoing);
-            if (flow != null) {
-                queue.add(flow.getTargetRef());
-            }
-        }
-        while (!queue.isEmpty()) {
-            String elementId = queue.poll();
-            if (elementId == null || !visited.add(elementId)) {
-                continue;
-            }
-            BpmnElementModel element = bpmn.getElement(elementId);
-            if (element == null) {
-                continue;
-            }
-            if (element.getType() == BpmnElementType.INCLUSIVE_GATEWAY
-                    && element.getIncoming() != null && element.getIncoming().size() > 1) {
-                return element.getId();
-            }
-            if (element.getOutgoing() != null) {
-                for (String outgoing : element.getOutgoing()) {
-                    BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                    if (flow != null) {
-                        queue.add(flow.getTargetRef());
-                    }
-                }
-            }
-        }
-        return null;
-    }
 }
