@@ -53,6 +53,47 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
         return (root, query, cb) -> cb.equal(root.get("assignee"), assignee);
     }
 
+    /**
+     * WO-IN-2 C0: matches a candidate-group token inside the comma-separated
+     * {@code user_tasks.candidate_groups} column.
+     *
+     * <p>There is NO candidate table and no {@code candidate_users} column in this schema (only
+     * {@code candidate_groups varchar(512)}, written by {@code UserTaskHandler.createTaskRow}
+     * from {@code zeebe:assignmentDefinition/@candidateGroups}) — so this cannot be an EXISTS
+     * over a normalized candidates relation; see escalation E-IN2-1/E-IN2-3. A JOIN is not an
+     * option either: it multiplies task rows and breaks pagination.
+     *
+     * <p>Token-exact on purpose: both sides are wrapped in the {@code ,} delimiter, so group
+     * {@code sales} does NOT match a task whose list holds {@code sales-east}. The delimiter is
+     * also what keeps the filter consistent with the write path (the engine stores
+     * {@code "a,b"}, see {@code DomainEventEmitterTest}); the {@code ", "} variant tolerates a
+     * human-written comma list with a space, which {@code AuthorizationService.parseCandidateGroups}
+     * already trims away on the authorization side.
+     *
+     * <p>LIKE metacharacters in the group name are escaped with the same backslash convention as
+     * {@code UiUserRepository.byUsernameContains} (WO-SEC-17) — a group literally called
+     * {@code sales%} must stay a literal, never a wildcard.
+     */
+    static Specification<UserTaskEntity> byCandidateGroup(String group) {
+        String escaped = escapeLike(group);
+        String tight = "%," + escaped + ",%";
+        String spaced = "%, " + escaped + ",%";
+        return (root, query, cb) -> {
+            var padded = cb.concat(cb.concat(",", root.get("candidateGroups")), ",");
+            return cb.or(cb.like(padded, tight, '\\'), cb.like(padded, spaced, '\\'));
+        };
+    }
+
+    /**
+     * WO-SEC-17 escaping convention: backslash first, then the two LIKE wildcards. Case is left
+     * alone on purpose — {@code AuthorizationService.parseCandidateGroups} compares group names
+     * case-SENSITIVELY, so a case-insensitive filter here would answer a wider question than the
+     * authorization side actually grants.
+     */
+    static String escapeLike(String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
     @Modifying
     @Query("UPDATE UserTaskEntity e SET e.completedAt = :completedAt WHERE e.id = :taskId")
     void setCompletedAt(UUID taskId, Instant completedAt);
