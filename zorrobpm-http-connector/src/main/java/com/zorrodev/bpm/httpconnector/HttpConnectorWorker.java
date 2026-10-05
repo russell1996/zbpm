@@ -17,6 +17,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.net.http.HttpTimeoutException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -28,6 +29,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * WO-ENG-31 Фаза 2: built-in воркер HTTP/REST outbound-коннектора (вариант (b)).
@@ -72,6 +80,27 @@ public class HttpConnectorWorker implements JobHandler {
     /** Заголовки ответа, недоступные маппингу (решение CTO п.4 — фильтруется по умолчанию). */
     private static final Set<String> FILTERED_RESPONSE_HEADERS = Set.of("set-cookie");
 
+    /**
+     * NEW5-06: watchdog для чтения тела. {@code HttpRequest.timeout} в JDK действует
+     * только до получения ЗАГОЛОВКОВ — тело через {@code BodyHandlers.ofInputStream()}
+     * читается уже без срока, и медленный allowlisted-сервер (1 байт/с) держит поток
+     * воркера неограниченно долго (H аудита: readTimeout=2s, реальный вызов 12.3s).
+     * Сторож на дедлайне закрывает поток ответа — блокирующий {@code read()} при этом
+     * отдаёт IOException, который мы опознаём как «дедлайн истёк» и превращаем в
+     * {@link java.net.HttpTimeoutException} (тот же класс, что бросил бы сам JDK:
+     * транзиентная ветка {@code handleJob} → ретраи/инцидент, НЕ детерминированный
+     * ERR_CONFIG — медленный сервер это не «невалидная конфигурация»).
+     *
+     * <p>Один daemon-поток на модуль: воркеров может быть много, а задача у сторожа
+     * одна на чтение и она всегда отменяется в {@code finally}.
+     */
+    private static final ScheduledExecutorService DEADLINE_WATCHDOG =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "http-connector-deadline");
+            t.setDaemon(true);
+            return t;
+        });
+
     private final HttpConnectorProperties properties;
     private final HttpSsrfGate ssrfGate;
     private final ActivityService activityService;
@@ -86,6 +115,38 @@ public class HttpConnectorWorker implements JobHandler {
         this.properties = properties;
         this.ssrfGate = ssrfGate;
         this.activityService = activityService;
+        mergeSecretsJson();
+    }
+
+    /**
+     * NEW5-07: разбор {@code zorrobpm.http-connector.secrets-json} в карту секретов
+     * один раз на старте. Битый JSON или не-объект — fail-fast (старт падает), а не
+     * первый запрос в проде: конфиг с опечаткой в секретах должен быть пойман при
+     * развёртывании, как это делает {@link HttpConnectorStartupValidator} для
+     * остальных ручек. Явный {@code secrets} перекрывает значение отсюда.     */
+    private void mergeSecretsJson() {
+        String blob = properties.getSecretsJson();
+        if (blob == null || blob.isBlank()) {
+            return;
+        }
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(blob);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(
+                "zorrobpm.http-connector.secrets-json is not valid JSON: " + e.getOriginalMessage(), e);
+        }
+        if (!root.isObject()) {
+            throw new IllegalStateException(
+                "zorrobpm.http-connector.secrets-json must be a JSON object of {name: secret}");
+        }
+        root.fields().forEachRemaining(entry -> {
+            if (!entry.getValue().isObject()) {
+                throw new IllegalStateException(
+                    "zorrobpm.http-connector.secrets-json['" + entry.getKey() + "'] must be a JSON object");
+            }
+            properties.getSecrets().putIfAbsent(entry.getKey(), entry.getValue().toString());
+        });
     }
 
     @Override
@@ -165,11 +226,18 @@ public class HttpConnectorWorker implements JobHandler {
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
-        HttpResponse<InputStream> response = sendWithRedirects(client, method, uri, headers, body, auth, readTimeout);
+        // NEW5-06: ОДИН дедлайн на весь обмен — заголовки, все хопы редиректа и тело.
+        // Раньше срок жил только на заголовках (HttpRequest.timeout), тело читалось без
+        // него. Тот же конфиг, что и раньше (http.readTimeout), — новых ручек не заводим.
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(readTimeout);
+
+        HttpResponse<InputStream> response =
+            sendWithRedirects(client, method, uri, headers, body, auth, readTimeout, deadlineNanos);
         int status = response.statusCode();
         Map<String, String> responseHeaders = filterResponseHeaders(response.headers().map());
         String contentType = response.headers().firstValue("content-type").orElse("");
-        String responseBody = readBounded(response.body(), properties.getMaxResponseBytes());
+        String responseBody = readBodyWithinDeadline(response.body(), properties.getMaxResponseBytes(),
+            deadlineNanos, readTimeout);
         // Тело могли не дочитать до конца при oversize — поток закрываем, соединение не переиспользуем.
         response.body().close();
 
@@ -194,15 +262,23 @@ public class HttpConnectorWorker implements JobHandler {
     }
 
     private HttpResponse<InputStream> sendWithRedirects(HttpClient client, String method, URI uri,
-            Map<String, String> headers, String body, AuthHeader auth, int readTimeout)
+            Map<String, String> headers, String body, AuthHeader auth, int readTimeout, long deadlineNanos)
             throws IOException, InterruptedException {
         URI current = uri;
         String currentMethod = method;
         String currentBody = body;
         int maxRedirects = properties.getMaxRedirects();
+        // NEW5-12: секрет из authRef уходит ТОЛЬКО на origin исходного запроса. Смена
+        // origin (даже на второй allowlisted-хост) → auth-заголовки снимаются, как
+        // делают браузеры: иначе секрет утекает стороннему хосту, которому мы уже
+        // доверяем по конфигурации. Обратно на исходный origin не восстанавливаем —
+        // цепочка редиректов с уходом и возвратом не должна ничем различаться.
+        final URI originalOrigin = originOf(uri);
+        boolean authAllowed = true;
         for (int hop = 0; ; hop++) {
-            HttpRequest request = buildRequest(current, currentMethod, headers, currentBody, auth, readTimeout);
-            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            HttpRequest request = buildRequest(current, currentMethod, headers, currentBody,
+                authAllowed ? auth : AuthHeader.none(), readTimeout);
+            HttpResponse<InputStream> response = sendBounded(client, request, deadlineNanos, readTimeout);
             int status = response.statusCode();
             if (!REDIRECT_STATUSES.contains(String.valueOf(status)) || hop >= maxRedirects) {
                 if (REDIRECT_STATUSES.contains(String.valueOf(status)) && hop >= maxRedirects) {
@@ -222,12 +298,96 @@ public class HttpConnectorWorker implements JobHandler {
             URI next = current.resolve(location.strip());
             // Каждый хоп — через тот же гейт (редирект на internal-хост закрыт здесь).
             ssrfGate.validate(next);
+            if (!originOf(next).equals(originalOrigin)) {
+                authAllowed = false;
+            }
             current = next;
             if (status == 303 || ((status == 301 || status == 302) && currentBody != null)) {
                 currentMethod = "GET";
                 currentBody = null;
             }
         }
+    }
+
+    /** NEW5-12: origin = схема + хост + порт (authority), как его понимает браузер. */
+    private static URI originOf(URI uri) {
+        try {
+            return new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), null, null, null);
+        } catch (java.net.URISyntaxException e) {
+            // Схема/хост уже проверены ssrfGate.validate и URI.create — сюда не дойти.
+            throw new IllegalArgumentException("cannot derive origin of " + uri, e);
+        }
+    }
+
+    /**
+     * NEW5-06: отправка под общим дедлайном. {@code sendAsync} + {@code get(remaining)}
+     * вместо {@code send} — блокирующий {@code send} не даёт отобрать оставшийся срок
+     * на весь обмен. Отмена future при истечении дедлайна разрывает обмен на стороне
+     * JDK, поэтому наш поток освобождается сразу.
+     */
+    private HttpResponse<InputStream> sendBounded(HttpClient client, HttpRequest request,
+            long deadlineNanos, int readTimeout) throws IOException, InterruptedException {
+        CompletableFuture<HttpResponse<InputStream>> pending =
+            client.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream());
+        try {
+            return pending.get(remainingNanos(deadlineNanos), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            pending.cancel(true);
+            throw deadlineExceeded(readTimeout, "response headers");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IOException io) {
+                throw io;
+            }
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new IOException("HTTP exchange failed: " + cause, cause);
+        }
+    }
+
+    /**
+     * NEW5-06: чтение тела под тем же дедлайном. Сторож закрывает поток ответа ровно
+     * в момент истечения; блокирующий {@code read()} отдаёт IOException, и мы отличаем
+     * «дедлайн» от «сервер оборвал соединение» по факту истечения времени.
+     */
+    private String readBodyWithinDeadline(InputStream body, long maxBytes, long deadlineNanos, int readTimeout)
+            throws IOException {
+        ScheduledFuture<?> watchdog = DEADLINE_WATCHDOG.schedule(() -> {
+            try {
+                body.close();
+            } catch (IOException | RuntimeException ignored) {
+                // Закрытие уже идущего чтения может бросить — это ожидаемо, дедлайн своё сделал.
+            }
+        }, remainingNanos(deadlineNanos), TimeUnit.NANOSECONDS);
+        try {
+            return readBounded(body, maxBytes);
+        } catch (IOException e) {
+            if (deadlineExpired(deadlineNanos)) {
+                throw deadlineExceeded(readTimeout, "response body");
+            }
+            throw e;
+        } finally {
+            watchdog.cancel(false);
+        }
+    }
+
+    private static long remainingNanos(long deadlineNanos) throws HttpTimeoutException {
+        long remaining = deadlineNanos - System.nanoTime();
+        if (remaining <= 0) {
+            throw deadlineExceeded(0, "exchange");
+        }
+        return remaining;
+    }
+
+    private static boolean deadlineExpired(long deadlineNanos) {
+        return System.nanoTime() - deadlineNanos >= 0;
+    }
+
+    private static HttpTimeoutException deadlineExceeded(int readTimeout, String what) {
+        // Тот же класс, что бросает сам JDK при HttpRequest.timeout: IOException →
+        // транзиентная ветка handleJob (FAILED → ретраи/инцидент), а не ERR_CONFIG.
+        return new HttpTimeoutException("no " + what + " within http.readTimeout=" + readTimeout + "s");
     }
 
     private static HttpRequest buildRequest(URI uri, String method, Map<String, String> headers,
