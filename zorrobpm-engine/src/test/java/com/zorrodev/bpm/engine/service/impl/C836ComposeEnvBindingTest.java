@@ -16,7 +16,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
 import java.io.IOException;
@@ -248,8 +247,25 @@ class C836ComposeEnvBindingTest {
         }
     }
 
-    /** Настоящие бины C8-36 в контексте; коллабораторы — моки (проверяется связка, не бизнес-логика). */
-    @Configuration(proxyBeanMethods = false)
+    /**
+     * Бины C8-36 в контексте; коллабораторы — моки (проверяется связка, не бизнес-логика).
+     *
+     * <p><b>Здесь НЕТ {@code @Configuration}, и это не небрежность.</b> В модуле
+     * лежит {@code TestMain} с {@code @SpringBootApplication}, а он сканирует
+     * компоненты по {@code com.zorrodev.bpm.engine.**} — то есть ВКЛЮЧАЯ
+     * test-classes. Аннотированный стереотипом класс из тестовых исходников
+     * поэтому становится бином в каждом {@code @SpringBootTest(classes = TestMain.class)}
+     * модуля. Проверено на себе: с {@code @Configuration} подключённый здесь МОК
+     * {@code CompletionDedupStore} подменял боевой во всех чужих контекстах, и
+     * {@code claim()} мока (дефолт Mockito для boolean — false) делал КАЖДЫЙ дедуп
+     * «дубликатом»: два теста {@code ListenerDuplicateCompletionTests} падали с
+     * «expected: 2 but was: 3» (бюджет не декрементился). Нашёл это полный
+     * {@code clean verify}, а не целевой прогон.
+     *
+     * <p>Без стереотипа класс остаётся «лайтовым» кандидатом конфигурации:
+     * {@code @Bean}-методы работают (их регистрирует {@code withUserConfiguration}),
+     * но component scan его не видит.
+     */
     static class C836Beans {
 
         @Bean
