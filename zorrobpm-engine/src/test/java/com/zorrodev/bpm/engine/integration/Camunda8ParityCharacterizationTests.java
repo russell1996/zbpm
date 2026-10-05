@@ -231,6 +231,60 @@ public class Camunda8ParityCharacterizationTests {
         runtimeService.completeUserTask(userTaskId, List.of());
     }
 
+    // ==================== WO-C8-35 (CR-03): условия на потоках из НЕ-шлюзовых элементов ====================
+
+    /**
+     * Контракт (решение CTO, WO-C8-35 CR-03, задокументирован в README «Чего честно нет»):
+     * условие на sequence flow вычисляется ТОЛЬКО выходящим из exclusive/inclusive
+     * gateway — ровно как предписывает Camunda 8/Zeebe. На потоке из обычного элемента
+     * условие парсится и отдаётся в структуру модели, но НЕ вычисляется: элемент
+     * разветвляется как неявная AND-вилка (WO-ENG-12), то есть активируются ВСЕ исходящие
+     * потоки независимо от условий.
+     *
+     * <p>Это расхождение с BPMN 2.0 (спека требует вычисления при выходе из ЛЮБОГО
+     * activity) и с Camunda 7. Принято сознательно: проект объявляет паритет с Camunda 8
+     * целью, а полная BPMN 2.0-семантика — breaking change с миграцией моделей, не тихая
+     * правка. Тест существует, чтобы решение не выглядело забытым пробелом: если кто-то
+     * «починит» это нечаянно, тест упадёт.
+     */
+    @Test
+    @Transactional
+    void plainElementWithTwoOutgoing_activatesBothBranchesAndIgnoresTheirConditions() throws Exception {
+        String key = uniq("c835pfc");
+        String xml = bpmn("test-c835-plain-flow-condition.bpmn")
+            .replace("c835-plain-flow-condition", key);
+
+        // the condition IS parsed and exposed (the model is not lossy) …
+        assertThat(bpmnParseService.parse(xml).getFlow("cFalse").getConditionExpression().getExpression())
+            .as("condition on a plain element's outgoing flow is parsed")
+            .isNotBlank();
+
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        // taken=yes → cTrue is true, cFalse is definitely false
+        UUID piId = start(model.getId(), List.of(var("taken", ProcessVariableType.STRING, "yes")));
+
+        // complete forkTask: BOTH branches must activate, because the conditions of a
+        // non-gateway element are not evaluated
+        UserTaskQuery q = new UserTaskQuery();
+        q.setProcessInstanceId(piId);
+        UUID forkTaskId = queryService.findUserTasks(q, null).getData().stream()
+            .filter(t -> "forkTask".equals(t.getName()))
+            .findFirst().orElseThrow().getId();
+        runtimeService.completeUserTask(forkTaskId, List.of());
+
+        List<String> userTaskNames = queryService.findUserTasks(q, null).getData().stream()
+            .map(UserTask::getName).toList();
+        assertThat(userTaskNames)
+            .as("implicit AND-fork: the FALSE branch is activated too (Zeebe parity, not BPMN 2.0)")
+            .contains("taskTaken", "taskSkipped");
+        assertThat(activity(piId, "cFalse").getStatus())
+            .as("the flow whose condition is false was still taken")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt())
+            .as("both branches are live, so the join is waiting — the process is not done")
+            .isNull();
+    }
+
     // ==================== §C.1: zeebe:taskHeaders ====================
 
     @Test

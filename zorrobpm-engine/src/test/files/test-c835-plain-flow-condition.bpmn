@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-35 (CR-03): a conditionExpression on a sequence flow that leaves a
+     NON-gateway element (an implicit AND-fork). Zeebe-parity contract: the
+     condition is parsed and exposed, but NOT evaluated — BOTH branches are
+     activated. Documented in README ("Чего честно нет") and pinned by
+     Camunda8ParityCharacterizationTests. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835plaincond" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c835-plain-flow-condition" name="c835-plain-flow-condition" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="forkTask" />
+    <bpmn:userTask id="forkTask" name="forkTask">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>cTrue</bpmn:outgoing>
+      <bpmn:outgoing>cFalse</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="cTrue" name="cTrue" sourceRef="forkTask" targetRef="taskTaken">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=taken = "yes"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="cFalse" name="cFalse" sourceRef="forkTask" targetRef="taskSkipped">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=taken = "never"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:userTask id="taskTaken" name="taskTaken">
+      <bpmn:incoming>cTrue</bpmn:incoming>
+      <bpmn:outgoing>t1</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="taskSkipped" name="taskSkipped">
+      <bpmn:incoming>cFalse</bpmn:incoming>
+      <bpmn:outgoing>t2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="t1" name="t1" sourceRef="taskTaken" targetRef="join1" />
+    <bpmn:sequenceFlow id="t2" name="t2" sourceRef="taskSkipped" targetRef="join1" />
+    <bpmn:parallelGateway id="join1" name="join1">
+      <bpmn:incoming>t1</bpmn:incoming>
+      <bpmn:incoming>t2</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="join1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
