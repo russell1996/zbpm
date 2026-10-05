@@ -1,0 +1,205 @@
+package com.zorrodev.bpm.handler.boot;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zorrodev.bpm.exchange.ProcessVariable;
+import com.zorrodev.bpm.handler.JobHandler;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.AmqpException;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
+
+/**
+ * WO-C8-36 (M-1): горячая переотправка ограничена backoff'ом 1с→30с, НЕ drop'ом.
+ *
+ * <p>До правки контейнер при отказе доставки делал requeue немедленно, то есть
+ * при немаршрутизируемом completion'е воркер крутил цикл без единой задержки.
+ * Поведение проверяется не «было ли исключение» (оно и раньше бросалось), а
+ * ПО ТЕМПУ ПОВТОРОВ: список фактических интервалов между попытками. Сними
+ * backoff — список станет пустым/нулевым и тест упадёт.
+ *
+ * <p>Sleeper подменён на записывающий: иначе проверка 1с→2с→4с стоила бы
+ * 7 секунд реального сна. Проброс на sleeper'е — единственное, что тест
+ * «трогает» вместо боевого кода; сам интервал вычисляет прод-класс.
+ */
+@ExtendWith(MockitoExtension.class)
+class CompletionRedeliveryBackoffTest {
+
+    @Mock private RabbitTemplate rabbitTemplate;
+    @Mock private JobHandler handler;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private JobCompletionListener listener;
+    private List<Long> slept;
+
+    @BeforeEach
+    void setUp() {
+        listener = new JobCompletionListener(handler, rabbitTemplate, objectMapper, "q-in");
+        slept = new ArrayList<>();
+        listener.setRedeliveryBackoff(new CompletionRedeliveryBackoff(slept::add));
+        org.springframework.amqp.rabbit.connection.ConnectionFactory cf =
+            org.mockito.Mockito.mock(org.springframework.amqp.rabbit.connection.ConnectionFactory.class);
+        org.mockito.Mockito.lenient().when(cf.isPublisherConfirms()).thenReturn(true);
+        org.mockito.Mockito.lenient().when(rabbitTemplate.getConnectionFactory()).thenReturn(cf);
+        listener.setConfirmTimeoutMs(120L);
+    }
+
+    private static ProcessVariable outVar() {
+        ProcessVariable v = new ProcessVariable();
+        v.setName("x");
+        v.setValue("1");
+        v.setType("STRING");
+        return v;
+    }
+
+    private static Message message(String body, String correlationId) {
+        MessageProperties props = new MessageProperties();
+        props.setCorrelationId(correlationId);
+        return new Message(body.getBytes(StandardCharsets.UTF_8), props);
+    }
+
+    private static String jobJson() {
+        return "{\"serviceTaskId\":\"" + UUID.randomUUID() + "\","
+            + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
+            + "\"processDefinitionId\":\"" + UUID.randomUUID() + "\","
+            + "\"serviceTaskKey\":\"k\",\"job\":\"job1\",\"variables\":{}}";
+    }
+
+    /**
+     * Confirm теряется на каждой отправке (future не завершаем → таймаут → throw).
+     * Lenient-строгость обязательна: этот же хелпер в тесте восстановления
+     * перестаёт быть последним стабом, и Mockito иначе ругается на «лишний».
+     */
+    private void everyConfirmLost() {
+        org.mockito.Mockito.lenient().when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        org.mockito.Mockito.lenient().doAnswer(inv -> null).when(rabbitTemplate)
+            .convertAndSend(anyString(), (Object) any(),
+                any(org.springframework.amqp.core.MessagePostProcessor.class),
+                any(CorrelationData.class));
+    }
+
+    @Test
+    void redeliveryBackoff_growsExponentially_andIsCappedAt30s() {
+        everyConfirmLost();
+        String correlationId = "corr-hot-loop";
+        Message msg = message(jobJson(), correlationId);
+
+        // Шесть неудачных доставок одной и той же отправки (confirm теряется).
+        for (int i = 0; i < 6; i++) {
+            assertThatThrownBy(() -> listener.onMessage(msg))
+                .as("попытка %s обязана бросить (вход не ACK'ается)", i)
+                .isInstanceOf(AmqpException.class);
+        }
+
+        assertThat(slept)
+            .as("интервалы между переотправками обязаны расти: без backoff цикл горячий")
+            .containsExactly(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 30_000L);
+        assertThat(slept).allSatisfy(d -> assertThat(d)
+            .as("интервал не превышает потолок 30с и не меньше стартовой секунды")
+            .isBetween(1_000L, 30_000L));
+    }
+
+    @Test
+    void redeliveryBackoff_neverDropsTheJob_andCountsRedeliveries() {
+        everyConfirmLost();
+        String correlationId = "corr-never-drop";
+        Message msg = message(jobJson(), correlationId);
+
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> listener.onMessage(msg))
+                .as("задание обязано переотправляться, а не быть отброшенным: "
+                    + "единственная причина redelivery — недоставленный результат, "
+                    + "а разбирается он на стороне движка")
+                .isInstanceOf(AmqpException.class);
+        }
+
+        assertThat(listener.redeliveryCountForTest())
+            .as("каждая переотправка считается — оператор должен видеть темп потока")
+            .isEqualTo(4L);
+        assertThat(org.mockito.Mockito.mockingDetails(handler).getInvocations())
+            .as("бизнес-эффект при этом НЕ повторяется (результат переигрывается из кэша)")
+            .hasSize(1);
+    }
+
+    @Test
+    void redeliveryBackoff_isPerJob_otherJobsNotDelayed() {
+        everyConfirmLost();
+        Message hot = message(jobJson(), "corr-hot");
+        Message fresh = message(jobJson(), "corr-fresh");
+
+        // Две неудачи у «горячего» задания…
+        assertThatThrownBy(() -> listener.onMessage(hot)).isInstanceOf(AmqpException.class);
+        assertThatThrownBy(() -> listener.onMessage(hot)).isInstanceOf(AmqpException.class);
+
+        // …и одна у другого: его шкала обязана начаться с первой секунды.
+        assertThatThrownBy(() -> listener.onMessage(fresh)).isInstanceOf(AmqpException.class);
+
+        assertThat(slept)
+            .as("backoff ведётся на отправку, а не на процесс: чужое задание "
+                + "не должно ждать после уже накопленных чужих неудач")
+            .containsExactly(1_000L, 2_000L, 1_000L);
+    }
+
+    @Test
+    void successfulDelivery_resetsBackoff_soRecoveredJobIsNotStuckAt30s() {
+        // Сначала две неудачи (маршрут битый), потом маршрут починили: следующая
+        // неудача обязана начать шкалу заново, иначе задание навсегда осталось бы
+        // на потолке 30с после починки.
+        everyConfirmLost();
+        String correlationId = "corr-recovered";
+        Message msg = message(jobJson(), correlationId);
+        assertThatThrownBy(() -> listener.onMessage(msg)).isInstanceOf(AmqpException.class);
+        assertThatThrownBy(() -> listener.onMessage(msg)).isInstanceOf(AmqpException.class);
+
+        // Успешная публикация: confirm ack, без возврата.
+        doAnswer(inv -> {
+            ((CorrelationData) inv.getArgument(3)).getFuture()
+                .complete(new CorrelationData.Confirm(true, null));
+            return null;
+        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
+        listener.onMessage(msg);
+
+        // Снова ломаем маршрут — шкала обязана начаться с 1с.
+        everyConfirmLost();
+        assertThatThrownBy(() -> listener.onMessage(msg)).isInstanceOf(AmqpException.class);
+
+        assertThat(slept)
+            .as("после успешной доставки счётчик сброшен — иначе починенное задание "
+                + "вечно ждало бы 30с перед каждой попыткой")
+            .containsExactly(1_000L, 2_000L, 1_000L);
+    }
+
+    @Test
+    void delaySchedule_isBoundedAndMonotonic() {
+        // Чистая шкала, без сети: контракт «1с → 30с и дальше не растёт».
+        long previous = 0;
+        for (int attempt = 1; attempt <= 8; attempt++) {
+            long delay = CompletionRedeliveryBackoff.delayFor(attempt);
+            assertThat(delay).isBetween(CompletionRedeliveryBackoff.INITIAL_DELAY_MS,
+                CompletionRedeliveryBackoff.MAX_DELAY_MS);
+            assertThat(delay).isGreaterThanOrEqualTo(previous);
+            previous = delay;
+        }
+        assertThat(CompletionRedeliveryBackoff.delayFor(8))
+            .as("потолок держится, а не уходит в бесконечность")
+            .isEqualTo(CompletionRedeliveryBackoff.MAX_DELAY_MS);
+    }
+}

@@ -67,6 +67,8 @@ class ListenerDuplicateCompletionTests {
     @Autowired
     private BpmnService bpmnService;
     @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
+    @Autowired
     private BpmnParseService bpmnParseService;
 
     private static String bpmn() throws Exception {
@@ -502,6 +504,49 @@ class ListenerDuplicateCompletionTests {
             .replace("c8-exec-listeners-2", key)
             .replace("          <zeebe:executionListener eventType=\"start\" type=\"listener-job-2\" />\n", "");
         bpmnService.addProcessDefinition(definitionId, bpmnParseService.parse(xml));
+    }
+
+    /**
+     * WO-C8-36 (M-3): legacy-проход (без идентификатора вызова) fail-open
+     * СОЗНАТЕЛЕН (решение CTO E-3) — но обязан быть ИЗМЕРИМ, иначе во время
+     * rolling-обновления нельзя оценить долю трафика вне защиты CR-01 и
+     * отличить намеренный обход от обычного REST-трафика.
+     *
+     * <p>Ассерт на СЧЁТЧИК, а не на лог: warn без числа нельзя ни сложить, ни
+     * сравнить с базовым уровнем, и именно это делало «принятый риск»
+     * невидимым. Мутация «снять вызов bpmMetrics.legacyUnphasedCompletion()»
+     * оставляет поведение прежним (тест проходит) — поэтому здесь дополнительно
+     * проверяется, что phased-путь счётчик НЕ трогает: иначе любой прогон с
+     * новым воркером маскировал бы legacy-трафик.
+     */
+    @Test
+    @Transactional
+    void legacyUnphasedCompletion_isCountedAndSeparatedFromPhasedPath() throws Exception {
+        double legacyBefore = counterValue("zbpm.completion.legacy.unphased");
+
+        // 1) Legacy-вызов (без фазы) — обязан посчитаться.
+        UUID legacyPi = start();
+        UUID legacyActivity = activity(legacyPi).getId();
+        runtimeService.completeServiceTask(legacyActivity, List.of());
+        assertThat(counterValue("zbpm.completion.legacy.unphased"))
+            .as("legacy-проход обязан попасть в счётчик — принятый риск должен быть измерим")
+            .isEqualTo(legacyBefore + 1);
+
+        // 2) Phased-вызов (новый воркер, с идентификатором вызова) — НЕ считается:
+        //    счётчик показывает именно долю трафика ВНЕ защиты CR-01.
+        UUID phasedPi = start();
+        UUID phasedActivity = activity(phasedPi).getId();
+        runtimeService.completeServiceTask(phasedActivity, List.of(),
+            ServiceTaskDispatchPhase.START, 0);
+        assertThat(counterValue("zbpm.completion.legacy.unphased"))
+            .as("phased-путь под защитой CR-01 не должен попадать в счётчик legacy")
+            .isEqualTo(legacyBefore + 1);
+    }
+
+    private double counterValue(String meterName) {
+        io.micrometer.core.instrument.Counter counter = meterRegistry.find(meterName).counter();
+        assertThat(counter).as("счётчик %s должен быть зарегистрирован", meterName).isNotNull();
+        return counter.count();
     }
 
     @Test

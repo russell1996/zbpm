@@ -97,6 +97,21 @@ public class JobCompletionListener implements MessageListener {
     static final long MIN_CONFIRM_TIMEOUT_MS = 100L;
 
     /**
+     * WO-C8-36 (M-2): верхняя граница ожидания confirm.
+     *
+     * <p>Зачем: контейнер воркера по умолчанию однопоточный (настройки
+     * {@code spring.rabbitmq.listener.*} живут в {@code zorrobpm-rabbitmq}, а
+     * стартер воркера на прод-classpath не значится — то есть внешний воркер
+     * работает на дефолтах Spring). При concurrency=1 единственный поток
+     * потребителя проводит в {@code future.get(...)} ВСЁ это время — на
+     * {@code completion-confirm-timeout=3600000} воркер молча вставал на час
+     * на каждом задании, без единого warn'а (warn ниже пола срабатывал только
+     * на слишком маленьком значении). Час — это уже не «медленно», это
+     * нерабочий воркер; поэтому 60с.
+     */
+    static final long MAX_CONFIRM_TIMEOUT_MS = 60_000L;
+
+    /**
      * WO-C8-36: ACK входа завязывается на confirm публикации результата. Полный
      * контракт — в javadoc {@link #ensurePublisherConfirms}; выключатель —
      * {@code ensurePublisherConfirms=false} (тогда только синхронные исключения).
@@ -115,6 +130,12 @@ public class JobCompletionListener implements MessageListener {
      * в namespace {@code zorrobpm.worker.*}, сравнивать не с чему, поэтому пол явный).
      */
     public void setConfirmTimeoutMs(long confirmTimeoutMs) {
+        // WO-C8-36 (M-2): ограничены ОБЕ границы, а не только пол. Значение выше
+        // потолка опасно не «медленно», а молча: единственный поток потребителя
+        // (воркер вне zorrobpm-rabbitmq идёт на дефолтах Spring = concurrency 1)
+        // проводит в future.get() всё это время и воркер перестаёт обрабатывать
+        // всё подряд — без warn'а. P-46 в применении: новая ручка рядом с
+        // проверяемой не должна быть ловушкой с другой стороны.
         if (confirmTimeoutMs < MIN_CONFIRM_TIMEOUT_MS) {
             log.warn("completion-confirm-timeout={}ms is below the {}ms floor — clamped. "
                 + "A non-positive timeout would expire every confirm immediately and "
@@ -122,7 +143,20 @@ public class JobCompletionListener implements MessageListener {
             this.confirmTimeoutMs = MIN_CONFIRM_TIMEOUT_MS;
             return;
         }
+        if (confirmTimeoutMs > MAX_CONFIRM_TIMEOUT_MS) {
+            log.warn("completion-confirm-timeout={}ms is above the {}ms ceiling — clamped. "
+                + "A worker on default listener settings has a single consumer thread; "
+                + "waiting longer than the ceiling parks it on every job.",
+                confirmTimeoutMs, MAX_CONFIRM_TIMEOUT_MS);
+            this.confirmTimeoutMs = MAX_CONFIRM_TIMEOUT_MS;
+            return;
+        }
         this.confirmTimeoutMs = confirmTimeoutMs;
+    }
+
+    /** Тест-хук: фактически применённый таймаут ожидания confirm, мс. */
+    long confirmTimeoutMsForTest() {
+        return confirmTimeoutMs;
     }
 
     /**
@@ -149,6 +183,45 @@ public class JobCompletionListener implements MessageListener {
         new java.util.concurrent.atomic.AtomicLong(0);
     private final java.util.concurrent.atomic.AtomicLong unroutableCount =
         new java.util.concurrent.atomic.AtomicLong(0);
+
+    /**
+     * WO-C8-36 (M-1): задержка перед повторной обработкой при недоставленном
+     * результате. Ключ счётчика — {@code correlationId} входящего задания.
+     */
+    private final java.util.concurrent.atomic.AtomicReference<CompletionRedeliveryBackoff>
+        redeliveryBackoffRef =
+            new java.util.concurrent.atomic.AtomicReference<>(new CompletionRedeliveryBackoff(
+                JobCompletionListener::sleepQuietly));
+
+    /**
+     * Тест-хук: подмена backoff'а sleeper'ом, который только ЗАПИСЫВАЕТ интервалы.
+     * Без этого проверка «1с→2с→4с» стоила бы 7 секунд реального сна на прогон.
+     */
+    void setRedeliveryBackoff(CompletionRedeliveryBackoff backoff) {
+        this.redeliveryBackoffRef.set(backoff);
+    }
+
+    /** Счётчик горячих переотправок — оператор должен видеть и сам факт, и темп. */
+    private final java.util.concurrent.atomic.AtomicLong redeliveryCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** WO-C8-36 (M-1): сколько раз задание было переотправлено после отказа доставки. */
+    public long redeliveryCountForTest() {
+        return redeliveryCount.get();
+    }
+
+    /** Тест-хук: сам backoff (счётчик попыток/задержки), не публикуется наружу. */
+    CompletionRedeliveryBackoff redeliveryBackoffForTest() {
+        return redeliveryBackoffRef.get();
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
 
     /** WO-C8-36: сколько completion'ов ушло без confirm-wait (fallback). */
     public long confirmsUnavailableCountForTest() {
@@ -421,6 +494,10 @@ public class JobCompletionListener implements MessageListener {
                         + returnedMessage.getReplyCode() + " " + returnedMessage.getReplyText()
                         + " — will be redelivered");
                 }
+                // Доставка подтверждена и маршрутизируема: сбрасываем шкалу
+                // backoff для этой отправки, иначе задание, у которого сначала
+                // был немаршрутизируемый маршрут, осталось бы на 30с навсегда.
+                redeliveryBackoffRef.get().reset(completionId);
             } else if (ensurePublisherConfirms) {
                 long n = confirmsUnavailableCount.incrementAndGet();
                 log.warn("Publisher confirms unavailable on worker connection factory "
@@ -431,13 +508,35 @@ public class JobCompletionListener implements MessageListener {
         } catch (AmqpException e) {
             // Transport failure: проброс наружу — контейнер NACK'ает/ретраит вход,
             // результат (уже в resultCache) не теряется. НЕ логируем как deserialize.
-            log.warn("Completion send failed (transport), message will be redelivered: {}", e.getMessage());
+            backOffBeforeRedelivery(completionId, e);
             throw e;
         } catch (RuntimeException e) {
             // Не-AMQP сбой отправки (сериализация конвертера и т.п.) — та же семантика.
-            log.warn("Completion send failed (transport), message will be redelivered: {}", e.getMessage());
+            backOffBeforeRedelivery(completionId, e);
             throw e;
         }
+    }
+
+    /**
+     * WO-C8-36 (M-1): перед тем как отказ уйдёт наружу (и контейнер сделает
+     * requeue), выдерживаем ограниченный экспоненциальный интервал.
+     *
+     * <p>Ключ счётчика — {@code completionId}: он стабилен на переотправке одной
+     * отправки (результат переигрывается из кэша), поэтому наши же повторы
+     * копятся в одну шкалу, а разные задания не замедляют друг друга.
+     *
+     * <p>Лог — ERROR, а не WARN: без задержки это был тихий цикл, и WARN на
+     * каждой итерации его не делал заметным. Сообщение называет попытку и
+     * интервал, чтобы по логу было видно, что темп действительно растёт.
+     */
+    private void backOffBeforeRedelivery(String completionId, Exception cause) {
+        CompletionRedeliveryBackoff backoff = redeliveryBackoffRef.get();
+        int attempt = backoff.recordFailedAttempt(completionId);
+        redeliveryCount.incrementAndGet();
+        long delay = backoff.awaitBeforeRedelivery(completionId, attempt);
+        log.error("Completion send failed (transport) — redelivery #{} of this send, "
+                + "retrying in {}ms (retry backoff is bounded 1s..30s and never drops the job): {}",
+            attempt, delay, cause.getMessage());
     }
 
     /** Тест-хук: сколько результатов сейчас закэшировано (не размер кэша Caffeine). */

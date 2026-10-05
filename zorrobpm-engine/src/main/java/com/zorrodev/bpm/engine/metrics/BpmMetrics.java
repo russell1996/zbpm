@@ -73,6 +73,17 @@ public class BpmMetrics {
     // --- Activity transitions (WO-QW-2) ---
     private final Counter activityTransitionIgnored;
 
+    /**
+     * WO-C8-36 (M-3): сколько completion'ов пришло БЕЗ идентификатора вызова
+     * (legacy-путь). Fail-open семантика на legacy-пути принята CTO осознанно
+     * (E-3) как совместимость со старыми воркерами, но «принято как риск» и
+     * «невидимо» — разные вещи: без счётчика во время rolling-обновления
+     * нельзя измерить, сколько трафика идёт вне защиты CR-01, и отличить
+     * намеренный обход от обычного REST-трафика. Именно эту невидимость
+     * закрывает счётчик (плюс WARN на каждый legacy-проход).
+     */
+    private final Counter legacyUnphasedCompletion;
+
     // --- SSE bridge (WO-REL-56, part B) ---
     private final Counter sseForeignSequenceDropped;
 
@@ -190,6 +201,12 @@ public class BpmMetrics {
         // WO-QW-2: idempotent status-guard no-ops in CompletionService
         // (duplicate/late completions). Counter with a reason tag so future
         // ignore-reasons can reuse the same meter.
+        this.legacyUnphasedCompletion = Counter.builder("zbpm.completion.legacy.unphased")
+            .description("WO-C8-36 (M-3): service-task completions accepted on the legacy "
+                + "null-dispatchPhase path (no call identifier — old worker or REST). "
+                + "These are OUTSIDE the CR-01 exact-match guard by construction (E-3).")
+            .register(registry);
+
         this.activityTransitionIgnored = Counter.builder("zbpm.activity.transition.ignored")
             .description("Activity completions ignored by the idempotent status guard")
             .tag("reason", "stale_status")
@@ -248,6 +265,15 @@ public class BpmMetrics {
     public void setFeedBacklog(long count) { feedBacklog.set(count); }
     public void setFeedAgeMaxSeconds(long seconds) { feedAgeMaxSeconds.set(seconds); }
     public void recordFeedAssignDuration(Duration duration) { feedAssignDuration.record(duration); }
+
+    /**
+     * WO-C8-36 (M-3): legacy-проход без идентификатора вызова. Считает и
+     * fail-open путь (совместимость), и осознанный обход защиты CR-01 — их
+     * различает уж вызывающий код, а не метрика.
+     */
+    public void legacyUnphasedCompletion() {
+        legacyUnphasedCompletion.increment();
+    }
 
     // --- Activity transitions (WO-QW-2) ---
     public void activityTransitionIgnored(String reason) {

@@ -474,6 +474,16 @@ public class CompletionService {
         // Менять семантику REST в этом WO нельзя (V7/scope) — legacy-цепочка
         // без изменений. Защита CR-01 действует на phased-сообщения нового
         // воркера; смешанные версии — остаточный риск с flag-day планом.
+        //
+        // WO-C8-36 (M-3): принятый риск обязан быть ИЗМЕРИМ. Счётчик + WARN на
+        // каждый legacy-проход: без них во время rolling-обновления нельзя
+        // оценить долю трафика вне защиты CR-01 и отличить намеренный обход
+        // (flag-day) от обычного REST-трафика. Семантика при этом НЕ меняется.
+        bpmMetrics.legacyUnphasedCompletion();
+        log.warn("WO-C8-36: service-task completion {} accepted WITHOUT call identifier "
+                + "(dispatchPhase=null) — legacy fail-open path, CR-01 exact-match guard "
+                + "does NOT apply (old worker or REST caller)",
+            serviceTaskId);
         completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
     }
 
@@ -1472,6 +1482,12 @@ public class CompletionService {
         // WO-C8-36 (red-team HOLD-2 — ОТКАЧЕНО, см. комментарий в completeServiceTask
         // выше): null-phase FAILED идёт legacy-хвостом без изменений — shared-budget
         // дизайн (WO-C8-21r2) и REST-семантика сохранены.
+        // WO-C8-36 (M-3): видимость та же, что у completion — счётчик + WARN.
+        bpmMetrics.legacyUnphasedCompletion();
+        log.warn("WO-C8-36: service-task failure {} accepted WITHOUT call identifier "
+                + "(dispatchPhase=null) — legacy fail-open path, CR-01 exact-match guard "
+                + "does NOT apply (old worker or REST caller)",
+            serviceTaskId);
         failLegacyTail(serviceTaskId, retries, message, activity, executor);
     }
 
