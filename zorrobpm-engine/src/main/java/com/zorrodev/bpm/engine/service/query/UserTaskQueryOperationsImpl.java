@@ -53,6 +53,13 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
         if (query.getAssignee() != null) {
             specifications.add(UserTaskRepository.byAssignee(query.getAssignee()));
         }
+        // WO-IN-2 C0: the declared candidate filters were never applied here (only completed/
+        // assigned/assignee had conditions), so ?candidateGroup=X silently answered with EVERY
+        // task of the caller. null/blank = "no filter" — the same rule as jobType in
+        // ServiceTaskQueryOperationsImpl (WO-IN-1), so an absent parameter keeps the old page.
+        if (query.getCandidateGroup() != null && !query.getCandidateGroup().isBlank()) {
+            specifications.add(UserTaskRepository.byCandidateGroup(query.getCandidateGroup().trim()));
+        }
         Specification<UserTaskEntity> all = Specification.allOf(specifications);
         PageRequest page = queryPaginationSupport.clampedPage(query.getPageIndex(), query.getPageSize(), Sort.by("createdAt").descending());
         return queryPaginationSupport.toDTOBulk(userTaskRepository.findAll(all, page), userTaskMapper::toDTOs);
