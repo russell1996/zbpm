@@ -136,21 +136,21 @@ public final class PgItIsolation {
         return id;
     }
 
-/**
- * The isolated form of the scheduler's claim query: <b>the rows the production query returned, minus
- * everybody else's</b>.
- *
- * <p>It takes the production result as its argument on purpose — it does NOT re-implement the
- * selection. {@code TimerJobRepository.findDueLocked} (native SQL: {@code fired = false AND due_at <=
- * :now ORDER BY due_at ASC LIMIT :batchSize FOR UPDATE SKIP LOCKED}) decides WHICH rows are candidates;
- * this only narrows that answer to the ids the caller owns. A test therefore judges the real query:
- * break the production predicate and the caller's assertion fails, instead of passing because the test
- * carries its own copy of the WHERE clause.
- */
-public static List<UUID> ownRowsAmong(Collection<UUID> ownIds, Collection<UUID> returnedIds) {
-    Set<UUID> mine = new HashSet<>(ownIds);
-    return returnedIds.stream().filter(mine::contains).toList();
-}
+    /**
+     * The isolated form of the scheduler's claim query: <b>the rows the production query returned, minus
+     * everybody else's</b>.
+     *
+     * <p>It takes the production result as its argument on purpose — it does NOT re-implement the
+     * selection. {@code TimerJobRepository.findDueLocked} (native SQL: {@code fired = false AND due_at <=
+     * :now ORDER BY due_at ASC LIMIT :batchSize FOR UPDATE SKIP LOCKED}) decides WHICH rows are candidates;
+     * this only narrows that answer to the ids the caller owns. A test therefore judges the real query:
+     * break the production predicate and the caller's assertion fails, instead of passing because the
+     * test carries its own copy of the WHERE clause.
+     */
+    public static List<UUID> ownRowsAmong(Collection<UUID> ownIds, Collection<UUID> returnedIds) {
+        Set<UUID> mine = new HashSet<>(ownIds);
+        return returnedIds.stream().filter(mine::contains).toList();
+    }
 
     /** Deletes exactly the given timer rows — the self-cleanup counterpart of {@link #insertCatchTimerJob}. */
     public static void deleteTimerJobs(JdbcTemplate jdbc, Collection<UUID> ids) {
