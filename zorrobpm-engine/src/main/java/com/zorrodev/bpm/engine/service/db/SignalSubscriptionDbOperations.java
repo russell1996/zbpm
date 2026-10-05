@@ -20,7 +20,7 @@ public interface SignalSubscriptionDbOperations {
     void createSignalStartSubscription(String processKey, UUID processDefinitionId, String elementId, String signalName);
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1): unconsumed signal subscriptions of this instance \u2014 the caller
+     * WO-C8-35 (CR-09, ШАГ 2/B1): unconsumed signal subscriptions of this instance — the caller
      * keeps only the boundary / event-sub-process forms (the ones that continue elsewhere).
      */
     List<com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity> findPendingSubscriptions(UUID processInstanceId);

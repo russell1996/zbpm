@@ -25,7 +25,7 @@ public interface ParallelGatewayRepository extends JpaRepository<ParallelGateway
 
     /**
      * WO-C8-35 (CR-09, ШАГ 3/B2): element ids of the gateways in this instance that still hold
-     * OPEN arrival rows \u2014 i.e. branches that arrived and are parked waiting for the join to fire.
+     * OPEN arrival rows — i.e. branches that arrived and are parked waiting for the join to fire.
      * Marker rows ({@code expectedCount} set) are excluded: they are not arrivals.
      */
     @Query("SELECT DISTINCT pg.gatewayElementId FROM ParallelGatewayEntity pg "

@@ -16,7 +16,7 @@ public interface ParallelGatewayDbOperations {
 
     /**
      * WO-C8-35 (CR-09, ШАГ 1/3): gateway element ids of this instance that still hold open arrival
-     * rows \u2014 branches parked at a join that has not fired yet.
+     * rows — branches parked at a join that has not fired yet.
      */
     Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId);
 
