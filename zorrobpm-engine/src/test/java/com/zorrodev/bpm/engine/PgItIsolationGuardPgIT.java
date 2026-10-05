@@ -95,9 +95,11 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
 
             // The premise of the old assertion — "the table has no due rows I did not create" — is
             // provably false in a shared database. This is why `isEmpty()` could not be the criterion.
+            // Snapshot first: the writer thread keeps appending while we read.
+            List<UUID> writtenSnapshot = List.copyOf(writtenByWriter);
             assertThat(PgItIsolation.allDueTimerIds(jdbc))
                 .contains(foreignLeftover)
-                .containsAll(writtenByWriter);
+                .containsAll(writtenSnapshot);
         } finally {
             writerRunning.set(false);
             writer.join(5000);

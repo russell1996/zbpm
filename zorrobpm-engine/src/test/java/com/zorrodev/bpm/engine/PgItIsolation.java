@@ -69,39 +69,48 @@ public final class PgItIsolation {
      * "fk_process_instances__process_definition_id"} — reproduced live, see the WO-QW-13 report.
      */
     public static void deleteDeployment(JdbcTemplate jdbc, String processKey) {
-        String instancesOfKey = "SELECT id FROM process_instances WHERE process_definition_id IN "
-            + "(SELECT id FROM process_definitions WHERE code = ?)";
-        String activitiesOfKey = "SELECT id FROM activities WHERE process_instance_id IN ("
-            + instancesOfKey + ")";
+        // Two different scopes, kept apart on purpose: definition ids for definition-scoped tables,
+        // instance ids for runtime tables. Mixing them up deletes nothing (and then the FK fails).
+        String definitionIds = "SELECT id FROM process_definitions WHERE code = ?";
+        String instanceIds = "SELECT id FROM process_instances WHERE process_definition_id IN ("
+            + definitionIds + ")";
+        String activityIds = "SELECT id FROM activities WHERE process_instance_id IN (" + instanceIds + ")";
 
         // 1. runtime children of this definition's instances (no ON DELETE CASCADE in the schema)
         for (String table : new String[] {
             "timer_jobs", "message_subscriptions", "signal_subscriptions", "parallel_gateways",
             "user_tasks", "service_tasks", "variables", "events" }) {
-            jdbc.update("DELETE FROM " + table + " WHERE process_instance_id IN (" + instancesOfKey + ")",
+            jdbc.update("DELETE FROM " + table + " WHERE process_instance_id IN (" + instanceIds + ")",
                 processKey);
         }
-        // incidents hang off activities; tokens hang off activities too (activities.token → tokens.id)
-        jdbc.update("DELETE FROM incidents WHERE activity_id IN (" + activitiesOfKey + ")", processKey);
-        jdbc.update("DELETE FROM tokens WHERE id IN (SELECT token FROM activities WHERE process_instance_id IN ("
-            + instancesOfKey + "))", processKey);
-        jdbc.update("DELETE FROM activities WHERE process_instance_id IN (" + instancesOfKey + ")", processKey);
+        // incidents hang off activities (fk_incidents__activity_id) and activities hang off tokens
+        // (fk_activities__token), so the order is incidents → activities → tokens. The token ids are
+        // read BEFORE the activities go away — `tokens` has no process_instance_id, so afterwards
+        // there would be no scoped way left to find them.
+        jdbc.update("DELETE FROM incidents WHERE activity_id IN (" + activityIds + ")", processKey);
+        List<UUID> tokenIds = jdbc.queryForList(
+            "SELECT DISTINCT token FROM activities WHERE process_instance_id IN (" + instanceIds + ")",
+            UUID.class, processKey);
+        jdbc.update("DELETE FROM activities WHERE process_instance_id IN (" + instanceIds + ")", processKey);
+        if (!tokenIds.isEmpty()) {
+            deleteById(jdbc, "tokens", tokenIds);
+        }
 
         // 2. the instances themselves
-        jdbc.update("DELETE FROM process_instances WHERE process_definition_id IN (" + instancesOfKey + ")",
+        jdbc.update("DELETE FROM process_instances WHERE process_definition_id IN (" + definitionIds + ")",
             processKey);
 
         // 3. definition-scoped artifacts (keyed by the definition, none references an instance)
         jdbc.update("DELETE FROM message_start_subscriptions WHERE process_key = ?", processKey);
         jdbc.update("DELETE FROM timer_start_jobs WHERE process_key = ?", processKey);
         jdbc.update("DELETE FROM signal_start_subscriptions WHERE process_key = ?", processKey);
-        jdbc.update("DELETE FROM element_artifact_binding WHERE process_definition_id IN "
-            + "(SELECT id FROM process_definitions WHERE code = ?)", processKey);
-        jdbc.update("DELETE FROM bpmn WHERE id IN (SELECT id FROM process_definitions WHERE code = ?)", processKey);
+        jdbc.update("DELETE FROM element_artifact_binding WHERE process_definition_id IN ("
+            + definitionIds + ")", processKey);
+        jdbc.update("DELETE FROM bpmn WHERE id IN (" + definitionIds + ")", processKey);
         // process_submission chains onto itself (fk_process_submission_previous) and onto
         // process_definitions — one statement for the whole chain of this key, children included.
         jdbc.update("DELETE FROM process_submission WHERE process_key = ? "
-            + "OR approved_definition_id IN (SELECT id FROM process_definitions WHERE code = ?)",
+            + "OR approved_definition_id IN (" + definitionIds + ")",
             processKey, processKey);
 
         // 4. the version row itself — no child may point at it by now
@@ -144,11 +153,15 @@ public final class PgItIsolation {
 
     /** Deletes exactly the given timer rows — the self-cleanup counterpart of {@link #insertCatchTimerJob}. */
     public static void deleteTimerJobs(JdbcTemplate jdbc, Collection<UUID> ids) {
+        deleteById(jdbc, "timer_jobs", ids);
+    }
+
+    private static void deleteById(JdbcTemplate jdbc, String table, Collection<UUID> ids) {
         if (ids.isEmpty()) {
             return;
         }
         String placeholders = ids.stream().map(id -> "?").collect(Collectors.joining(", "));
-        jdbc.update("DELETE FROM timer_jobs WHERE id IN (" + placeholders + ")", ids.toArray());
+        jdbc.update("DELETE FROM " + table + " WHERE id IN (" + placeholders + ")", ids.toArray());
     }
 
     /** Every due unfired row in the table — for tests that deliberately assert on scheduler-wide state. */
