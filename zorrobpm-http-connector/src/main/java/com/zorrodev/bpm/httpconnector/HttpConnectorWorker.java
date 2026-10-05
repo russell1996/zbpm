@@ -112,8 +112,9 @@ public class HttpConnectorWorker implements JobHandler {
         String s = raw == null ? "" : raw;
         s = QUERY_VALUE.matcher(s).replaceAll("$1=***");
         s = USERINFO.matcher(s).replaceAll("://***@");
-        s = QUOTED_CREDENTIAL.matcher(s).replaceAll("$1 ***\"");
         s = BARE_CREDENTIAL.matcher(s).replaceAll("$1 ***");
+        s = QUOTED_CREDENTIAL.matcher(s).replaceAll("$1 ***\"");
+        s = QUOTED_SECRET_VALUE.matcher(s).replaceAll("\"***\"");
         if (s.length() > MAX_DIAG_CHARS) {
             s = s.substring(0, MAX_DIAG_CHARS) + "…(truncated)";
         }
@@ -121,13 +122,21 @@ public class HttpConnectorWorker implements JobHandler {
     }
 
     private static final java.util.regex.Pattern QUERY_VALUE =
-        java.util.regex.Pattern.compile("([?&#][^?&#=\\s\"']+)=([^?&#\\s\"']*)");
+        java.util.regex.Pattern.compile("([?&#][^?&#=\\s\"']+)=([^?&#\\s\"']*(?:\\s+[^?&#\\s\"']*)*)");
     private static final java.util.regex.Pattern USERINFO =
         java.util.regex.Pattern.compile("://[^/\\s\"']*@");
     private static final java.util.regex.Pattern QUOTED_CREDENTIAL =
         java.util.regex.Pattern.compile("((?i)Bearer|Basic)\\s+[^\"]*\"");
+    private static final java.util.regex.Pattern QUOTED_SECRET_VALUE =
+        // Red-team WO-QW-11 находка 2: apiKey-in-header с произвольным именем —
+        // JDK цитирует сырое значение ("..."), без префикса Bearer/Basic.
+        // Lookahead исключает Bearer/Basic-форму (её чинят два паттерна выше) и
+        // уже-санитизированное "***"; порог {8,} не трогает короткие цитаты.
+        java.util.regex.Pattern.compile("\"((?!Bearer |Basic |[^\"]*\\*\\*\\*)[^\"]{8,})\"");
     private static final java.util.regex.Pattern BARE_CREDENTIAL =
-        java.util.regex.Pattern.compile("((?i)Bearer|Basic)\\s+\\S+");
+        // Без кавычек в классе: иначе съедает закрывающую кавычку JDK-цитаты
+        // ("Bearer tok..." → "Bearer ***) — кавычечную форму чинит следующий паттерн.
+        java.util.regex.Pattern.compile("((?i)Bearer|Basic)\\s+[^\\s\"]+");
 
     /**
      * NEW5-06: watchdog для чтения тела. {@code HttpRequest.timeout} в JDK действует

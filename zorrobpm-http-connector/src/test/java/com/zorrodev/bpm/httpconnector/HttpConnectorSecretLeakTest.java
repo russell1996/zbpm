@@ -253,6 +253,36 @@ class HttpConnectorSecretLeakTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void illegalHeaderCharsFromCustomApiKeyHeader_noSecretInDiag() {
+        // Red-team находка 2: apiKey-in-header с произвольным именем (без
+        // префикса Bearer/Basic) — JDK цитирует сырое значение целиком.
+        HttpConnectorProperties props = new HttpConnectorProperties();
+        props.setEnabled(true);
+        props.setAllowedHosts("127.0.0.1");
+        props.setAllowPrivateNetworks(true);
+        props.getSecrets().put("ck",
+            "{\"type\":\"apiKey\",\"name\":\"X-Key\",\"value\":\"line1\\n" + HEADER_CANARY + "\",\"in\":\"header\"}");
+        HttpConnectorWorker w =
+            new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService);
+        JobDetailModel model = job(
+            pv("http.url", baseUrl + "/ok", "STRING"),
+            pv("http.authType", "apiKey", "STRING"),
+            pv("http.authRef", "ck", "STRING"));
+
+        List<ProcessVariable> result = w.handleJob(model);
+
+        assertThat(result).isEmpty();
+        org.mockito.ArgumentCaptor<List> captor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(activityService).throwServiceTaskError(eq(model.getServiceTaskId()),
+            eq(HttpConnectorWorker.ERR_CONFIG), captor.capture());
+        List<com.zorrodev.bpm.contract.model.ProcessVariable> vars = captor.getValue();
+        String httpError = vars.stream().filter(v -> "http.error".equals(v.getName())).findFirst()
+            .orElseThrow(() -> new AssertionError("no http.error in " + vars)).getValue();
+        assertThat(httpError).doesNotContain(HEADER_CANARY);
+    }
+
+    @Test
     void transportFailure_noSecretInDiag_transientSemanticsKept() {
         // Мёртвый порт: транзиент (FAILED/ретраи, НЕ BPMN-ошибка), секрет нигде.
         ListAppender<ILoggingEvent> appender = attachAppender(HttpConnectorWorker.class);
@@ -286,7 +316,11 @@ class HttpConnectorSecretLeakTest {
             "Illegal character in path at index 26: http://h/bad path?api_key=" + ENCODED_CANARY))
             .doesNotContain(QUERY_CANARY, ENCODED_CANARY)
             .contains("api_key=***");
-        // Отражённый секрет из кривого Location.
+        // Red-team находка 1: сырой секрет с пробелами, отражённый в Location —
+        // режется целиком, а не до первого пробела.
+        assertThat(HttpConnectorWorker.sanitizeDiag(
+            "Illegal character in path at index 5: /evil path?api_key=K3y w1th %enc"))
+            .doesNotContain("K3y", "w1th");
         assertThat(HttpConnectorWorker.sanitizeDiag(
             "Illegal character in path at index 5: /evil path?api_key=" + REDIRECT_CANARY))
             .doesNotContain(REDIRECT_CANARY)
@@ -296,6 +330,11 @@ class HttpConnectorSecretLeakTest {
             "invalid header value: \"Bearer line1\n" + HEADER_CANARY + "\""))
             .doesNotContain(HEADER_CANARY)
             .contains("Bearer ***");
+        // Red-team находка 2: apiKey-in-header с произвольным именем — JDK цитирует
+        // сырое значение без префикса схемы.
+        assertThat(HttpConnectorWorker.sanitizeDiag(
+            "invalid header value: \"X-Key line1\n" + HEADER_CANARY + "\""))
+            .doesNotContain(HEADER_CANARY);
         assertThat(HttpConnectorWorker.sanitizeDiag("Basic dXNlcjpwYXNz wires down"))
             .doesNotContain("dXNlcjpwYXNz")
             .contains("Basic ***");
