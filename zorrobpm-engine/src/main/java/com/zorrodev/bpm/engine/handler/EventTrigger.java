@@ -131,13 +131,30 @@ public class EventTrigger {
             // WO-C8-28: snapshot the live user tasks FIRST — only freshly cancelled
             // activities may open a canceling phase (an already-cancelled task whose
             // phase ran and closed must never reopen on a later firing).
-            List<UUID> cancelCandidates = cancelingPhaseService.activeUserTaskIdsOnToken(tokenId);
-            dbService.cancelActivity(hostActivityId);
-            // WO-ENG-3: Cancel all remaining active activities on this token.  For multi-instance,
-            // this terminates all sibling MI instances and their inner tasks (they share the same
-            // token).  For a single-instance host, the host was already cancelled above so this
-            // call is a safe no-op (the host is no longer CREATED/IN_PROGRESS).
-            dbService.cancelActiveActivitiesForToken(tokenId);
+            //
+            // WO-C8-34 (CR-05): scope-confined vs token-wide cancel. The
+            // cancelActivity+cancelActiveActivitiesForToken block below is correct
+            // ONLY for multi-instance hosts (MI instances genuinely share one
+            // token). A scope-CONTAINER host (subprocess/call activity/ad-hoc)
+            // carries a whole subtree on its scope token: cancelling the token
+            // would kill unrelated parallel branches of the fork that happen to
+            // share it (external review P1). Container hosts cancel only their
+            // own scope (host activity row + in-scope activities + running child
+            // instances for call activities) — the ErrorEscalationThrower
+            // self-check pattern for plain hosts is unchanged below.
+            List<UUID> cancelCandidates;
+            BpmnElementModel hostElement = bpmn.getElement(host.getBpmnElementId());
+            if (isScopeContainerHost(hostElement) && !isMultiInstanceHost(hostElement)) {
+                cancelCandidates = cancelScopeContainer(processInstanceId, tokenId, hostActivityId, host);
+            } else {
+                cancelCandidates = cancelingPhaseService.activeUserTaskIdsOnToken(tokenId);
+                dbService.cancelActivity(hostActivityId);
+                // WO-ENG-3: Cancel all remaining active activities on this token.  For multi-instance,
+                // this terminates all sibling MI instances and their inner tasks (they share the same
+                // token).  For a single-instance host, the host was already cancelled above so this
+                // call is a safe no-op (the host is no longer CREATED/IN_PROGRESS).
+                dbService.cancelActiveActivitiesForToken(tokenId);
+            }
             // WO-C8-28: canceling listeners defer the cancellation tail — the boundary
             // continuation below runs only after the last canceling listener completes
             // (see the canceling resume branch in CompletionService). Returns true all
@@ -167,6 +184,62 @@ public class EventTrigger {
             rearmRepeatingBoundaryTimer(hostActivityId, boundary, processInstanceId);
         }
         return true;
+    }
+
+    /**
+     * WO-C8-34 (CR-05): is {@code hostElement} a scope container (embedded
+     * subprocess / ad-hoc subprocess / call activity)? Its scope token carries
+     * a whole subtree, so token-wide cancellation would leak into unrelated
+     * parallel branches sharing the token.
+     */
+    private boolean isScopeContainerHost(BpmnElementModel hostElement) {
+        if (hostElement == null || hostElement.getType() == null) {
+            return false;
+        }
+        return hostElement.getType() == BpmnElementType.SUB_PROCESS
+            || hostElement.getType() == BpmnElementType.AD_HOC_SUB_PROCESS
+            || hostElement.getType() == BpmnElementType.CALL_ACTIVITY;
+    }
+
+    /**
+     * WO-C8-34 (CR-05): multi-instance hosts keep the legacy token-wide cancel
+     * (MI instances genuinely share one token — WO-ENG-3 semantics).
+     */
+    private boolean isMultiInstanceHost(BpmnElementModel hostElement) {
+        return Optional.ofNullable(hostElement.getExtensions())
+            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
+            .isPresent();
+    }
+
+    /**
+     * WO-C8-34 (CR-05): cancels exactly one scope-container subtree: the
+     * in-scope activities (via the enclosing scope chain, so parallel branches
+     * INSIDE the scope die with it), the container host row itself, and every
+     * still-running child instance for call activities (mirror of
+     * {@code ErrorEscalationThrower} child handling). Sibling branches OUTSIDE
+     * the scope — even on the same token — are never touched.
+     *
+     * @return freshly cancelled user-task ids for the canceling-phase snapshot
+     */
+    private List<UUID> cancelScopeContainer(UUID processInstanceId, UUID tokenId, UUID hostActivityId, Activity host) {
+        List<Activity> inScope = elementSupport.filterActivitiesInScope(
+            processInstanceId, dbService.getActiveActivities(processInstanceId), hostActivityId);
+        List<UUID> cancelCandidates = inScope.stream()
+            .filter(a -> a.getType() == BpmnElementType.USER_TASK
+                && (a.getStatus() == ActivityStatus.CREATED || a.getStatus() == ActivityStatus.IN_PROGRESS))
+            .map(Activity::getId)
+            .toList();
+        for (Activity active : inScope) {
+            dbService.cancelActivity(active.getId());
+        }
+        dbService.cancelActivity(hostActivityId);
+        for (UUID childInstanceId : dbService.findRunningChildInstanceIds(hostActivityId)) {
+            dbService.cancelActiveActivities(childInstanceId);
+            dbService.completeProcessInstance(childInstanceId);
+        }
+        log.info("{}/{}: Boundary interrupting scope container {} — cancelled {} in-scope activities",
+            processInstanceId, tokenId, host.getBpmnElementId(), inScope.size());
+        return cancelCandidates;
     }
 
     /**

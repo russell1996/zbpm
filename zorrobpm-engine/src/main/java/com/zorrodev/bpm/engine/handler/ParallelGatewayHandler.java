@@ -42,6 +42,17 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
         List<String> outgoings = bpmnElement.getOutgoing();
 
         if (incomings.size() == 1) {
+            // WO-C8-34 (crit 7, V7-finding): the degenerate 1-in/1-out form is an
+            // explicit pass-through (mirrors InclusiveGatewayHandler's else) — NOT
+            // a fork. Forking a child token + pendingBranches counter for a single
+            // branch only re-labels the token for no reason.
+            if (outgoings.size() == 1) {
+                UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
+                dbService.completeActivity(activityId);
+                log.info("{}/{}: Entering and completing {}: {}/{} (degenerate 1/1 pass-through)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+                flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
+                return;
+            }
             UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
             dbService.completeActivity(activityId);
             log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());

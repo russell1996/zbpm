@@ -84,6 +84,14 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
     }
 
     @Override
+    public List<UUID> findRunningChildInstanceIds(UUID parentActivityId) {
+        return processInstanceRepository.findByParentActivityId(parentActivityId).stream()
+            .filter(pi -> pi.getCompletedAt() == null)
+            .map(ProcessInstanceEntity::getId)
+            .toList();
+    }
+
+    @Override
     public void completeProcessInstance(UUID processInstanceId) {
         ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());

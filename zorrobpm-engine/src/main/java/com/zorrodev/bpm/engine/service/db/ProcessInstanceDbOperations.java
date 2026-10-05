@@ -27,4 +27,10 @@ public interface ProcessInstanceDbOperations {
     void cancelProcessInstance(UUID processInstanceId);
 
     void lockProcessInstance(UUID processInstanceId);
+
+    /**
+     * WO-C8-34 (CR-04): ids of still-running child instances started by one call
+     * activity row (completed ones excluded — nothing to cancel there).
+     */
+    List<UUID> findRunningChildInstanceIds(UUID parentActivityId);
 }

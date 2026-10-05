@@ -34,6 +34,7 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
     private final ActivityService activityService;
     private final ElementSupport elementSupport;
     private final ExecutionContext executionContext;
+    private final BoundaryScheduler boundaryScheduler;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.CALL_ACTIVITY; }
@@ -49,6 +50,14 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
 
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        // WO-C8-34 (CR-04): boundaries attached to the call activity are armed on
+        // the container row, like task hosts. The firing path (EventTrigger) treats
+        // the container as a scope: only this call's work is cancelled, sibling
+        // parent branches survive; the child instance is completed with it.
+        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
 
         List<ProcessVariable> variables = resolveChildInitialVariables(bpmnElement, processInstanceId);
 

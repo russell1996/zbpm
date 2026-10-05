@@ -84,9 +84,13 @@ public class BoundaryScheduler {
     }
 
     /**
-     * Schedules interrupting timer boundary jobs for any timer boundary event attached to the
-     * given host activity. When such a timer fires before the host completes, the host is cancelled
-     * and flow continues from the boundary's outgoing.
+     * Schedules timer boundary jobs for every timer boundary event attached to the
+     * given host activity — interrupting AND non-interrupting alike (WO-C8-34: the
+     * old javadoc said "interrupting" only, but the scheduler never filtered by
+     * {@code isInterrupting} and must not: a non-interrupting timer also needs its
+     * job to fire; the interrupting/non-interrupting split happens at fire time in
+     * {@code EventTrigger.fireBoundary}). When such a timer fires before the host
+     * completes, the boundary continuation runs from the boundary's outgoing.
      */
     public void scheduleBoundaryTimers(UUID processInstanceId, UUID hostActivityId, BpmnElementModel host) {
         BpmnProcessDefinitionModel pd = host.getProcessDefinition();

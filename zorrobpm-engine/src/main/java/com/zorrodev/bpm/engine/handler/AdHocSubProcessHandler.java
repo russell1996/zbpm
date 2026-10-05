@@ -49,6 +49,7 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
     private final DBService dbService;
     private final ScriptService scriptService;
     private final ElementSupport elementSupport;
+    private final BoundaryScheduler boundaryScheduler;
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService serviceTaskEnqueueService;
 
@@ -69,6 +70,13 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
 
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+
+        // WO-C8-34 (CR-04): boundaries attached to the ad-hoc container are armed
+        // on entry, like task hosts. Covers both internal and job-worker modes
+        // (registration happens before the mode split).
+        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
 
         // Docs order: input mappings apply on entering, BEFORE the collection is evaluated.
         elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);

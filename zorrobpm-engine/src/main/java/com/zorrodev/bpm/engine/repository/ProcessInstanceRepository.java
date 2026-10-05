@@ -81,6 +81,9 @@ public interface ProcessInstanceRepository extends JpaRepository<ProcessInstance
     @Query("SELECT pi FROM ProcessInstanceEntity pi WHERE pi.id = :id")
     Optional<ProcessInstanceEntity> findByIdForUpdate(UUID id);
 
+    /** WO-C8-34 (CR-04): child instances started by one call activity row. */
+    List<ProcessInstanceEntity> findByParentActivityId(UUID parentActivityId);
+
     /**
      * WO-REL-31 CR-4: definition key in one join query instead of instance→definition
      * two-step resolution. Empty when the instance or its definition is missing —

@@ -28,6 +28,7 @@ public class SubProcessHandler implements ElementHandler, TypedElementHandler {
 
     private final DBService dbService;
     private final ElementSupport elementSupport;
+    private final BoundaryScheduler boundaryScheduler;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.SUB_PROCESS; }
@@ -55,6 +56,15 @@ public class SubProcessHandler implements ElementHandler, TypedElementHandler {
         // the container activity — the same activity-scoped write task handlers use).
         // Runs BEFORE the nested start so inner elements already see seeded values.
         elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+
+        // WO-C8-34 (CR-04): boundary events attached to the subprocess container
+        // itself are armed on entry, like UserTaskHandler/ServiceTaskHandler do
+        // for task hosts — same trio, same relative order (right after the host
+        // row exists). Teardown rides the host row: fireBoundary ignores jobs
+        // whose host already finished, and scope/confine paths cancel the host.
+        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
+        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
 
         ctx.executor().execute(processInstanceId, childToken.getId(), bpmn, bpmn.getElement(startEventId));
     }
