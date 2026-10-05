@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c834forkboundary" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c834-fork-boundary" name="c834-fork-boundary" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="fork" />
+    <bpmn:parallelGateway id="fork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flowA</bpmn:outgoing>
+      <bpmn:outgoing>flowB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowA" name="flowA" sourceRef="fork" targetRef="hostTask" />
+    <bpmn:userTask id="hostTask" name="hostTask">
+      <bpmn:incoming>flowA</bpmn:incoming>
+      <bpmn:outgoing>flowA2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowA2" name="flowA2" sourceRef="hostTask" targetRef="join" />
+    <bpmn:boundaryEvent id="hostTimeout" name="hostTimeout" attachedToRef="hostTask" cancelActivity="true">
+      <bpmn:outgoing>flowTimeout</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tedFork">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowTimeout" name="flowTimeout" sourceRef="hostTimeout" targetRef="endTimeout" />
+    <bpmn:endEvent id="endTimeout" name="endTimeout">
+      <bpmn:incoming>flowTimeout</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="fork" targetRef="siblingTask" />
+    <bpmn:userTask id="siblingTask" name="siblingTask">
+      <bpmn:incoming>flowB</bpmn:incoming>
+      <bpmn:outgoing>flowB2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowB2" name="flowB2" sourceRef="siblingTask" targetRef="join" />
+    <bpmn:parallelGateway id="join">
+      <bpmn:incoming>flowA2</bpmn:incoming>
+      <bpmn:incoming>flowB2</bpmn:incoming>
+      <bpmn:outgoing>flowOut</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowOut" name="flowOut" sourceRef="join" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flowOut</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
