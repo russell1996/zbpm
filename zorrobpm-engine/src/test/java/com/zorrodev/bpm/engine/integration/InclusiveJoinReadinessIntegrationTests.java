@@ -11,6 +11,7 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -57,6 +58,9 @@ public class InclusiveJoinReadinessIntegrationTests {
 
     @Autowired
     private IncidentRepository incidentRepository;
+
+    @Autowired
+    private ActivityService activityService;
 
     private UUID start(String file) throws Exception {
         return startWithVars(file, List.of());
@@ -313,5 +317,29 @@ public class InclusiveJoinReadinessIntegrationTests {
         // на join, не декрементит его). Это поведение учёта pendingBranches, а не inclusive-join:
         // тот же расклад даёт обычный PARALLEL_GATEWAY join. Отдельная находка — в отчёте
         // (V7), здесь не чинится.
+    }
+
+    // ── находка @verifier раунда 3 (№1): деактивация через ДОСТАВКУ catch-события ──────────
+    @Transactional
+    @Test
+    void signalCatchTakingItsFalseBranch_wakesTheParkedJoin() throws Exception {
+        // Точная репродукция verifier'а: у последнего возможного доставщика join'а нет activity
+        // ЗАДАЧИ — это signal catch, ушедший в условие с ложной ветвью. Хвост signal(...) —
+        // тоже деактивация; до перепроверки он уходил в proceedToOutgoing, и join висел
+        // вечно (RUNNING, токен припаркован, инцидента нет).
+        UUID pi = start("test-c835-signal-catch-incl-join.bpmn");
+
+        complete(pi, "taskA");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("sigCatch is live and can still reach the join through xorSig's true branch")
+            .isEqualTo(0L);
+
+        activityService.broadcastSignal("sig1", List.of());
+
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("the catch died on its false branch — the parked join must wake up")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
     }
 }

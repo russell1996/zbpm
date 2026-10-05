@@ -53,6 +53,10 @@ class CompletionServiceTest {
     private ElementListenerPhaseService elementListenerPhaseService;
 
     // WO-QW-2: BpmMetrics mock for the activityTransitionIgnored hook.
+    // WO-C8-35 (CR-09, ШАГ 3): @InjectMocks иначе подставит null, и первым же новым
+    // тестом в этом классе он упал бы вместо проверки (находка @verifier раунда 3).
+    @Mock
+    private InclusiveGatewayHandler inclusiveGatewayHandler;
     @Mock
     private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
 

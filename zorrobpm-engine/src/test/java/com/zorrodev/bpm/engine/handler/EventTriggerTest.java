@@ -58,6 +58,10 @@ class EventTriggerTest {
     private TimerJobRepository timerJobRepository;
     // WO-C8-28: новый конструкторный параметр (инжект моком — существующие тесты
     // путей без отмены его не трогают, но @InjectMocks без мока дал бы null).
+    // WO-C8-35 (CR-09, ШАГ 3): @InjectMocks иначе подставит null, и первым же новым
+    // тестом в этом классе он упал бы вместо проверки (находка @verifier раунда 3).
+    @Mock
+    private InclusiveGatewayHandler inclusiveGatewayHandler;
     @Mock
     private CancelingPhaseService cancelingPhaseService;
 

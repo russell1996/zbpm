@@ -725,12 +725,6 @@ public class DBServiceImpl implements DBService {
     }
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1). Три источника «ещё может доставить» без строки activity:
-     * взведённый boundary timer (timer_jobs), взведённые boundary-подпижки (message/signal) и
-     * event-subprocess-триггеры. Наружу отдаётся только МНОЖЕСТВО element id выходов \u2014
-     * сколько именно там строк, движку знать не надо: решает {@code canReach}.
-     */
-    /**
      * WO-C8-35 (CR-09, ШАГ 2/B1): element ids of this instance's still-ARMED triggers that
      * continue somewhere else — boundary timer/message/signal and event-subprocess triggers.
      * Наружу отдаётся только МНОЖЕСТВО element id выходов: сколько именно там строк, движку

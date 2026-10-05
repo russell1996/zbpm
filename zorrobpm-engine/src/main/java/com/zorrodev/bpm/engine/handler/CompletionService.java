@@ -1939,6 +1939,12 @@ public class CompletionService {
         }
 
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
+        // WO-C8-35 (CR-09, ШАГ 3): catch-событие (timer/message/signal), получившее сигнал, —
+        // такая же деактивация, как завершение задачи: только что умер последний возможный
+        // доставщик припаркованного join'а. @verifier раунда 3 воспроизвёл висящий инстанс
+        // на pfork -> {taskA->join; sigCatch->xorSig(false)}: этот хвост уходил в
+        // proceedToOutgoing БЕЗ перепроверки, и join не просыпался (RUNNING, без инцидента).
+        inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, tokenId, bpmn, executor);
         triggerConditionalEvents(processInstanceId, executor);
     }
 

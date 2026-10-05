@@ -393,6 +393,11 @@ public class EventTrigger {
 
         if (ext.isInterrupting()) {
             dbService.cancelActiveActivities(processInstanceId);
+            // WO-C8-35 (CR-09, ШАГ 3): прерывающий event-subprocess только что ПОГАСИЛ все живые
+            // activity инстанса — после этого ни один join не может получить ветвь ниоткуда.
+            // Перепроверка припаркованных join'ов обязана быть здесь же (@verifier раунда 3,
+            // находка 2): иначе токен, припаркованный на join'е, остаётся ждать вечно.
+            inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, null, bpmn, executor);
             Token token = dbService.createToken(null);
             log.info("{}/{}: Interrupting event sub-process {} starting at {}", processInstanceId, token.getId(), eventSubprocessId, ext.getStartEventId());
             executor.execute(processInstanceId, token.getId(), ext.getStartEventId());

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835_sig" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c835-signal-catch-incl-join" name="test-c835-signal-catch-incl-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+
+    <!-- WO-C8-35 (находка @verifier раунда 3, №1): второй возможный доставщик в join — не
+         задача, а SIGNAL CATCH, ушедший в условие с ложной ветвью. Хвост signal(...) — тоже
+         деактивация; без перепроверки припаркованного join'а он уходил в proceedToOutgoing
+         и токен висел в RUNNING навсегда, без инцидента. -->
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fC</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="pfork" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fC" name="fC" sourceRef="pfork" targetRef="sigCatch" />
+
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>gA</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="gA" name="gA" sourceRef="taskA" targetRef="join" />
+
+    <bpmn:intermediateCatchEvent id="sigCatch" name="sigCatch">
+      <bpmn:incoming>fC</bpmn:incoming>
+      <bpmn:outgoing>fSig</bpmn:outgoing>
+      <bpmn:signalEventDefinition id="sed1" signalRef="sig1" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="fSig" name="fSig" sourceRef="sigCatch" targetRef="xorSig" />
+
+    <bpmn:exclusiveGateway id="xorSig" name="xorSig" default="fEndB">
+      <bpmn:incoming>fSig</bpmn:incoming>
+      <bpmn:outgoing>fSigOk</bpmn:outgoing>
+      <bpmn:outgoing>fEndB</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="fSigOk" name="fSigOk" sourceRef="xorSig" targetRef="join">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=good = "yes"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="fEndB" name="fEndB" sourceRef="xorSig" targetRef="endB" />
+    <bpmn:endEvent id="endB" name="endB">
+      <bpmn:incoming>fEndB</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>gA</bpmn:incoming>
+      <bpmn:incoming>fSigOk</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:signal id="sig1" name="sig1" />
+</bpmn:definitions>
