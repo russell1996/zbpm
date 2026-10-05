@@ -23,4 +23,11 @@ public class EventDefinitionExtensionModel {
      * Null = no filter declared — re-evaluation behavior byte-identical to before.
      */
     private ConditionalFilter conditionalFilter;
+    /**
+     * WO-C8-34 (CR-06): resolved {@code waitForCompletion} of a compensate event
+     * definition. Null = attribute absent — BPMN default {@code true} (the throw
+     * waits for its handlers). Explicit {@code false} keeps the legacy
+     * fire-and-continue behavior.
+     */
+    private Boolean waitForCompletion;
 }

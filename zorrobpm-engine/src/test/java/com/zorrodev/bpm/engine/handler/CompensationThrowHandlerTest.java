@@ -34,6 +34,7 @@ class CompensationThrowHandlerTest {
 
     @Mock private DBService dbService;
     @Mock private FlowNavigator flowNavigator;
+    @Mock private ElementSupport elementSupport;
     @Mock private TokenExecutor executor;
 
     @InjectMocks private CompensationThrowHandler handler;

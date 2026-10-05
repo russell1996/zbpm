@@ -5,6 +5,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
+import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
@@ -376,6 +377,9 @@ public class CompletionService {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
         }
+        // WO-C8-34 (CR-06): a finished user-task handler may unpark a
+        // waitForCompletion thrower (same resume as the service-task tail).
+        resumeParkedCompensationThrowers(processInstanceId, executor);
         flowNavigator.proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement, executor);
         triggerConditionalEvents(processInstanceId, executor);
     }
@@ -393,6 +397,23 @@ public class CompletionService {
         if (resumeElementListenerPhase(serviceTaskId, variables, executor)) {
             return;
         }
+        // WO-C8-34 (CR-06): the resume hook needs the REAL executor (it
+        // continues parked throwers' outgoing flows, not just bookkeeping).
+        // Stash it for the tail: the tail receives only ids, and threading the
+        // executor through finishServiceTaskCompletion's signature would ripple
+        // across every phase-resume caller. Thread-local with try/finally —
+        // the tail runs in the same thread, same transaction.
+        resumeExecutorHolder.set(executor);
+        try {
+            completeServiceTaskInner(serviceTaskId, variables, executor);
+        } finally {
+            resumeExecutorHolder.remove();
+        }
+    }
+
+    private static final ThreadLocal<TokenExecutor> resumeExecutorHolder = new ThreadLocal<>();
+
+    private void completeServiceTaskInner(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
         Activity activity = elementSupport.lockInstanceFirst(serviceTaskId);
         // WO-REL-59: тот же единый порядок instance→activity, что в
         // completeUserTask выше (сериализация с cancel; см. комментарий выше).
@@ -967,8 +988,174 @@ public class CompletionService {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
         }
+        // WO-C8-34 (CR-06): a finished compensation handler may unpark a
+        // waitForCompletion thrower (resume completes it + continues outgoing).
+        // The REAL executor rides the thread-local (set at completeServiceTask
+        // entry): the tail signature carries only ids, and the resume must run
+        // the outgoing flow, not just bookkeeping.
+        TokenExecutor resumeExecutor = resumeExecutorHolder.get();
+        if (resumeExecutor != null) {
+            resumeParkedCompensationThrowers(processInstanceId, resumeExecutor);
+        }
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
         triggerConditionalEvents(processInstanceId, executor);
+    }
+
+    /**
+     * WO-C8-34 (CR-06): scans parked compensation throwers (IN_PROGRESS rows)
+     * and resumes those whose launched handlers are all done: completes the
+     * thrower row and continues its outgoing flow. Called from BOTH completion
+     * tails (service-task + user-task) — a handler may itself be either kind,
+     * and the throw path parks before knowing which kind will finish. Same
+     * transaction as the completing tail, so the check sees the just-written
+     * COMPLETED row.
+     */
+    public void resumeParkedCompensationThrowers(UUID processInstanceId, TokenExecutor executor) {
+        List<Activity> parked = dbService.getActiveActivities(processInstanceId).stream()
+            .filter(a -> a.getType() == BpmnElementType.COMPENSATION_THROW_EVENT)
+            .toList();
+        for (Activity thrower : parked) {
+            ProcessInstance pi = dbService.getProcessInstance(processInstanceId);
+            BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
+            BpmnElementModel el = bpmn.getElement(thrower.getBpmnElementId());
+            if (el == null) {
+                continue;
+            }
+            List<Activity> targets = compensationTargets(processInstanceId, thrower.getToken(), el);
+            if (!compensationThrowerHasPending(processInstanceId, thrower.getId(), bpmn, targets)) {
+                dbService.completeActivity(thrower.getId());
+                log.info("{}/{}: Compensation throw {} resumed after handlers completed", processInstanceId, thrower.getToken(), el.getId());
+                flowNavigator.proceedToOutgoing(processInstanceId, thrower.getToken(), bpmn, el, executor);
+            }
+        }
+    }
+
+    /**
+     * WO-C8-34 (CR-06/CR-07): shared candidate computation for one thrower —
+     * scope-confined completed activities (CancelEndHandler pattern) plus the
+     * pre-existing activityRef filter. Used by the throw path and the resume
+     * path so the two can never diverge on "which handlers count".
+     */
+    public List<Activity> compensationTargets(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
+        String activityRef = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getReference)
+            .orElse(null);
+        Token throwToken = dbService.findToken(tokenId).orElse(null);
+        UUID scopeActivityId = throwToken == null ? null : throwToken.getScopeActivityId();
+        List<Activity> targets = dbService.getCompletedActivities(processInstanceId);
+        if (scopeActivityId != null) {
+            targets = elementSupport.filterActivitiesInScope(processInstanceId, targets, scopeActivityId);
+        }
+        if (activityRef != null) {
+            String ref = activityRef;
+            targets = targets.stream().filter(a -> ref.equals(a.getBpmnElementId())).toList();
+        }
+        return targets;
+    }
+
+    /**
+     * WO-C8-34 (CR-06): pending-handler check shared by the throw path and the
+     * resume path. A handler is pending while its latest row is active (or no
+     * row exists yet — launched but not recorded).
+     */
+    public boolean compensationThrowerHasPending(UUID processInstanceId, UUID throwActivityId,
+            BpmnProcessDefinitionModel bpmn, List<Activity> targets) {
+        Map<String, BpmnElementModel> boundaryIndex = new java.util.HashMap<>();
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (attached != null) {
+                boundaryIndex.putIfAbsent(attached, element);
+            }
+        }
+        for (Activity target : targets) {
+            BpmnElementModel boundary = boundaryIndex.get(target.getBpmnElementId());
+            if (boundary == null) {
+                continue;
+            }
+            String handlerId = Optional.ofNullable(boundary.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getCompensationHandlerId)
+                .orElse(null);
+            if (handlerId == null) {
+                continue;
+            }
+            BpmnElementModel handler = bpmn.getElement(handlerId);
+            if (handler == null) {
+                continue;
+            }
+            // WO-C8-34 (CR-06): same latest-row-wins rule as the throw path
+            // (see CompensationThrowHandler.isHandlerPending): pending unless
+            // a COMPLETED row exists AND no ACTIVE row is newer than it.
+            if (isCompensationHandlerPending(processInstanceId, handlerId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * WO-C8-34 (CR-06): latest-row-wins for one compensation handler element
+     * (mirror of {@code CompensationThrowHandler.isHandlerPending} — the two
+     * must stay in sync; the resume tail calls this one). Pending unless a
+     * COMPLETED row exists AND no ACTIVE row is newer than it.
+     */
+    private boolean isCompensationHandlerPending(UUID processInstanceId, String handlerId) {
+        java.time.Instant newestCompleted = null;
+        java.util.UUID newestCompletedId = null;
+        for (Activity a : dbService.getCompletedActivities(processInstanceId)) {
+            if (!handlerId.equals(a.getBpmnElementId())) {
+                continue;
+            }
+            if (newestCompleted == null || compareActivityRecency(a.getCompletedAt(), a.getId(),
+                    newestCompleted, newestCompletedId) > 0) {
+                newestCompleted = a.getCompletedAt();
+                newestCompletedId = a.getId();
+            }
+        }
+        java.time.Instant newestActive = null;
+        java.util.UUID newestActiveId = null;
+        for (Activity a : dbService.getActiveActivities(processInstanceId)) {
+            if (!handlerId.equals(a.getBpmnElementId())) {
+                continue;
+            }
+            if (newestActive == null || compareActivityRecency(a.getCreatedAt(), a.getId(),
+                    newestActive, newestActiveId) > 0) {
+                newestActive = a.getCreatedAt();
+                newestActiveId = a.getId();
+            }
+        }
+        if (newestCompleted == null) {
+            return true;
+        }
+        if (newestActive == null) {
+            return false;
+        }
+        return compareActivityRecency(newestActive, newestActiveId, newestCompleted, newestCompletedId) > 0;
+    }
+
+    private static int compareActivityRecency(java.time.Instant t1, java.util.UUID id1,
+            java.time.Instant t2, java.util.UUID id2) {
+        if (t1 != null && t2 != null) {
+            int c = t1.compareTo(t2);
+            if (c != 0) {
+                return c;
+            }
+        } else if (t1 != null) {
+            return 1;
+        } else if (t2 != null) {
+            return -1;
+        }
+        if (id1 != null && id2 != null) {
+            return id1.compareTo(id2);
+        }
+        return 0;
     }
 
     /**
