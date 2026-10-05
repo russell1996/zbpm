@@ -319,6 +319,42 @@ class AuthorizationServiceTest {
         assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.START)).isFalse();
         assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.DEPLOY)).isFalse();
         assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.MANAGE_MEMBERS)).isFalse();
+        // WO-ACL-22 criterion 3: VIEWER stays read-only — cancel is NOT granted.
+        assertThat(auth.canOperate(viewer, "test-proc", AuthorizationService.Action.DELETE_PROCESS)).isFalse();
+    }
+
+    // --- WO-ACL-22: OWNER and DESIGNER cancel instances of their own process ---
+
+    @Test
+    void owner_canDeleteProcessOwnProcess_ACL22() {
+        UUID userId = UUID.randomUUID();
+        UUID processId = UUID.randomUUID();
+        ProcessEntity process = new ProcessEntity();
+        process.setId(processId);
+        process.setDefinitionKey("test-proc");
+
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "OWNER")));
+
+        Principal owner = new Principal.UserPrincipal(userId, "owner", "USER");
+        assertThat(auth.canOperate(owner, "test-proc", AuthorizationService.Action.DELETE_PROCESS)).isTrue();
+    }
+
+    @Test
+    void designer_canDeleteProcessOwnProcess_ACL22() {
+        UUID userId = UUID.randomUUID();
+        UUID processId = UUID.randomUUID();
+        ProcessEntity process = new ProcessEntity();
+        process.setId(processId);
+        process.setDefinitionKey("test-proc");
+
+        when(processRepository.findByDefinitionKey("test-proc")).thenReturn(Optional.of(process));
+        when(processMemberRepository.findById(new ProcessMemberId(processId, userId)))
+            .thenReturn(Optional.of(createMember(processId, userId, "DESIGNER")));
+
+        Principal designer = new Principal.UserPrincipal(userId, "designer", "USER");
+        assertThat(auth.canOperate(designer, "test-proc", AuthorizationService.Action.DELETE_PROCESS)).isTrue();
     }
 
     // --- Unknown role in DB (legacy garbage, e.g. "Owner") → DENY, not silent elevation ---
