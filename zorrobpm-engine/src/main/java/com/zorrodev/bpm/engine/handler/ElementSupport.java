@@ -1234,14 +1234,25 @@ public class ElementSupport {
      * an unrelated join lying on one branch's path swallowed the counter and left the
      * real join waiting forever.
      *
-     * <p>One BFS from the split carrying a bitmask of which outgoing branch reached
-     * each element; a candidate qualifies when at least TWO of this split's branches
-     * reach it. Cost stays O(graph) instead of O(branches x graph).
+     * <p>One walk from the split carrying a bitmask of which outgoing branch reached each
+     * element; a candidate qualifies when at least TWO of this split's branches reach it.
+     * Cost: each element is expanded at most once per distinct mask value it acquires,
+     * i.e. O(elements x outgoing branches) — not the O(branches x graph) of one BFS per
+     * branch — and it terminates on cyclic graphs (the first version had no settle check
+     * and hung the start on a retry-loop: a regression against the previous
+     * {@code visited}-guarded BFS, caught by the G-H red-team).
      */
     public String findConvergentInclusiveJoin(BpmnProcessDefinitionModel bpmn, BpmnElementModel split) {
         List<String> outgoings = split.getOutgoing() == null ? List.of() : split.getOutgoing();
         // element id -> bitmask of WHICH outgoing branches of this split reach it
         Map<String, Integer> branchMask = new HashMap<>();
+        // element id -> the mask it had when it was last expanded. Without this the walk
+        // re-expands an element on every incoming edge: on a graph with a loop-back it
+        // never terminates (proved live — a retry-loop fixture hung the process start on
+        // 100 % CPU, a regression against the previous `visited`-guarded BFS) and on a
+        // chain of diamonds it grows ~14x per four diamonds. Masks only ever GAIN bits,
+        // so "mask unchanged since the last expansion" is a sound settle test.
+        Map<String, Integer> settled = new HashMap<>();
         Deque<String> queue = new ArrayDeque<>();
         for (int i = 0; i < outgoings.size(); i++) {
             BpmnFlowModel flow = bpmn.getFlow(outgoings.get(i));
@@ -1256,14 +1267,19 @@ public class ElementSupport {
                 continue;
             }
             Integer mask = branchMask.get(elementId);
-            if (mask == null) {
+            if (mask == null || mask.equals(settled.get(elementId))) {
                 continue;
             }
+            settled.put(elementId, mask);
             BpmnElementModel element = bpmn.getElement(elementId);
             if (element == null) {
                 continue;
             }
-            if (element.getType() == BpmnElementType.INCLUSIVE_GATEWAY
+            // never the split itself: with a loop-back the split becomes reachable under a
+            // 2-bit mask, but it is not its own merge partner (the counter would land on
+            // an id nobody reads)
+            if (!elementId.equals(split.getId())
+                    && element.getType() == BpmnElementType.INCLUSIVE_GATEWAY
                     && element.getIncoming() != null && element.getIncoming().size() > 1
                     && Integer.bitCount(mask) > 1) {
                 return elementId;
