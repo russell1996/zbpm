@@ -18,7 +18,9 @@ import com.zorrodev.bpm.contract.model.ProcessInstance;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Profile;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -72,6 +74,33 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
 
     boolean isDispatchPhaseStampingEnabled() {
         return dispatchPhaseStamping;
+    }
+
+    /**
+     * WO-C8-36 (F-2): состояние флага печатается на старте движка — один раз,
+     * а не на каждый completion.
+     *
+     * <p>Зачем: выключенный флаг означает, что CR-01 не защищает НИЧЕГО (тело
+     * задания не несёт {@code dispatchPhase} → воркер эхом шлёт {@code null} →
+     * движок идёт в legacy-путь fail-open), и без этой строки единственный
+     * сигнал — WARN на каждом completion плюс счётчик, то есть «всё выглядит
+     * штатно, пока не посмотришь метрики». Отдельно важно для soak-рига
+     * {@code docker-compose.multi.yml}: фlagF2 там стоит в {@code &app-env} у
+     * всех трёх реплик, и WARN на их старте — первый сигнал, что конфигурация
+     * разъехалась с прод-дефолтом.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void logStampStateOnStartup() {
+        if (dispatchPhaseStamping) {
+            log.info("ServiceTaskEnqueue: zorrobpm.engine.dispatch-phase-stamping=ON — "
+                + "dispatchPhase/dispatchIndex stamped into job payloads (CR-01 exact-match "
+                + "guard active on the engine; all workers must tolerate the new fields)");
+        } else {
+            log.warn("ServiceTaskEnqueue: zorrobpm.engine.dispatch-phase-stamping=OFF — job "
+                + "payloads stay byte-identical to pre-CR-01 and completions without "
+                + "dispatchPhase take the LEGACY fail-open path (CR-01 exact-match guard does "
+                + "NOT apply). Turn the flag on only after every worker is updated.");
+        }
     }
 
     @Transactional

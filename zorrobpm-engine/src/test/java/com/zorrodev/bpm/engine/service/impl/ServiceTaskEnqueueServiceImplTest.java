@@ -1,5 +1,9 @@
 package com.zorrodev.bpm.engine.service.impl;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
@@ -21,6 +25,7 @@ import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -858,6 +863,62 @@ class ServiceTaskEnqueueServiceImplTest {
             .as("прод-дефолт phased-штампа ВЫКЛЮЧЕН: старый воркер не должен получать "
                 + "незнакомые поля до осознанного включения флага")
             .isFalse();
+    }
+
+    /**
+     * WO-C8-36 (F-2): состояние флага печатается на старте, и уровень лога
+     * РАЗНЫЙ для включённого и выключенного состояния.
+     *
+     * <p>Зачем уровень различается: выключенный флаг = CR-01 выключен (legacy
+     * fail-open), и это должно быть видно в обычном логе реплики, а не только в
+     * счётчике ignored'ов. Мутация «всегда INFO» или «убрать вызов метода» валит
+     * один из двух ассертов; мутация «поменять ветки местами» — оба.
+     */
+    @Test
+    void dispatchPhaseStamping_startupLog_statesLevelPerFlagValue() {
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        // ListAppender без start() молча отбрасывает всё: AppenderBase.doAppend()
+        // проверяет started и уходит в warn. Старт — часть установки (WO-C8-36 F-2).
+        appender.start();
+        Logger logger = (Logger) LoggerFactory.getLogger(ServiceTaskEnqueueServiceImpl.class);
+        Level previous = logger.getLevel();
+        logger.setLevel(Level.INFO);
+        logger.addAppender(appender);
+        try {
+            ServiceTaskEnqueueServiceImpl on = freshService();
+            on.setDispatchPhaseStampingEnabled(true);
+            on.logStampStateOnStartup();
+            ServiceTaskEnqueueServiceImpl off = freshService();
+            off.setDispatchPhaseStampingEnabled(false);
+            off.logStampStateOnStartup();
+
+            List<ILoggingEvent> events = appender.list;
+            assertThat(events).hasSize(2);
+            assertThat(events.get(0).getLevel())
+                .as("включённый флаг — обычный INFO, это штатная конфигурация нашего стека")
+                .isEqualTo(Level.INFO);
+            assertThat(events.get(0).getFormattedMessage())
+                .contains("dispatch-phase-stamping=ON")
+                .contains("CR-01 exact-match guard active");
+            assertThat(events.get(1).getLevel())
+                .as("выключенный флаг = CR-01 выключен и путь fail-open — это WARN, "
+                    + "чтобы бросалось в глаза в логе реплики (в т.ч. soak-рига "
+                    + "docker-compose.multi.yml, где раньше флага не было вовсе)")
+                .isEqualTo(Level.WARN);
+            assertThat(events.get(1).getFormattedMessage())
+                .contains("dispatch-phase-stamping=OFF")
+                .contains("LEGACY fail-open path");
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previous);
+        }
+    }
+
+    private ServiceTaskEnqueueServiceImpl freshService() {
+        return new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
     }
 
     private String capturedPayload() {
