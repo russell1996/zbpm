@@ -30,6 +30,16 @@ public interface ServiceTaskRepository extends JpaRepository<ServiceTaskEntity, 
     }
 
     /**
+     * WO-IN-1: filters by the job type the task was created with — the {@code zeebe:taskDefinition}
+     * type from the BPMN (or the listener job type), stored on {@code job} by the creation path.
+     * Callers decide what a blank value means (see {@code ServiceTaskQueryOperationsImpl}: blank =
+     * "no filter"), so this method does not second-guess its argument.
+     */
+    static Specification<ServiceTaskEntity> byJobType(String jobType) {
+        return (root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("job"), jobType);
+    }
+
+    /**
      * Filters by the authoritative activity lifecycle (task id == activity id):
      * completed == true -> activity COMPLETED; false -> active (CREATED/IN_PROGRESS).
      * CANCELLED/ERROR tasks are excluded from both (a cancelled task is neither active nor completed).
