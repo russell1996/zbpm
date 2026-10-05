@@ -4,6 +4,7 @@ import com.zorrodev.bpm.contract.model.BpmnElementStatistics;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -11,6 +12,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -81,6 +84,50 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
         return (root, query, cb) -> {
             var padded = cb.concat(cb.concat(",", root.get("candidateGroups")), ",");
             return cb.or(cb.like(padded, tight, '\\'), cb.like(padded, spaced, '\\'));
+        };
+    }
+
+    static Specification<UserTaskEntity> byBpmnElementId(String bpmnElementId) {
+        return (root, query, cb) -> cb.equal(root.get("bpmnElementId"), bpmnElementId);
+    }
+
+    static Specification<UserTaskEntity> byFormKey(String formKey) {
+        return (root, query, cb) -> cb.equal(root.get("formKey"), formKey);
+    }
+
+    /**
+     * WO-IN-2 criterion 1: "everything that concerns this person" as ONE query — the task's
+     * assignee is this user, OR the task's candidate-group list intersects one of the user's
+     * groups. One predicate, not several paged queries merged in the JVM: that is exactly what
+     * produced duplicates and gaps before, and a JOIN would multiply task rows and break
+     * pagination, so the roles are OR-ed inside a single specification (E-IN2-3).
+     *
+     * <p>{@code assignee} holds the USERNAME, not the user id
+     * ({@code RuntimeOperationSupport.resolvePrincipalId}), and the candidate groups live in the
+     * comma-separated {@code candidate_groups} column — see {@link #byCandidateGroup} for the
+     * token-exact matching and the LIKE escaping.
+     *
+     * <p>Fail-closed: with neither a username nor a single group there is nothing this person
+     * relates to, and the specification must match NO row rather than fall back to "see all".
+     */
+    static Specification<UserTaskEntity> relatesTo(String username, Collection<String> groups) {
+        return (root, query, cb) -> {
+            List<Predicate> roles = new ArrayList<>();
+            if (username != null && !username.isBlank()) {
+                roles.add(cb.equal(root.get("assignee"), username));
+            }
+            var padded = cb.concat(cb.concat(",", root.get("candidateGroups")), ",");
+            for (String group : groups == null ? List.<String>of() : groups) {
+                String escaped = escapeLike(group);
+                roles.add(cb.like(padded, "%," + escaped + ",%", '\\'));
+                roles.add(cb.like(padded, "%, " + escaped + ",%", '\\'));
+            }
+            if (roles.isEmpty()) {
+                // never `disjunction()` here — an empty OR is TRUE, which would answer
+                // "everything" to a person filter that matched nothing.
+                return cb.isNull(root.get("id"));
+            }
+            return cb.or(roles.toArray(Predicate[]::new));
         };
     }
 

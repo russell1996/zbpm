@@ -53,8 +53,13 @@ class UserTaskQueryOperationsImplTest {
         when(userTaskRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
         UserTask dto = new UserTask();
         dto.setId(entity.getId());
-        PageRequest clamped = PageRequest.of(0, 10, Sort.by("createdAt").descending());
-        when(queryPaginationSupport.clampedPage(0, 10, Sort.by("createdAt").descending())).thenReturn(clamped);
+        // WO-IN-2: the default order is still createdAt DESC, but it now always ends with the
+        // `id` tie-breaker so pages cannot drift — the ONE existing-test edit this WO needs
+        // (the assertion pins the exact Sort handed to clampedPage; the behaviour itself is
+        // proven by UserTaskSortAndElementFilterIntegrationTests#sort_alwaysEndsWithIdTieBreaker).
+        Sort expectedSort = Sort.by("createdAt").descending().and(Sort.by("id").descending());
+        PageRequest clamped = PageRequest.of(0, 10, expectedSort);
+        when(queryPaginationSupport.clampedPage(0, 10, expectedSort)).thenReturn(clamped);
         PagedDataDTO<UserTask> bulkResult = new PagedDataDTO<>();
         bulkResult.setData(List.of(dto));
         bulkResult.setTotalElements(1L);
@@ -78,7 +83,7 @@ class UserTaskQueryOperationsImplTest {
         captured.toPredicate(root, cq, cb);
         verify(processDefinitionIdPath).in(List.of(allowedPdId));
 
-        verify(queryPaginationSupport).clampedPage(0, 10, Sort.by("createdAt").descending());
+        verify(queryPaginationSupport).clampedPage(0, 10, expectedSort);
         verify(queryPaginationSupport).toDTOBulk(eq(page), any());
         assertThat(result.getData()).containsExactly(dto);
     }
