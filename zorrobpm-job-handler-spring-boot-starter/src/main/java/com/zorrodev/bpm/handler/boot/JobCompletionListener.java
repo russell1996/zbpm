@@ -74,33 +74,62 @@ public class JobCompletionListener implements MessageListener {
 
     /**
      * WO-C8-36 (CR-13): ACK входящего задания связан с надёжной публикацией
-     * результата. Отправка идёт с per-send {@code CorrelationData} + mandatory;
-     * после send — синхронное ожидание брокерского confirm
-     * ({@code waitForConfirmsOrDie}, требует confirm-type CORRELATED — ставит
-     * {@code HandlerAutoConfiguration} при {@code ensurePublisherConfirms}).
-     * NACK/timeout/return → исключение → вход НЕ подтверждается (retry/NACK
-     * контейнера), результат уже в resultCache — восстанавливаем без повторного
-     * бизнес-эффекта. Выключатель — {@code ensurePublisherConfirms=false}
-     * (тогда только синхронные исключения, как до WO).
+     * результата. Отправка идёт с per-send {@code CorrelationData} + mandatory,
+     * после send — синхронное ожидание брокерского confirm этой отправки
+     * (код — {@link #sendCompletion}). Требует confirm-type CORRELATED (ставит
+     * {@code HandlerAutoConfiguration}); при недоступных confirms см.
+     * {@link #confirmsAvailable} — warn + счётчик, не тишина.
+     *
+     * <p>Голый confirm ack НЕ равен доставке: брокер подтверждает ПРИЁМ и для
+     * {@code basic.return}, поэтому возврат ловится отдельно и сам по себе
+     * бросает исключение.
+     *
+     * <p>NACK/timeout/return → исключение → вход НЕ подтверждается (retry/NACK
+     * контейнера), а результат уже в resultCache — восстанавливается без
+     * повторного бизнес-эффекта. Выключатель —
+     * {@code ensurePublisherConfirms=false} (тогда только синхронные исключения,
+     * как до WO).
      */
     private boolean ensurePublisherConfirms = true;
     private long confirmTimeoutMs = 5_000L;
 
-    /** WO-C8-36: ставит {@code HandlerAutoConfiguration} из пропертей (тесты — дефолт). */
+    /** WO-C8-36: нижняя граница ожидания confirm (см. {@link #setConfirmTimeoutMs}). */
+    static final long MIN_CONFIRM_TIMEOUT_MS = 100L;
+
+    /**
+     * WO-C8-36: ACK входа завязывается на confirm публикации результата. Полный
+     * контракт — в javadoc {@link #ensurePublisherConfirms}; выключатель —
+     * {@code ensurePublisherConfirms=false} (тогда только синхронные исключения).
+     */
     public void setEnsurePublisherConfirms(boolean ensurePublisherConfirms) {
         this.ensurePublisherConfirms = ensurePublisherConfirms;
     }
 
-    /** WO-C8-36: ставит {@code HandlerAutoConfiguration} из пропертей (тесты — дефолт). */
+    /**
+     * WO-C8-36: таймаут подтверждения не может быть неположительным: при 0/отрицательном
+     * {@code future.get(<=0)} истекает мгновенно, то confirm-wait бросал бы на КАЖДОМ
+     * completion'е → вход не ACK'ается никогда → воркер уходит в бесконечную
+     * переотправку (redelivery storm), то есть опsetting-protection превращается в
+     * DoS самому себе. Конфиг недоверенный ввод — зажимаем полом и warn'им (P-41:
+     * новая ручка рядом с проверяемой не должна быть ловушкой; здесь она единственная
+     * в namespace {@code zorrobpm.worker.*}, сравнивать не с чему, поэтому пол явный).
+     */
     public void setConfirmTimeoutMs(long confirmTimeoutMs) {
+        if (confirmTimeoutMs < MIN_CONFIRM_TIMEOUT_MS) {
+            log.warn("completion-confirm-timeout={}ms is below the {}ms floor — clamped. "
+                + "A non-positive timeout would expire every confirm immediately and "
+                + "redeliver every job forever.", confirmTimeoutMs, MIN_CONFIRM_TIMEOUT_MS);
+            this.confirmTimeoutMs = MIN_CONFIRM_TIMEOUT_MS;
+            return;
+        }
         this.confirmTimeoutMs = confirmTimeoutMs;
     }
 
     /**
-     * WO-C8-36 (red-team 1.2 + пересмотр HOLD-6): НЕ держим разделяемый сет
-     * возвратов. Немаршрутизируемость читается с САМОЙ отправки —
-     * {@link CorrelationData#getReturned()}, который spring-amqp заполняет в
-     * {@code basic.return}-обработчике ({@code PublisherCallbackChannelImpl}).
+     * WO-C8-36 (red-team 1.2 + пересмотр HOLD-6): немаршрутизиваемость читается с
+     * САМОЙ отправки — {@link CorrelationData#getReturned()}, который spring-amqp
+     * заполняет в {@code basic.return}-обработчике ({@code PublisherCallbackChannelImpl});
+     * разделяемый сет возвратов НЕ держим.
      *
      * <p>Почему это не гонка (HOLD-6 был про окно «return опоздал после confirm»):
      * в ack-пути {@code doHandleConfirm} сначала зовёт
@@ -111,7 +140,6 @@ public class JobCompletionListener implements MessageListener {
      * состоянием с собственной гонкой и несовпадением форматов (prod «cid#millis»
      * против тестового «cid») — удалены.
      */
-
     /**
      * WO-C8-36 (red-team HOLD-4): наблюдаемость тихих ослаблений БЕЗ новой
      * зависимости (micrometer в стартер не тянем): счётчики + warn на каждый
@@ -320,10 +348,10 @@ public class JobCompletionListener implements MessageListener {
                 // немаршрутизируемо = результат потерян (CR-13-режим в
                 // миниатюре; окно микроскопическое — return идёт до confirm на том
                 // же канале, опоздание требует переупорядочивания в executor'е).
-                // Это остаточный риск, а не «ложного успеха нет». Чистка ниже
-                // убирает только МУСОР сета (опоздавшие id старше TTL — за это
-                // время любой return уже пришёл), доставку она не чинит и не
-                // обязана: TTL удаляет строку, не возвращает результат.
+                // Это остаточный риск, а не «ложного успеха нет»: он не чинится
+                // TTL-чисткой (сет возвратов удалён в re-pass HOLD-6) и не чинится
+                // повтором — чтобы сузить его до нуля, нужен was-accepted-сигнал
+                // брокера, которого в AMQP 0-9-1 нет. Оставлен явным, не спрятан.
                 //
                 // Per-send future вместо waitForConfirmsOrDie: у того есть
                 // invoke-scope-требование (см. комментарий выше про dedicatedChannels),

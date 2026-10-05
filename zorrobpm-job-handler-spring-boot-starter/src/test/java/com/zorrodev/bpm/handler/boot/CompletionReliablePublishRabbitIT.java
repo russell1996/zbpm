@@ -215,6 +215,9 @@ class CompletionReliablePublishRabbitIT {
 
     @Test
     void confirmLostAfterSend_inputNotAcked_resultRecovered_effectOnce() throws Exception {
+        // Локальный на задачу (PoF-правка): ноль ДО старта, чтобы «2 попытки»
+        // ниже нельзя было набрать чем-то посторонним.
+        AtomicInteger completionSendAttempts = new AtomicInteger(0);
         UUID taskId = UUID.randomUUID();
         String correlationId = "c836-c5-" + UUID.randomUUID();
         AtomicInteger handlerCalls = new AtomicInteger(0);
@@ -234,6 +237,14 @@ class CompletionReliablePublishRabbitIT {
             public void convertAndSend(String routingKey, Object object,
                     org.springframework.amqp.core.MessagePostProcessor messagePostProcessor,
                     org.springframework.amqp.rabbit.connection.CorrelationData correlationData) {
+                // POF-правка (P-67): считаем КАЖДУЮ попытку публикации результата.
+                // Без этого счётчика тест был зелёным и при снятом confirm-wait
+                // (проверено мутацией): «результат доехал, эффект один раз, очередь
+                // пуста» выполняется и когда восстановления НЕ было вовсе — первая
+                // отправка тоже долетает, просто с decoy-корреляцией. Отличать
+                // «восстановлено переотправкой» от «восстановления не требовалось»
+                // можно только по СЧЁТЧИКУ попыток.
+                completionSendAttempts.incrementAndGet();
                 if (firstSend.compareAndSet(true, false) && correlationData != null) {
                     droppedFirstConfirm.set(true);
                     super.convertAndSend(routingKey, object, messagePostProcessor,
@@ -269,6 +280,18 @@ class CompletionReliablePublishRabbitIT {
                 .as("первый confirm реально потерян (иначе сценарий пуст)")
                 .isTrue();
             Thread.sleep(2000);
+            // Счётчик проверяется ПОСЛЕ окна восстановления, не сразу после
+            // awaitCompletionFrom: тот возвращается уже по ПЕРВОЙ доставке
+            // (сообщение опубликовано, decoy-корреляция на маршрутизацию не
+            // влияет), а redelivery случается позже. Проверка «сразу» была бы
+            // гонкой и видела бы 1 попытку при полностью рабочем коде.
+            assertThat(completionSendAttempts.get())
+                .as("результат публиковался НЕСКОЛЬКО раз: первая попытка не была "
+                    + "принята (потерян confirm → NACK входа → redelivery → новая "
+                    + "попытка). Без confirm-wait попыток ровно одна — и все "
+                    + "остальные ассерты этого теста всё равно проходят, то есть "
+                    + "проверяли бы «восстановления не требовалось» (P-67)")
+                .isGreaterThanOrEqualTo(2);
             assertThat(handlerCalls.get())
                 .as("бизнес-эффект ровно один раз")
                 .isEqualTo(1);

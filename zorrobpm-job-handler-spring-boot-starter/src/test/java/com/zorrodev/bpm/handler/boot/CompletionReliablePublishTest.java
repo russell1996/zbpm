@@ -126,6 +126,23 @@ class CompletionReliablePublishTest {
     }
 
     @Test
+    void confirmTimeout_nonPositiveValue_clampedToFloor_notImmediateTimeout() {
+        // WO-C8-36 (red-team, P-41): ручка zorrobpm.worker.completion-confirm-timeout —
+        // недоверенный ввод. При 0/отрицательном future.get() истекает мгновенно, то
+        // confirm-wait бросал бы на КАЖДОМ completion'е: вход не ACK'ается никогда,
+        // воркер уходит в бесконечную переотправку. Проверяем, что пол держит:
+        // future НЕ завершаем, поэтому при Clamp'е к 100 c всё равно получим
+        // таймаут с ПОЛОВЫМ значением в сообщении, а не мгновенный выход.
+        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        listener.setConfirmTimeoutMs(0L);
+
+        assertThatThrownBy(() -> listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-zero")))
+            .isInstanceOf(AmqpException.class)
+            .hasMessageContaining("was not confirmed within "
+                + JobCompletionListener.MIN_CONFIRM_TIMEOUT_MS + "ms");
+    }
+
+    @Test
     void unroutableReturn_throws_inputNotAcked() {
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         // Return приходит раньше confirm (как на реальном брокере): к моменту

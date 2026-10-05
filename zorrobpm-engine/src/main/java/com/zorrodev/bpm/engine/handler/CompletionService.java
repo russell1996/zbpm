@@ -1,8 +1,9 @@
 package com.zorrodev.bpm.engine.handler;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
-import com.zorrodev.bpm.exchange.ServiceTaskDispatchPhase;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
@@ -12,6 +13,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.dto.Token;
+import com.zorrodev.bpm.exchange.ServiceTaskDispatchPhase;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
@@ -23,6 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -58,14 +61,6 @@ public class CompletionService {
     private final BpmMetrics bpmMetrics;
 
     /**
-     * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
-     * {@code service_tasks} rows (user tasks — C8-21/C8-24 phases; gateways and events —
-     * C8-25 phases). A service-task completion arriving for them with no listener phase
-     * open is spurious (e.g. a redelivered listener completion; the broker is at-least-once)
-     * and is ignored instead of falling into the service-task tail (no row → orElseThrow).
-     * Any FUTURE kind defaults to the tail (loud 500) — fail-closed by construction.
-     */
-    /**
      * WO-C8-36 (red-team HOLD-1): уже обработанные completionId (дедуп FAILED-дубликатов
      * открытой фазы). Только in-process память: Caffeine bounded 10k/10m — тот же паттерн,
      * что resultCache воркера (F38). Рестарт очищает сет — осознанно (см. failSharedBudgetOnce).
@@ -77,10 +72,10 @@ public class CompletionService {
      * повторно. Устранение этого требует durable-inbox (миграция схемы, G-C) —
      * вне объёма этого WO; practical impact ограничен окном рестарта.
      */
-    private final com.github.benmanes.caffeine.cache.Cache<String, Boolean> processedCompletionIds =
-        com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+    private final Cache<String, Boolean> processedCompletionIds =
+        Caffeine.newBuilder()
             .maximumSize(10_000)
-            .expireAfterAccess(java.time.Duration.ofMinutes(10))
+            .expireAfterAccess(Duration.ofMinutes(10))
             .build();
 
     /** WO-C8-36: тест-хук — сколько completionId сейчас помнит дедуп. */
@@ -88,6 +83,14 @@ public class CompletionService {
         return processedCompletionIds.asMap().size();
     }
 
+    /**
+     * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
+     * {@code service_tasks} rows (user tasks — C8-21/C8-24 phases; gateways and events —
+     * C8-25 phases). A service-task completion arriving for them with no listener phase
+     * open is spurious (e.g. a redelivered listener completion; the broker is at-least-once)
+     * and is ignored instead of falling into the service-task tail (no row → orElseThrow).
+     * Any FUTURE kind defaults to the tail (loud 500) — fail-closed by construction.
+     */
     private static final Set<BpmnElementType> PHASE_ONLY_ELEMENT_TYPES = EnumSet.of(
         BpmnElementType.USER_TASK,
         BpmnElementType.EXCLUSIVE_GATEWAY, BpmnElementType.PARALLEL_GATEWAY,
