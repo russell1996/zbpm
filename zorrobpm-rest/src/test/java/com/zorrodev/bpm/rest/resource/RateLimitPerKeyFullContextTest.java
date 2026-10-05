@@ -70,6 +70,10 @@ class RateLimitPerKeyFullContextTest {
     @Autowired
     private ProcessMemberRepository processMemberRepository;
 
+    /** NEW5-09: счётчик отказов 429 (его до этого WO не существовало). */
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
@@ -220,5 +224,49 @@ class RateLimitPerKeyFullContextTest {
             builder.header("Authorization", "Bearer " + bearerToken);
         }
         return builder.build();
+    }
+
+    /**
+     * NEW5-09 (WO-QW-10): каждый выданный 429 обязан попасть в счётчик — без него
+     * всплеск троттлинга не на чем построить Grafana-правило (до этого WO метрики
+     * отказов не существовало вообще).
+     *
+     * <p>POF: счётчик заведен в единственной воронке {@code send429}, поэтому и
+     * «сними счётчик» (тест падает), и «убери вызов из send429, оставив 429 как
+     * были» (тест тоже падает) — оба варианта закрыты.
+     */
+    @Test
+    void criterionNew5RateLimit429_incrementsRejectionCounter() throws Exception {
+        double before = rejectionCount();
+
+        // Реальный обход лимита по IP-бакету через настоящую цепочку фильтров
+        // (RANDOM_PORT + HttpClient — не вызов send429 напрямую).
+        int seen429 = 0;
+        // Лимита в фильтре публично нет (только reset()), поэтому перебираем
+        // заведомо больше дефолта login-бакета (5/мин): 30 запросов с одного адреса.
+        for (int i = 0; i < 30; i++) {
+            HttpResponse<String> r = httpClient.send(
+                HttpRequest.newBuilder()
+                    .uri(URI.create("http://localhost:" + port + "/auth/login"))
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                    .header("X-Forwarded-For", "198.51.100.42")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"username\":\"nobody\",\"password\":\"x\"}"))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            if (r.statusCode() == 429) {
+                seen429++;
+            }
+        }
+
+        assertThat(seen429).as("лимит действительно выдан — иначе тест проверял бы пустоту").isPositive();
+        assertThat(rejectionCount())
+            .as("каждый 429 учтён в zbpm.ratelimit.rejected")
+            .isGreaterThanOrEqualTo(before + seen429);
+    }
+
+    private double rejectionCount() {
+        io.micrometer.core.instrument.Counter counter =
+            meterRegistry.find("zbpm.ratelimit.rejected").counter();
+        assertThat(counter).as("счётчик отказов зарегистрирован").isNotNull();
+        return counter.count();
     }
 }

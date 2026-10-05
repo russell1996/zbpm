@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.nio.file.Files;
@@ -34,6 +35,19 @@ import static org.mockito.Mockito.verify;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
+// NEW5-05 (WO-QW-10): @MockitoBean DBService — общий мок для теста И для потоков
+// планировщиков того же контекста (@EnableScheduling активен и в тестах). Поллер с
+// интервалом 2-5с успевал дёрнуть мок из своего потока, пока тест ставил на нём
+// стабы → UnfinishedStubbingException, недетерминированно (в CI это и ловилось).
+// Паркуем ВСЕ поллеры, которые ходят в DBService, на час — тем же приёмом, что
+// TimerBatchIsolationPgIT/FeedPosition*PgIT паркуют таймер-поллер. Поведение
+// самого теста не меняется: он проверяет атомарность деплоя, а не поллеры.
+@TestPropertySource(properties = {
+    "zorrobpm.feed-position.poll-interval-ms=3600000",
+    "zorrobpm.engine.outbox-poll-interval-ms=3600000",
+    "zorrobpm.engine.timer-poll-interval-ms=3600000",
+    "zorrobpm.servicetask.watchdog-interval-ms=3600000"
+})
 class ProcessDefinitionServiceAtomicityIntegrationTests {
 
     @Autowired private ProcessDefinitionService service;
