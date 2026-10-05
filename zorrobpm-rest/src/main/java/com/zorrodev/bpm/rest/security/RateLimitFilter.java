@@ -43,9 +43,12 @@ import java.util.Set;
  * <p>Data endpoints: per-IP generous limit (WO-SEC-45).
  *
  * <p>Trusted proxy support: when {@code zorrobpm.security.rate-limit.trusted-proxies} is configured,
- * the filter trusts the connection remote address as the real client IP (set by nginx {@code real_ip_header}
- * + {@code set_real_ip_from}, WO-SEC-52). It does NOT parse the leftmost X-Forwarded-For entry, which an
- * upstream client can spoof (SEC-4). Untrusted XFF headers are ignored (WO-SEC-12/13 anti-spoofing preserved).
+ * the filter takes the client IP from the {@code X-Real-IP} header — but ONLY when the immediate
+ * TCP peer belongs to the trusted set. nginx overwrites that header with its own post-{@code real_ip}
+ * {@code $remote_addr} ({@code proxy_set_header X-Real-IP $remote_addr}, WO-SEC-86), so the value
+ * cannot be spoofed by the client. It does NOT parse the leftmost X-Forwarded-For entry, which an
+ * upstream client can spoof (SEC-4). Untrusted proxy headers are ignored (WO-SEC-12/13 anti-spoofing
+ * preserved); without a trusted proxy in front, {@code remoteAddr} is the direct client.
  *
  * <p>HOLD-fix (body-buffering DoS): per-IP check runs BEFORE any body read.
  * The body is only buffered (with a 16 KB cap) after the IP bucket allows the request.
@@ -381,24 +384,38 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     /**
-     * WO-SEC-44/SEC-52: extract client IP, respecting trusted proxy configuration.
+     * WO-SEC-44/SEC-52/WO-SEC-86: extract client IP, respecting trusted proxy configuration.
      * <p>
-     * When the immediate peer is a trusted proxy (e.g. nginx with {@code real_ip_header
-     * X-Forwarded-For} + {@code set_real_ip_from}), the proxy has already rewritten the
-     * connection's remote address to the real client IP — so we trust {@code remoteAddr}
-     * directly. Reading the LEFTMOST X-Forwarded-For entry (the old behaviour, SEC-4) is
-     * spoofable: an upstream client can prepend arbitrary addresses to XFF, and the
-     * leftmost is exactly the attacker-controlled one, letting a client dodge/forge its
-     * rate-limit bucket. Without a trusted proxy in front, {@code remoteAddr} is the
-     * direct client — also correct.
+     * When the immediate TCP peer is a trusted proxy (the {@code frontend} nginx container,
+     * matched via {@code zorrobpm.security.rate-limit.trusted-proxies}), the real client IP
+     * is taken from the {@code X-Real-IP} header. nginx overwrites that header with its own
+     * post-{@code real_ip} {@code $remote_addr} on every proxied request
+     * ({@code proxy_set_header X-Real-IP $remote_addr}), so a client cannot spoof it — the
+     * value the app sees was written by nginx, not by the client.
+     * <p>
+     * When the peer is NOT trusted (or no proxies are configured, or the header is
+     * absent/blank), the raw {@code remoteAddr} is used and every proxy header is ignored.
+     * In particular the LEFTMOST {@code X-Forwarded-For} entry is NEVER read here (SEC-4):
+     * an upstream client can prepend arbitrary addresses to XFF, and the leftmost is
+     * exactly the attacker-controlled one.
+     * <p>
+     * WO-SEC-86 root cause note: an earlier revision trusted the peer's address directly
+     * on the false premise that nginx {@code real_ip} "rewrites the connection's remote
+     * address". It does not — it rewrites {@code $remote_addr} INSIDE nginx, not the source
+     * address of the outgoing connection to the app. Every visitor therefore presented the
+     * same address and all "per-IP" buckets were one shared bucket per installation.
      */
     public String getClientIp(HttpServletRequest request) {
         String remoteAddr = request.getRemoteAddr();
-        if (trustedProxies.isEmpty() || !isTrustedProxy(remoteAddr)) {
-            return remoteAddr;
+        if (!trustedProxies.isEmpty() && isTrustedProxy(remoteAddr)) {
+            String realIp = request.getHeader("X-Real-IP");
+            // Red-team WO-SEC-86 (п.3): значение обязано быть одиночным IP —
+            // список через запятую / мусор ротацией давал бы свежие бакеты +
+            // раздувал таблицу. Не-IP → fallback на remoteAddr (fail-closed).
+            if (realIp != null && !realIp.isBlank() && isSingleIpAddress(realIp.trim())) {
+                return realIp.trim();
+            }
         }
-        // Trusted proxy in front: rely on it having resolved the real client IP into the
-        // connection remote address (nginx real_ip). Do NOT parse XFF leftmost (SEC-4).
         return remoteAddr;
     }
 
@@ -417,6 +434,20 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     /**
+     * Red-team WO-SEC-86 (п.3): строгая проверка «одиночный IP-адрес» (v4/v6) —
+     * без неё список/мусор в X-Real-IP становился ключом бакета дословно.
+     */
+    static boolean isSingleIpAddress(String value) {
+        if (value.contains(",") || value.contains(" ") || value.contains("\t")) return false;
+        try {
+            java.net.InetAddress.getByName(value);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Simple CIDR match for IPv4. Supports /8, /16, /24, /32 masks.
      */
     static boolean matchesCidr(String ip, String cidr) {
@@ -424,6 +455,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
             String[] parts = cidr.split("/");
             String network = parts[0];
             int prefixLen = Integer.parseInt(parts[1]);
+            // Red-team WO-SEC-86 (п.2): prefix вне 0..32 — fail-closed. Без
+            // этого сдвиг Java (mod 64) давал маску Long.MIN_VALUE и match
+            // ЛЮБОГО пира (fail-open на опечатке в env).
+            if (prefixLen < 0 || prefixLen > 32) return false;
 
             long ipNum = ipToLong(ip);
             long networkNum = ipToLong(network);
