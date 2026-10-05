@@ -209,9 +209,14 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
         }
         Set<String> firedInPass = new HashSet<>();
         boolean progress = true;
+        // Детерминированный порядок (minor red-team раунда 3): припаркованных join'ов может быть
+        // несколько, и порядок, в котором они срабатывают, определял HashSet — то есть хеш-функция
+        // JVM, а не модель процесса. Сортируем по element id: и лог, и порядок продолжений
+        // становятся воспроизводимыми. (Слой чтения тоже отдаёт отсортированный набор —
+        // ParallelGatewayDbOperationsImpl.getGatewaysWithOpenArrivals.)
         while (progress) {
             progress = false;
-            for (String gatewayId : dbService.getGatewaysWithOpenArrivals(processInstanceId)) {
+            for (String gatewayId : new TreeSet<>(dbService.getGatewaysWithOpenArrivals(processInstanceId))) {
                 if (firedInPass.contains(gatewayId)) {
                     continue;
                 }

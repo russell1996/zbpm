@@ -10,7 +10,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 
 /**
@@ -63,10 +65,15 @@ public class ParallelGatewayDbOperationsImpl implements ParallelGatewayDbOperati
         parallelGatewayRepository.save(entity);
     }
 
-    @Override
-    public Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId) {
-        return new HashSet<>(parallelGatewayRepository.findGatewayIdsWithOpenArrivals(processInstanceId));
-    }
+@Override
+public Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId) {
+    // WO-C8-35 раунд 5 (minor red-team): порядок срабатывания нескольких припаркованных
+    // join'ов не должен зависеть от HashSet. Возвращаем ОТСОРТИРОВАННЫЙ по element id набор
+    // (LinkedHashSet с порядком TreeSet) — иначе при нескольких припаркованных join'ах
+    // последовательность resume задаётся хеш-функцией JVM, а не моделью процесса.
+    return new LinkedHashSet<>(new TreeSet<>(
+        parallelGatewayRepository.findGatewayIdsWithOpenArrivals(processInstanceId)));
+}
 
     @Override
     public Integer getInclusiveExpected(UUID processInstanceId, String gatewayElementId) {
