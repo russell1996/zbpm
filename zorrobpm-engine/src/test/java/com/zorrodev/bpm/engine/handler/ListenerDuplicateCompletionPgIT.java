@@ -37,7 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * фазу, дубликаты обязаны глохнуть).
  *
  * <p>POF: мутация «phased-путь делегирует в legacy-цепочку без exact-match»
- * даёт 2 endEvent-строки (второй дубликат падает в хвост) — тест RED.
+ * (зашунтированы обе ветки — completePhased и failPhased) даёт 3 endEvent-строки
+ * вместо 1: каждый дубликат падает в хвост и открывает end-фазу заново —
+ * тест RED на `expected: 1 but was: 3` (проверено мутацией, см. отчёт).
  */
 @Tag("pg")
 class ListenerDuplicateCompletionPgIT extends PostgresIT {

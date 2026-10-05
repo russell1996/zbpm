@@ -42,6 +42,14 @@ public interface ActivityService {
     void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, String dispatchPhase,
         Integer dispatchIndex);
 
+    /**
+     * WO-C8-36 (security review HOLD-1): тот же fail плюс {@code completionId} — идентификатор
+     * отправки результата (nullable). Сквозной проброс до
+     * {@code CompletionService.failSharedBudgetOnce} (дедуп дубликатов открытой фазы).
+     */
+    void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, String dispatchPhase,
+        Integer dispatchIndex, String completionId);
+
     void completeUserTask(UUID activityId, List<ProcessVariable> variables);
 
     /**

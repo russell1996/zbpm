@@ -108,7 +108,13 @@ public class RuntimeServiceImpl implements RuntimeService {
     @Override
     public IdDTO failServiceTask(UUID id, String errorMessage, Integer retries, String dispatchPhase,
             Integer dispatchIndex) {
-        activityService.failServiceTask(id, errorMessage, retries, dispatchPhase, dispatchIndex);
+        return failServiceTask(id, errorMessage, retries, dispatchPhase, dispatchIndex, null);
+    }
+
+    @Override
+    public IdDTO failServiceTask(UUID id, String errorMessage, Integer retries, String dispatchPhase,
+            Integer dispatchIndex, String completionId) {
+        activityService.failServiceTask(id, errorMessage, retries, dispatchPhase, dispatchIndex, completionId);
         IdDTO result = new IdDTO();
         result.setId(id);
         return result;

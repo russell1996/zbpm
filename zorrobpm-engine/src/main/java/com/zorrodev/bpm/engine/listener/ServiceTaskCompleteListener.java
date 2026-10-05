@@ -44,7 +44,8 @@ public class ServiceTaskCompleteListener {
         // WO-C8-36 (CR-01): идентификатор вызова — в перегрузки (null = legacy без проверки).
         if ("FAILED".equalsIgnoreCase(serviceTaskCompleted.getStatus())) {
             runtimeService.failServiceTask(serviceTaskId, serviceTaskCompleted.getErrorMessage(), null,
-                serviceTaskCompleted.getDispatchPhase(), serviceTaskCompleted.getDispatchIndex());
+                serviceTaskCompleted.getDispatchPhase(), serviceTaskCompleted.getDispatchIndex(),
+                serviceTaskCompleted.getCompletionId());
             return;
         }
 
