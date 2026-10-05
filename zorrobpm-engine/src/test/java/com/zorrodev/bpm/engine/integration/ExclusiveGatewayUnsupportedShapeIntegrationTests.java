@@ -2,6 +2,8 @@ package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
+import com.zorrodev.bpm.contract.model.ProcessVariable;
+import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.contract.dto.query.UserTaskQuery;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.UserTask;
@@ -85,6 +87,34 @@ public class ExclusiveGatewayUnsupportedShapeIntegrationTests {
             .filter(i -> i.getActivityId().equals(gateway.getId()))
             .toList())
             .as("no incident for a legal (if pointless) diagram")
+            .isEmpty();
+    }
+
+    /**
+     * WO-C8-35 (CR-10 ч.1), решение зафиксировано явно: 1/1 — полный no-op, поэтому
+     * условие на его единственном исходящем потоке НЕ вычисляется. Схема выглядит
+     * бессмысленной, но трактовка «как будто шлюза нет» выбрана сознательно (так требует
+     * WO) и задокументирована в README; без этого теста она выглядела бы забытым
+     * пробелом — G-H red-team справедливо указал на несоответствие контракту.
+     */
+    @Transactional
+    @Test
+    void degenerateExclusiveGateway_oneInOneOut_withFalseCondition_stillPassesThrough() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-exclusive-gateway-degenerate-condition.bpmn"));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        UUID processInstanceId = runtimeService.startProcessInstance(dto).getId();
+
+        assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt())
+            .as("the FALSE condition on the single outgoing flow is not evaluated — 1/1 is a no-op")
+            .isNotNull();
+        assertThat(incidentRepository.findAll().stream()
+            .filter(i -> i.getMessage() != null)
+            .filter(i -> i.getMessage().contains("xor"))
+            .toList())
+            .as("no incident: the shape is legal, the condition is simply not consulted")
             .isEmpty();
     }
 

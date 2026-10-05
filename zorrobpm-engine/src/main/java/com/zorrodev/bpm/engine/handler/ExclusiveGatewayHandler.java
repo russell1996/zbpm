@@ -99,12 +99,22 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
             BpmnElementModel target = bpmn.getElement(targetRef);
             executor.execute(processInstanceId, token, bpmn, target);
         } else if (outgoings.size() == 1 && incoming.size() == 1) {
-            // WO-C8-35 (CR-10 ч.1): degenerate 1-in/1-out is an unconditional
+            // WO-C8-35 (CR-10 ч.1): degenerate 1-in/1-out is an UNCONDITIONAL
             // pass-through — with nothing to evaluate and nothing to merge, the gateway
             // is a no-op in the model and must behave like one in the engine. Before this
             // it fell into the `else` and threw IllegalStateException, i.e. an incident on
             // a legal (if pointless) diagram. Same shape as the PGW 1/1 pass-through
             // (WO-C8-34 crit 7) and the inclusive handler's fallthrough.
+            //
+            // A conditionExpression ON this single outgoing flow is deliberately NOT
+            // evaluated (the G-H red-team flagged the inconsistency and the answer is a
+            // decision, not a patch): the WO asks for an unconditional pass-through «как
+            // если бы шлюза не было», and a 1/1 gateway is exactly that. So the general
+            // rule "conditions are evaluated on flows out of exclusive/inclusive gateways"
+            // has this one documented exception — written down in README ("Чего честно
+            // нет") and pinned by
+            // ExclusiveGatewayUnsupportedShapeIntegrationTests.degenerateExclusiveGateway_
+            // oneInOneOut_withFalseCondition_stillPassesThrough.
             String outgoing = outgoings.get(0);
             flowNavigator.processFlow(processInstanceId, token, outgoing, false, null);
             dbService.completeActivity(activityId);
