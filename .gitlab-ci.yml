@@ -724,7 +724,21 @@ mirror:github:
             ci/claude-hook-dispatch-check.sh \
             ci/test-gate.sh ci/test-gate-selftest.sh ci/wo-report-gate.sh ci/sync-dispatch.sh \
             ci/deploy-wait.sh
-      sed -i 's/10\.189\.131\.111/<internal-host>/g' docker-compose.yml
+      # 2026-10-05: подмена внутренних адресов — по ВСЕМ текстовым файлам, не только docker-compose.yml
+      # (раньше nginx.conf, nginx.cidr.test.ts и README светили подсеть/хосты в публичном форке).
+      # Подсеть/хосты -> адреса документации RFC 5737 (192.0.2.0/24), внутренний GitLab -> плейсхолдер.
+      grep -rIl . --exclude-dir=.git . | xargs sed -i \
+        -e 's#10\.189\.131\.0/24#192.0.2.0/24#g' \
+        -e 's#10\.189\.131\.111#192.0.2.111#g' \
+        -e 's#10\.189\.131\.242#192.0.2.242#g' \
+        -e 's#https://git\.itte\.kz/[A-Za-z0-9_./-]*#https://github.com/russell1996/zbpm.git#g' \
+        -e 's#git\.itte\.kz#<internal-git-host>#g' \
+        -e 's#<prod-host>#<prod-host>#g'
+      # Fail-closed: не публикуем, если внутренний адрес/хост остался (новый формат, новый файл).
+      if grep -rInE '10\.189\.|git\.itte\.kz|<prod-host>|92\.46\.186' --exclude-dir=.git . ; then
+        echo "ABORT: internal address survived sanitization, mirror NOT pushed" >&2
+        exit 1
+      fi
       git init -q
       git checkout -q -b main
       git add -A
