@@ -270,16 +270,22 @@ class HttpConnectorSecretLeakTest {
             pv("http.authType", "apiKey", "STRING"),
             pv("http.authRef", "ck", "STRING"));
 
-        List<ProcessVariable> result = w.handleJob(model);
+        ListAppender<ILoggingEvent> appender = attachAppender(HttpConnectorWorker.class);
+        try {
+            List<ProcessVariable> result = w.handleJob(model);
 
-        assertThat(result).isEmpty();
-        org.mockito.ArgumentCaptor<List> captor = org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(activityService).throwServiceTaskError(eq(model.getServiceTaskId()),
-            eq(HttpConnectorWorker.ERR_CONFIG), captor.capture());
-        List<com.zorrodev.bpm.contract.model.ProcessVariable> vars = captor.getValue();
-        String httpError = vars.stream().filter(v -> "http.error".equals(v.getName())).findFirst()
-            .orElseThrow(() -> new AssertionError("no http.error in " + vars)).getValue();
-        assertThat(httpError).doesNotContain(HEADER_CANARY);
+            assertThat(result).isEmpty();
+            org.mockito.ArgumentCaptor<List> captor = org.mockito.ArgumentCaptor.forClass(List.class);
+            verify(activityService).throwServiceTaskError(eq(model.getServiceTaskId()),
+                eq(HttpConnectorWorker.ERR_CONFIG), captor.capture());
+            List<com.zorrodev.bpm.contract.model.ProcessVariable> vars = captor.getValue();
+            String httpError = vars.stream().filter(v -> "http.error".equals(v.getName())).findFirst()
+                .orElseThrow(() -> new AssertionError("no http.error in " + vars)).getValue();
+            assertThat(httpError).doesNotContain(HEADER_CANARY);
+            assertNoCanary(appender.list, HEADER_CANARY);
+        } finally {
+            ((Logger) LoggerFactory.getLogger(HttpConnectorWorker.class)).detachAppender(appender);
+        }
     }
 
     @Test
