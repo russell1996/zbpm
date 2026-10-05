@@ -68,6 +68,11 @@ default:
       - "zorrobpm-job-handler-spring-boot-starter/**/*"
       - "zorrobpm-test/**/*"
       - "zorrobpm-exchange/**/*"
+      # WO-QW-11 (CR-14): модуль был в reactor, но не в якоре — MR, меняющий
+      # ТОЛЬКО коннектор, молча пропускал backend verify / test:pg / security /
+      # build. Долговременная страховка от повторения — ci/check-code-changes-paths.sh
+      # (сверяет якорь со списком <modules> корневого pom.xml).
+      - "zorrobpm-http-connector/**/*"
       - "zorrobpm-frontend/**/*"
       - "pom.xml"
       - "Dockerfile"
