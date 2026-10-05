@@ -451,7 +451,7 @@ public class CompletionService {
         // completeUserTask выше (сериализация с cancel; см. комментарий выше).
         // Phase-resume выше лока осознанно: у phase-job нет activity-строки
         // (lock ниже orElseThrow — см. C8-25).
-        if (!isCompletionAllowed(serviceTaskId, activity)) {
+        if (!isCompletionAllowed(serviceTaskId, activity, dispatchPhase)) {
             return;
         }
         UUID processInstanceId = activity.getProcessInstanceId();
@@ -726,7 +726,7 @@ public class CompletionService {
      * WO-DEBT-6 S1: status guard of {@link #completeServiceTask} (WO-C8-28).
      * Extracted byte-identical except mechanical return plumbing. Returns true when the completion may proceed.
      */
-    private boolean isCompletionAllowed(UUID serviceTaskId, Activity activity) {
+    private boolean isCompletionAllowed(UUID serviceTaskId, Activity activity, String dispatchPhase) {
         if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
             // WO-C8-28: a CANCELLED activity with an open canceling phase is NOT done —
             // its listener completions must reach the canceling branch below (the phase
@@ -740,7 +740,13 @@ public class CompletionService {
                 // (ERROR) that was superseded by incident-resolve re-execution.
                 log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
                 // WO-QW-2: observability for the idempotent guard above (log level + no-op unchanged).
-                bpmMetrics.activityTransitionIgnored("stale_status");
+                // WO-C8-36 (F-5): тег причины РАЗДЕЛЁН — игнор без идентификатора
+                // вызова (legacy fail-open путь, dispatchPhase == null) иначе неотличим
+                // от игнора phased-сообщения, хотя у первого нет защиты CR-01 вовсе.
+                // Это тот же объект «принято осознанным риском» (E-3), но измеряемый:
+                // E-3a обязан быть виден по метрике, а не только по WARN в логе.
+                bpmMetrics.activityTransitionIgnored(dispatchPhase == null
+                    ? "legacy_null_phase" : "stale_status");
                 return false;
             }
         }

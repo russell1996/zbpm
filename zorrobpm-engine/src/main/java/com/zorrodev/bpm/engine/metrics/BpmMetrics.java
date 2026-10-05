@@ -7,6 +7,9 @@ import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -71,7 +74,16 @@ public class BpmMetrics {
     private final Timer timerLag;
 
     // --- Activity transitions (WO-QW-2) ---
-    private final Counter activityTransitionIgnored;
+    // WO-C8-36 (F-5): счётчик ОДИН на причину, а не один на всё. РаньшеMeter с
+    // жёстким .tag("reason","stale_status") принимал ещё и stale_phase, и
+    // duplicate_completion, то есть в Prometheus phased-игноры и отказы дедупа были
+    // неотличимы от stale_status — а счётчик добавлен именно затем, чтобы оператор
+    // ВИДЕЛ причину (E-3a).
+    private final Map<String, Counter> activityTransitionIgnoredByReason;
+
+    /** Известные причины игнора перехода. Неизвестные — по-прежнему не считаются. */
+    static final List<String> ACTIVITY_TRANSITION_IGNORE_REASONS =
+        List.of("stale_status", "stale_phase", "duplicate_completion", "legacy_null_phase");
 
     /**
      * WO-C8-36 (M-3): сколько completion'ов пришло БЕЗ идентификатора вызова
@@ -207,10 +219,17 @@ public class BpmMetrics {
                 + "These are OUTSIDE the CR-01 exact-match guard by construction (E-3).")
             .register(registry);
 
-        this.activityTransitionIgnored = Counter.builder("zbpm.activity.transition.ignored")
-            .description("Activity completions ignored by the idempotent status guard")
-            .tag("reason", "stale_status")
-            .register(registry);
+        // WO-C8-36 (F-5): по счётчику на причину — тег перестаёт врать.
+        Map<String, Counter> ignoredByReason = new LinkedHashMap<>();
+        for (String reason : ACTIVITY_TRANSITION_IGNORE_REASONS) {
+            ignoredByReason.put(reason, Counter.builder("zbpm.activity.transition.ignored")
+                .description("Activity completions ignored by the idempotent status/phase guard. "
+                    + "One series per reason — a shared 'stale_status' tag made phased-ignores "
+                    + "and dedup rejections indistinguishable from it.")
+                .tag("reason", reason)
+                .register(registry));
+        }
+        this.activityTransitionIgnoredByReason = Map.copyOf(ignoredByReason);
 
         // WO-REL-56 (part B): foreign sequence dropped, visible to the
         // operator instead of silently skipped (pre-REL-55 behavior was a
@@ -275,13 +294,20 @@ public class BpmMetrics {
         legacyUnphasedCompletion.increment();
     }
 
-    // --- Activity transitions (WO-QW-2) ---
+    // --- Activity transitions (WO-QW-2 + WO-C8-36 F-5) ---
+    /**
+     * Причины: {@code stale_status} (WO-QW-2 — активность уже в терминальном
+     * статусе), {@code stale_phase} (не тот индекс/фаза вызова), {@code
+     * duplicate_completion} (тот же {@code completionId} уже обработан — durable
+     * дедуп H-2), {@code legacy_null_phase} (сообщение без идентификатора вызова,
+     * fail-open путь E-3). Каждая — ОТДЕЛЬНАЯ серия: общий счётчик с одним тегом
+     * делал три разные причины неразличимыми, а счётчик добавлен именно ради
+     * видимости причины.
+     */
     public void activityTransitionIgnored(String reason) {
-        // WO-C8-36: reasons — "stale_status" (WO-QW-2), "stale_phase" и
-        // "duplicate_completion" (phased-игноры, включая red-team HOLD-1 дедуп).
-        if ("stale_status".equals(reason) || "stale_phase".equals(reason)
-            || "duplicate_completion".equals(reason)) {
-            activityTransitionIgnored.increment();
+        Counter counter = activityTransitionIgnoredByReason.get(reason);
+        if (counter != null) {
+            counter.increment();
         }
     }
 
