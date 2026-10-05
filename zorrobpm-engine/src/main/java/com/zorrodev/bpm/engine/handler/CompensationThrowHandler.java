@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.handler;
 
 import com.zorrodev.bpm.engine.dto.Activity;
+import com.zorrodev.bpm.engine.dto.Token;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
@@ -33,6 +34,7 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
 
     private final DBService dbService;
     private final FlowNavigator flowNavigator;
+    private final ElementSupport elementSupport;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.COMPENSATION_THROW_EVENT; }
@@ -47,21 +49,144 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
 
     private void processCompensationThrow(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement, TokenExecutor executor) {
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        dbService.completeActivity(activityId);
 
         String activityRef = Optional.ofNullable(bpmnElement.getExtensions())
             .map(BpmnElementExtensionModel::getEventDefinition)
             .map(EventDefinitionExtensionModel::getReference)
             .orElse(null);
+        // WO-C8-34 (CR-06 + CR-07): the thrower is scope-confined from here on —
+        // candidates are completed activities of THIS scope only (CancelEndHandler
+        // pattern), with the pre-existing activityRef filter applied on top.
+        Token throwToken = dbService.findToken(tokenId).orElse(null);
+        UUID scopeActivityId = throwToken == null ? null : throwToken.getScopeActivityId();
         log.info("{}/{}: Compensation throw {} at {} (target {})", processInstanceId, tokenId, bpmnElement.getId(), activityId, activityRef == null ? "all" : activityRef);
 
         List<Activity> targets = dbService.getCompletedActivities(processInstanceId);
+        if (scopeActivityId != null) {
+            targets = elementSupport.filterActivitiesInScope(processInstanceId, targets, scopeActivityId);
+        }
         if (activityRef != null) {
-            targets = targets.stream().filter(a -> activityRef.equals(a.getBpmnElementId())).toList();
+            String ref = activityRef;
+            targets = targets.stream().filter(a -> ref.equals(a.getBpmnElementId())).toList();
         }
         runCompensation(processInstanceId, tokenId, bpmn, targets, executor);
 
+        // WO-C8-34 (CR-06): waitForCompletion (BPMN default true) — the throw
+        // activity stays IN_PROGRESS until every launched handler really
+        // completes; the outgoing continuation runs only then. Explicit
+        // waitForCompletion=false keeps the legacy fire-and-continue.
+        boolean wait = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(EventDefinitionExtensionModel::getWaitForCompletion)
+            .orElse(Boolean.TRUE);
+        if (wait) {
+            // IN_PROGRESS = parked: resume (from the service/user completion
+            // tails) completes it when the last launched handler finishes.
+            // With zero launched handlers there is nothing to wait for —
+            // complete immediately (old path, no leak).
+            if (!havePendingHandlers(processInstanceId, activityId, bpmn, targets)) {
+                dbService.completeActivity(activityId);
+                flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
+            }
+            return;
+        }
+        dbService.completeActivity(activityId);
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
+    }
+
+    /**
+     * WO-C8-34 (CR-06): did this throw launch any compensation handler that is
+     * still unfinished? For each launched handler the LATEST row (by completedAt,
+     * then by id for same-millisecond ties) decides: COMPLETED latest → done;
+     * anything else latest (CREATED/IN_PROGRESS row, or no row at all) →
+     * pending. Latest-row-wins closes the same-transaction snapshot hole
+     * (a just-completed handler whose bulk UPDATE is invisible to the
+     * repeatable-read snapshot still shows its CREATED row — but the COMPLETED
+     * row has a NEWER id, and exactly one of them is latest).
+     */
+    private boolean havePendingHandlers(UUID processInstanceId, UUID throwActivityId,
+            BpmnProcessDefinitionModel bpmn, List<Activity> targets) {
+        Map<String, BpmnElementModel> boundaryIndex = indexCompensationBoundaries(bpmn);
+        for (Activity target : targets) {
+            BpmnElementModel boundary = boundaryIndex.get(target.getBpmnElementId());
+            if (boundary == null) {
+                continue;
+            }
+            String handlerId = Optional.ofNullable(boundary.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(BoundaryEventExtensionModel::getCompensationHandlerId)
+                .orElse(null);
+            if (handlerId == null || bpmn.getElement(handlerId) == null) {
+                continue;
+            }
+            if (isHandlerPending(processInstanceId, handlerId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * WO-C8-34 (CR-06): latest-row-wins for one handler element. Compares the
+     * newest COMPLETED row against the newest ACTIVE (CREATED/IN_PROGRESS) row
+     * by completedAt (fallback: createdAt for active rows, which never have
+     * completedAt), then by id for same-millisecond ties. Pending unless a
+     * COMPLETED row exists AND no ACTIVE row is newer than it. Same-millisecond
+     * completes-then-recreates ties are vanishingly rare and fail CLOSED
+     * (parked, healed by the next resume) — never silently continued.
+     */
+    private boolean isHandlerPending(UUID processInstanceId, String handlerId) {
+        java.time.Instant newestCompleted = null;
+        java.util.UUID newestCompletedId = null;
+        for (Activity a : dbService.getCompletedActivities(processInstanceId)) {
+            if (!handlerId.equals(a.getBpmnElementId())) {
+                continue;
+            }
+            if (newestCompleted == null || compareActivityRecency(a.getCompletedAt(), a.getId(),
+                    newestCompleted, newestCompletedId) > 0) {
+                newestCompleted = a.getCompletedAt();
+                newestCompletedId = a.getId();
+            }
+        }
+        java.time.Instant newestActive = null;
+        java.util.UUID newestActiveId = null;
+        for (Activity a : dbService.getActiveActivities(processInstanceId)) {
+            if (!handlerId.equals(a.getBpmnElementId())) {
+                continue;
+            }
+            if (newestActive == null || compareActivityRecency(a.getCreatedAt(), a.getId(),
+                    newestActive, newestActiveId) > 0) {
+                newestActive = a.getCreatedAt();
+                newestActiveId = a.getId();
+            }
+        }
+        if (newestCompleted == null) {
+            // launched (boundary maps it) but never finished — still pending.
+            return true;
+        }
+        if (newestActive == null) {
+            return false;
+        }
+        // both exist: pending only if the active row is strictly newer.
+        return compareActivityRecency(newestActive, newestActiveId, newestCompleted, newestCompletedId) > 0;
+    }
+
+    private static int compareActivityRecency(java.time.Instant t1, java.util.UUID id1,
+            java.time.Instant t2, java.util.UUID id2) {
+        if (t1 != null && t2 != null) {
+            int c = t1.compareTo(t2);
+            if (c != 0) {
+                return c;
+            }
+        } else if (t1 != null) {
+            return 1;
+        } else if (t2 != null) {
+            return -1;
+        }
+        if (id1 != null && id2 != null) {
+            return id1.compareTo(id2);
+        }
+        return 0;
     }
 
     /**

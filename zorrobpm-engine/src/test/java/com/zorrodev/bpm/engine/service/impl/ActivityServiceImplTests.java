@@ -233,9 +233,9 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.ESCALATION_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent(dbService, activityService));
         registerHandler(BpmnElementType.ESCALATION_THROW_EVENT, new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent(dbService, flowNav, activityService));
         registerHandler(BpmnElementType.SERVICE_TASK, new com.zorrodev.bpm.engine.handler.ServiceTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService));
-        registerHandler(BpmnElementType.COMPENSATION_THROW_EVENT, new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.COMPENSATION_THROW_EVENT, new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav, elementSupport));
         registerHandler(BpmnElementType.CANCEL_END_EVENT, new com.zorrodev.bpm.engine.handler.CancelEndHandler(dbService, flowNav, activityService,
-            new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav)));
+            new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav, elementSupport)));
         // Aliases
         registerHandler(BpmnElementType.MESSAGE_START_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));
         registerHandler(BpmnElementType.TIMER_START_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));

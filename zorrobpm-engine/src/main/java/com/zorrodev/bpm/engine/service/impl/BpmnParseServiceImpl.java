@@ -471,6 +471,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         } else if (compensate != null) {
             def.setType(EventDefinitionType.COMPENSATE);
             def.setReference(compensate.getActivityRef());
+            // WO-C8-34 (CR-06): the flag used to die here (only type+reference
+            // were copied). BPMN default true — null stays null, the handler
+            // treats null as true.
+            def.setWaitForCompletion(compensate.getWaitForCompletion());
         } else {
             return;
         }
