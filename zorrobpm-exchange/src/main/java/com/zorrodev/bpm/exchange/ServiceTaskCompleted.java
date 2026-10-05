@@ -34,4 +34,9 @@ public class ServiceTaskCompleted {
      * WO-C8-36 (CR-01): индекс внутри фазы из сообщения воркера (nullable).
      */
     private Integer dispatchIndex;
+    /**
+     * WO-C8-36 (red-team HOLD-1): идентификатор отправки (см.
+     * {@code ServiceTaskCompleteData.completionId}). Дальше без изменений.
+     */
+    private String completionId;
 }

@@ -121,8 +121,47 @@ public class JobCompletionListener implements MessageListener {
         return returnedCompletionIds;
     }
 
-    private final java.util.concurrent.atomic.AtomicBoolean confirmsUnavailableLogged =
-        new java.util.concurrent.atomic.AtomicBoolean(false);
+    /**
+     * WO-C8-36 (red-team HOLD-6): чистка опоздавших return-id. Формат метки —
+     * суффикс epoch-millis через '#': id ставит воркер ("completion-UUID"),
+     * метку дописывает returns-callback конфигурации ("completion-UUID#millis").
+     * Без метки (старый формат/тесты) — не трогаем (fail-open чистки, не доставки).
+     */
+    private void evictStaleReturnedIds() {
+        long now = System.currentTimeMillis();
+        returnedCompletionIds.removeIf(id -> {
+            int hash = id.lastIndexOf('#');
+            if (hash < 0) {
+                return false;
+            }
+            try {
+                return now - Long.parseLong(id.substring(hash + 1))
+                    > java.util.concurrent.TimeUnit.MINUTES.toMillis(10);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        });
+    }
+
+    /**
+     * WO-C8-36 (red-team HOLD-4): наблюдаемость тихих ослаблений БЕЗ новой
+     * зависимости (micrometer в стартер не тянем): счётчики + warn на каждый
+     * fallback-путь (видно в логах/алертах; громкий путь — confirm-throw).
+     */
+    private final java.util.concurrent.atomic.AtomicLong confirmsUnavailableCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+    private final java.util.concurrent.atomic.AtomicLong unroutableCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** WO-C8-36: сколько completion'ов ушло без confirm-wait (fallback). */
+    public long confirmsUnavailableCountForTest() {
+        return confirmsUnavailableCount.get();
+    }
+
+    /** WO-C8-36: сколько completion'ов поймано как unroutable. */
+    public long unroutableCountForTest() {
+        return unroutableCount.get();
+    }
 
     /**
      * WO-C8-36: доступны ли publisher confirms на фабрике шаблона.
@@ -254,7 +293,16 @@ public class JobCompletionListener implements MessageListener {
         // WO-C8-36 (CR-13): per-send CorrelationData — confirm/return маппятся на
         // ЭТУ отправку (общий confirm-callback движка без correlation data их
         // игнорировал — та же дыра, что чиним).
-        String completionId = "completion-" + UUID.randomUUID();
+        // WO-C8-36 (red-team HOLD-1): completionId СТАБИЛЕН на redelivery —
+        // объект completeData создаётся один раз на correlationId и переигрывается
+        // из resultCache (см. onMessageTraced), поэтому ставим id один раз и
+        // храним ВНУТРИ тела: движок дедуплицирует FAILED-дубликаты по нему.
+        String idFromBody = completeData.getCompletionId();
+        if (idFromBody == null) {
+            idFromBody = "completion-" + UUID.randomUUID();
+            completeData.setCompletionId(idFromBody);
+        }
+        final String completionId = idFromBody;
         CorrelationData correlationData = new CorrelationData(completionId);
         try {
             // WO-OBS-8: the completion hop carries the forwarded trace context as AMQP
@@ -279,16 +327,46 @@ public class JobCompletionListener implements MessageListener {
                 // (тот же transport-проброс, что выше — вход не подтверждается).
                 // Unroutable даёт confirm ack=true ПОСЛЕ basic.return — возврат
                 // ловится отдельно ниже (голый ack доставке не равен).
+                //
+                // WO-C8-36 (red-team HOLD-6 re-pass): порядок return-vs-confirm.
+                // Брокер шлёт basic.return ДО confirm-ack на том же канале;
+                // spring-amqp доставляет оба колбэка последовательно через
+                // executor соединения, а waitForConfirmsOrDie возвращается только
+                // после confirm — в штатном случае к моменту проверки callback
+                // уже отработал и id в сете. Строгого happens-before спецификация
+                // executor'а не даёт — остаточное окно (return опоздал ПОСЛЕ
+                // confirm): текущий send засчитан успехом, вход ACK'нут, а
+                // сообщение немаршрутизируемо = результат потерян (CR-13-режим
+                // в миниатюре; окно микроскопическое — return идёт до confirm
+                // на том же канале, опоздание требует переупорядочивания в
+                // executor'е). Это остаточный риск, а не «ложного успеха нет».
+                // Чистка ниже убирает только МУСОР сета (опоздавшие id старше
+                // TTL — за это время любой return уже пришёл), доставку она не
+                // чинит и не обязана: TTL удаляет строку, не возвращает результат.
                 rabbitTemplate.waitForConfirmsOrDie(confirmTimeoutMs);
-                if (returnedCompletionIds.remove(completionId)) {
+                evictStaleReturnedIds();
+                // Снимаем оба варианта: "cid#millis" (прод-callback) и голый cid
+                // (тесты/старый формат). removeIf — один проход, атомарно по элементу.
+                java.util.concurrent.atomic.AtomicBoolean returned =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+                returnedCompletionIds.removeIf(id -> {
+                    boolean mine = id.equals(completionId) || id.startsWith(completionId + "#");
+                    if (mine) {
+                        returned.set(true);
+                    }
+                    return mine;
+                });
+                if (returned.get()) {
+                    unroutableCount.incrementAndGet();
                     throw new AmqpException("Completion " + completionId
                         + " returned as unroutable by broker (mandatory) — will be redelivered");
                 }
-            } else if (ensurePublisherConfirms
-                && confirmsUnavailableLogged.compareAndSet(false, true)) {
+            } else if (ensurePublisherConfirms) {
+                long n = confirmsUnavailableCount.incrementAndGet();
                 log.warn("Publisher confirms unavailable on worker connection factory "
-                    + "(HandlerAutoConfiguration sets CORRELATED in prod) — completions "
-                    + "fall back to sync-exceptions-only until confirms appear");
+                    + "(HandlerAutoConfiguration sets CORRELATED in prod) — completion {} "
+                    + "falls back to sync-exceptions-only (fallback #{} until confirms appear)",
+                    completionId, n);
             }
         } catch (AmqpException e) {
             // Transport failure: проброс наружу — контейнер NACK'ает/ретраит вход,

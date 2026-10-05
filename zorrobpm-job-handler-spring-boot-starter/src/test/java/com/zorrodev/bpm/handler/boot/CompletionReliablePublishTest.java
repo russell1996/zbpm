@@ -125,6 +125,8 @@ class CompletionReliablePublishTest {
 
         // Дискриминатор P-67: id, попавший в исключение-путь, — именно тот, что ушёл в send.
         assertThat(inFlight.get()).startsWith("completion-");
+        // WO-C8-36 (red-team re-pass-3): счётчик unroutable реально инкрементится.
+        assertThat(listener.unroutableCountForTest()).isEqualTo(1L);
     }
 
     @Test
@@ -148,6 +150,37 @@ class CompletionReliablePublishTest {
 
         listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-off"));
 
+        org.mockito.Mockito.verify(rabbitTemplate, org.mockito.Mockito.never())
+            .waitForConfirmsOrDie(anyLong());
+    }
+
+    @Test
+    void staleReturnedId_evicted_unroutableStillDetectedForFreshId() {
+        // WO-C8-36 (red-team HOLD-6): опоздавший return (id старше TTL) не висит
+        // в сете вечно — чистка по метке; свежий unroutable при этом ловится.
+        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        long ancient = System.currentTimeMillis()
+            - java.util.concurrent.TimeUnit.MINUTES.toMillis(11);
+        listener.returnedCompletionIdsForTest().add("completion-ancient#" + ancient);
+
+        listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-evict"));
+
+        org.mockito.Mockito.verify(rabbitTemplate).waitForConfirmsOrDie(5_000L);
+        assertThat(listener.returnedCompletionIdsForTest()).doesNotContain("completion-ancient#" + ancient);
+    }
+
+    @Test
+    void confirmsUnavailableFallback_countedAndLogged() {
+        // WO-C8-36 (red-team HOLD-4): тихое ослабление посчитано (не молча).
+        org.springframework.amqp.rabbit.connection.ConnectionFactory noConfirms =
+            org.mockito.Mockito.mock(org.springframework.amqp.rabbit.connection.ConnectionFactory.class);
+        org.mockito.Mockito.when(noConfirms.isPublisherConfirms()).thenReturn(false);
+        org.mockito.Mockito.lenient().when(rabbitTemplate.getConnectionFactory()).thenReturn(noConfirms);
+        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+
+        listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-fb"));
+
+        assertThat(listener.confirmsUnavailableCountForTest()).isEqualTo(1L);
         org.mockito.Mockito.verify(rabbitTemplate, org.mockito.Mockito.never())
             .waitForConfirmsOrDie(anyLong());
     }

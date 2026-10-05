@@ -153,7 +153,11 @@ public class HandlerAutoConfiguration {
                         log.warn("Completion returned as unroutable: replyCode={}, replyText={}, correlationId={}",
                             returned.getReplyCode(), returned.getReplyText(), cid);
                         if (cid != null) {
-                            returnedCompletionIds.add(cid);
+                            // WO-C8-36 (red-team HOLD-6): метка времени для чистки
+                            // опоздавших (см. JobCompletionListener.evictStaleReturnedIds).
+                            // Формат "cid#millis"; remove в listener'е снимает оба
+                            // варианта (с меткой и голый — голый кладут тесты).
+                            returnedCompletionIds.add(cid + "#" + System.currentTimeMillis());
                         }
                     });
                 } catch (IllegalStateException someoneElsesCallback) {

@@ -251,9 +251,12 @@ public class BpmMetrics {
 
     // --- Activity transitions (WO-QW-2) ---
     public void activityTransitionIgnored(String reason) {
-        // Single pre-registered reason tag today ("stale_status"); the parameter
-        // keeps the call-site honest if a second reason ever appears.
-        if ("stale_status".equals(reason)) activityTransitionIgnored.increment();
+        // WO-C8-36: reasons — "stale_status" (WO-QW-2), "stale_phase" и
+        // "duplicate_completion" (phased-игноры, включая red-team HOLD-1 дедуп).
+        if ("stale_status".equals(reason) || "stale_phase".equals(reason)
+            || "duplicate_completion".equals(reason)) {
+            activityTransitionIgnored.increment();
+        }
     }
 
     // --- SSE bridge (WO-REL-56, part B) ---
