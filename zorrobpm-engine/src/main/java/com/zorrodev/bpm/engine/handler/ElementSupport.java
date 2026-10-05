@@ -79,44 +79,47 @@ public class ElementSupport {
     }
 
     /**
-     * Locks the activity row ({@code SELECT ... FOR UPDATE} via
-     * {@code DBService.getActivityForUpdate}).
-     * Serialises all execution touching one instance so concurrent async
-     * branches cannot race on joins or double-advance a token; the row read
-     * under the lock is consistent with it (a competing transaction has already
-     * committed by the time we hold it).
-     * <p>WO-REL-30 (B-3): single statement, no read/lock race window
-     * (was: get + lock + get = 3 statements).
-     * <p>WO-REL-59, честно: этот метод лочит ТОЛЬКО activity-строку — НЕ
-     * instance-строку (JOIN в {@code findByIdForUpdate} даёт {@code FOR UPDATE
-     * OF} с одним алиасом на PG, см. javadoc репозитория и
-     * {@code Rel59SqlProbePgIT}). Путь, которому нужна сериализация с cancel
-     * (complete user/service task), обязан брать instance-lock ПЕРВЫМ — через
-     * {@link #lockInstanceFirst}, а не через этот метод.
-     * <p>Shared by {@link CompletionService}, {@link EventTrigger} and
-     * {@link IncidentService} (WO-AUD-24 / P-24 dedup).
-     */
-    public Activity lockAndReload(UUID activityId) {
-        return dbService.getActivityForUpdate(activityId);
-    }
-
-    /**
-     * WO-REL-59: единый порядок захвата instance→activity — тот же, что у
-     * cancel-пути ({@code ProcessInstanceRuntimeOperationsImpl}:
+     * WO-REL-59 + WO-REL-63: единый порядок захвата instance→activity — тот же,
+     * что у cancel-пути ({@code ProcessInstanceRuntimeOperationsImpl}:
      * {@code lockProcessInstance} → {@code cancelActiveActivities}).
-     * До фикса complete-пути брали activity→instance, cancel — наоборот:
-     * на PostgreSQL это ABBA-deadlock под конкурентной нагрузкой
-     * (проигравший — {@code ERROR: deadlock detected}, SQLState 40P01;
-     * воспроизведено {@code Rel59CompleteCancelDeadlockPgIT} на дереве до
-     * фикса). После фикса второй участник просто ждёт коммита первого —
-     * сериализация вместо deadlock.
+     *
+     * <p>Единственный способ взять activity-lock в этом движке. Прежний
+     * {@code lockAndReload} (activity-only) удалён в WO-REL-63: после перевода
+     * последних путей на этот метод у него не осталось ни одного
+     * продакшн-вызова, а сам он — ровно та ловушка, которой оба раза ловился
+     * ABBA-дедлок с отменой.
+     *
+     * <p>Почему activity-first неверен: {@code DBService.getActivityForUpdate}
+     * на PostgreSQL даёт {@code FOR UPDATE OF} с одним алиасом и лочит ТОЛЬКО
+     * строку activity (см. javadoc {@code ActivityRepository.findByIdForUpdate}
+     * и {@code Rel59SqlProbePgIT}). Дальше путь исполнения в конце flow делает
+     * {@code completeProcessInstance} — UPDATE строки {@code process_instances},
+     * то есть просит ТОТ ЖЕ instance-row-lock, который уже держит отмена. Отмена
+     * же берёт instance-lock первым и затем построчно UPDATE'ит activity-строки.
+     * Получается activity→instance против instance→activity — классический
+     * ABBA, проигравший получает {@code ERROR: deadlock detected} (SQLState
+     * 40P01) через {@code deadlock_timeout} (~1с). Воспроизведено на реальном PG:
+     * {@code Rel59CompleteCancelDeadlockPgIT} (complete) и
+     * {@code Rel63RemainingAbbaDeadlockPgIT} (таймер / сообщение / граничное
+     * событие) — 5–7 раундов deadlock на дереве до фикса, 0 после. С фиксом
+     * второй участник просто ждёт коммита первого — сериализация вместо
+     * deadlock.
      *
      * <p>Механика — прецедент {@code IncidentService.resolveIncident}:
      * plain read (нужен только processInstanceId) → instance-lock →
      * {@code getActivityForUpdate} (свежесть даёт сам захват: cancel пишет
      * activity-строки только под instance-lock; row-lock держится до коммита
      * той же транзакции — паттерн WO-ENG-19). Инвариант WO-REL-30 (ровно один
-     * SELECT FOR UPDATE) сохранён.
+     * SELECT FOR UPDATE на activity) сохранён; добавлен ровно один FOR UPDATE на
+     * instance — он и есть недостающая первая половина порядка.
+     *
+     * <p>Требует внешней транзакции ({@code getActivity} и
+     * {@code lockProcessInstance} не открывают свои — JOIN-аннотация стоит на
+     * {@code getActivityForUpdate}). Все живые вызывающие — доменные методы с
+     * классовым {@code @Transactional} ({@code ActivityServiceImpl},
+     * {@code CompletionService}, {@code EventTrigger}) — либо {@code
+     * TimerJobExecutor.fire} с {@code REQUIRES_NEW}, так что в бою условие
+     * выполняется.
      */
     public Activity lockInstanceFirst(UUID activityId) {
         Activity activity = dbService.getActivity(activityId);

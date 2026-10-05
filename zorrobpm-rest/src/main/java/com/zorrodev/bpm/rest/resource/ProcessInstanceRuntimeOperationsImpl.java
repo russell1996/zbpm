@@ -111,11 +111,15 @@ public class ProcessInstanceRuntimeOperationsImpl implements ProcessInstanceRunt
         String key = runtimeOperationSupport.resolveDefinitionKeyByInstance(id);
         runtimeOperationSupport.requireOperate(key, AuthorizationService.Action.DELETE_PROCESS);
 
-        // WO-ACL-21 (б): instance-lock как у resolve/escalation/message-signal/
-        // call-activity — сериализует отмену с timer-fire (TimerJobExecutor.fire
-        // берёт тот же FOR UPDATE + cancelled-guard, L1 FIX). Против complete-
-        // путей односторонний (те lock'а не берут) — честная граница в отчёте
-        // (V7-находка: cancelled-guard в CompletionService, не чинится здесь).
+        // WO-ACL-21 (б): instance-lock сериализует отмену с путями исполнения.
+        // TimerJobExecutor.fire (re-arm) берёт тот же FOR UPDATE + cancelled-guard
+        // (L1 FIX). Против complete/user-task путей — как у resolve/escalation/
+        // message-signal/call-activity: обе стороны берут instance-lock ПЕРВЫМ
+        // (WO-REL-59 для complete, WO-REL-63 для остальных — signal, fireBoundary,
+        // fail, ad-hoc, assign, claim, throw), поэтому порядок захватов у них
+        // общий и ABBA-цикла нет. Старая формулировка «против complete-путей
+        // односторонний (те lock'а не берют)» была неверной — была верна только
+        // до WO-REL-59, а после него тем более.
         dbService.lockProcessInstance(id);
 
         var pi = dbService.getProcessInstance(id);

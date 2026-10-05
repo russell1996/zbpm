@@ -212,8 +212,13 @@ public interface DBService {
     Activity getActivity(UUID activityId);
 
     /**
-     * WO-REL-30 (B-3): activity + its process-instance lock in ONE
-     * {@code SELECT ... FOR UPDATE} — drop-in для {@code lockAndReload}.
+     * WO-REL-30 (B-3), уточнено WO-REL-59: activity-lock ОДНИМ
+     * {@code SELECT ... FOR UPDATE} — но {@code FOR UPDATE OF} в
+     * {@code findByIdForUpdate} называет один алиас, поэтому на PostgreSQL
+     * лочится ТОЛЬКО строка {@code activities}, instance-строку этот запрос не
+     * берёт (проверено {@code Rel59SqlProbePgIT}; хинт EXTENDED не помогает).
+     * Путь, которому нужна сериализация с отменой экземпляра, берёт
+     * instance-lock ПЕРВЫМ — см. {@code ElementSupport.lockInstanceFirst}.
      */
     Activity getActivityForUpdate(UUID activityId);
 

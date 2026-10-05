@@ -47,6 +47,7 @@ class DomainTransactionalBoundaryPgIT extends PostgresIT {
     @Autowired ActivityRepository activityRepository;
     @Autowired ProcessInstanceRepository processInstanceRepository;
     @Autowired QueryService queryService;
+    @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
 
     private UUID deployServiceTaskProcess() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/integration/process1.bpmn"));
@@ -88,8 +89,28 @@ class DomainTransactionalBoundaryPgIT extends PostgresIT {
             .isNull();
     }
 
+    /**
+     * WO-REL-30 (B-3) + WO-REL-59/63 на реальном PostgreSQL: доменный захват
+     * берёт instance-lock ПЕРВЫМ, потом activity-lock, и оба FOR UPDATE
+     * работают на PG.
+     *
+     * <p>WO-REL-63 удалил {@code lockAndReload} (activity-only) — после перевода
+     * последних путей у него не осталось продакшн-вызовов, и он был ровно той
+     * ловушкой, которой ловился ABBA-дедлок с отменой. Тест переведён на
+     * {@code lockInstanceFirst} и проверяет более сильное утверждение, чем
+     * прежний «просто вернул не-null»: ПОРЯДОК захватов виден в логе SQL.
+     *
+     * <p>Честная граница изменения: составной захват требует внешней транзакции
+     * ({@code getActivity} и {@code lockProcessInstance} не открывают свои —
+     * JOIN-аннотация стоит на {@code getActivityForUpdate}), поэтому вызов идёт
+     * в {@code TransactionTemplate}. Все живые вызывающие — доменные методы с
+     * классовым {@code @Transactional} либо {@code TimerJobExecutor.fire} с
+     * {@code REQUIRES_NEW}, так что в бою условие выполняется; прежняя проверка
+     * «голый доменный вызов сам открывает транзакцию» к составному захвату уже
+     * неприменима и заменена проверкой порядка.
+     */
     @Test
-    void lockAndReload_happyPathOnPg() throws Exception {
+    void lockInstanceFirst_instanceLockBeforeActivityLockOnPg() throws Exception {
         UUID pdId = deployServiceTaskProcess();
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(pdId);
@@ -98,10 +119,50 @@ class DomainTransactionalBoundaryPgIT extends PostgresIT {
         List<ActivityEntity> active = activityRepository.findByProcessInstanceIdAndStatusIn(
             piId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));
         assertThat(active).as("PG: запаркованная service task").isNotEmpty();
+        UUID activityId = active.get(0).getId();
 
-        // Один SELECT ... FOR UPDATE под капотом: на PG без активной Tx это
-        // кинуло бы TransactionRequiredException — join-аннотация открывает свою.
-        assertThat(elementSupport.lockAndReload(active.get(0).getId())).isNotNull();
+        ch.qos.logback.classic.Logger sqlLogger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("org.hibernate.SQL");
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        var prev = sqlLogger.getLevel();
+        sqlLogger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        sqlLogger.addAppender(appender);
+        Object locked;
+        try {
+            locked = new org.springframework.transaction.support.TransactionTemplate(txManager)
+                .execute(status -> elementSupport.lockInstanceFirst(activityId));
+        } finally {
+            sqlLogger.detachAppender(appender);
+            sqlLogger.setLevel(prev == null ? ch.qos.logback.classic.Level.INFO : prev);
+        }
+        assertThat(locked).as("PG: составной доменный захват возвращает активность").isNotNull();
+
+        List<String> sql = appender.list.stream()
+            .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+            .toList();
+        // Фильтр по таблице в FROM, а не по подстроке: колонка
+        // parent_activity_id тоже содержит "activit". PESSIMISTIC_WRITE на PG
+        // рендерится как FOR NO KEY UPDATE (H2 — как FOR UPDATE), поэтому
+        // ловим обе формы.
+        List<String> instanceLocks = sql.stream()
+            .filter(m -> m.toLowerCase().contains("from process_instances") && isLocking(m))
+            .toList();
+        List<String> activityLocks = sql.stream()
+            .filter(m -> m.toLowerCase().contains("from activities") && isLocking(m))
+            .toList();
+        assertThat(instanceLocks).as("PG: ровно один FOR UPDATE на process_instances").hasSize(1);
+        assertThat(activityLocks).as("PG: ровно один FOR UPDATE на activities").hasSize(1);
+        assertThat(sql.indexOf(instanceLocks.get(0)))
+            .as("PG: instance-lock ПЕРЕД activity-lock — единственный порядок без ABBA с отменой")
+            .isLessThan(sql.indexOf(activityLocks.get(0)));
+    }
+
+    /** PostgreSQL renders PESSIMISTIC_WRITE as FOR NO KEY UPDATE; H2 as FOR UPDATE. */
+    private static boolean isLocking(String sql) {
+        String s = sql.toLowerCase();
+        return s.contains("for update") || s.contains("for no key update");
     }
 
     @Test
