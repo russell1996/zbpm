@@ -1169,27 +1169,47 @@ public class ElementSupport {
     // 2 из 3 ветвей. Теперь правило одно для ВСЕХ inclusive-join и целиком выводится из
     // состояния инстанса:
     //
-    //     ready(J) ⟺ никто в инстансе НЕ МОЖЕТ доставить в J ещё одну ветвь
+//     ready(J) ⟺ никто в инстансе НЕ МОЖЕТ доставить в J ещё одну ветвь
     //
-    // «кто-то может» — это объединение трёх множеств, и каждое закрывало свою дыру:
-    //   (a) активные activity                   — обычная живая ветвь;
-    //   (b) ВЗВЕДЁННЫЕ триггеры (ШАГ 2, B1)     — у ещё не выстрелившего boundary timer/
-    //                                               message/signal и event-subprocess НЕТ строки
-    //                                               activity, без (b) join срабатывал на первом
-    //               приходе, а по границе — ВТОРЫМ (taskNotify дважды, BLOCKER-1 red-team);
-    //   (c) припаркованные шлюзы (ШAГ 1/3)      — ветвь, дошедшая до join'а и ждущая, тоже
-    //               доставка в полёте; плюс сам сплит в фазе разветвления (его activity
-    //               остаётся живой весь фанаут — см. InclusiveGatewayHandler).
+    // «кто-то может» — объединение ДВУХ множеств (раунд 5: было три, см. ниже):
+    //   (a) активные activity                   — обычная живая ветвь, и вместе с ней
+    //                                               ВСЕ граничные события, привязанные к её
+    //                                               элементу (ребро границы внутри canReach);
+    //   (b) припаркованные шлюзы (ШАГ 1/3)      — ветвь, дошедшая до join'а и ждущая, тоже
+    //                                               доставка в полёте; плюс сам сплит в фазе
+    //                                               разветвления (его activity остаётся живой
+    //                                               весь фанаут — см. InclusiveGatewayHandler).
     //
-    // Намеренная асимметрия: консервативность (b)+(c) может заставить join ЖДАТ лишнего, но
+    // Раунд 5 удалил множество «взведённых триггеров» (armed timer/message/signal + индекс под
+    // них): строка armed есть только у этих трёх типов, а CONDITIONAL/ERROR/ESCALATION границы её
+    // не имеют ВООБЩЕ, поэтому во вселенной их не было — и join срабатывал на первом приходе, а
+    // по границе ВТОРЫМ (BLOCKER-3 red-team, живой прогон). Свойство «живой хост ⇒ граница может
+    // выстрелить» теперь получается структурно, без единого запроса, и покрывает ЛЮБОЙ тип границы.
+    //
+    // Намеренная асимметрия: консервативность (b) может заставить join ЖДАТ лишнего, но
     // никогда не срабатывает раньше времени. Обратную сторону — «последний доставщик умер» —
     // снимает перепроверка припаркованных join'ов при каждой деактивации (ШАГ 3, B2), иначе
     // консервативность была бы вечным ожиданием (BLOCKER-2).
 
     /**
      * Can a live execution sitting on {@code fromElementId} still reach
-     * {@code targetElementId}? Forward BFS over outgoing flows, {@code visited}-guarded, so it
-     * terminates on cyclic graphs.
+     * {@code targetElementId}? Forward BFS, {@code visited}-guarded, so it terminates on cyclic
+     * graphs.
+     *
+     * <p>Reachability goes through TWO edges out of every visited element (WO-C8-35 раунд 5,
+     * BLOCKER-3 red-team):
+     * <ol>
+     *   <li>исходящие SEQUENCE-потоки элемента;</li>
+     *   <li>исходящие потоки ГРАНИЧНЫХ событий, привязанных к нему
+     *       ({@code BpmnProcessDefinitionModel.getBoundaryEventsAttachedTo}) — любого типа,
+     *       прерывающих и нет.</li>
+     * </ol>
+     * Второе ребро обязано быть здесь, а не в отдельном «взведённом» множестве: граница привязана
+     * к хосту через {@code attachedToRef}, а не потоком, и наличие строки armed есть только у
+     * timer/message/signal — у CONDITIONAL/ERROR/ESCALATION границы её нет ВООБЩЕ. Пока хост жив,
+     * граница может выстрелить, значит хост — возможный доставщик ветви; хост умер → хост исчез из
+     * множества живых activity, и правило перечитывается на деактивации (перепроверка
+     * припаркованных join'ов).
      *
      * <p>Conditions on flows out of a gateway are NOT evaluated: a path through a conditional
      * gateway counts as reachable even when its condition may evaluate false. That is
@@ -1197,10 +1217,11 @@ public class ElementSupport {
      * duplicates business side effects, which is what the static counter used to cause).
      * The cost of that conservatism is a possible over-wait, and it is paid back by
      * {@code InclusiveGatewayHandler.resumeParkedInclusiveJoins}: when the last possible
-     * deliverer dies (XOR took its other branch, cancellation, termination, a boundary fired),
-     * every parked inclusive join is re-evaluated. Counting a false-condition path as reachable
-     * IS the wait-forever defect if nothing ever re-checks — that was BLOCKER-2, and this
-     * Javadoc previously asserted the exact opposite of what the code did.
+     * deliverer dies (XOR took its other branch, cancellation, termination, a boundary fired,
+     * an error/escalation boundary killed its host), every parked inclusive join is re-evaluated.
+     * Counting a false-condition path as reachable IS the wait-forever defect if nothing ever
+     * re-checks — that was BLOCKER-2, and this Javadoc previously asserted the exact opposite
+     * of what the code did.
      */
     public boolean canReach(BpmnProcessDefinitionModel bpmn, String fromElementId, String targetElementId) {
         if (fromElementId == null || targetElementId == null || fromElementId.equals(targetElementId)) {
@@ -1214,22 +1235,34 @@ public class ElementSupport {
             if (current == null || !visited.add(current)) {
                 continue;
             }
+            if (current.equals(targetElementId)) {
+                return true;
+            }
             BpmnElementModel element = bpmn.getElement(current);
-            if (element == null || element.getOutgoing() == null) {
+            if (element == null) {
                 continue;
             }
-            for (String flowId : element.getOutgoing()) {
-                BpmnFlowModel flow = bpmn.getFlow(flowId);
-                if (flow == null) {
-                    continue;
-                }
-                if (flow.getTargetRef() != null && flow.getTargetRef().equals(targetElementId)) {
-                    return true;
-                }
-                queue.add(flow.getTargetRef());
+            enqueueOutgoingTargets(bpmn, element.getOutgoing(), queue);
+            // Ребро границы: у хоста может быть взведённая граница, у которой НЕТ строки
+            // activity, но есть исходящий поток в сторону join'а.
+            for (BpmnElementModel boundary : bpmn.getBoundaryEventsAttachedTo(current)) {
+                enqueueOutgoingTargets(bpmn, boundary.getOutgoing(), queue);
             }
         }
         return false;
+    }
+
+    private void enqueueOutgoingTargets(BpmnProcessDefinitionModel bpmn, List<String> outgoingFlowIds,
+            Deque<String> queue) {
+        if (outgoingFlowIds == null) {
+            return;
+        }
+        for (String flowId : outgoingFlowIds) {
+            BpmnFlowModel flow = bpmn.getFlow(flowId);
+            if (flow != null && flow.getTargetRef() != null) {
+                queue.add(flow.getTargetRef());
+            }
+        }
     }
 
     /**
@@ -1258,33 +1291,6 @@ public class ElementSupport {
     }
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2, BLOCKER-1/B1): an ARMED but not-yet-fired trigger can still
-     * deliver a branch, and it has no activity row at all — its outgoing flows hang off the
-     * boundary element / event sub-process, which is not an execution. Without this the join
-     * fired on the first arrival and then fired AGAIN when the boundary arrived, running every
-     * downstream side effect twice with no incident anywhere.
-     *
-     * <p>Read as a set of outlet element ids ({@code DBService.getArmedTriggerElementIds}):
-     * armed timer jobs and message/signal BOUNDARY subscriptions. The start trigger of an
-     * event sub-process is deliberately NOT in that set (WO-C8-35 Решение 2, round 4): it delivers a
-     * branch into its own scope token, never into a join, and its subscription is never consumed —
-     * counting it would pin every reachable join for the whole instance.
-     */
-    public boolean hasArmedTriggerReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
-            BpmnElementModel join) {
-        for (String outletId : dbService.getArmedTriggerElementIds(processInstanceId)) {
-            if (outletId.equals(join.getId())) {
-                // an armed event ON the join itself: it continues from there, it does not deliver to it
-                continue;
-            }
-            if (canReach(bpmn, outletId, join.getId())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * WO-C8-35 (CR-09, ШАГ 1/3): a branch that already arrived at ANOTHER gateway and is parked
      * there is a delivery in flight too — it holds open arrival rows, and once that gateway
      * fires it continues downstream, possibly into this join. Without this the join could fire
@@ -1306,13 +1312,20 @@ public class ElementSupport {
 
     /**
      * WO-C8-35 (CR-09) раунд 3: THE single readiness rule for every inclusive join, whatever
-     * split it comes from. See the block comment above for the three sets that make up
+     * split it comes from. See the block comment above for the two sets that make up
      * "can still deliver".
+     *
+     * <p>Раунд 5 (BLOCKER-3): множество «взведённых триггеров» УДАЛЕНО целиком вместе с тремя
+     * запросами и индексом под них. Причина не в том, что оно было лишним, а в том, что оно было
+     * НЕПОЛНЫМ: строка armed есть только у timer/message/signal, а условная и escalation-границы
+     * её не имеют никогда, поэтому join, в который могла доставить такая граница, считал
+     * инстанс пустым и срабатывал на первом приходе — а по границе срабатывал ВТОРЫМ
+     * (живой прогон red-team BLOCKER-3). Теперь то же свойство получено СТРУКТУРНО, из
+     * {@link #canReach}: живой хост + его границы = возможный доставщик, без единого запроса.
      */
     public boolean isInclusiveJoinReady(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel join) {
         return !hasOtherLiveExecutionReaching(processInstanceId, bpmn, join)
-            && !hasArmedTriggerReaching(processInstanceId, bpmn, join)
             && !hasParkedJoinReaching(processInstanceId, bpmn, join);
     }
 

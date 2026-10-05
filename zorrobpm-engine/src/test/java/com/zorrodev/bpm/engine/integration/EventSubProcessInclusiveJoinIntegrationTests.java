@@ -4,13 +4,14 @@ import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.TestMain;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.dto.IdDTO;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
-import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -74,7 +75,7 @@ public class EventSubProcessInclusiveJoinIntegrationTests {
     private ActivityService activityService;
 
     @Autowired
-    private DBService dbService;
+    private BpmnService bpmnService;
 
     @Autowired
     private MessageSubscriptionRepository messageSubscriptionRepository;
@@ -91,6 +92,16 @@ public class EventSubProcessInclusiveJoinIntegrationTests {
     private List<ActivityEntity> activities(UUID pi) {
         return activityRepository.findAll().stream()
             .filter(a -> a.getProcessInstanceId().equals(pi))
+            .toList();
+    }
+
+    /** Element ids of every boundary event attached to a host in this instance's definition. */
+    private List<String> boundaryEventsAttachedTo(UUID pi) {
+        BpmnProcessDefinitionModel model = bpmnService.getProcessDefinitionModelById(
+            queryService.getProcessInstance(pi).getProcessDefinitionId());
+        return model.getElements().stream()
+            .filter(e -> e.getExtensions() != null && e.getExtensions().getBoundaryEventExtension() != null)
+            .map(e -> e.getId())
             .toList();
     }
 
@@ -187,12 +198,16 @@ public class EventSubProcessInclusiveJoinIntegrationTests {
         // The PREMISE, pinned: the non-interrupting handler's subscription really is never
         // consumed, so its trigger really is armed for the rest of the instance. Without this the
         // assertion below could pass for the wrong reason (a consumed subscription).
-        assertThat(messageSubscriptionRepository.findByProcessInstanceIdAndConsumedFalse(pi))
+        assertThat(messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndProcessInstanceIdOrderByIdDesc("ping", pi))
             .as("premise: the non-interrupting event-subprocess subscription stays pending")
             .isNotEmpty();
-        assertThat(dbService.getArmedTriggerElementIds(pi))
-            .as("Решение CTO 2: the event-subprocess START trigger is not a pending deliverer — its "
-                + "own start runs in a separate scope token and never hands a branch to a join")
+        // Раунд 5: armed-множества больше нет, поэтому «не доставщик» доказывается СТРУКТУРНО —
+        // стартовый триггер event-subprocess не привязан ни к одному хосту через attachedToRef,
+        // а значит не является границей живой activity и не входит во вселенную «ещё может
+        // доставить» (BpmnProcessDefinitionModel.getBoundaryEventsAttachedTo).
+        assertThat(boundaryEventsAttachedTo(pi))
+            .as("Решение CTO 2, раунд 5: стартовый триггер event-subprocess не привязан к хосту — "
+                + "он доставляет ветвь в свой scope-токен, а не в join")
             .doesNotContain("pingHandler");
 
         complete(pi, "taskMain");

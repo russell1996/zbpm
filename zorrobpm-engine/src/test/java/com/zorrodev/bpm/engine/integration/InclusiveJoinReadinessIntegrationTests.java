@@ -91,12 +91,16 @@ public class InclusiveJoinReadinessIntegrationTests {
     }
 
     private void complete(UUID pi, String elementId) {
+        complete(pi, elementId, List.of());
+    }
+
+    private void complete(UUID pi, String elementId, List<ProcessVariable> withVars) {
         activities(pi).stream()
             .filter(a -> a.getBpmnElementId().equals(elementId))
             .filter(a -> a.getStatus() == ActivityStatus.CREATED)
             .findFirst()
             .ifPresentOrElse(
-                a -> runtimeService.completeUserTask(a.getId(), List.of()),
+                a -> runtimeService.completeUserTask(a.getId(), withVars),
                 () -> { throw new AssertionError("no CREATED " + elementId + " in " + pi); });
     }
 
@@ -183,6 +187,50 @@ public class InclusiveJoinReadinessIntegrationTests {
             .isEqualTo(1L);
         assertThat(countOf(pi, "taskNotify", ActivityStatus.CREATED))
             .as("taskNotify created twice is the exact red-team observation (double side effect)")
+            .isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
+    }
+
+    // ── BLOCKER-3 (red-team раунда 3): граница БЕЗ персистентной armed-записи ─────────────────
+    @Transactional
+    @Test
+    void conditionalBoundaryOnALiveHost_theJoinPassesThroughExactlyOnce() throws Exception {
+        // Диаграмма red-team дословно (WO-C8-35-independent-review-r3.md §BLOCKER-3):
+        // pfork -> {taskA -> gC -> join ; taskHold + непрерывающий condB (abort="true") -> fBnd
+        // -> join ; taskFlag}. CONDITIONAL-граница НЕ имеет строки armed-записи ни в одной
+        // таблице (arm только timer), поэтому во вселенной «ещё может доставить» её не было,
+        // а canReach шёл по sequence-потокам хоста, минуя привязку по attachedToRef.
+        // Наблюдение red-team: join COMPLETED=1/taskAfter CREATED=1 уже после taskA, затем после
+        // abort=true — join COMPLETED=2, taskAfter CREATED=2. Тихая двойная бизнес-побочка.
+        UUID pi = start("test-c835-condbnd-incl-join.bpmn");
+
+        complete(pi, "taskA");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("taskHold is LIVE and its conditional boundary reaches the join — the join must wait")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED))
+            .as("nothing downstream of the join may run on arrival #1 of 2")
+            .isEqualTo(0L);
+
+        // abort=true -> condB fires on the still-live host, its branch arrives (2nd arrival).
+        // The host is still alive, so its boundary can fire again — the join must STILL park:
+        // firing here is exactly what made the red-team see taskAfter twice.
+        complete(pi, "taskFlag", List.of(var("abort", "true")));
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("taskHold is still alive — its boundary can still deliver a branch, the join waits")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED))
+            .as("taskAfter created before the host dies is the double side effect")
+            .isEqualTo(0L);
+
+        // The LAST possible deliverer dies: taskHold completes -> the boundary is disarmed ->
+        // nobody can reach the join any more -> the re-check on this deactivation fires it ONCE.
+        complete(pi, "taskHold");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("the join must pass through EXACTLY ONCE — not twice (red-team BLOCKER-3)")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED))
+            .as("taskAfter CREATED twice is the exact red-team observation")
             .isEqualTo(1L);
         assertThat(incidents(pi)).isEqualTo(0L);
     }

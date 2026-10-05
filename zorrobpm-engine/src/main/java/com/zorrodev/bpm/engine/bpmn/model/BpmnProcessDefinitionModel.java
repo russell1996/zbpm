@@ -3,12 +3,14 @@ package com.zorrodev.bpm.engine.bpmn.model;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 public class BpmnProcessDefinitionModel {
@@ -61,6 +63,8 @@ public class BpmnProcessDefinitionModel {
     @Setter
     private String defaultJobPriority;
     private final Map<String, BpmnElementModel> elements = new HashMap<>();
+    /** WO-C8-35 раунд 5: memo индекса «хост → его граничные события» (см. getBoundaryEventsAttachedTo). */
+    private final Map<String, List<BpmnElementModel>> boundaryEventsByHost = new ConcurrentHashMap<>();
     @Getter
     @Setter
     private BpmnElementModel startEvent;
@@ -135,6 +139,35 @@ public class BpmnProcessDefinitionModel {
             .filter(e -> e.getType() == BpmnElementType.SIGNAL_START_EVENT)
             .filter(e -> e.getEventSubProcessId() == null)
             .toList();
+    }
+
+    /**
+     * WO-C8-35 (CR-09, раунд 5 / BLOCKER-3): граничные события, привязанные к элементу
+     * {@code hostElementId} ({@code boundaryEventExtension.attachedToRef == host}), ЛЮБОГО типа
+     * (timer/message/signal/conditional/error/escalation/compensation/cancel), прерывающие и нет.
+     *
+     * <p>Индекс строится лениво и кэшируется в самой модели: модель разбирается один раз и дальше
+     * живёт в Caffeine-кэше {@code BpmnServiceImpl} общей на все потоки, поэтому здесь нужен
+     * потокобезопасный memo, а не пересборка на каждый запрос достижимости (правило готовности
+     * inclusive-join зовёт его на каждое живое исполнение).
+     *
+     * <p>Стартовый триггер event-subprocess сюда НЕ попадает: он привязан к контейнеру как
+     * дочерний элемент, а не через {@code attachedToRef} (решение CTO 2, раунд 4) — и не должен
+     * попадать: запуск event-subprocess создаёт собственный scope-инстанс и не доставляет ветвь
+     * в уже идущий join.
+     *
+     * @return элементы-границы хоста; пустой список, если границ нет (в т.ч. {@code null} хоста)
+     */
+    public List<BpmnElementModel> getBoundaryEventsAttachedTo(String hostElementId) {
+        if (hostElementId == null) {
+            return List.of();
+        }
+        return boundaryEventsByHost.computeIfAbsent(hostElementId, host -> elements.values().stream()
+            .filter(e -> e.getExtensions() != null && e.getExtensions().getBoundaryEventExtension() != null)
+            .filter(e -> host.equals(e.getExtensions().getBoundaryEventExtension().getAttachedToRef()))
+            .sorted(Comparator.comparing(BpmnElementModel::getId,
+                Comparator.nullsLast(Comparator.naturalOrder())))
+            .toList());
     }
 
     /**

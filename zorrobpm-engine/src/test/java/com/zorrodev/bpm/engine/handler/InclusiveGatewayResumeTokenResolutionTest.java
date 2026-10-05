@@ -93,7 +93,6 @@ class InclusiveGatewayResumeTokenResolutionTest {
         // a parked, READY join: one arrival held open and nobody left who could deliver
         lenient().when(dbService.getGatewaysWithOpenArrivals(any())).thenReturn(Set.of("join"));
         lenient().when(dbService.getActiveActivities(any())).thenReturn(List.of());
-        lenient().when(dbService.getArmedTriggerElementIds(any())).thenReturn(Set.of());
         lenient().when(dbService.getParallelGatewayArrivedFlows(any(), eq("join"))).thenReturn(Set.of("fA"));
     }
 

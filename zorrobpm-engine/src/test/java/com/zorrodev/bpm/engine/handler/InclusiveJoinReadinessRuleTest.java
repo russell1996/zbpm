@@ -1,9 +1,11 @@
 package com.zorrodev.bpm.engine.handler;
 
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FeelBudget;
@@ -36,9 +38,10 @@ import static org.mockito.Mockito.when;
  * {@code canReach -> true} left all five of those tests green; these tests are written so that
  * mutation must fail several of them (see the report's mutation table).
  *
- * <p>The three "can still deliver" sets: live activities, ARMED triggers (boundary/event
- * sub-process — they have no activity row, BLOCKER-1) and parked joins (a branch waiting at
- * another gateway, MAJOR-1's partial-merge shape).
+ * <p>The two "can still deliver" sets (round 5: the persisted ARMED-trigger set is gone): live
+ * activities — each together with the boundary events attached to its element, which is where
+ * BLOCKER-3 lived — and parked joins (a branch waiting at another gateway, MAJOR-1's
+ * partial-merge shape).
  */
 class InclusiveJoinReadinessRuleTest {
 
@@ -55,7 +58,6 @@ class InclusiveJoinReadinessRuleTest {
         elementSupport = new ElementSupport(dbService, scriptService, feelBudget, objectMapper,
             ZoneId.of("Asia/Almaty"), false);
         bpmn = new BpmnProcessDefinitionModel();
-        lenient().when(dbService.getArmedTriggerElementIds(any())).thenReturn(Set.of());
         lenient().when(dbService.getGatewaysWithOpenArrivals(any())).thenReturn(Set.of());
         lenient().when(dbService.getActiveActivities(any())).thenReturn(List.of());
     }
@@ -83,6 +85,18 @@ class InclusiveJoinReadinessRuleTest {
         if (target != null) {
             target.getIncoming().add(id);
         }
+    }
+
+    /** Граничное событие, привязанное к хосту — ровно так, как их кладёт парсер (attachedToRef). */
+    private BpmnElementModel boundary(String id, String hostId) {
+        BpmnElementModel b = element(id, BpmnElementType.CONDITIONAL_BOUNDARY_EVENT);
+        BpmnElementExtensionModel ext = new BpmnElementExtensionModel();
+        BoundaryEventExtensionModel be = new BoundaryEventExtensionModel();
+        be.setAttachedToRef(hostId);
+        be.setInterrupting(false);
+        ext.setBoundaryEventExtension(be);
+        b.setExtensions(ext);
+        return b;
     }
 
     private Activity liveOn(String elementId) {
@@ -156,35 +170,51 @@ class InclusiveJoinReadinessRuleTest {
     }
 
     @Test
-    void hasArmedTriggerReaching_seesABoundaryTimerThatHasNoActivityRow() {
-        // BLOCKER-1: the armed boundary has no activity row at all, so the live-activity set is
-        // empty here — reachability must still report "can deliver".
-        element("taskWait", BpmnElementType.USER_TASK);
-        element("tmrCheck", BpmnElementType.BOUNDARY_TIMER_EVENT);
+    void canReach_goesThroughABoundaryAttachedToTheHostByAttachedToRef() {
+        // BLOCKER-3 red-team (живой прогон): условная граница привязана к хосту через
+        // attachedToRef, а не потоком, и строки armed у неё НЕТ ВООБЩЕ. Если canReach идёт
+        // только по sequence-потокам хоста, хост с живой границей выглядит «не может доставить»
+        // — join срабатывает на первом приходе и ВТОРЫМ на приходе от границы (taskAfter дважды).
+        element("taskA", BpmnElementType.USER_TASK);
         element("taskHold", BpmnElementType.USER_TASK);
+        element("endHold", BpmnElementType.END_EVENT);
+        boundary("condB", "taskHold");   // непрерывающая условная граница на taskHold
         element("join", BpmnElementType.INCLUSIVE_GATEWAY);
-        flow("main", "taskWait", "join");
-        flow("gB", "tmrCheck", "taskHold");
-        flow("fHold", "taskHold", "join");
-        BpmnElementModel join = bpmn.getElement("join");
+        flow("gC", "taskA", "join");
+        flow("fHoldEnd", "taskHold", "endHold");
+        flow("fBnd", "condB", "join");
 
-        when(dbService.getArmedTriggerElementIds(any())).thenReturn(Set.of("tmrCheck"));
-        assertThat(elementSupport.hasArmedTriggerReaching(UUID.randomUUID(), bpmn, join)).isTrue();
-
-        // disarmed (fired/consumed) → nobody can deliver from that outlet any more
-        when(dbService.getArmedTriggerElementIds(any())).thenReturn(Set.of());
-        assertThat(elementSupport.hasArmedTriggerReaching(UUID.randomUUID(), bpmn, join)).isFalse();
+        assertThat(elementSupport.canReach(bpmn, "taskHold", "join"))
+            .as("живой хост + его граница = возможный доставщик ветви в join")
+            .isTrue();
+        assertThat(elementSupport.canReach(bpmn, "taskA", "join")).isTrue();
+        assertThat(elementSupport.canReach(bpmn, "endHold", "join"))
+            .as("end без исходящих потоков и без границ ничего доставить не может")
+            .isFalse();
     }
 
     @Test
-    void hasArmedTriggerReaching_ignoresAnEventArmedOnTheJoinItself() {
+    void canReach_boundaryOfADeadHostIsGone_becauseTheHostIsNoLongerLive() {
+        // Ровно то свойство, которое раньше держала armed-таблица: пока хост жив — граница может
+        // выстрелить; хост умер — он исчез из множества живых activity, и его граница снята.
+        // Здесь это чисто структурное свойство: НИ ОДНОГО запроса к armed-таблицам не делается.
+        element("taskHold", BpmnElementType.USER_TASK);
+        boundary("tmrCheck", "taskHold");
         element("join", BpmnElementType.INCLUSIVE_GATEWAY);
-        flow("fEnd", "join", "endEvent");
-        element("endEvent", BpmnElementType.END_EVENT);
+        flow("fBnd", "tmrCheck", "join");
         BpmnElementModel join = bpmn.getElement("join");
+        UUID pi = UUID.randomUUID();
 
-        when(dbService.getArmedTriggerElementIds(any())).thenReturn(Set.of("join"));
-        assertThat(elementSupport.hasArmedTriggerReaching(UUID.randomUUID(), bpmn, join)).isFalse();
+        when(dbService.getActiveActivities(any())).thenReturn(List.of(liveOn("taskHold")));
+        assertThat(elementSupport.isInclusiveJoinReady(pi, bpmn, join))
+            .as("taskHold жив, его граница ведёт в join — ждать")
+            .isFalse();
+
+        // та же диаграмма, хост мёртв (его нет среди живых activity) — доставлять некому
+        when(dbService.getActiveActivities(any())).thenReturn(List.of());
+        assertThat(elementSupport.isInclusiveJoinReady(pi, bpmn, join))
+            .as("мёртвый хост = снятая граница, никто доставить не может — join готов")
+            .isTrue();
     }
 
     @Test
@@ -208,13 +238,12 @@ class InclusiveJoinReadinessRuleTest {
     @Test
     void isInclusiveJoinReady_trueOnlyWhenNoSetCanDeliver() {
         element("taskLive", BpmnElementType.USER_TASK);
-        element("tmrCheck", BpmnElementType.BOUNDARY_TIMER_EVENT);
         element("taskHold", BpmnElementType.USER_TASK);
+        boundary("condB", "taskHold");   // граница привязана к taskHold и ведёт прямо в join
         element("j1", BpmnElementType.INCLUSIVE_GATEWAY);
         element("join", BpmnElementType.INCLUSIVE_GATEWAY);
         flow("f1", "taskLive", "join");
-        flow("gB", "tmrCheck", "taskHold");
-        flow("fHold", "taskHold", "join");
+        flow("fBnd", "condB", "join");
         flow("jOut", "j1", "join");
         BpmnElementModel join = bpmn.getElement("join");
         UUID pi = UUID.randomUUID();
@@ -226,13 +255,12 @@ class InclusiveJoinReadinessRuleTest {
         when(dbService.getActiveActivities(any())).thenReturn(List.of(liveOn("taskLive")));
         assertThat(elementSupport.isInclusiveJoinReady(pi, bpmn, join)).isFalse();
 
-        // only an ARMED trigger reaches it → must still wait (BLOCKER-1)
-        when(dbService.getActiveActivities(any())).thenReturn(List.of());
-        when(dbService.getArmedTriggerElementIds(any())).thenReturn(Set.of("tmrCheck"));
+        // only a LIVE HOST WHOSE BOUNDARY reaches it → must still wait (BLOCKER-3)
+        when(dbService.getActiveActivities(any())).thenReturn(List.of(liveOn("taskHold")));
         assertThat(elementSupport.isInclusiveJoinReady(pi, bpmn, join)).isFalse();
 
         // only a parked join reaches it → must still wait
-        when(dbService.getArmedTriggerElementIds(any())).thenReturn(Set.of());
+        when(dbService.getActiveActivities(any())).thenReturn(List.of());
         when(dbService.getGatewaysWithOpenArrivals(any())).thenReturn(Set.of("j1"));
         assertThat(elementSupport.isInclusiveJoinReady(pi, bpmn, join)).isFalse();
 
