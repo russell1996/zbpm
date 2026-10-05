@@ -41,6 +41,12 @@ public class ServiceTaskQueryOperationsImpl implements ServiceTaskQueryOperation
         if (query.getId() != null) {
             specifications.add(ServiceTaskRepository.byId(query.getId()));
         }
+        // WO-IN-1: jobType was declared in the DTO (and sent by the client resolver) but never
+        // applied here, so ?jobType=X silently returned every task. null/blank means "no filter":
+        // a request without the parameter must keep returning the same page as before.
+        if (query.getJobType() != null && !query.getJobType().isBlank()) {
+            specifications.add(ServiceTaskRepository.byJobType(query.getJobType().trim()));
+        }
         if (query.getCompleted() != null) {
             specifications.add(ServiceTaskRepository.byCompleted(query.getCompleted()));
         }

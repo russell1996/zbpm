@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WO-IN-1 fixture: one process, TWO simultaneously open service tasks with DIFFERENT
+  zeebe:taskDefinition types (in1-alpha-job / in1-beta-job). The parallel split keeps both
+  jobs open at the same time, so a service-task query can only return "just one of them"
+  if a real jobType filter is applied. Completing alpha does not reach the join (beta is
+  still open), so alpha stays queryable as completed=true while beta stays active.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_in1_jobtype" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-in1-jobtype" name="test-in1-jobtype" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="split" />
+    <bpmn:parallelGateway id="split" name="split">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flowAlpha</bpmn:outgoing>
+      <bpmn:outgoing>flowBeta</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:sequenceFlow id="flowAlpha" name="flowAlpha" sourceRef="split" targetRef="svcAlpha" />
+    <bpmn:serviceTask id="svcAlpha" name="svcAlpha">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="in1-alpha-job" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowAlpha</bpmn:incoming>
+      <bpmn:outgoing>flowAlpha2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flowAlpha2" name="flowAlpha2" sourceRef="svcAlpha" targetRef="join" />
+
+    <bpmn:sequenceFlow id="flowBeta" name="flowBeta" sourceRef="split" targetRef="svcBeta" />
+    <bpmn:serviceTask id="svcBeta" name="svcBeta">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="in1-beta-job" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowBeta</bpmn:incoming>
+      <bpmn:outgoing>flowBeta2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flowBeta2" name="flowBeta2" sourceRef="svcBeta" targetRef="join" />
+
+    <bpmn:parallelGateway id="join" name="join">
+      <bpmn:incoming>flowAlpha2</bpmn:incoming>
+      <bpmn:incoming>flowBeta2</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flow3" name="flow3" sourceRef="join" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
