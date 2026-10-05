@@ -3,6 +3,8 @@ package com.zorrodev.bpm.engine.handler;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
@@ -25,6 +27,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -1149,4 +1155,131 @@ public class ElementSupport {
         }
         return 0;
     }
+
+    // ── WO-C8-35 (CR-09): inclusive-gateway join readiness ────────────────────
+    //
+    // Two join mechanisms lived by different rules: the parallel join compares the
+    // arrived flows with ITS OWN incoming set, the inclusive join compares them with
+    // a static `expected` counter that only three writers ever set (inclusive split,
+    // multi-instance, ad-hoc). Reached from anything else — XOR, a parallel fork, an
+    // implicit AND-fork, a subprocess/call-activity exit — `expected` is null, the
+    // join logs "not ready" on EVERY arrival and waits forever, silently (no
+    // incident). Replacing null with 1 would have been the tempting one-liner and
+    // would fire NEIGHBOURING joins early, so readiness is decided by reachability of
+    // a still-live execution instead.
+
+    /**
+     * Can a live execution sitting on {@code fromElementId} still reach
+     * {@code targetElementId}? Forward BFS over outgoing flows. Conservative on
+     * purpose: a path through a gateway is counted even if its conditions may
+     * evaluate false, because the alternative is the wait-forever defect.
+     */
+    public boolean canReach(BpmnProcessDefinitionModel bpmn, String fromElementId, String targetElementId) {
+        if (fromElementId == null || targetElementId == null || fromElementId.equals(targetElementId)) {
+            return fromElementId != null && fromElementId.equals(targetElementId);
+        }
+        Set<String> visited = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        queue.add(fromElementId);
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            if (current == null || !visited.add(current)) {
+                continue;
+            }
+            BpmnElementModel element = bpmn.getElement(current);
+            if (element == null || element.getOutgoing() == null) {
+                continue;
+            }
+            for (String flowId : element.getOutgoing()) {
+                BpmnFlowModel flow = bpmn.getFlow(flowId);
+                if (flow == null) {
+                    continue;
+                }
+                if (flow.getTargetRef() != null && flow.getTargetRef().equals(targetElementId)) {
+                    return true;
+                }
+                queue.add(flow.getTargetRef());
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Is some OTHER still-live execution in this instance able to reach the join?
+     * This is what replaces the missing {@code expected} counter: the join is ready
+     * exactly when nobody else can still deliver a branch to it.
+     *
+     * <p>Arrived branches are already COMPLETED by the time the join runs
+     * ({@code FlowNavigator.processFlow} completes the flow row), so they do not
+     * count as live — the arriving branch excludes itself without special-casing.
+     */
+    public boolean hasOtherLiveExecutionReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel join) {
+        for (Activity activity : dbService.getActiveActivities(processInstanceId)) {
+            String elementId = activity.getBpmnElementId();
+            if (elementId == null || elementId.equals(join.getId())) {
+                continue;
+            }
+            if (canReach(bpmn, elementId, join.getId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * WO-C8-35 (CR-09, criterion 2): the join partner of an inclusive split is the
+     * FIRST reachable inclusive gateway that ACTUALLY CONVERGES this split's
+     * branches — the old BFS returned the first inclusive with several incomings, so
+     * an unrelated join lying on one branch's path swallowed the counter and left the
+     * real join waiting forever.
+     *
+     * <p>One BFS from the split carrying a bitmask of which outgoing branch reached
+     * each element; a candidate qualifies when at least TWO of this split's branches
+     * reach it. Cost stays O(graph) instead of O(branches x graph).
+     */
+    public String findConvergentInclusiveJoin(BpmnProcessDefinitionModel bpmn, BpmnElementModel split) {
+        List<String> outgoings = split.getOutgoing() == null ? List.of() : split.getOutgoing();
+        // element id -> bitmask of WHICH outgoing branches of this split reach it
+        Map<String, Integer> branchMask = new HashMap<>();
+        Deque<String> queue = new ArrayDeque<>();
+        for (int i = 0; i < outgoings.size(); i++) {
+            BpmnFlowModel flow = bpmn.getFlow(outgoings.get(i));
+            if (flow != null && flow.getTargetRef() != null) {
+                branchMask.merge(flow.getTargetRef(), 1 << i, (a, b) -> a | b);
+                queue.add(flow.getTargetRef());
+            }
+        }
+        while (!queue.isEmpty()) {
+            String elementId = queue.poll();
+            if (elementId == null) {
+                continue;
+            }
+            Integer mask = branchMask.get(elementId);
+            if (mask == null) {
+                continue;
+            }
+            BpmnElementModel element = bpmn.getElement(elementId);
+            if (element == null) {
+                continue;
+            }
+            if (element.getType() == BpmnElementType.INCLUSIVE_GATEWAY
+                    && element.getIncoming() != null && element.getIncoming().size() > 1
+                    && Integer.bitCount(mask) > 1) {
+                return elementId;
+            }
+            if (element.getOutgoing() == null) {
+                continue;
+            }
+            for (String outgoing : element.getOutgoing()) {
+                BpmnFlowModel flow = bpmn.getFlow(outgoing);
+                if (flow != null && flow.getTargetRef() != null) {
+                    branchMask.merge(flow.getTargetRef(), mask, (a, b) -> a | b);
+                    queue.add(flow.getTargetRef());
+                }
+            }
+        }
+        return null;
+    }
+
 }

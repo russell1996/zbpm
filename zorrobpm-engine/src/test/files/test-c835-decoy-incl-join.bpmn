@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-35 (CR-09, criterion 2): a DECOY join on one branch's path.
+     The inclusive split has two branches: A goes taskA -> decoyJoin -> join,
+     B goes taskB -> join. `decoyJoin` is a legal inclusive gateway with two
+     incomings (from taskA and from the sibling taskX of an UNRELATED part of the
+     model), so the old first-match BFS wrote `expected=1` onto decoyJoin and the
+     REAL join never got a counter — the process hung. With the convergent-join
+     rule the counter lands on `join` (both branches reach it) and the instance
+     completes. The decoy also fires, which is correct: on its own it is a real
+     merge of taskA and taskX's path, and taskX's branch is live, so it must wait
+     for taskX rather than complete the process. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835decoy" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c835-decoy-incl-join" name="c835-decoy-incl-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="fork0" />
+    <bpmn:parallelGateway id="fork0" name="fork0">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:outgoing>fX</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="fork0" targetRef="split" />
+    <bpmn:sequenceFlow id="fX" name="fX" sourceRef="fork0" targetRef="taskX" />
+    <bpmn:inclusiveGateway id="split" name="split">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>spA</bpmn:outgoing>
+      <bpmn:outgoing>spB</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="spA" name="spA" sourceRef="split" targetRef="taskA" />
+    <bpmn:sequenceFlow id="spB" name="spB" sourceRef="split" targetRef="taskB" />
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>spA</bpmn:incoming>
+      <bpmn:outgoing>a1</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="taskB" name="taskB">
+      <bpmn:incoming>spB</bpmn:incoming>
+      <bpmn:outgoing>b1</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="a1" name="a1" sourceRef="taskA" targetRef="decoyJoin" />
+    <bpmn:sequenceFlow id="b1" name="b1" sourceRef="taskB" targetRef="join" />
+    <bpmn:inclusiveGateway id="decoyJoin" name="decoyJoin">
+      <bpmn:incoming>a1</bpmn:incoming>
+      <bpmn:incoming>x1</bpmn:incoming>
+      <bpmn:outgoing>d1</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="d1" name="d1" sourceRef="decoyJoin" targetRef="join" />
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>d1</bpmn:incoming>
+      <bpmn:incoming>b1</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="join" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:userTask id="taskX" name="taskX">
+      <bpmn:incoming>x0</bpmn:incoming>
+      <bpmn:outgoing>x1</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="x0" name="x0" sourceRef="fork0" targetRef="taskX" />
+    <bpmn:sequenceFlow id="x1" name="x1" sourceRef="taskX" targetRef="decoyJoin" />
+  </bpmn:process>
+</bpmn:definitions>

@@ -45,6 +45,19 @@ class GatewayJoinRootTokenCollapseTest {
     @Mock
     private ExecutionContext executionContext;
 
+    /**
+     * WO-C8-35 (CR-09): the handler now asks ElementSupport whether another live
+     * execution can still reach the join, so this unit test wires the REAL component
+     * (over the same dbService mock). A mocked ElementSupport would answer "nobody else
+     * can reach it" in every case and make the readiness assertion vacuous.
+     */
+    private ElementSupport realElementSupport() {
+        return new ElementSupport(dbService, scriptService,
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.service.FeelBudget.class),
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class),
+            java.time.ZoneId.of("Asia/Almaty"), false);
+    }
+
     private Token rootToken(UUID id) {
         Token t = new Token();
         t.setId(id);
@@ -106,7 +119,7 @@ class GatewayJoinRootTokenCollapseTest {
         when(dbService.getToken(rootId)).thenReturn(rootToken(rootId));
         when(dbService.createActivity(eq(pi), any(UUID.class), any(BpmnElementModel.class))).thenReturn(UUID.randomUUID());
 
-        new InclusiveGatewayHandler(dbService, flowNavigator, scriptService)
+        new InclusiveGatewayHandler(dbService, flowNavigator, scriptService, realElementSupport())
             .handle(new ExecutionCtx(pi, rootId, executor, executionContext), bpmn, join);
 
         ArgumentCaptor<UUID> tokenCaptor = ArgumentCaptor.forClass(UUID.class);
