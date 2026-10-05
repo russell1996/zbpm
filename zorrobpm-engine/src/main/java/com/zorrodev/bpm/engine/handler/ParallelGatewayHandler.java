@@ -41,16 +41,17 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
         List<String> incomings = bpmnElement.getIncoming();
         List<String> outgoings = bpmnElement.getOutgoing();
 
-        // WO-C8-34 (crit 7, V7-finding): degenerate FORMS are explicit
-        // pass-throughs (mirrors InclusiveGatewayHandler's else) — NOT forks.
-        // 1/1 (fork+join collapsed) and 1-out self-loops (the single outgoing
-        // flow points back at this gateway) continue on the SAME token. A
-        // self-loop MUST NOT fork: forking re-executes the gateway on a child
-        // token ad infinitum (StackOverflow instead of the depth guard — the
-        // child call happens before the depth check in execute()). Forking a
-        // child token + pendingBranches counter for these forms only re-labels
-        // the token.
-        if ((incomings.size() == 1 && outgoings.size() == 1) || isSelfLoop(bpmn, bpmnElement, outgoings)) {
+        // WO-C8-34 (crit 7, V7-finding): degenerate 1/1 (fork+join collapsed
+        // into one gateway) continues on the SAME token — NOT a fork. Forking
+        // a child token + pendingBranches counter for a single branch only
+        // re-labels the token (a stale counter row lingers on the child).
+        // NOTE: 1-out SELF-LOOPS (flow back to this gateway) are deliberately
+        // NOT pass-through here: the fork-then-loop is what the depth guard
+        // (ExecutionContext.enterDepth in execute()) counts — pass-through
+        // would recurse proceedToOutgoing→execute ad infinitum BELOW the
+        // guard's counting frame and StackOverflow instead of tripping it
+        // (proven live: ActivityServiceCharacterizationTest depth test).
+        if (incomings.size() == 1 && outgoings.size() == 1 && !isSelfLoop(bpmn, bpmnElement, outgoings)) {
             UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
             dbService.completeActivity(activityId);
             log.info("{}/{}: Entering and completing {}: {}/{} (degenerate pass-through)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
