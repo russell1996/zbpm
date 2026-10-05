@@ -1172,11 +1172,11 @@ public class ActivityServiceImplTests {
     @Test
     public void recursionDepthGuardStopsInfiniteLoop() throws IOException {
         // test-loop.bpmn: startEvent -> parallel1, and flow2: parallel1 -> parallel1 (self loop).
-        // The 1-out self-loop is an explicit pass-through (WO-C8-34 crit 7), so
-        // the loop now spins on the SAME token through proceedToOutgoing until
-        // the depth guard trips — EngineException, never StackOverflowError.
-        // createToken is never called on this path (stub removed — strict
-        // Mockito flags it as unnecessary).
+        // Self-loops are deliberately NOT pass-through (WO-C8-34 crit 7 NOTE):
+        // the gateway forks a child token and the loop spins fork→execute on
+        // fresh tokens until the depth guard trips — EngineException, never
+        // StackOverflowError (strict-Mockito note: createToken IS called here,
+        // the stub below is consumed).
         String bpmnStr = Files.readString(Path.of("src/test/files/test-loop.bpmn"));
         BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmnStr);
 
@@ -1194,6 +1194,7 @@ public class ActivityServiceImplTests {
 
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(dbService.createToken(any())).thenReturn(token);
 
         // Use a real ExecutionContext with low depth limit (not a mock)
         ExecutionContext realCtx = new ExecutionContext();
