@@ -12,7 +12,6 @@ import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -188,7 +187,15 @@ class C836WorkerConfirmEnvBindingTest {
         }
     }
 
-    @Configuration(proxyBeanMethods = false)
+    /**
+     * Бины стартера для контекста теста. <b>Без {@code @Configuration}</b> — по
+     * той же причине, что и в engine-тесте этого WO: стереотипный класс из
+     * test-sources виден component scan'у любого {@code @SpringBootApplication}
+     * в своём пакете и становится бином в чужих контекстах (здесь — с моками
+     * вместо AMQP). «Лайтовый» кандидат, зарегистрированный явно через
+     * {@code withUserConfiguration}, даёт рабочие {@code @Bean}-методы и при этом
+     * неотличим для сканирования.
+     */
     static class WorkerBeans {
 
         @Bean
