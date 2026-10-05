@@ -25,4 +25,13 @@ public class ServiceTaskCompleted {
      * MDC on the completion path — no DB read per completion just for logging.
      */
     private String processInstanceId;
+    /**
+     * WO-C8-36 (CR-01): идентификатор вызова из сообщения воркера (nullable —
+     * legacy без проверки). Дальше по engine-internal пути без изменений.
+     */
+    private String dispatchPhase;
+    /**
+     * WO-C8-36 (CR-01): индекс внутри фазы из сообщения воркера (nullable).
+     */
+    private Integer dispatchIndex;
 }

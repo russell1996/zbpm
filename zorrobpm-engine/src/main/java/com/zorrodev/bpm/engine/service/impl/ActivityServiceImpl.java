@@ -204,8 +204,22 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     @Override
+    public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, String dispatchPhase,
+            Integer dispatchIndex) {
+        // WO-C8-36: тот же executor-параметр (WO-C8-34 B2) плюс идентификатор вызова —
+        // и phased, и legacy хвост обязаны уметь отпустить паркованный thrower.
+        completionService.failServiceTask(serviceTaskId, errorMessage, retries, dispatchPhase, dispatchIndex, this);
+    }
+
+    @Override
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables) {
-        completionService.completeServiceTask(serviceTaskId, variables, this);
+        completeServiceTask(serviceTaskId, variables, null, null);
+    }
+
+    @Override
+    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, String dispatchPhase,
+            Integer dispatchIndex) {
+        completionService.completeServiceTask(serviceTaskId, variables, dispatchPhase, dispatchIndex, this);
     }
 
     @Override

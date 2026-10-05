@@ -27,4 +27,13 @@ public class ServiceTaskCompleteData {
      * MDC on the completion path — no DB read per completion just for logging.
      */
     private String processInstanceId;
+    /**
+     * WO-C8-36 (CR-01): эхо {@code dispatchPhase} входящего задания (nullable —
+     * null у старых воркеров, движок трактует как legacy без проверки).
+     */
+    private String dispatchPhase;
+    /**
+     * WO-C8-36 (CR-01): эхо {@code dispatchIndex} входящего задания (nullable).
+     */
+    private Integer dispatchIndex;
 }

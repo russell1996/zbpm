@@ -89,6 +89,10 @@ public class ServiceTaskListener {
             serviceTaskCompleted.setStatus(data.getStatus());
             serviceTaskCompleted.setErrorMessage(data.getErrorMessage());
             serviceTaskCompleted.setVariables(data.getVariables());
+            // WO-C8-36 (CR-01): идентификатор вызова дальше по engine-internal
+            // пути без изменений (null = legacy без проверки).
+            serviceTaskCompleted.setDispatchPhase(data.getDispatchPhase());
+            serviceTaskCompleted.setDispatchIndex(data.getDispatchIndex());
             serviceTaskCompleted.setTraceParent(traceParent);
             serviceTaskCompleted.setProcessInstanceId(processInstanceId);
             publisher.publishEvent(serviceTaskCompleted);

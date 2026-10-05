@@ -13,6 +13,7 @@ import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import com.zorrodev.bpm.engine.tracing.TracingSupport;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import com.zorrodev.bpm.exchange.ProcessVariable;
+import com.zorrodev.bpm.exchange.ServiceTaskDispatchPhase;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +71,12 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         // listener job is dispatched below) — merged over the element headers at the end.
         Map<String, String> listenerHeaders = null;
 
+        // WO-C8-36 (CR-01): штамп конкретного вызова — какая фаза и какой индекс
+        // ставятся в эту отправку. Побеждает та же ветка, что выбирает job ниже
+        // (порядок if-chain 1:1, включая "end — только когда start закрыт").
+        String dispatchPhase = ServiceTaskDispatchPhase.REAL;
+        Integer dispatchIndex = null;
+
         // WO-C8-21: while a creating listener is in flight, the dispatched job is the
         // listener's. Read ONLY for elements that declare creating listeners (user tasks),
         // so every pre-existing path never touches the new read. A user task has no "real"
@@ -80,6 +87,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         if (pendingCreating != null && pendingCreating >= 0 && pendingCreating < creatingListeners.size()) {
             job = creatingListeners.get(pendingCreating).jobType();
             listenerHeaders = creatingListeners.get(pendingCreating).headers();
+            dispatchPhase = ServiceTaskDispatchPhase.CREATING;
+            dispatchIndex = pendingCreating;
         } else if (pendingCreating != null) {
             log.warn("User task {} has out-of-bounds pendingCreatingListenerIndex {} ({} creating listeners) — raising incident",
                 serviceTaskId, pendingCreating, creatingListeners.size());
@@ -97,6 +106,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         if (pendingCompleting != null && pendingCompleting >= 0 && pendingCompleting < completingListeners.size()) {
             job = completingListeners.get(pendingCompleting).jobType();
             listenerHeaders = completingListeners.get(pendingCompleting).headers();
+            dispatchPhase = ServiceTaskDispatchPhase.COMPLETING;
+            dispatchIndex = pendingCompleting;
         } else if (pendingCompleting != null) {
             log.warn("User task {} has out-of-bounds pendingCompletingListenerIndex {} ({} completing listeners) — raising incident",
                 serviceTaskId, pendingCompleting, completingListeners.size());
@@ -113,6 +124,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         if (pendingAssigning != null && pendingAssigning >= 0 && pendingAssigning < assigningListeners.size()) {
             job = assigningListeners.get(pendingAssigning).jobType();
             listenerHeaders = assigningListeners.get(pendingAssigning).headers();
+            dispatchPhase = ServiceTaskDispatchPhase.ASSIGNING;
+            dispatchIndex = pendingAssigning;
         } else if (pendingAssigning != null) {
             log.warn("User task {} has out-of-bounds pendingAssigningListenerIndex {} ({} assigning listeners) — raising incident",
                 serviceTaskId, pendingAssigning, assigningListeners.size());
@@ -129,6 +142,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         if (pendingUpdating != null && pendingUpdating >= 0 && pendingUpdating < updatingListeners.size()) {
             job = updatingListeners.get(pendingUpdating).jobType();
             listenerHeaders = updatingListeners.get(pendingUpdating).headers();
+            dispatchPhase = ServiceTaskDispatchPhase.UPDATING;
+            dispatchIndex = pendingUpdating;
         } else if (pendingUpdating != null) {
             log.warn("User task {} has out-of-bounds pendingUpdatingListenerIndex {} ({} updating listeners) — raising incident",
                 serviceTaskId, pendingUpdating, updatingListeners.size());
@@ -146,6 +161,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         if (pendingCanceling != null && pendingCanceling >= 0 && pendingCanceling < cancelingListeners.size()) {
             job = cancelingListeners.get(pendingCanceling).jobType();
             listenerHeaders = cancelingListeners.get(pendingCanceling).headers();
+            dispatchPhase = ServiceTaskDispatchPhase.CANCELING;
+            dispatchIndex = pendingCanceling;
         } else if (pendingCanceling != null) {
             log.warn("User task {} has out-of-bounds pendingCancelingListenerIndex {} ({} canceling listeners) — raising incident",
                 serviceTaskId, pendingCanceling, cancelingListeners.size());
@@ -163,6 +180,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         if (pendingStart != null && pendingStart >= 0 && pendingStart < startListeners.size()) {
             job = startListeners.get(pendingStart).jobType();
             listenerHeaders = startListeners.get(pendingStart).headers();
+            dispatchPhase = ServiceTaskDispatchPhase.START;
+            dispatchIndex = pendingStart;
         } else if (pendingStart != null) {
             log.warn("Service task {} has out-of-bounds pendingListenerIndex {} ({} start listeners) — dispatching real job",
                 serviceTaskId, pendingStart, startListeners.size());
@@ -179,6 +198,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             if (pendingEnd != null && pendingEnd >= 0 && pendingEnd < endListeners.size()) {
                 job = endListeners.get(pendingEnd).jobType();
                 listenerHeaders = endListeners.get(pendingEnd).headers();
+                dispatchPhase = ServiceTaskDispatchPhase.END;
+                dispatchIndex = pendingEnd;
             } else if (pendingEnd != null) {
                 log.warn("Service task {} has out-of-bounds pendingEndListenerIndex {} ({} end listeners) — dispatching real job",
                     serviceTaskId, pendingEnd, endListeners.size());
@@ -218,6 +239,8 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         detail.setVariables(variables);
         detail.setTaskHeaders(taskHeaders);
         detail.setPriority(priority);
+        detail.setDispatchPhase(dispatchPhase);
+        detail.setDispatchIndex(dispatchIndex);
 
         writeOutboxEntry(serviceTaskId, detail);
     }
@@ -263,6 +286,11 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         detail.setVariables(variables);
         detail.setTaskHeaders(taskHeaders);
         detail.setPriority(priority);
+        // WO-C8-36 (CR-01): фазовая отправка штампуется как element_start —
+        // приём идёт по PK фазы (DONE-маркер ElementListenerPhaseService),
+        // штамп здесь — для единой схемы наблюдаемости/отладки.
+        detail.setDispatchPhase(ServiceTaskDispatchPhase.ELEMENT_START);
+        detail.setDispatchIndex(index);
 
         writeOutboxEntry(phaseId, detail);
     }
