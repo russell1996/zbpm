@@ -45,25 +45,6 @@ public class HandlerAutoConfiguration {
     @Value("${zorrobpm.worker.completion-confirm-timeout:5000}")
     private long completionConfirmTimeoutMs = 5_000L;
 
-    /**
-     * WO-C8-36: общий сет немаршрутизируемых completion-ids (см.
-     * {@code JobCompletionListener.setReturnedCompletionIds}: callback — один на
-     * шаблон, listener'ов много). Живёт пока жив бин конфигурации (весь uptime).
-     */
-    private final java.util.Set<String> returnedCompletionIds =
-        java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-    /**
-     * WO-C8-36: ReturnsCallback — один на шаблон (повторный set на ТОМ ЖЕ
-     * шаблоне = IllegalState). Сет уже настроенных шаблонов СЛАБЫЙ: повторный
-     * init() на том же шаблоне — no-op; новый шаблон (новый контекст) — ставим
-     * свой. Static, т.к. три контекста одной JVM делят бин-класс (поймано
-     * живьём: два app-теста + третий контекст); weak — закрытые контексты не
-     * текут (их шаблоны уходят со сборщиком, сет не держит).
-     */
-    private static final java.util.Set<RabbitTemplate> returnsCallbackInstalledOn =
-        java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
-
     private ObjectMapper objectMapper;  // shared instance (CRIT-5)
 
     /**
@@ -130,44 +111,22 @@ public class HandlerAutoConfiguration {
                     cf == null ? "null" : cf.getClass().getSimpleName());
             }
             rabbitTemplate.setMandatory(true);
-            // ReturnsCallback — ОДИН на шаблон (spring-amqp: повторный set =
-            // IllegalState). В составных контекстах init() может вызываться
-            // повторно (поймано живьём: app-модуль ронял контекст полным verify)
-            // — повторный set пропускаем (первый callback уже пишет в тот же
-            // общий сет; чужие callback'и этот стартер не затирает никогда).
-            // Второй контур поверх weak-сета: чужой callback на шаблоне (не наш,
-            // уже стоявший до нас — составной контекст) — не затираем и не
-            // падаем, только mandatory (возврат тогда ловит чужой callback,
-            // наш wait всё равно увидит confirm; unroutable-check деградирует
-            // до старого поведения — честно, без IllegalState).
-            boolean alreadyOurs;
-            synchronized (returnsCallbackInstalledOn) {
-                alreadyOurs = !returnsCallbackInstalledOn.add(rabbitTemplate);
-            }
-            if (!alreadyOurs) {
-                try {
-                    rabbitTemplate.setReturnsCallback(returned -> {
-                        String cid = returned.getMessage() != null
-                            ? returned.getMessage().getMessageProperties().getCorrelationId()
-                            : null;
-                        log.warn("Completion returned as unroutable: replyCode={}, replyText={}, correlationId={}",
-                            returned.getReplyCode(), returned.getReplyText(), cid);
-                        if (cid != null) {
-                            // WO-C8-36 (red-team HOLD-6): метка времени для чистки
-                            // опоздавших (см. JobCompletionListener.evictStaleReturnedIds).
-                            // Формат "cid#millis"; remove в listener'е снимает оба
-                            // варианта (с меткой и голый — голый кладут тесты).
-                            returnedCompletionIds.add(cid + "#" + System.currentTimeMillis());
-                        }
-                    });
-                } catch (IllegalStateException someoneElsesCallback) {
-                    synchronized (returnsCallbackInstalledOn) {
-                        returnsCallbackInstalledOn.remove(rabbitTemplate);
-                    }
-                    log.warn("WO-C8-36: RabbitTemplate already has a returns callback "
-                        + "(not ours) — keeping it, unroutable completions rely on its owner: {}",
-                        someoneElsesCallback.getMessage());
-                }
+            // ReturnsCallback нужен ТОЛЬКО для наблюдаемости (warn в лог). Решение
+            // «считать ли отправку доставленной» принимает сам воркер по
+            // CorrelationData.getReturned() (см. JobCompletionListener.sendCompletion)
+            // — это не зависит от чужого callback на шаблоне, поэтому составной
+            // контекст (чужой callback уже стоял) больше не деградирует проверку.
+            // Обратный контур: повторный set на том же шаблоне = IllegalState,
+            // init() в составных контекстах вызывается повторно — молча пропускаем.
+            try {
+                rabbitTemplate.setReturnsCallback(returned -> log.warn(
+                    "Completion returned as unroutable: replyCode={}, replyText={}, exchange={}, routingKey={}",
+                    returned.getReplyCode(), returned.getReplyText(),
+                    returned.getExchange(), returned.getRoutingKey()));
+            } catch (IllegalStateException someoneElsesCallback) {
+                log.warn("WO-C8-36: RabbitTemplate already has a returns callback "
+                    + "(not ours) — keeping it; delivery decision does not depend on it: {}",
+                    someoneElsesCallback.getMessage());
             }
         }
 
@@ -205,7 +164,6 @@ public class HandlerAutoConfiguration {
                 new JobCompletionListener(handler, rabbitTemplate, objectMapper, queueName);
             jobListener.setEnsurePublisherConfirms(ensurePublisherConfirms);
             jobListener.setConfirmTimeoutMs(completionConfirmTimeoutMs);
-            jobListener.setReturnedCompletionIds(returnedCompletionIds);
             container.setMessageListener(jobListener);
             container.start();
         }

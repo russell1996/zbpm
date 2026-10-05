@@ -20,9 +20,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WO-REL-36 (F10): слушатель worker-очереди с разделённой обработкой ошибок.
@@ -88,14 +86,6 @@ public class JobCompletionListener implements MessageListener {
     private boolean ensurePublisherConfirms = true;
     private long confirmTimeoutMs = 5_000L;
 
-    /**
-     * WO-C8-36: ids немаршрутизируемых completion'ов (basic.return приходит раньше
-     * confirm с ack=true — см. engine-side {@code RabbitConfiguration}: голый
-     * confirm врёт про доставку). Запись — в returns-callback (connection-thread),
-     * чтение — после wait (happens-before через confirm-latch, гонки нет).
-     */
-    private volatile Set<String> returnedCompletionIds = ConcurrentHashMap.newKeySet();
-
     /** WO-C8-36: ставит {@code HandlerAutoConfiguration} из пропертей (тесты — дефолт). */
     public void setEnsurePublisherConfirms(boolean ensurePublisherConfirms) {
         this.ensurePublisherConfirms = ensurePublisherConfirms;
@@ -107,41 +97,20 @@ public class JobCompletionListener implements MessageListener {
     }
 
     /**
-     * WO-C8-36: общий сет с конфигурацией (returns-callback — один на шаблон,
-     * listener'ов — по одному на хендлер; у каждого свой сет return потерялся бы
-     * для всех, кроме последнего). Ids уникальны на отправку — чужое не трогаем
-     * (remove только своего completionId). До вызова — локальный сет (тесты).
+     * WO-C8-36 (red-team 1.2 + пересмотр HOLD-6): НЕ держим разделяемый сет
+     * возвратов. Немаршрутизируемость читается с САМОЙ отправки —
+     * {@link CorrelationData#getReturned()}, который spring-amqp заполняет в
+     * {@code basic.return}-обработчике ({@code PublisherCallbackChannelImpl}).
+     *
+     * <p>Почему это не гонка (HOLD-6 был про окно «return опоздал после confirm»):
+     * в ack-пути {@code doHandleConfirm} сначала зовёт
+     * {@code PendingConfirm.waitForReturnIfNeeded()} (ждёт return-latch до 60 с) и
+     * только затем дёргает confirm-listener — то есть к моменту, когда наша
+     * confirm-future завершится, {@code getReturned()} уже заполнен. Проверено
+     * байткодом spring-rabbit 4.0.4. Разделяемый сет + TTL-чистка были лишним
+     * состоянием с собственной гонкой и несовпадением форматов (prod «cid#millis»
+     * против тестового «cid») — удалены.
      */
-    public void setReturnedCompletionIds(Set<String> shared) {
-        this.returnedCompletionIds = shared;
-    }
-
-    /** WO-C8-36: тест-хук — ids, увиденные в returns-callback. */
-    Set<String> returnedCompletionIdsForTest() {
-        return returnedCompletionIds;
-    }
-
-    /**
-     * WO-C8-36 (red-team HOLD-6): чистка опоздавших return-id. Формат метки —
-     * суффикс epoch-millis через '#': id ставит воркер ("completion-UUID"),
-     * метку дописывает returns-callback конфигурации ("completion-UUID#millis").
-     * Без метки (старый формат/тесты) — не трогаем (fail-open чистки, не доставки).
-     */
-    private void evictStaleReturnedIds() {
-        long now = System.currentTimeMillis();
-        returnedCompletionIds.removeIf(id -> {
-            int hash = id.lastIndexOf('#');
-            if (hash < 0) {
-                return false;
-            }
-            try {
-                return now - Long.parseLong(id.substring(hash + 1))
-                    > java.util.concurrent.TimeUnit.MINUTES.toMillis(10);
-            } catch (NumberFormatException e) {
-                return false;
-            }
-        });
-    }
 
     /**
      * WO-C8-36 (red-team HOLD-4): наблюдаемость тихих ослаблений БЕЗ новой
@@ -305,6 +274,17 @@ public class JobCompletionListener implements MessageListener {
         final String completionId = idFromBody;
         CorrelationData correlationData = new CorrelationData(completionId);
         try {
+            // WO-C8-36 (red-team blocker 1.1): RabbitTemplate.waitForConfirmsOrDie
+            // ТРЕБУЕТ scope invoke(...) — вне его бросает IllegalStateException
+            // («This operation is only available within the scope of an invoke
+            // operation», подтверждено байткодом spring-rabbit 4.0.4: метод читает
+            // ThreadLocal dedicatedChannels). Наш send идёт обычным
+            // convertAndSend, поэтому каждый completion падал бы с
+            // IllegalStateException → NACK входа → после retry-окна задание в DLQ,
+            // т.е. фикс давал противоположность заявленной гарантии.
+            // Заменяем на per-send confirm-future: корреляция ровно с ЭТОЙ
+            // отправкой (channel-wide waitForConfirms при concurrency 3-5 ждал бы
+            // чужие confirms и давал ложные NACK).
             // WO-OBS-8: the completion hop carries the forwarded trace context as AMQP
             // headers (the engine-side @RabbitListener reads them via @Headers) AND
             // inside the converted body (belt and braces: the body fields feed the
@@ -323,43 +303,63 @@ public class JobCompletionListener implements MessageListener {
                 return m;
             }, correlationData);
             if (ensurePublisherConfirms && confirmsAvailable()) {
-                // Синхронный confirm: NACK/timeout/разрыв до confirm → исключение
-                // (тот же transport-проброс, что выше — вход не подтверждается).
-                // Unroutable даёт confirm ack=true ПОСЛЕ basic.return — возврат
-                // ловится отдельно ниже (голый ack доставке не равен).
+                // Синхронный per-send confirm: NACK/timeout/разрыв до confirm →
+                // исключение (тот же transport-проброс, что выше — вход не
+                // подтверждается). Unroutable даёт confirm ack=true ПОСЛЕ
+                // basic.return — возврат ловится отдельно ниже (голый ack
+                // доставке не равен).
                 //
                 // WO-C8-36 (red-team HOLD-6 re-pass): порядок return-vs-confirm.
                 // Брокер шлёт basic.return ДО confirm-ack на том же канале;
                 // spring-amqp доставляет оба колбэка последовательно через
-                // executor соединения, а waitForConfirmsOrDie возвращается только
-                // после confirm — в штатном случае к моменту проверки callback
-                // уже отработал и id в сете. Строгого happens-before спецификация
-                // executor'а не даёт — остаточное окно (return опоздал ПОСЛЕ
-                // confirm): текущий send засчитан успехом, вход ACK'нут, а
-                // сообщение немаршрутизируемо = результат потерян (CR-13-режим
-                // в миниатюре; окно микроскопическое — return идёт до confirm
-                // на том же канале, опоздание требует переупорядочивания в
-                // executor'е). Это остаточный риск, а не «ложного успеха нет».
-                // Чистка ниже убирает только МУСОР сета (опоздавшие id старше
-                // TTL — за это время любой return уже пришёл), доставку она не
-                // чинит и не обязана: TTL удаляет строку, не возвращает результат.
-                rabbitTemplate.waitForConfirmsOrDie(confirmTimeoutMs);
-                evictStaleReturnedIds();
-                // Снимаем оба варианта: "cid#millis" (прод-callback) и голый cid
-                // (тесты/старый формат). removeIf — один проход, атомарно по элементу.
-                java.util.concurrent.atomic.AtomicBoolean returned =
-                    new java.util.concurrent.atomic.AtomicBoolean(false);
-                returnedCompletionIds.removeIf(id -> {
-                    boolean mine = id.equals(completionId) || id.startsWith(completionId + "#");
-                    if (mine) {
-                        returned.set(true);
+                // executor соединения, а future завершается только по confirm —
+                // в штатном случае к моменту проверки callback уже отработал и
+                // id в сете. Строгого happens-before спецификация executor'а не
+                // даёт — остаточное окно (return опоздал ПОСЛЕ confirm): текущий
+                // send засчитан успехом, вход ACK'нут, а сообщение
+                // немаршрутизируемо = результат потерян (CR-13-режим в
+                // миниатюре; окно микроскопическое — return идёт до confirm на том
+                // же канале, опоздание требует переупорядочивания в executor'е).
+                // Это остаточный риск, а не «ложного успеха нет». Чистка ниже
+                // убирает только МУСОР сета (опоздавшие id старше TTL — за это
+                // время любой return уже пришёл), доставку она не чинит и не
+                // обязана: TTL удаляет строку, не возвращает результат.
+                //
+                // Per-send future вместо waitForConfirmsOrDie: у того есть
+                // invoke-scope-требование (см. комментарий выше про dedicatedChannels),
+                // а channel-wide барьер при concurrency 3-5 ждал бы чужие confirms.
+                try {
+                    CorrelationData.Confirm confirm =
+                        correlationData.getFuture().get(confirmTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    if (!confirm.isAck()) {
+                        throw new AmqpException("Completion " + completionId
+                            + " was NACKed by broker: " + confirm.getReason()
+                            + " — will be redelivered");
                     }
-                    return mine;
-                });
-                if (returned.get()) {
+                } catch (java.util.concurrent.ExecutionException e) {
+                    throw new AmqpException("Completion " + completionId
+                        + " confirm failed: " + e.getCause(), e.getCause());
+                } catch (java.util.concurrent.TimeoutException e) {
+                    throw new AmqpException("Completion " + completionId
+                        + " was not confirmed within " + confirmTimeoutMs + "ms"
+                        + " — will be redelivered", e);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AmqpException("Completion " + completionId
+                        + " confirm wait was interrupted — will be redelivered", e);
+                }
+                // Голый confirm ack НЕ равен доставке: брокер подтверждает ПРИЁМ
+                // и для немаршрутизируемого сообщения (сперва basic.return, потом
+                // ack). Ответ лежит на самой отправке (см. javadoc про
+                // getReturned) — гонки нет, чужой отправки не коснёмся.
+                org.springframework.amqp.core.ReturnedMessage returnedMessage =
+                    correlationData.getReturned();
+                if (returnedMessage != null) {
                     unroutableCount.incrementAndGet();
                     throw new AmqpException("Completion " + completionId
-                        + " returned as unroutable by broker (mandatory) — will be redelivered");
+                        + " returned as unroutable by broker (mandatory): "
+                        + returnedMessage.getReplyCode() + " " + returnedMessage.getReplyText()
+                        + " — will be redelivered");
                 }
             } else if (ensurePublisherConfirms) {
                 long n = confirmsUnavailableCount.incrementAndGet();

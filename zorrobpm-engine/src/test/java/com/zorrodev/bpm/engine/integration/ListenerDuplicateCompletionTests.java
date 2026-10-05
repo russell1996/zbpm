@@ -58,6 +58,10 @@ class ListenerDuplicateCompletionTests {
     private ActivityRepository activityRepository;
     @Autowired
     private ServiceTaskRepository serviceTaskRepository;
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager txManager;
+    @Autowired
+    private com.zorrodev.bpm.engine.handler.CancelingPhaseService cancelingPhaseService;
 
     private static String bpmn() throws Exception {
         // Та же фикстура, что у соседа (C8-11), минус end-listener — изолируем START-фазу.
@@ -184,9 +188,135 @@ class ListenerDuplicateCompletionTests {
             .isEqualTo(budgetBefore - 2);
     }
 
+    /**
+     * WO-C8-36 (red-team 1.3): exact-match доказан РАЗЛИЧАЮЩИМ ассертом для всех
+     * пяти user-task фаз, а не только для start/end/real.
+     *
+     * <p>Почему именно чтение колонки в СВЕЖЕЙ транзакции: внутри
+     * {@code @Transactional}-теста чтение отдаёт L1-кэш уровня 1 (артефакт теста,
+     * не прод-кода). Ассерт «фаза не сдвинулась» обязан быть прочитан из БД, иначе
+     * он одинаков при «чужой индекс проигнорирован» и «чужой индекс фазу закрыл» —
+     * ровно та неразличающая пара, на которой red-team поймал неприкрытую ветку
+     * ASSIGNING (снятие {@code pending.equals(dispatchIndex)} оставляло тест зелёным).
+     *
+     * <p>Мутация «снять exact-match в ветке X» валит именно этот тест: фаза
+     * закрывается чужим индексом (значение становится {@code null} вместо 0).
+     */
+    @Test
+    void phasedMismatchIgnored_allUserTaskPhases_phaseColumnUnmovedInFreshTransaction() throws Exception {
+        // 1) ASSIGNING — фаза открывается активацией задачи.
+        UUID utPi = inTransactionReturning(() ->
+            startUserTask("test-c8-task-listeners-assigning.bpmn", "c8phassign-"));
+        UUID assigningId = activityIn(utPi, "review").getId();
+        assertThat(pendingIn(() -> dbService.getPendingAssigningListenerIndex(assigningId)))
+            .as("assigning-фаза открыта на индексе 0").isEqualTo(0);
+        inTransaction(() -> runtimeService.completeServiceTask(assigningId, List.of(),
+            ServiceTaskDispatchPhase.ASSIGNING, 7));
+        assertThat(pendingIn(() -> dbService.getPendingAssigningListenerIndex(assigningId)))
+            .as("чужой assigning/7 обязан оставить фазу на месте")
+            .isEqualTo(0);
+        // Легитимный индекс после чужого — всё ещё принимается (делегация, не игнор всего).
+        inTransaction(() -> runtimeService.completeServiceTask(assigningId, List.of(),
+            ServiceTaskDispatchPhase.ASSIGNING, 0));
+        assertThat(pendingIn(() -> dbService.getPendingAssigningListenerIndex(assigningId)))
+            .as("легитимный assigning/0 закрывает фазу").isNull();
+
+        // 2) CREATING — фаза открывается на входе в user task.
+        UUID creatingPi = inTransactionReturning(() ->
+            startUserTask("test-c8-task-listeners-two-creating.bpmn", "c8phcreat-"));
+        UUID creatingId = activityIn(creatingPi, "review").getId();
+        assertThat(pendingIn(() -> dbService.getPendingCreatingListenerIndex(creatingId)))
+            .as("creating-фаза открыта на индексе 0").isEqualTo(0);
+        inTransaction(() -> runtimeService.completeServiceTask(creatingId, List.of(),
+            ServiceTaskDispatchPhase.CREATING, 7));
+        assertThat(pendingIn(() -> dbService.getPendingCreatingListenerIndex(creatingId)))
+            .as("чужой creating/7 обязан оставить фазу на месте")
+            .isEqualTo(0);
+
+        // 3) COMPLETING — фаза открывается завершением задачи (без переменных).
+        UUID completingPi = inTransactionReturning(() ->
+            startUserTask("test-c8-task-listeners-completing.bpmn", "c8phcompl-"));
+        UUID completingId = activityIn(completingPi, "review").getId();
+        inTransaction(() -> runtimeService.completeUserTask(completingId, List.of()));
+        assertThat(pendingIn(() -> dbService.getPendingCompletingListenerIndex(completingId)))
+            .as("completing-фаза открыта на индексе 0").isEqualTo(0);
+        inTransaction(() -> runtimeService.completeServiceTask(completingId, List.of(),
+            ServiceTaskDispatchPhase.COMPLETING, 7));
+        assertThat(pendingIn(() -> dbService.getPendingCompletingListenerIndex(completingId)))
+            .as("чужой completing/7 обязан оставить фазу на месте")
+            .isEqualTo(0);
+
+        // 4) UPDATING — фаза открывается завершением задачи С переменными.
+        UUID updatingPi = inTransactionReturning(() ->
+            startUserTask("test-c8-task-listeners-updating.bpmn", "c8phupd-"));
+        UUID updatingId = activityIn(updatingPi, "review").getId();
+        com.zorrodev.bpm.contract.model.ProcessVariable note =
+            new com.zorrodev.bpm.contract.model.ProcessVariable();
+        note.setName("note");
+        note.setValue("hello");
+        note.setType(com.zorrodev.bpm.contract.model.ProcessVariableType.STRING);
+        inTransaction(() -> runtimeService.completeUserTask(updatingId, List.of(note)));
+        assertThat(pendingIn(() -> dbService.getPendingUpdatingListenerIndex(updatingId)))
+            .as("updating-фаза открыта на индексе 0").isEqualTo(0);
+        inTransaction(() -> runtimeService.completeServiceTask(updatingId, List.of(),
+            ServiceTaskDispatchPhase.UPDATING, 7));
+        assertThat(pendingIn(() -> dbService.getPendingUpdatingListenerIndex(updatingId)))
+            .as("чужой updating/7 обязан оставить фазу на месте")
+            .isEqualTo(0);
+
+        // 5) CANCELING — фаза открывается отменой задачи.
+        UUID cancelingPi = inTransactionReturning(() ->
+            startUserTask("test-c8-task-listeners-canceling.bpmn", "c8phcanc-"));
+        UUID cancelingId = activityIn(cancelingPi, "review").getId();
+        // Отменяем задачу ( canceling-фаза открывается только для CANCELED-активности,
+        // см. CancelingPhaseService.openForActivity), затем открываем саму фазу.
+        inTransaction(() -> dbService.cancelActivity(cancelingId));
+        inTransaction(() -> cancelingPhaseService.openForActivity(cancelingId, null));
+        assertThat(pendingIn(() -> dbService.getPendingCancelingListenerIndex(cancelingId)))
+            .as("canceling-фаза открыта на индексе 0").isEqualTo(0);
+        inTransaction(() -> runtimeService.completeServiceTask(cancelingId, List.of(),
+            ServiceTaskDispatchPhase.CANCELING, 7));
+        assertThat(pendingIn(() -> dbService.getPendingCancelingListenerIndex(cancelingId)))
+            .as("чужой canceling/7 обязан оставить фазу на месте")
+            .isEqualTo(0);
+    }
+
+    /** Читает фазовую колонку в СВЕЖЕЙ транзакции (внутри теста L1-кэш врёт). */
+    private Integer pendingIn(java.util.function.Supplier<Integer> read) {
+        org.springframework.transaction.support.TransactionTemplate fresh =
+            new org.springframework.transaction.support.TransactionTemplate(txManager);
+        return fresh.execute(status -> read.get());
+    }
+
+    /** Прод-вызов, который сам открывает транзакцию (@Transactional на прод-классе). */
+    private void inTransaction(Runnable prodCall) {
+        new org.springframework.transaction.support.TransactionTemplate(txManager)
+            .executeWithoutResult(status -> prodCall.run());
+    }
+
+    private UUID startUserTask(String fixture, String idPrefix) {
+        try {
+            String xml = Files.readString(Paths.get("src/test/files/" + fixture));
+            ProcessDefinition model = processDefinitionService.addProcessDefinition(
+                xml.replace("c8-task-listeners", idPrefix + UUID.randomUUID().toString().substring(0, 8)));
+            StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+            dto.setProcessDefinitionId(model.getId());
+            dto.setVariables(List.of());
+            return runtimeService.startProcessInstance(dto).getId();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("fixture " + fixture + " unreadable", e);
+        }
+    }
+
+    /**
+     * WO-C8-36 (red-team 1.3 re-pass): тот же класс доказательств для END и
+     * ASSIGNING на ПОВЕДЕНЧЕСКОМ уровне (инстанс/парковка), а не на чтении
+     * колонки — этот тест остаётся как зеркало сценария «дубликат не завершает
+     * инстанс» (критерий 1 в фазе end).
+     */
     @Test
     @Transactional
-    void phasedMismatchIgnored_endAndAssigningBranches() throws Exception {
+    void phasedMismatchIgnored_endAndAssigningBehaviour() throws Exception {
         // WO-C8-36 (red-team HOLD-5, re-pass: имя честное — покрыты end+assigning;
         // start/real — соседние тесты выше; creating/completing/updating/canceling
         // mismatch идут ТОЙ ЖЕ строкой exact-match (failUserTaskPhase) и покрыты
@@ -263,6 +393,12 @@ class ListenerDuplicateCompletionTests {
         assertThat(activityIn(piId, "review").getStatus()).isEqualTo(ActivityStatus.CREATED);
         assertThat(dbService.getPendingAssignee(activityIn(piId, "review").getId())).isEqualTo("alice");
         return piId;
+    }
+
+    /** Прод-вызов, возвращающий значение, в СВОЕЙ транзакции. */
+    private <T> T inTransactionReturning(java.util.function.Supplier<T> prodCall) {
+        return new org.springframework.transaction.support.TransactionTemplate(txManager)
+            .execute(status -> prodCall.get());
     }
 
     private ActivityEntity activityIn(UUID piId, String elementId) {

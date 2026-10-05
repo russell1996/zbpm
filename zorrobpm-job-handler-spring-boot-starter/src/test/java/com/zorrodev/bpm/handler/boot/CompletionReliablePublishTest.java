@@ -20,15 +20,14 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 /**
@@ -91,33 +90,60 @@ class CompletionReliablePublishTest {
         return captor.getValue();
     }
 
-    @Test
-    void confirmNackOrTimeout_throws_inputNotAcked() {
-        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
-        doThrow(new AmqpException("NACK from broker")).when(rabbitTemplate)
-            .waitForConfirmsOrDie(anyLong());
+    /**
+     * Ответ на confirm по in-flight отправке. Прод-механизм ждёт per-send
+     * {@code CorrelationData.getFuture()} — мок обязан его завершать, иначе тест
+     * проверял бы несуществующий API (такое и служило блокером red-team 1.1:
+     * {@code waitForConfirmsOrDie} вне invoke-scope кидает в бою, а мок был no-op).
+     */
+    private void answerConfirm(CorrelationData cd, boolean ack, String reason) {
+        cd.getFuture().complete(new CorrelationData.Confirm(ack, reason));
+    }
 
-        // CR-13/крит.5: NACK/timeout обязаны выйти наружу — контейнер не подтвердит вход.
+    @Test
+    void confirmNack_throws_inputNotAcked() {
+        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        doAnswer(inv -> {
+            answerConfirm((CorrelationData) inv.getArgument(3), false, "exchange down");
+            return null;
+        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
+
+        // CR-13/крит.5: NACK обязан выйти наружу — контейнер не подтвердит вход.
         assertThatThrownBy(() -> listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-nack")))
             .isInstanceOf(AmqpException.class)
-            .hasMessageContaining("NACK");
+            .hasMessageContaining("NACKed");
+    }
+
+    @Test
+    void confirmTimeout_throws_inputNotAcked() {
+        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        listener.setConfirmTimeoutMs(120L);
+        // Future НЕ завершаем — эмуляция потери confirm (NACK/разрыв после отправки).
+        assertThatThrownBy(() -> listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-timeout")))
+            .isInstanceOf(AmqpException.class)
+            .hasMessageContaining("was not confirmed within 120ms");
     }
 
     @Test
     void unroutableReturn_throws_inputNotAcked() {
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
-        // Return приходит раньше confirm (как на реальном брокере): к моменту wait
-        // id уже в returned-сете — confirm ack=true обязан НЕ считаться успехом.
+        // Return приходит раньше confirm (как на реальном брокере): к моменту
+        // завершения future id уже в returned-сете — confirm ack=true обязан НЕ
+        // считаться успехом.
         AtomicReference<String> inFlight = new AtomicReference<>();
         doAnswer(inv -> {
-            inFlight.set(((CorrelationData) inv.getArgument(3)).getId());
+            CorrelationData cd = (CorrelationData) inv.getArgument(3);
+            inFlight.set(cd.getId());
+            // Так spring-amqp и помечает возврат: basic.return кладёт
+            // ReturnedMessage в саму отправку ДО подтверждения.
+            cd.setReturned(new org.springframework.amqp.core.ReturnedMessage(
+                new org.springframework.amqp.core.Message(new byte[0]),
+                312, "NO_ROUTE", "", "c836.it.complete.unroutable"));
+            answerConfirm(cd, true, null);
             return null;
         }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
-        doAnswer(inv -> {
-            listener.returnedCompletionIdsForTest().add(inFlight.get());
-            return null;
-        }).when(rabbitTemplate).waitForConfirmsOrDie(anyLong());
 
         assertThatThrownBy(() -> listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-ret")))
             .isInstanceOf(AmqpException.class)
@@ -132,41 +158,72 @@ class CompletionReliablePublishTest {
     @Test
     void confirmedRoutable_sendsOnce_withPerSendCorrelationData() {
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        doAnswer(inv -> {
+            answerConfirm((CorrelationData) inv.getArgument(3), true, null);
+            return null;
+        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
 
         listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-ok"));
 
-        // Счастливый путь: wait прошёл молча (mock no-op), исключения нет.
-        org.mockito.Mockito.verify(rabbitTemplate).waitForConfirmsOrDie(5_000L);
+        // Счастливый путь: confirm ack=true, возвратов нет — исключения нет,
+        // вход подтверждается (вызывающий код завершился нормой).
         CorrelationData cd = sentCorrelationData();
         assertThat(cd.getId()).startsWith("completion-");
+        assertThat(cd.getFuture().isDone())
+            .as("прод-код дождался confirm своей отправки — future завершён")
+            .isTrue();
     }
 
     @Test
     void confirmsDisabled_syncExceptionsOnly_noWaitNoThrow() {
-        // RED-контроль: именно wait/return-check дают throw выше. Со старым
-        // поведением (ensure=false) те же NACK/return остаются тихими.
+        // RED-контроль: именно confirm-wait/return-check дают throw выше. Со
+        // старым поведением (ensure=false) те же NACK/return остаются тихими.
         listener.setEnsurePublisherConfirms(false);
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
 
         listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-off"));
 
-        org.mockito.Mockito.verify(rabbitTemplate, org.mockito.Mockito.never())
-            .waitForConfirmsOrDie(anyLong());
+        CorrelationData captured = sentCorrelationData();
+        assertThat(captured.getFuture().isDone())
+            .as("без confirm-wait future отправки не ждём (старое поведение)")
+            .isFalse();
     }
 
     @Test
-    void staleReturnedId_evicted_unroutableStillDetectedForFreshId() {
-        // WO-C8-36 (red-team HOLD-6): опоздавший return (id старше TTL) не висит
-        // в сете вечно — чистка по метке; свежий unroutable при этом ловится.
+    void unroutableDecisionIsPerSend_notSharedState() {
+        // Red-team 1.2 (пересмотр): решение о доставке принимает САМА отправка
+        // (CorrelationData.getReturned), а не разделяемый сет. Два соседних
+        // вызова не могут увидеть чужой возврат — проверяем конкретно: у первой
+        // отправки возврат есть, у второй — нет, и вторая обязана пройти.
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
-        long ancient = System.currentTimeMillis()
-            - java.util.concurrent.TimeUnit.MINUTES.toMillis(11);
-        listener.returnedCompletionIdsForTest().add("completion-ancient#" + ancient);
+        AtomicInteger call = new AtomicInteger();
+        List<CorrelationData> sends = new java.util.ArrayList<>();
+        doAnswer(inv -> {
+            CorrelationData cd = (CorrelationData) inv.getArgument(3);
+            sends.add(cd);
+            if (call.getAndIncrement() == 0) {
+                cd.setReturned(new org.springframework.amqp.core.ReturnedMessage(
+                    new org.springframework.amqp.core.Message(new byte[0]),
+                    312, "NO_ROUTE", "", "nowhere"));
+            }
+            answerConfirm(cd, true, null);
+            return null;
+        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
 
-        listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-evict"));
+        assertThatThrownBy(() -> listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-a")))
+            .isInstanceOf(AmqpException.class).hasMessageContaining("unroutable");
 
-        org.mockito.Mockito.verify(rabbitTemplate).waitForConfirmsOrDie(5_000L);
-        assertThat(listener.returnedCompletionIdsForTest()).doesNotContain("completion-ancient#" + ancient);
+        // Второй вызов — чистый маршрут: никакого наследованного состояния.
+        // CorrelationData смотрим через тот же Answer (второй вызов = вторая
+        // отправка), а не через sentCorrelationData: тотverify-ит РОВНО один раз.
+        listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-b"));
+        assertThat(sends).as("две отправки — две независимые CorrelationData").hasSize(2);
+        assertThat(sends.get(1).getReturned())
+            .as("вторая отправка не унаследовала возврат первой — состояние per-send")
+            .isNull();
+        assertThat(listener.unroutableCountForTest()).isEqualTo(1L);
     }
 
     @Test
@@ -181,8 +238,34 @@ class CompletionReliablePublishTest {
         listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-fb"));
 
         assertThat(listener.confirmsUnavailableCountForTest()).isEqualTo(1L);
-        org.mockito.Mockito.verify(rabbitTemplate, org.mockito.Mockito.never())
-            .waitForConfirmsOrDie(anyLong());
+        CorrelationData captured = sentCorrelationData();
+        assertThat(captured.getFuture().isDone())
+            .as("без confirms future не ждём — fallback честно помечен счётчиком")
+            .isFalse();
+    }
+
+    @Test
+    void completionId_echoedIntoCompletion_exactValue() {
+        // WO-C8-36 (red-team HOLD-1 + проброс из незакоммиченной правки): воркер
+        // обязан вернуть Идентификатор ОТПРАВКИ, по которому движок дедуплицирует
+        // FAILED-дубликаты. Без этого охранник недостижим из живого пути.
+        when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        doAnswer(inv -> {
+            answerConfirm((CorrelationData) inv.getArgument(3), true, null);
+            return null;
+        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
+
+        listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-cid"));
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(anyString(), payload.capture(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
+        ServiceTaskCompleteData sent = (ServiceTaskCompleteData) payload.getValue();
+        assertThat(sent.getCompletionId())
+            .as("completionId обязателен в теле completion — по нему движок дедуплицирует")
+            .isNotNull()
+            .startsWith("completion-");
     }
 
     @Test
@@ -190,6 +273,11 @@ class CompletionReliablePublishTest {
         // WO-C8-36 (CR-01, сторона воркера): фаза/индекс входящего задания
         // возвращаются в completion без изменений (assert на КОНКРЕТНЫЕ значения).
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
+        doAnswer(inv -> {
+            answerConfirm((CorrelationData) inv.getArgument(3), true, null);
+            return null;
+        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
         UUID taskId = UUID.randomUUID();
         String body = "{\"serviceTaskId\":\"" + taskId + "\","
             + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","

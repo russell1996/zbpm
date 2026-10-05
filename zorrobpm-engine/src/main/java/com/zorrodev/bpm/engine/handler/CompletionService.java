@@ -69,6 +69,13 @@ public class CompletionService {
      * WO-C8-36 (red-team HOLD-1): уже обработанные completionId (дедуп FAILED-дубликатов
      * открытой фазы). Только in-process память: Caffeine bounded 10k/10m — тот же паттерн,
      * что resultCache воркера (F38). Рестарт очищает сет — осознанно (см. failSharedBudgetOnce).
+     *
+     * <p>WO-C8-36 (red-team 1.4): маркер снимается при откате транзакции, иначе
+     * потерявшийся (не списанный) сбой невозможно переиграть до истечения TTL.
+     * Чего in-memory НЕ даёт (осознанная граница, отчёт §Границы): рестарт движка
+     * очищает сет — после него переигранный confirm-loss может списать бюджет
+     * повторно. Устранение этого требует durable-inbox (миграция схемы, G-C) —
+     * вне объёма этого WO; practical impact ограничен окном рестарта.
      */
     private final com.github.benmanes.caffeine.cache.Cache<String, Boolean> processedCompletionIds =
         com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
@@ -426,10 +433,12 @@ public class CompletionService {
      * устаревший игнорятся ДО переменных/ретраев/переходов и НИКОГДА не падают
      * в хвост чужой фазы (fail-closed; legacy остаётся fail-open — см. отчёт).
      *
-     * <p>WO-C8-36 (red-team HOLD-1): {@code completionId} — идентификатор
-     * КОНКРЕТНОЙ отправки. Дедуп FAILED-дубликатов открытой фазы (см.
-     * {@link #failServiceTask}); SUCCESS-дубликаты безопасны и без него (первый
-     * закрывает фазу), но обрабатываются той же очередью ради единообразия.
+     * <p>WO-C8-36 (red-team HOLD-1): {@code completionId} на SUCCESS-пути НЕ
+     * используется — дедуп там не нужен (первый результат закрывает фазу,
+     * повтор отсекает exact-match по фазе, см. {@link #completePhased}). Параметр
+     * оставлен в сигнатуре, чтобы phased-вызовы имели единый набор
+     * идентификаторов вызова; мёртвый параметр удалён бы в отдельном WO по P-14.
+     * Дедуп FAILED-дубликатов — в {@link #failServiceTask}.
      */
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables,
             String dispatchPhase, Integer dispatchIndex, String completionId, TokenExecutor executor) {
@@ -1524,7 +1533,19 @@ public class CompletionService {
             bpmMetrics.activityTransitionIgnored("duplicate_completion");
             return;
         }
-        failSharedBudget(serviceTaskId, retries, message, activity, executor);
+        try {
+            failSharedBudget(serviceTaskId, retries, message, activity, executor);
+        } catch (RuntimeException | Error e) {
+            // Маркер дедупа НЕЛЬЗЯ оставлять при откате транзакции: бюджет не списан,
+            // re-dispatch не создан, а воркер переиграет ТОТ ЖЕ completionId из
+            // resultCache — и уйдёт в игнор, потеряв сбой целиком до истечения TTL
+            // (red-team 1.4). Снимаем маркер только если он всё ещё наш (чужой,
+            // успешно записанный параллельно, не трогаем).
+            if (completionId != null) {
+                processedCompletionIds.asMap().remove(completionId, Boolean.TRUE);
+            }
+            throw e;
+        }
     }
 
     /**

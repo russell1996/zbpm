@@ -20,9 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -142,23 +140,19 @@ class CompletionReliablePublishRabbitIT {
         return detail;
     }
 
-    /** Listener на прод-шаблоне: mandatory + returns в общий сет (как стартер). */
+    /**
+     * Listener на боевом шаблоне: mandatory + publisher-returns на фабрике РОВНО
+     * как в {@code HandlerAutoConfiguration}. Решение о доставке принимает сам
+     * воркер по {@code CorrelationData.getReturned()} — общий сет возвратов
+     * удалён (red-team 1.2: он был источником гонки и несовпадения форматов).
+     */
     private JobCompletionListener listenerOn(RabbitTemplate template, JobHandler handler,
-            String completeQueue, Set<String> returnedIds) {
+            String completeQueue) {
         template.setMandatory(true);
-        template.setReturnsCallback(returned -> {
-            String cid = returned.getMessage() != null
-                ? returned.getMessage().getMessageProperties().getCorrelationId()
-                : null;
-            if (cid != null) {
-                returnedIds.add(cid);
-            }
-        });
         JobCompletionListener jobListener =
             new JobCompletionListener(handler, template, objectMapper, JOB_QUEUE, completeQueue);
         jobListener.setEnsurePublisherConfirms(true);
         jobListener.setConfirmTimeoutMs(5_000L);
-        jobListener.setReturnedCompletionIds(returnedIds);
         return jobListener;
     }
 
@@ -167,13 +161,12 @@ class CompletionReliablePublishRabbitIT {
         UUID taskId = UUID.randomUUID();
         String correlationId = "c836-c4-" + UUID.randomUUID();
         AtomicInteger handlerCalls = new AtomicInteger(0);
-        Set<String> returnedIds = ConcurrentHashMap.newKeySet();
 
         JobHandler handler = probeHandler(handlerCalls);
         RabbitTemplate listenerTemplate = new RabbitTemplate(sendCf);
         listenerTemplate.setMessageConverter(new Jackson2JsonMessageConverter(new ObjectMapper()));
         JobCompletionListener jobListener =
-            listenerOn(listenerTemplate, handler, NO_SUCH_QUEUE, returnedIds);
+            listenerOn(listenerTemplate, handler, NO_SUCH_QUEUE);
 
         org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer container =
             containerFactory.createListenerContainer();
@@ -195,6 +188,10 @@ class CompletionReliablePublishRabbitIT {
             assertThat(handlerCalls.get())
                 .as("эффект ровно один раз (все redelivery — из кэша)")
                 .isEqualTo(1);
+            assertThat(jobListener.unroutableCountForTest())
+                .as("воркер распознал возврат как НЕ доставку (getReturned) — вход не подтверждён "
+                    + "(red-team 1.2)")
+                .isPositive();
 
             // «Правка маршрута»: объявляем очередь — следующий redelivery доходит.
             admin.declareQueue(new org.springframework.amqp.core.Queue(NO_SUCH_QUEUE, true, false, false));
@@ -221,28 +218,37 @@ class CompletionReliablePublishRabbitIT {
         UUID taskId = UUID.randomUUID();
         String correlationId = "c836-c5-" + UUID.randomUUID();
         AtomicInteger handlerCalls = new AtomicInteger(0);
-        AtomicBoolean confirmLostOnce = new AtomicBoolean(false);
-        Set<String> returnedIds = ConcurrentHashMap.newKeySet();
 
         JobHandler handler = probeHandler(handlerCalls);
-        // Живой брокер, но ПЕРВЫЙ confirm теряем (эмуляция NACK/timeout/разрыва
-        // после отправки — детерминированно, без гонки send-vs-destroy).
+        // Живой брокер, живая отправка — но confirm ПЕРВОЙ отправки теряется.
+        // Эмуляция ровно того, что делает брокер при потере confirm: сообщение
+        // ушло, а future той отправки не завершается. Технически — первая
+        // отправка уходит брокеру с ПОДМЕННОЙ CorrelationData (её confirm
+        // завершается и пропадает), тогда как listener продолжает ждать future
+        // СВОЕЙ (незавершённой) отправки → таймаут → throw → NACK входа.
+        // Вторая (redelivery) отправка идёт с честной корреляцией и подтверждается.
         RabbitTemplate flakyTemplate = new RabbitTemplate(sendCf) {
-            private final AtomicBoolean first = new AtomicBoolean(true);
+            private final AtomicBoolean firstSend = new AtomicBoolean(true);
 
             @Override
-            public void waitForConfirmsOrDie(long timeout) {
-                if (first.compareAndSet(true, false)) {
-                    confirmLostOnce.set(true);
-                    throw new org.springframework.amqp.AmqpException(
-                        "C836-IT: simulated confirm loss after send");
+            public void convertAndSend(String routingKey, Object object,
+                    org.springframework.amqp.core.MessagePostProcessor messagePostProcessor,
+                    org.springframework.amqp.rabbit.connection.CorrelationData correlationData) {
+                if (firstSend.compareAndSet(true, false) && correlationData != null) {
+                    droppedFirstConfirm.set(true);
+                    super.convertAndSend(routingKey, object, messagePostProcessor,
+                        new org.springframework.amqp.rabbit.connection.CorrelationData(
+                            correlationData.getId() + "-decoy"));
+                    return;
                 }
-                super.waitForConfirmsOrDie(timeout);
+                super.convertAndSend(routingKey, object, messagePostProcessor, correlationData);
             }
         };
         flakyTemplate.setMessageConverter(new Jackson2JsonMessageConverter(new ObjectMapper()));
         JobCompletionListener jobListener =
-            listenerOn(flakyTemplate, handler, COMPLETE_QUEUE, returnedIds);
+            listenerOn(flakyTemplate, handler, COMPLETE_QUEUE);
+        // Таймаут короткий, чтобы потеря confirm не жгла 20 c на прогон.
+        jobListener.setConfirmTimeoutMs(700L);
 
         org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer container =
             containerFactory.createListenerContainer();
@@ -257,15 +263,63 @@ class CompletionReliablePublishRabbitIT {
             });
 
             // Потеря confirm → throw → NACK → redelivery из кэша → второй send
-            // подтверждает → ACK. Эффект один раз, результат доставлен.
+            // подтверждается → ACK. Эффект один раз, результат доставлен.
             awaitCompletionFrom(taskId, COMPLETE_QUEUE, Duration.ofSeconds(20));
-            assertThat(confirmLostOnce.get())
+            assertThat(droppedFirstConfirm.get())
                 .as("первый confirm реально потерян (иначе сценарий пуст)")
                 .isTrue();
             Thread.sleep(2000);
             assertThat(handlerCalls.get())
                 .as("бизнес-эффект ровно один раз")
                 .isEqualTo(1);
+            assertThat(serverMessageCount(JOB_QUEUE))
+                .as("вход ACK-нут после успешной переотправки — задание не зависло в очереди")
+                .isZero();
+        } finally {
+            container.stop();
+        }
+    }
+
+    private final AtomicBoolean droppedFirstConfirm = new AtomicBoolean(false);
+
+    @Test
+    void happyPath_confirmedRoutable_inputAcked_completionDelivered() throws Exception {
+        // Red-team 1.1/1.2 — тест, которого не было: счастливый путь ОБЯЗАН
+        // проверять не только «completion доехал», но и то, что listener вернулся
+        // нормой и вход ACK-нут. Именно этот пробел скрывал блокер: старый код
+        // бросал IllegalStateException на КАЖДОМ completion, а оба IT были зелёные.
+        // Мутация «подтверждение не проверяется / бросается» валит тест здесь.
+        UUID taskId = UUID.randomUUID();
+        String correlationId = "c836-happy-" + UUID.randomUUID();
+        AtomicInteger handlerCalls = new AtomicInteger(0);
+
+        // Шаблон отправки — с ТЕМ ЖЕ конвертером, что у контейнера
+        // (SimpleMessageConverter не умеет POJO: без этого падает
+        // «only supports String, byte[] and Serializable payloads»).
+        RabbitTemplate listenerTemplate = new RabbitTemplate(sendCf);
+        listenerTemplate.setMessageConverter(new Jackson2JsonMessageConverter(new ObjectMapper()));
+        JobCompletionListener jobListener =
+            listenerOn(listenerTemplate, probeHandler(handlerCalls), COMPLETE_QUEUE);
+        org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer container =
+            containerFactory.createListenerContainer();
+        container.setQueueNames(JOB_QUEUE);
+        container.setMessageListener(jobListener);
+        container.setConcurrentConsumers(1);
+        container.start();
+        try {
+            senderTemplate.convertAndSend(JOB_QUEUE, jobDetail(taskId), m -> {
+                m.getMessageProperties().setCorrelationId(correlationId);
+                return m;
+            });
+
+            awaitCompletionFrom(taskId, COMPLETE_QUEUE, Duration.ofSeconds(20));
+            assertThat(handlerCalls.get()).isEqualTo(1);
+            assertThat(serverMessageCount(JOB_QUEUE))
+                .as("вход ACK-нут: onMessage вернулся нормой (confirm ack, не unroutable)")
+                .isZero();
+            assertThat(jobListener.unroutableCountForTest())
+                .as("маршрутизируемый результат возвратов не имеет — вход ACK-нут штатно")
+                .isZero();
         } finally {
             container.stop();
         }

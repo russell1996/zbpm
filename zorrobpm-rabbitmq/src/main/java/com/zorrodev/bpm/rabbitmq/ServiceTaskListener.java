@@ -93,6 +93,10 @@ public class ServiceTaskListener {
             // пути без изменений (null = legacy без проверки).
             serviceTaskCompleted.setDispatchPhase(data.getDispatchPhase());
             serviceTaskCompleted.setDispatchIndex(data.getDispatchIndex());
+            // WO-C8-36 (red-team HOLD-1): completionId — без переноса здесь он
+            // терялся на переходе rabbit→engine, и дедуп в CompletionService был
+            // недостижим из прод-пути (доступен только прямым вызовом из теста).
+            serviceTaskCompleted.setCompletionId(data.getCompletionId());
             serviceTaskCompleted.setTraceParent(traceParent);
             serviceTaskCompleted.setProcessInstanceId(processInstanceId);
             publisher.publishEvent(serviceTaskCompleted);

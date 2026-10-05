@@ -47,6 +47,16 @@ public interface RuntimeService {
     IdDTO failServiceTask(UUID id, String errorMessage, Integer retries, String dispatchPhase, Integer dispatchIndex);
 
     /**
+     * WO-C8-36 (red-team HOLD-1): тот же fail плюс идентификатор КОНКРЕТНОЙ отправки
+     * результата ({@code completionId}, nullable). Нужен, чтобы дедуп дубликатов
+     * открытой фазы был достижим из живого пути воркера (ServiceTaskCompleteListener
+     * передаёт эхо из сообщения) — иначе перегрузка с ним существовала бы только
+     * для прямых вызовов из тестов. Null = legacy без дедупа.
+     */
+    IdDTO failServiceTask(UUID id, String errorMessage, Integer retries, String dispatchPhase, Integer dispatchIndex,
+        String completionId);
+
+    /**
      * WO-DIFF-5: throws a BPMN error from a service task (boundary matching, not generic failure);
      * see {@link ActivityService#throwServiceTaskError}.
      */

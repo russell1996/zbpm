@@ -224,6 +224,10 @@ class ServiceTaskListenerTest {
         data.setStatus("SUCCESS");
         data.setDispatchPhase("start");
         data.setDispatchIndex(0);
+        // Red-team 1.5: completionId ОБЯЗАН пережить переход rabbit→engine, иначе
+        // дедуп в CompletionService недостижим из живого пути (охранник, который
+        // существовал только для прямых вызовов из теста).
+        data.setCompletionId("completion-c836-probe");
 
         var seenEvent = new com.zorrodev.bpm.exchange.ServiceTaskCompleted[1];
         ApplicationEventPublisher capturingPublisher = event -> {
@@ -237,5 +241,29 @@ class ServiceTaskListenerTest {
         assertThat(seenEvent[0]).isNotNull();
         assertThat(seenEvent[0].getDispatchPhase()).isEqualTo("start");
         assertThat(seenEvent[0].getDispatchIndex()).isEqualTo(0);
+        assertThat(seenEvent[0].getCompletionId()).isEqualTo("completion-c836-probe");
+    }
+
+    @Test
+    void c836_legacyCompletionWithoutIdentifiers_stillPropagatesNulls() {
+        // Red-team 1.5, обратная сторона: старый воркер без новых полей не должен
+        // ломаться — эхо null, движок идёт legacy-путём (задокументированная
+        // обратная совместимость контракта).
+        com.zorrodev.bpm.exchange.ServiceTaskCompleteData data =
+            new com.zorrodev.bpm.exchange.ServiceTaskCompleteData();
+        data.setServiceTaskId(UUID.randomUUID());
+        data.setStatus("SUCCESS");
+
+        var seenEvent = new com.zorrodev.bpm.exchange.ServiceTaskCompleted[1];
+        ApplicationEventPublisher capturingPublisher = event -> {
+            if (event instanceof com.zorrodev.bpm.exchange.ServiceTaskCompleted c) {
+                seenEvent[0] = c;
+            }
+        };
+        new ServiceTaskListener(jobQueueDeclarer, rabbitTemplate, capturingPublisher).on(data, Map.of());
+
+        assertThat(seenEvent[0].getStatus()).isEqualTo("SUCCESS");
+        assertThat(seenEvent[0].getDispatchPhase()).isNull();
+        assertThat(seenEvent[0].getCompletionId()).isNull();
     }
 }
