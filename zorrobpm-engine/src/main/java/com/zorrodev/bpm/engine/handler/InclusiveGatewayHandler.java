@@ -137,7 +137,16 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
             BpmnElementModel bpmnElement, UUID tokenId, TokenExecutor executor, String reason) {
         Set<String> arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, bpmnElement.getId());
         dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
-        Token token = dbService.getToken(tokenId);
+        // Раунд 4 (Решение 1): getToken() — это findToken().orElseThrow(). Строка токена могла
+        // исчезнуть между резолвом в резюме и здесь (retention-cleanup / гонка отмены), и бросок
+        // из join'а уронил бы хвост вызывающего на ровном месте. Отсутствующий токен = нечем
+        // продолжать — WARN и выход, arrivals уже очищены, повторного зависания не будет.
+        Token token = tokenId == null ? null : dbService.findToken(tokenId).orElse(null);
+        if (token == null) {
+            log.warn("{}/{}: inclusive join {} not completed — its continuation token is gone (requested {})",
+                    processInstanceId, tokenId, bpmnElement.getId(), tokenId);
+            return;
+        }
         // WO-DIFF-4: same null-parent guard as ParallelGatewayHandler — a
         // non-interrupting boundary fork leaves the host branch on the (possibly
         // ROOT) host token; collapsing to a null parent would continue on null.
@@ -172,10 +181,25 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
      * вторым проходом по уже сработавшей волне.
      *
      * @param tokenId токен, на котором продолжается сработавший join (схлопывается на родителя
-     *               тем же правилом, что и в пути прихода)
+     *               тем же правилом, что и в пути прихода). Резолвит САМ хендлер: если токена нет
+     *               или его строка уже удалена, резюм ничего не делает (см. блок про токен ниже)
      */
     public void resumeParkedInclusiveJoins(UUID processInstanceId, UUID tokenId,
             BpmnProcessDefinitionModel bpmn, TokenExecutor executor) {
+        // WO-C8-35 раунд 4 (Решение 1): «бери токен ТЕМ ЖЕ способом — а не null». Раунд 3-bis
+        // передал сюда null (токена припаркованной ветви взять негде), и это уронило ВЕСЬ хвост
+        // вызывающего: getToken — это findToken(id).orElseThrow(), плюс NPE на getParentId(),
+        // рождался инцидент, и прерывающий event-subprocess не стартовал вовсе. Разбор показал,
+        // что call-site с настоящим токеном здесь и не нужен (живой прогон: прерывающий
+        // event-subprocess ЗАМЕЩАЕТ отменённый поток — EventSubProcessInclusiveJoinIntegrationTests),
+        // поэтому честный остаток решения — не подбирать токен, а не дать резюму уронить чужой
+        // хвост: токен резолвится здесь, и взять нечего → WARN и ничего.
+        Token resumeToken = tokenId == null ? null : dbService.findToken(tokenId).orElse(null);
+        if (resumeToken == null) {
+            log.warn("{}/{}: inclusive-join resume skipped — no usable continuation token (requested {})",
+                    processInstanceId, tokenId, tokenId);
+            return;
+        }
         Set<String> firedInPass = new HashSet<>();
         boolean progress = true;
         while (progress) {
