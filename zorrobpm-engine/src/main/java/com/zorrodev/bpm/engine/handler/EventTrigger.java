@@ -146,6 +146,16 @@ public class EventTrigger {
             BpmnElementModel hostElement = bpmn.getElement(host.getBpmnElementId());
             if (isScopeContainerHost(hostElement) && !isMultiInstanceHost(hostElement)) {
                 cancelCandidates = cancelScopeContainer(processInstanceId, tokenId, hostActivityId, host);
+            } else if (isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {
+                // WO-C8-34 (CR-05): a plain (non-container, non-MI) host whose token
+                // also carries OTHER branches — parallel-fork/record siblings on the
+                // same token (external review P1 repro). Token-wide cancel would kill
+                // the sibling; cancel only the host row itself (the ErrorEscalation-
+                // Thrower self-check pattern: "only the throwing activity"). MI hosts
+                // keep the token-wide cancel above (WO-ENG-3); lone-token hosts are
+                // unaffected either way (host already cancelled = safe no-op).
+                cancelCandidates = cancelingPhaseService.activeUserTaskIdsOnToken(tokenId);
+                dbService.cancelActivity(hostActivityId);
             } else {
                 cancelCandidates = cancelingPhaseService.activeUserTaskIdsOnToken(tokenId);
                 dbService.cancelActivity(hostActivityId);
@@ -209,6 +219,16 @@ public class EventTrigger {
         return Optional.ofNullable(hostElement.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
             .isPresent();
+    }
+
+    /**
+     * WO-C8-34 (CR-05): does {@code tokenId} carry live activities OTHER than the
+     * host — i.e. would token-wide cancel leak past the host? MI hosts are excluded
+     * by the caller (they keep token-wide cancel); here any extra activity counts.
+     */
+    private boolean isPlainHostOnSharedToken(UUID processInstanceId, UUID tokenId, Activity host) {
+        return dbService.getActiveActivities(processInstanceId).stream()
+            .anyMatch(a -> tokenId.equals(a.getToken()) && !a.getId().equals(host.getId()));
     }
 
     /**
