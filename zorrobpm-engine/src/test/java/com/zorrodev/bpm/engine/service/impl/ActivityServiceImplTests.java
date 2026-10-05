@@ -191,7 +191,10 @@ public class ActivityServiceImplTests {
             throw new RuntimeException(e);
         }
         // Create real ErrorEscalationThrower with mocked dependencies and inject it (WO-AUD-23)
-        var errorEscalationThrower = new com.zorrodev.bpm.engine.handler.ErrorEscalationThrower(dbService, bpmnService, flowNavigator, eventTrigger);
+        // WO-C8-35 раунд 5 (BLOCKER-4): в конструктор добавлен InclusiveGatewayHandler — перепроверка
+        // припаркованных join'ов на путях гашения хоста error/escalation-границей.
+        var errorEscalationThrower = new com.zorrodev.bpm.engine.handler.ErrorEscalationThrower(dbService, bpmnService, flowNavigator, eventTrigger,
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler.class));
         try {
             var eetField = ActivityServiceImpl.class.getDeclaredField("errorEscalationThrower");
             eetField.setAccessible(true);

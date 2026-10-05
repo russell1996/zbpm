@@ -33,6 +33,15 @@ public class ErrorEscalationThrower {
     private final BpmnService bpmnService;
     private final FlowNavigator flowNavigator;
     private final EventTrigger eventTrigger;
+    /**
+     * WO-C8-35 раунд 5 (BLOCKER-4): перепроверка припаркованных inclusive-join'ов после смерти
+     * последнего возможного доставщика. Раньше она стояла вручную на шести точках деактивации
+     * (CompletionService, EventTrigger, InclusiveGatewayHandler) и НИ ОДНОЙ из них не было здесь,
+     * хотя этот класс — единственное место, где умирает хост с собственной ERROR/ESCALATION-границей.
+     * Цикла зависимостей нет: {@code InclusiveGatewayHandler} не знает ни про этот класс,
+     * ни про {@code EventTrigger}, который уже Depends on него.
+     */
+    private final InclusiveGatewayHandler inclusiveGatewayHandler;
 
     /**
      * Propagates a BPMN error from {@code tokenId} outward through the scope hierarchy, looking for
@@ -78,6 +87,13 @@ public class ErrorEscalationThrower {
                     dbService.cancelActivity(throwing.getId());
                     log.info("{}: error '{}' caught by boundary {} on throwing activity {}", processInstanceId, errorCode, boundary.getId(), throwingActivityBpmnElementId);
                     flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary, executor);
+                    inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, tokenId, bpmn, executor);
+                    // WO-C8-35 раунд 5 (BLOCKER-4): хост ТОЛЬКО ЧТО умер и был последним
+                    // возможным доставщиком ветви в припаркованный join — перечитываем правило
+                    // готовности. Без этого join спит вечно: инстанс RUNNING, taskAfter не создан,
+                    // инцидента нет (живой прогон red-team, InclusiveJoinDeactivationWakeupIntegrationTests).
+                    // Порядок — ПОСЛЕ proceedToOutgoing, как на всех остальных хвостах: собственное
+                    // продолжение границы ещё может донести ветвь.
                     return true;
                 }
             }
@@ -93,6 +109,11 @@ public class ErrorEscalationThrower {
                 dbService.cancelActivity(scope.getId());
                 log.info("{}: error '{}' caught by boundary {} on subprocess {}", processInstanceId, errorCode, boundary.getId(), scope.getBpmnElementId());
                 flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
+                // БЕЗ перепроверки припаркованных join'ов, и это НЕ пропуск, а решение (белый
+                // список охранного теста DeactivationWakeupCoverageTest): погашен ВЕСЬ scope целиком,
+                // то есть умерли и все его внутренние ветви. Воскрешать join этого scope значило бы
+                // выполнить хвост ОТМЕНЁННОГО потока — ровно тот контрпример, на котором
+                // @verifier раунда 4 поймал регресс (POF-2, EventSubProcessInclusiveJoinIntegrationTests).
                 return true;
             }
             tok = tok.getParentId() != null ? dbService.getToken(tok.getParentId()) : null;
@@ -103,6 +124,9 @@ public class ErrorEscalationThrower {
         if (errorHandler != null) {
             log.info("{}: error '{}' caught by event sub-process {}", processInstanceId, errorCode, errorHandler.getId());
             eventTrigger.triggerEventSubprocess(processInstanceId, errorHandler.getId(), List.of(), executor);
+            // Тот же белый список: прерывающий event-subprocess по BPMN ЗАМЕЩАЕТ основной поток,
+            // а его запуск гасит activity всего инстанса (EventTrigger.cancelActiveActivities).
+            // Просыпать тут припаркованный join = пускать хвост отменённого scope.
             return true;
         }
 
@@ -123,6 +147,11 @@ public class ErrorEscalationThrower {
                 dbService.cancelActivity(callActivity.getId());
                 log.info("{}: error '{}' caught by boundary {} on call activity {}", parentInstanceId, errorCode, boundary.getId(), callActivity.getBpmnElementId());
                 flowNavigator.proceedToOutgoing(parentInstanceId, callActivity.getToken(), parentBpmn, boundary, executor);
+                // WO-C8-35 раунд 5 (BLOCKER-4): в РОДИТЕЛЕ только что умерла строка call activity —
+                // последний возможный доставщик в его припаркованный join. Перечитываем под
+                // РОДИТЕЛЬСКИМ instance-lock (он уже взят выше, dbService.lockProcessInstance).
+                inclusiveGatewayHandler.resumeParkedInclusiveJoins(parentInstanceId,
+                    callActivity.getToken(), parentBpmn, executor);
                 return true;
             }
             // not caught on the call activity: keep propagating within the parent instance
@@ -219,6 +248,9 @@ public class ErrorEscalationThrower {
                     dbService.cancelActivity(scope.getId());
                     log.info("{}: escalation '{}' caught (interrupting) by boundary {} on subprocess {}", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId());
                     flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
+                    // Белый список охранного теста: погашен весь scope вместе с его внутренними
+                    // ветвями — воскрешать его join значит выполнить хвост отменённого потока
+                    // (контрпример раунда 4).
                     return true;
                 }
                 Token branch = dbService.createToken(tok.getParentId());
@@ -246,6 +278,11 @@ public class ErrorEscalationThrower {
                     dbService.cancelActivity(callActivity.getId());
                     log.info("{}: escalation '{}' caught (interrupting) by boundary {} on call activity {}", parentInstanceId, escalationCode, boundary.getId(), callActivity.getBpmnElementId());
                     flowNavigator.proceedToOutgoing(parentInstanceId, callActivity.getToken(), parentBpmn, boundary, executor);
+                    // WO-C8-35 раунд 5 (BLOCKER-4): то же для ESCALATION-семейства — строка call
+                    // activity в родителе умерла, его припаркованный join обязан проснуться
+                    // (иначе он спит вечно, инцидента нет).
+                    inclusiveGatewayHandler.resumeParkedInclusiveJoins(parentInstanceId,
+                        callActivity.getToken(), parentBpmn, executor);
                     return true; // child instance was cancelled, so the throwing path is gone
                 }
                 // the child instance keeps running; a parallel branch is spawned in the parent

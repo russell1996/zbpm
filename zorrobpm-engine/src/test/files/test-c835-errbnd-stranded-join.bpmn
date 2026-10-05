@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c835_errbnd" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="E-THROW" name="E-THROW" errorCode="E-THROW" />
+  <bpmn:process id="test-c835-errbnd-stranded-join" name="test-c835-errbnd-stranded-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+
+    <!-- Диаграмма red-team BLOCKER-4 ДОСЛОВНО (WO-C8-35-independent-review-r3.md):
+         pfork -> { taskA -> gC -> join ; taskSvc -> xorSvc, fSvcJoin(svcOk="yes") -> join,
+                    fSvcEnd -> end ; errBoundary(interrupting, E-THROW) on taskSvc
+                    -> fEscape -> escapeEnd }.
+         join — inclusive, 2 входа (gC, fSvcJoin), 1 выход -> taskAfter -> end.
+         Наблюдение red-team: после taskA join ПРИПАРКОВАН (1 из 2, корректно); после
+         throwServiceTaskError(taskSvc,"E-THROW") taskSvc CANCELLED, escapeEnd COMPLETED,
+         а join COMPLETED=0, taskAfter CREATED=0, completedAt=null, инцидентов 0 — инстанс висит
+         RUNNING навсегда, потому что ErrorEscalationThrower не будил припаркованные join'ы. -->
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fSvc</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="pfork" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fSvc" name="fSvc" sourceRef="pfork" targetRef="taskSvc" />
+
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>gC</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="gC" name="gC" sourceRef="taskA" targetRef="join" />
+
+    <bpmn:serviceTask id="taskSvc" name="taskSvc">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="taskSvc" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fSvc</bpmn:incoming>
+      <bpmn:outgoing>fToXor</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fToXor" name="fToXor" sourceRef="taskSvc" targetRef="xorSvc" />
+
+    <bpmn:exclusiveGateway id="xorSvc" name="xorSvc" default="fSvcEnd">
+      <bpmn:incoming>fToXor</bpmn:incoming>
+      <bpmn:outgoing>fSvcJoin</bpmn:outgoing>
+      <bpmn:outgoing>fSvcEnd</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="fSvcJoin" name="fSvcJoin" sourceRef="xorSvc" targetRef="join">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">=svcOk == "yes"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="fSvcEnd" name="fSvcEnd" sourceRef="xorSvc" targetRef="endSvc" />
+    <bpmn:endEvent id="endSvc" name="endSvc">
+      <bpmn:incoming>fSvcEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:boundaryEvent id="errBoundary" name="errBoundary" attachedToRef="taskSvc" cancelActivity="true">
+      <bpmn:outgoing>fEscape</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="edThrow" errorRef="E-THROW" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fEscape" name="fEscape" sourceRef="errBoundary" targetRef="escapeEnd" />
+    <bpmn:endEvent id="escapeEnd" name="escapeEnd">
+      <bpmn:incoming>fEscape</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>gC</bpmn:incoming>
+      <bpmn:incoming>fSvcJoin</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
