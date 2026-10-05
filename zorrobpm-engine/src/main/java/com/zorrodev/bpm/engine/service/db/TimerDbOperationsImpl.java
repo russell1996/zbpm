@@ -79,6 +79,11 @@ public class TimerDbOperationsImpl implements TimerDbOperations {
     }
 
     @Override
+    public List<com.zorrodev.bpm.engine.entity.TimerJobEntity> findArmedTimerJobs(UUID processInstanceId) {
+        return timerJobRepository.findArmedTimerJobs(processInstanceId);
+    }
+
+    @Override
     public void deleteTimerJobsByProcessInstanceId(UUID processInstanceId) {
         timerJobRepository.deleteByProcessInstanceId(processInstanceId);
     }

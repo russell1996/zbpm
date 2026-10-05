@@ -23,6 +23,15 @@ public interface ParallelGatewayRepository extends JpaRepository<ParallelGateway
     boolean existsByProcessInstanceIdAndGatewayElementIdAndEnteredFlowId(
         UUID processInstanceId, String gatewayElementId, String enteredFlowId);
 
+    /**
+     * WO-C8-35 (CR-09, ШАГ 3/B2): element ids of the gateways in this instance that still hold
+     * OPEN arrival rows \u2014 i.e. branches that arrived and are parked waiting for the join to fire.
+     * Marker rows ({@code expectedCount} set) are excluded: they are not arrivals.
+     */
+    @Query("SELECT DISTINCT pg.gatewayElementId FROM ParallelGatewayEntity pg "
+        + "WHERE pg.processInstanceId = :processInstanceId AND pg.expectedCount IS NULL")
+    List<String> findGatewayIdsWithOpenArrivals(UUID processInstanceId);
+
     @Modifying
     void deleteByProcessInstanceIdAndGatewayElementId(UUID processInstanceId, String gatewayElementId);
 }

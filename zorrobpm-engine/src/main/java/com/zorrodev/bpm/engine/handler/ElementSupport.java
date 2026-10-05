@@ -1156,23 +1156,51 @@ public class ElementSupport {
         return 0;
     }
 
-    // ── WO-C8-35 (CR-09): inclusive-gateway join readiness ────────────────────
+    // ── WO-C8-35 (CR-09) раунд 3: единое правило готовности inclusive-join ──────────
     //
-    // Two join mechanisms lived by different rules: the parallel join compares the
-    // arrived flows with ITS OWN incoming set, the inclusive join compares them with
-    // a static `expected` counter that only three writers ever set (inclusive split,
-    // multi-instance, ad-hoc). Reached from anything else — XOR, a parallel fork, an
-    // implicit AND-fork, a subprocess/call-activity exit — `expected` is null, the
-    // join logs "not ready" on EVERY arrival and waits forever, silently (no
-    // incident). Replacing null with 1 would have been the tempting one-liner and
-    // would fire NEIGHBOURING joins early, so readiness is decided by reachability of
-    // a still-live execution instead.
+    // Два join-механизма жили по разным правилам: parallel join сверяет приходы со своими
+    // СОБСТВЕННЫми входящими, inclusive join — со статическим счётчиком `expected`, который
+    // писал только inclusive-сплит. От XOR/параллельного форка/неявной AND-вилки/выхода из
+    // подпроцесса счётчика нет → join логировал «не готов» на КАЖДЫЙ приход и ждал вечно,
+    // молча (без инцидента).
+    //
+    // Раунд 3 (HOLD красного флага, MAJOR-1/MAJOR-2) счётчик снят ЦЕЛИКОМ: он писался
+    // вслепую (UK-нарушение на двух сплитах в один join) и уезжал на шлюз, достигаемый
+    // 2 из 3 ветвей. Теперь правило одно для ВСЕХ inclusive-join и целиком выводится из
+    // состояния инстанса:
+    //
+    //     ready(J) ⟺ никто в инстансе НЕ МОЖЕТ доставить в J ещё одну ветвь
+    //
+    // «кто-то может» — это объединение трёх множеств, и каждое закрывало свою дыру:
+    //   (a) активные activity                   — обычная живая ветвь;
+    //   (b) ВЗВЕДЁННЫЕ триггеры (ШАГ 2, B1)     — у ещё не выстрелившего boundary timer/
+    //                                               message/signal и event-subprocess НЕТ строки
+    //                                               activity, без (b) join срабатывал на первом
+    //               приходе, а по границе — ВТОРЫМ (taskNotify дважды, BLOCKER-1 red-team);
+    //   (c) припаркованные шлюзы (ШAГ 1/3)      — ветвь, дошедшая до join'а и ждущая, тоже
+    //               доставка в полёте; плюс сам сплит в фазе разветвления (его activity
+    //               остаётся живой весь фанаут — см. InclusiveGatewayHandler).
+    //
+    // Намеренная асимметрия: консервативность (b)+(c) может заставить join ЖДАТ лишнего, но
+    // никогда не срабатывает раньше времени. Обратную сторону — «последний доставщик умер» —
+    // снимает перепроверка припаркованных join'ов при каждой деактивации (ШАГ 3, B2), иначе
+    // консервативность была бы вечным ожиданием (BLOCKER-2).
 
     /**
      * Can a live execution sitting on {@code fromElementId} still reach
-     * {@code targetElementId}? Forward BFS over outgoing flows. Conservative on
-     * purpose: a path through a gateway is counted even if its conditions may
-     * evaluate false, because the alternative is the wait-forever defect.
+     * {@code targetElementId}? Forward BFS over outgoing flows, {@code visited}-guarded, so it
+     * terminates on cyclic graphs.
+     *
+     * <p>Conditions on flows out of a gateway are NOT evaluated: a path through a conditional
+     * gateway counts as reachable even when its condition may evaluate false. That is
+     * deliberately conservative — the join waits rather than fires early (the opposite failure
+     * duplicates business side effects, which is what the static counter used to cause).
+     * The cost of that conservatism is a possible over-wait, and it is paid back by
+     * {@code InclusiveGatewayHandler.resumeParkedInclusiveJoins}: when the last possible
+     * deliverer dies (XOR took its other branch, cancellation, termination, a boundary fired),
+     * every parked inclusive join is re-evaluated. Counting a false-condition path as reachable
+     * IS the wait-forever defect if nothing ever re-checks — that was BLOCKER-2, and this
+     * Javadoc previously asserted the exact opposite of what the code did.
      */
     public boolean canReach(BpmnProcessDefinitionModel bpmn, String fromElementId, String targetElementId) {
         if (fromElementId == null || targetElementId == null || fromElementId.equals(targetElementId)) {
@@ -1206,12 +1234,14 @@ public class ElementSupport {
 
     /**
      * Is some OTHER still-live execution in this instance able to reach the join?
-     * This is what replaces the missing {@code expected} counter: the join is ready
-     * exactly when nobody else can still deliver a branch to it.
      *
      * <p>Arrived branches are already COMPLETED by the time the join runs
-     * ({@code FlowNavigator.processFlow} completes the flow row), so they do not
-     * count as live — the arriving branch excludes itself without special-casing.
+     * ({@code FlowNavigator.processFlow} completes the flow row), so they do not count as live —
+     * the arriving branch excludes itself without special-casing. An inclusive SPLIT that is
+     * currently dispatching (its activity row stays live for the whole fan-out, see
+     * {@code InclusiveGatewayHandler}) IS counted here: that is what keeps the join from firing
+     * on the first arrival of a pass-through fan-out, whose sibling branches have no activity
+     * row yet.
      */
     public boolean hasOtherLiveExecutionReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel join) {
@@ -1228,74 +1258,59 @@ public class ElementSupport {
     }
 
     /**
-     * WO-C8-35 (CR-09, criterion 2): the join partner of an inclusive split is the
-     * FIRST reachable inclusive gateway that ACTUALLY CONVERGES this split's
-     * branches — the old BFS returned the first inclusive with several incomings, so
-     * an unrelated join lying on one branch's path swallowed the counter and left the
-     * real join waiting forever.
+     * WO-C8-35 (CR-09, ШАГ 2, BLOCKER-1/B1): an ARMED but not-yet-fired trigger can still
+     * deliver a branch, and it has no activity row at all — its outgoing flows hang off the
+     * boundary element / event sub-process, which is not an execution. Without this the join
+     * fired on the first arrival and then fired AGAIN when the boundary arrived, running every
+     * downstream side effect twice with no incident anywhere.
      *
-     * <p>One walk from the split carrying a bitmask of which outgoing branch reached each
-     * element; a candidate qualifies when at least TWO of this split's branches reach it.
-     * Cost: each element is expanded at most once per distinct mask value it acquires,
-     * i.e. O(elements x outgoing branches) — not the O(branches x graph) of one BFS per
-     * branch — and it terminates on cyclic graphs (the first version had no settle check
-     * and hung the start on a retry-loop: a regression against the previous
-     * {@code visited}-guarded BFS, caught by the G-H red-team).
+     * <p>Read as a set of outlet element ids ({@code DBService.getArmedTriggerElementIds}):
+     * armed timer jobs, message/signal boundary subscriptions and event-subprocess triggers.
      */
-    public String findConvergentInclusiveJoin(BpmnProcessDefinitionModel bpmn, BpmnElementModel split) {
-        List<String> outgoings = split.getOutgoing() == null ? List.of() : split.getOutgoing();
-        // element id -> bitmask of WHICH outgoing branches of this split reach it
-        Map<String, Integer> branchMask = new HashMap<>();
-        // element id -> the mask it had when it was last expanded. Without this the walk
-        // re-expands an element on every incoming edge: on a graph with a loop-back it
-        // never terminates (proved live — a retry-loop fixture hung the process start on
-        // 100 % CPU, a regression against the previous `visited`-guarded BFS) and on a
-        // chain of diamonds it grows ~14x per four diamonds. Masks only ever GAIN bits,
-        // so "mask unchanged since the last expansion" is a sound settle test.
-        Map<String, Integer> settled = new HashMap<>();
-        Deque<String> queue = new ArrayDeque<>();
-        for (int i = 0; i < outgoings.size(); i++) {
-            BpmnFlowModel flow = bpmn.getFlow(outgoings.get(i));
-            if (flow != null && flow.getTargetRef() != null) {
-                branchMask.merge(flow.getTargetRef(), 1 << i, (a, b) -> a | b);
-                queue.add(flow.getTargetRef());
+    public boolean hasArmedTriggerReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel join) {
+        for (String outletId : dbService.getArmedTriggerElementIds(processInstanceId)) {
+            if (outletId.equals(join.getId())) {
+                // an armed event ON the join itself: it continues from there, it does not deliver to it
+                continue;
+            }
+            if (canReach(bpmn, outletId, join.getId())) {
+                return true;
             }
         }
-        while (!queue.isEmpty()) {
-            String elementId = queue.poll();
-            if (elementId == null) {
+        return false;
+    }
+
+    /**
+     * WO-C8-35 (CR-09, ШАГ 1/3): a branch that already arrived at ANOTHER gateway and is parked
+     * there is a delivery in flight too — it holds open arrival rows, and once that gateway
+     * fires it continues downstream, possibly into this join. Without this the join could fire
+     * while an upstream join was still holding a branch destined for it (MAJOR-1's partial-merge
+     * shape: {@code j1} parks with A/B while {@code j2} waits on j1's outgoing).
+     */
+    public boolean hasParkedJoinReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel join) {
+        for (String gatewayId : dbService.getGatewaysWithOpenArrivals(processInstanceId)) {
+            if (gatewayId.equals(join.getId())) {
                 continue;
             }
-            Integer mask = branchMask.get(elementId);
-            if (mask == null || mask.equals(settled.get(elementId))) {
-                continue;
-            }
-            settled.put(elementId, mask);
-            BpmnElementModel element = bpmn.getElement(elementId);
-            if (element == null) {
-                continue;
-            }
-            // never the split itself: with a loop-back the split becomes reachable under a
-            // 2-bit mask, but it is not its own merge partner (the counter would land on
-            // an id nobody reads)
-            if (!elementId.equals(split.getId())
-                    && element.getType() == BpmnElementType.INCLUSIVE_GATEWAY
-                    && element.getIncoming() != null && element.getIncoming().size() > 1
-                    && Integer.bitCount(mask) > 1) {
-                return elementId;
-            }
-            if (element.getOutgoing() == null) {
-                continue;
-            }
-            for (String outgoing : element.getOutgoing()) {
-                BpmnFlowModel flow = bpmn.getFlow(outgoing);
-                if (flow != null && flow.getTargetRef() != null) {
-                    branchMask.merge(flow.getTargetRef(), mask, (a, b) -> a | b);
-                    queue.add(flow.getTargetRef());
-                }
+            if (canReach(bpmn, gatewayId, join.getId())) {
+                return true;
             }
         }
-        return null;
+        return false;
+    }
+
+    /**
+     * WO-C8-35 (CR-09) раунд 3: THE single readiness rule for every inclusive join, whatever
+     * split it comes from. See the block comment above for the three sets that make up
+     * "can still deliver".
+     */
+    public boolean isInclusiveJoinReady(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel join) {
+        return !hasOtherLiveExecutionReaching(processInstanceId, bpmn, join)
+            && !hasArmedTriggerReaching(processInstanceId, bpmn, join)
+            && !hasParkedJoinReaching(processInstanceId, bpmn, join);
     }
 
 }

@@ -64,6 +64,11 @@ public class ParallelGatewayDbOperationsImpl implements ParallelGatewayDbOperati
     }
 
     @Override
+    public Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId) {
+        return new HashSet<>(parallelGatewayRepository.findGatewayIdsWithOpenArrivals(processInstanceId));
+    }
+
+    @Override
     public Integer getInclusiveExpected(UUID processInstanceId, String gatewayElementId) {
         return parallelGatewayRepository.findExpectedCounts(processInstanceId, gatewayElementId)
             .stream().findFirst().orElse(null);

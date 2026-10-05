@@ -724,6 +724,41 @@ public class DBServiceImpl implements DBService {
         parallelGatewayDbOperations.recordInclusiveExpected(processInstanceId, gatewayElementId, expectedCount);
     }
 
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1). Три источника «ещё может доставить» без строки activity:
+     * взведённый boundary timer (timer_jobs), взведённые boundary-подпижки (message/signal) и
+     * event-subprocess-триггеры. Наружу отдаётся только МНОЖЕСТВО element id выходов \u2014
+     * сколько именно там строк, движку знать не надо: решает {@code canReach}.
+     */
+    @Override
+    public java.util.Set<String> getArmedTriggerElementIds(UUID processInstanceId) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (com.zorrodev.bpm.engine.entity.TimerJobEntity job : timerDbOperations.findArmedTimerJobs(processInstanceId)) {
+            addIfPresent(ids, job.getBoundaryElementId());
+            addIfPresent(ids, job.getEventSubprocessId());
+        }
+        for (com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity sub : messageSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
+            addIfPresent(ids, sub.getBoundaryElementId());
+            addIfPresent(ids, sub.getEventSubprocessId());
+        }
+        for (com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity sub : signalSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
+            addIfPresent(ids, sub.getBoundaryElementId());
+            addIfPresent(ids, sub.getEventSubprocessId());
+        }
+        return ids;
+    }
+
+    private static void addIfPresent(java.util.Set<String> ids, String id) {
+        if (id != null && !id.isEmpty()) {
+            ids.add(id);
+        }
+    }
+
+    @Override
+    public java.util.Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId) {
+        return parallelGatewayDbOperations.getGatewaysWithOpenArrivals(processInstanceId);
+    }
+
     @Override
     public Integer getInclusiveExpected(UUID processInstanceId, String gatewayElementId) {
         return parallelGatewayDbOperations.getInclusiveExpected(processInstanceId, gatewayElementId);

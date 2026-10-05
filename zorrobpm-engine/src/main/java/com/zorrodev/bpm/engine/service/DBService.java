@@ -468,9 +468,31 @@ public interface DBService {
     /**
      * Records, for an inclusive-gateway join, how many branches its split activated (the number of
      * arrivals the join must wait for). Stored as a marker row alongside the arrival rows.
+     *
+     * <p>WO-C8-35 раунд 3: НЕ вызывается больше из {@code InclusiveGatewayHandler} — счётчик
+     * активных ветвей для обычного inclusive-join снят (решение CTO на MAJOR-1/MAJOR-2).
+     * Остались только multi-instance ({@code miId::batchUuid}) и ad-hoc
+     * ({@code AdHocJoin.joinKey(...)}) — составные ключи со своей логикой резолвинга; их
+     * обработчики не InclusiveGatewayHandler.
      */
     void recordInclusiveExpected(UUID processInstanceId, String gatewayElementId, int expectedCount);
 
     /** Expected arrival count recorded for an inclusive join, or {@code null} if none was recorded. */
     Integer getInclusiveExpected(UUID processInstanceId, String gatewayElementId);
+
+    /**
+     * WO-C8-35 (CR-09, ШАГ 1/3): gateway element ids of this instance that still hold OPEN arrival
+     * rows \u2014 ветви, которые пришли к шлюзу и ждут, пока он сработает. Читается движком при
+     * перепроверке припаркованных join'ов (см. {@code InclusiveGatewayHandler.resumeParkedInclusiveJoins}).
+     */
+    java.util.Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId);
+
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1): element ids of this instance's still-ARMED event triggers that
+     * continue somewhere else \u2014 boundary timer/message/signal и event-subprocess. Именно они
+     * делают «доставка ещё возможна» невидимой для {@code getActiveActivities}: у взведённого
+     * boundary-события нет строки activity, потому что оно ещё не выстрелило.
+     * Catch-события (message/signal/timer catch) исключены \u2014 их покрывает живая activity хоста.
+     */
+    java.util.Set<String> getArmedTriggerElementIds(UUID processInstanceId);
 }

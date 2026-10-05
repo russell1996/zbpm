@@ -55,6 +55,16 @@ public interface TimerJobRepository extends JpaRepository<TimerJobEntity, UUID>,
     @Query("DELETE FROM TimerJobEntity t WHERE t.processInstanceId = :processInstanceId")
     void deleteByProcessInstanceId(@Param("processInstanceId") UUID processInstanceId);
 
+    /**
+     * WO-C8-35 (CR-09, ШАГ 2/B1): element ids of this instance's ARMED timer triggers that
+     * continue somewhere else \u2014 a boundary timer's boundary element and an event-sub-process
+     * timer. Catch timers (no boundary, no event sub-process) are excluded: the host activity
+     * row already represents them in the live-execution universe.
+     */
+    @Query("SELECT t FROM TimerJobEntity t WHERE t.processInstanceId = :processInstanceId "
+        + "AND t.fired = false AND (t.boundaryElementId IS NOT NULL OR t.eventSubprocessId IS NOT NULL)")
+    List<TimerJobEntity> findArmedTimerJobs(UUID processInstanceId);
+
     static Specification<TimerJobEntity> byProcessInstanceId(UUID processInstanceId) {
         return (root, query, cb) -> cb.equal(root.get("processInstanceId"), processInstanceId);
     }
