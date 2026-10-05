@@ -1043,24 +1043,6 @@ public class CompletionService {
         }
     }
 
-    private static int compareActivityRecency(java.time.Instant t1, java.util.UUID id1,
-            java.time.Instant t2, java.util.UUID id2) {
-        if (t1 != null && t2 != null) {
-            int c = t1.compareTo(t2);
-            if (c != 0) {
-                return c;
-            }
-        } else if (t1 != null) {
-            return 1;
-        } else if (t2 != null) {
-            return -1;
-        }
-        if (id1 != null && id2 != null) {
-            return id1.compareTo(id2);
-        }
-        return 0;
-    }
-
     /**
      * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result —
      * the counterpart of {@link #completeServiceTask} for the FIRST typed job result in
