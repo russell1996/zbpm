@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-34 red-team M2: an MI host INSIDE a parallel fork. The fork runs every
+     branch on ONE token (ParallelGatewayHandler), so the MI instances and the
+     sibling branch share it. Token-wide cancel (correct for a lone MI host,
+     WO-ENG-3) killed the sibling branch — the CR-05 defect with an MI host.
+     Expected after the fix: firing on one MI instance cancels the MI siblings of
+     the SAME element and leaves the other branch's task CREATED. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c834mifork" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c834-mi-fork-boundary" name="c834-mi-fork-boundary" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="fork1" />
+    <bpmn:parallelGateway id="fork1" name="fork1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="fork1" targetRef="miTask" />
+    <bpmn:userTask id="miTask" name="miTask">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:loopCardinality>2</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="miTimeout" name="miTimeout" attachedToRef="miTask">
+      <bpmn:outgoing>f5</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tedMiFork">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="fork1" targetRef="otherTask" />
+    <bpmn:userTask id="otherTask" name="otherTask">
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:outgoing>f6</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f4" name="f4" sourceRef="miTask" targetRef="join1" />
+    <bpmn:sequenceFlow id="f5" name="f5" sourceRef="miTimeout" targetRef="endTimeout" />
+    <bpmn:sequenceFlow id="f6" name="f6" sourceRef="otherTask" targetRef="join1" />
+    <bpmn:parallelGateway id="join1" name="join1">
+      <bpmn:incoming>f4</bpmn:incoming>
+      <bpmn:incoming>f6</bpmn:incoming>
+      <bpmn:outgoing>f7</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="f7" name="f7" sourceRef="join1" targetRef="endEvent" />
+    <bpmn:endEvent id="endTimeout" name="endTimeout">
+      <bpmn:incoming>f5</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f7</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

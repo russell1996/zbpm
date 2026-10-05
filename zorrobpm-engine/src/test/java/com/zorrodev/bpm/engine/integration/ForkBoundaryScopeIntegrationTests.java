@@ -119,4 +119,41 @@ public class ForkBoundaryScopeIntegrationTests {
             .toList();
         assertThat(rows).allMatch(a -> a.getStatus() == ActivityStatus.CANCELLED);
     }
+
+    /**
+     * WO-C8-34 red-team M2 (major): the same CR-05 defect with a MULTI-INSTANCE host.
+     * A fork runs all branches on ONE token, so MI instances and the sibling branch
+     * share it — the token-wide cancel that is CORRECT for a lone MI host (WO-ENG-3)
+     * killed the unrelated branch here. Expected: the MI siblings OF THIS ELEMENT go
+     * CANCELLED (WO-ENG-3 preserved), the other fork branch stays CREATED.
+     */
+    @Transactional
+    @Test
+    void interruptingBoundaryOnMiHostInsideFork_cancelsMiSiblingsButNotForkBranch() throws Exception {
+        UUID pi = deployAndStart("test-c834-mi-fork-boundary.bpmn");
+
+        UserTaskQuery query = new UserTaskQuery();
+        query.setProcessInstanceId(pi);
+        List<UserTask> parked = queryService.findUserTasks(query, null).getData();
+        UserTask miInstance = parked.stream()
+            .filter(t -> "miTask".equals(t.getName()))
+            .findFirst().orElseThrow(() -> new AssertionError("MI task not parked: " + parked));
+        UserTask otherBranch = parked.stream()
+            .filter(t -> "otherTask".equals(t.getName()))
+            .findFirst().orElseThrow(() -> new AssertionError("sibling branch not parked: " + parked));
+
+        activityService.fireBoundaryTimer(miInstance.getId(), "miTimeout");
+
+        List<ActivityEntity> miRows = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(pi))
+            .filter(a -> "miTask".equals(a.getBpmnElementId()))
+            .toList();
+        assertThat(miRows).as("both MI instances of the element").hasSize(2);
+        assertThat(miRows)
+            .as("MI siblings of the SAME element still cancelled (WO-ENG-3)")
+            .allMatch(a -> a.getStatus() == ActivityStatus.CANCELLED);
+        assertThat(activityRepository.findById(otherBranch.getId()).orElseThrow().getStatus())
+            .as("the OTHER fork branch must survive an MI host's boundary")
+            .isEqualTo(ActivityStatus.CREATED);
+    }
 }

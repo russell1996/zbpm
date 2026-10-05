@@ -147,6 +147,25 @@ public class EventTrigger {
             boolean miHost = isMultiInstanceHost(hostElement);
             if (isScopeContainerHost(hostElement) && !miHost) {
                 cancelCandidates = cancelScopeContainer(processInstanceId, tokenId, hostActivityId, host);
+            } else if (miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {
+                // WO-C8-34 (CR-05, red-team M2): an MI host that sits on a FORK token.
+                // Token-wide cancel is right for MI siblings (they share the token,
+                // WO-ENG-3) but here the token also carries ANOTHER fork branch — the
+                // token-wide call would kill that unrelated branch, which is the very
+                // CR-05 defect. Cancel exactly the MI instances OF THIS ELEMENT (same
+                // bpmnElementId, same token, active) and leave foreign branches alone.
+                List<Activity> ownInstances = dbService.getActivitiesByTokenAndBpmnElementId(
+                        tokenId, host.getBpmnElementId()).stream()
+                    .filter(a -> a.getStatus() == ActivityStatus.CREATED
+                        || a.getStatus() == ActivityStatus.IN_PROGRESS)
+                    .toList();
+                List<UUID> miCandidates = cancelingPhaseService.activeUserTaskIdsOnToken(tokenId).stream()
+                    .filter(id -> ownInstances.stream().anyMatch(a -> a.getId().equals(id)))
+                    .toList();
+                for (Activity instance : ownInstances) {
+                    dbService.cancelActivity(instance.getId());
+                }
+                cancelCandidates = miCandidates;
             } else if (!miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {
                 // WO-C8-34 (CR-05): a plain (non-container, non-MI) host whose token
                 // also carries OTHER branches — parallel-fork/record siblings on the
@@ -224,7 +243,9 @@ public class EventTrigger {
 
     /**
      * WO-C8-34 (CR-05): does {@code tokenId} carry live activities OTHER than the
-     * host — i.e. would token-wide cancel leak past the host? MI hosts are excluded
+     * host — i.e. would token-wide cancel leak past the host? Plain hosts use it to
+     * switch to host-only cancel; MI hosts use it to switch to own-instances-only
+     * cancel (red-team M2). See the callers.
      * by the caller (they keep token-wide cancel); here any extra activity counts.
      */
     private boolean isPlainHostOnSharedToken(UUID processInstanceId, UUID tokenId, Activity host) {
