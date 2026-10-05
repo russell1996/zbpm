@@ -57,7 +57,27 @@ public class QueryResource implements QueryContract {
     }
 
     public PagedDataDTO<UserTask> getUserTasks(@ParameterObject UserTaskQuery query) {
-        return queryService.findUserTasks(query, resolveAllowedPdIds());
+        Collection<UUID> allowedPdIds = resolveAllowedPdIds();
+        // WO-IN-2 criterion 4: "tasks that concern person X" is a QUESTION ABOUT ANOTHER USER, so
+        // the value of relatesTo needs its own authorization — the allowedPdIds filter above only
+        // answers "which processes may this caller read". Default DENY (G-L): asking about your own
+        // tasks is always fine, asking about someone else's needs a principal that can already see
+        // everything (allowedPdIds == null, i.e. SUPER_ADMIN per WO-SEC-54), because such a caller
+        // loses nothing: the unfiltered list already contains those rows. A ServicePrincipal has no
+        // user id at all (RuntimeOperationSupport.resolvePrincipalId writes its apiKeyId into
+        // `assignee`), so it gets no `relatesTo` support rather than a wrong one.
+        if (query.getRelatesTo() != null && !mayAskAboutUser(query.getRelatesTo(), allowedPdIds)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
+        }
+        return queryService.findUserTasks(query, allowedPdIds);
+    }
+
+    private boolean mayAskAboutUser(UUID targetUserId, Collection<UUID> allowedPdIds) {
+        if (allowedPdIds == null) {
+            return true; // see-all principal (SUPER_ADMIN)
+        }
+        Object attr = request.getAttribute("principal");
+        return attr instanceof Principal.UserPrincipal user && targetUserId.equals(user.userId());
     }
 
     public UserTask getUserTask(@PathVariable UUID id) {
