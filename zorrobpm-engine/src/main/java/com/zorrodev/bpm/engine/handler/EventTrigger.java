@@ -144,9 +144,10 @@ public class EventTrigger {
             // self-check pattern for plain hosts is unchanged below.
             List<UUID> cancelCandidates;
             BpmnElementModel hostElement = bpmn.getElement(host.getBpmnElementId());
-            if (isScopeContainerHost(hostElement) && !isMultiInstanceHost(hostElement)) {
+            boolean miHost = isMultiInstanceHost(hostElement);
+            if (isScopeContainerHost(hostElement) && !miHost) {
                 cancelCandidates = cancelScopeContainer(processInstanceId, tokenId, hostActivityId, host);
-            } else if (isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {
+            } else if (!miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {
                 // WO-C8-34 (CR-05): a plain (non-container, non-MI) host whose token
                 // also carries OTHER branches — parallel-fork/record siblings on the
                 // same token (external review P1 repro). Token-wide cancel would kill

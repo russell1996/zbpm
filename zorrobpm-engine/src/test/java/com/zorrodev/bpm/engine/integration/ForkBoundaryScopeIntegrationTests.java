@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -94,5 +95,28 @@ public class ForkBoundaryScopeIntegrationTests {
 
         // the SIBLING on the same fork token is untouched — still parked
         assertThat(activityStatus(sibling.getId())).isEqualTo(ActivityStatus.CREATED);
+    }
+
+    @Transactional
+    @Test
+    void interruptingBoundaryOnMiHost_cancelsSiblingInstances() throws Exception {
+        // WO-ENG-3 regression guard: MI instances genuinely share one token, so
+        // token-wide cancel is CORRECT here — firing on one instance must cancel
+        // the sibling instance too (the fork test above must NOT be read as
+        // "never cancel for the token").
+        UUID pi = deployAndStart("test-mi-boundary.bpmn");
+
+        UserTaskQuery query = new UserTaskQuery();
+        query.setProcessInstanceId(pi);
+        List<UserTask> parked = queryService.findUserTasks(query, null).getData();
+        assertThat(parked).hasSize(2);
+
+        activityService.fireBoundaryTimer(parked.get(0).getId(), "boundaryTimer");
+
+        List<ActivityEntity> rows = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(pi))
+            .filter(a -> "miTask".equals(a.getBpmnElementId()))
+            .toList();
+        assertThat(rows).allMatch(a -> a.getStatus() == ActivityStatus.CANCELLED);
     }
 }
