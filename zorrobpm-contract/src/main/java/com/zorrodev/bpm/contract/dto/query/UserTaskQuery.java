@@ -28,6 +28,11 @@ public class UserTaskQuery extends BaseQuery {
     private UUID relatesTo;
     /** White-listed user-task column to sort by; unknown value → 400, never interpolated into SQL. */
     private String sortBy;
-    /** "asc" (default) / "desc" — only read when {@link #sortBy} is present. */
+    /**
+     * "asc" / "desc". Read on its own too: with no {@link #sortBy} it applies to the default
+     * {@code createdAt} column, so {@code ?sortOrder=asc} alone means "oldest first"
+     * (@verifier finding 6 — the javadoc used to claim the opposite and the field WAS read
+     * unconditionally). Absent → DESC, the direction this endpoint has always answered with.
+     */
     private String sortOrder;
 }

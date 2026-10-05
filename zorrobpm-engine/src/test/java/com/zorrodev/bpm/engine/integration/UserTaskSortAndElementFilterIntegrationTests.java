@@ -186,6 +186,30 @@ public class UserTaskSortAndElementFilterIntegrationTests {
 
     @Transactional
     @Test
+    void sortOrder_withoutSortBy_appliesToTheDefaultColumn() throws Exception {
+        // @verifier round 2, finding 6: the javadoc claimed sortOrder is read ONLY together with
+        // sortBy, but resolveSort reads it unconditionally. Decision: honour it — `?sortOrder=asc`
+        // alone means "createdAt ascending", which is coherent and matches the default's direction
+        // switch. This test pins that decision so the two can never disagree again.
+        UserTaskEntity older = taskWith("alice", null, null);
+        older.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
+        userTaskRepository.save(older);
+        UserTaskEntity newer = taskWith("bob", null, null);
+        newer.setCreatedAt(Instant.parse("2026-01-02T00:00:00Z"));
+        userTaskRepository.save(newer);
+
+        UserTaskQuery asc = new UserTaskQuery();
+        asc.setPageSize(50);
+        asc.setSortOrder("asc");
+        assertThat(ids(asc)).as("oldest first").containsExactly(older.getId(), newer.getId());
+
+        // absent sortOrder keeps the historical DESC default
+        assertThat(ids(new UserTaskQuery())).as("newest first")
+            .containsExactly(newer.getId(), older.getId());
+    }
+
+    @Transactional
+    @Test
     void sortBy_unknownField_isRejectedNotInterpolated() throws Exception {
         taskWith("alice", null, null);
         UserTaskQuery q = new UserTaskQuery();
