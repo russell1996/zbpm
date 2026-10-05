@@ -65,6 +65,8 @@ public class BpmnProcessDefinitionModel {
     private final Map<String, BpmnElementModel> elements = new HashMap<>();
     /** WO-C8-35 раунд 5: memo индекса «хост → его граничные события» (см. getBoundaryEventsAttachedTo). */
     private final Map<String, List<BpmnElementModel>> boundaryEventsByHost = new ConcurrentHashMap<>();
+    /** Мемо для {@link #hasRowBackedBoundaryEvent()} (см. комментарий метода). */
+    private volatile Boolean rowBackedBoundary;
     @Getter
     @Setter
     private BpmnElementModel startEvent;
@@ -139,6 +141,27 @@ public class BpmnProcessDefinitionModel {
             .filter(e -> e.getType() == BpmnElementType.SIGNAL_START_EVENT)
             .filter(e -> e.getEventSubProcessId() == null)
             .toList();
+    }
+
+    /**
+     * WO-C8-35 раунд 5, эскалация: есть ли в определении граничное событие, у которого ЕСТЬ
+     * персистентная armed-запись (timer/message/signal). Только такие границы могут уже сработать,
+     * и только их «сработала/не сработала» движок знает из БД; у conditional/error/escalation/
+     * cancel-границы такой записи нет НИКОГДА, и они остаются возможными доставщиками, пока жив хост
+     * (движок действительно может перевыстрелить условную границу при следующей смене переменных).
+     *
+     * <p>Ответ кэшируется в модели: правило готовности спрашивает это на каждой проверке, а модель
+     * лежит в Caffeine-кэше общей на все потоки.
+     */
+    public boolean hasRowBackedBoundaryEvent() {
+        if (rowBackedBoundary != null) {
+            return rowBackedBoundary;
+        }
+        rowBackedBoundary = elements.values().stream()
+            .filter(e -> e.getExtensions() != null && e.getExtensions().getBoundaryEventExtension() != null)
+            .map(e -> e.getType())
+            .anyMatch(BpmnElementType::isRowBackedBoundaryEvent);
+        return rowBackedBoundary;
     }
 
     /**

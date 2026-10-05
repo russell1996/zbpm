@@ -49,5 +49,17 @@ public enum BpmnElementType {
     ESCALATION_THROW_EVENT,
     CANCEL_END_EVENT,
     CANCEL_BOUNDARY_EVENT,
-    TERMINATE_END_EVENT
+    TERMINATE_END_EVENT;
+
+    /**
+     * WO-C8-35 раунд 5: типы граничных событий, у которых движок ВЕДЁТ персистентную armed-запись
+     * (timer_jobs / message_subscriptions / signal_subscriptions), то есть может знать, что граница
+     * УЖЕ сработала. Только для них «граница снята» — наблюдаемый факт; у остальных типов записи
+     * нет никогда, и живой хост остаётся возможным доставщиком (см. BpmnProcessDefinitionModel).
+     */
+    public boolean isRowBackedBoundaryEvent() {
+        return this == BOUNDARY_TIMER_EVENT
+            || this == MESSAGE_BOUNDARY_EVENT
+            || this == SIGNAL_BOUNDARY_EVENT;
+    }
 }
