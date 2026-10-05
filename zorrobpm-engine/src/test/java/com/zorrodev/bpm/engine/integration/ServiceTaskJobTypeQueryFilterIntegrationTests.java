@@ -136,6 +136,22 @@ public class ServiceTaskJobTypeQueryFilterIntegrationTests {
         assertThat(find(empty)).extracting(ServiceTask::getJob).containsExactlyInAnyOrder(ALPHA_JOB, BETA_JOB);
     }
 
+    /**
+     * A padded value is trimmed before it is compared, so {@code ?jobType=%20alpha%20} finds the
+     * same task as the exact spelling instead of silently returning nothing. (This is the only
+     * behaviour the implementation adds beyond "null/blank = no filter", so it gets its own test
+     * rather than staying an untested line.)
+     */
+    @Transactional
+    @Test
+    void jobType_withSurroundingWhitespace_matchesTheJobType() throws Exception {
+        startTwoJobTypeProcess();
+
+        ServiceTaskQuery padded = query();
+        padded.setJobType("  " + ALPHA_JOB + "\t");
+        assertThat(find(padded)).extracting(ServiceTask::getId).containsExactly(alphaTaskId);
+    }
+
     /** jobType + completed: the combination must narrow on both axes, not swallow one of them. */
     @Transactional
     @Test
