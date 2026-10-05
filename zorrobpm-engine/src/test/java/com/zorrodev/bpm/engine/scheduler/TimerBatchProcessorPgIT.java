@@ -273,28 +273,35 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
 
     // ==================== Criterion #4: not-due timer not captured ====================
 
-    /**
-     * A timer that is not due yet is never a claim candidate — while a timer that IS due is.
-     *
-     * <p>WO-QW-13: the old form asserted that the scheduler query returns an EMPTY list, i.e. it
-     * asserted a property of the whole shared {@code timer_jobs} table. Any due row left behind by
-     * another class — or written by the live background poller between this test's insert and its
-     * query — made it fail with {@code Expecting empty but was: [<uuid>]} on a row it never created.
-     * Both claims are now asked about THIS test's own ids, and the positive half is pinned as well
-     * (the due row of the same pair IS returned), so the test cannot degenerate into "nothing is ever
-     * returned" and is strictly stronger than the old assertion.
-     */
-    @Test
-    void notDueTimer_notInFindDue() {
-        Instant now = Instant.now();
-        UUID futureJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.plusSeconds(3600));
-        UUID dueJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.minusSeconds(10));
+/**
+ * A timer that is not due yet is never a claim candidate — while a timer that IS due is.
+ *
+ * <p>WO-QW-13: the old form asserted that the scheduler query returns an EMPTY list, i.e. it asserted a
+ * property of the whole shared {@code timer_jobs} table. Any due row left behind by another class — or
+ * written by the live background poller between this test's insert and its query — made it fail with
+ * {@code Expecting empty but was: [<uuid>]} on a row it never created.
+ *
+ * <p>The candidate set comes from the PRODUCTION query {@link TimerJobRepository#findDueLocked}
+ * (not from a copy of its WHERE clause): this test decides what it owns, the engine decides what is
+ * claimable, and the assertion asks about the intersection. So breaking the production predicate breaks
+ * this test, and both halves of the criterion are pinned: the not-due row is absent, the due row of the
+ * same pair is present — it cannot degenerate into "nothing is ever returned".
+ */
+@Test
+@Transactional
+void notDueTimer_notInFindDue() {
+    Instant now = Instant.now();
+    UUID futureJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.plusSeconds(3600));
+    UUID dueJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.minusSeconds(10));
 
-        List<UUID> claimed = PgItIsolation.dueTimerIdsAmong(jdbc, List.of(futureJobId, dueJobId));
+    List<UUID> claimedByEngine = timerJobRepository.findDueLocked(now, 100).stream()
+        .map(TimerJobEntity::getId)
+        .toList();
+    List<UUID> claimedByMe = PgItIsolation.ownRowsAmong(List.of(futureJobId, dueJobId), claimedByEngine);
 
-        assertThat(claimed).containsExactly(dueJobId);
-        assertThat(claimed).doesNotContain(futureJobId);
-    }
+    assertThat(claimedByMe).containsExactly(dueJobId);
+    assertThat(claimedByMe).doesNotContain(futureJobId);
+}
 
     // ==================== WO-REL-11: batch-size LIMIT ====================
 
@@ -327,28 +334,34 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
             ownIds.add(PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now));
         }
 
-        // WO-QW-13: the batch window (LIMIT 100) is GLOBAL, so a due row of another class can occupy
-        // slots of it. This test therefore drains until ITS OWN rows are gone and claims ONLY its own
-        // rows (claiming a foreign row would be exactly the interference this WO removes), while every
-        // single run still has to respect the cap. The 5-runs figure is kept as a lower bound, because
-        // 500 own jobs at batchSize=100 cannot need fewer than 5 runs.
-        int totalProcessed = 0;
+        // WO-QW-13: this test's verdict must rest on ITS OWN rows. The production query returns whatever
+        // is claimable table-wide (that is the scheduler's job), so the assertion narrows the answer to
+        // this test's ids and claims only those. `totalProcessed` used to add up `batch.size()`, which
+        // silently counted rows another class had inserted — the actual order dependency here.
+        int totalProcessedOwn = 0;
         int runs = 0;
-        while (!PgItIsolation.dueTimerIdsAmong(jdbc, ownIds).isEmpty() && runs < 20) {
-            List<TimerJobEntity> batch = timerJobRepository.findDueLocked(now, 100);
-            assertThat(batch).as("run %s must not exceed the 100-row batch limit", runs).hasSizeLessThanOrEqualTo(100);
-            for (TimerJobEntity job : batch) {
-                if (ownIds.contains(job.getId())) {
-                    timerJobRepository.claimTimerJob(job.getId());
-                    totalProcessed++;
-                }
+        while (true) {
+            List<UUID> batch = timerJobRepository.findDueLocked(now, 100).stream()
+                .map(TimerJobEntity::getId)
+                .toList();
+            assertThat(batch).as("run %s must not exceed the 100-row batch limit", runs)
+                .hasSizeLessThanOrEqualTo(100);
+            List<UUID> ownBatch = PgItIsolation.ownRowsAmong(ownIds, batch);
+            if (ownBatch.isEmpty()) {
+                break;
+            }
+            for (UUID id : ownBatch) {
+                timerJobRepository.claimTimerJob(id);
+                totalProcessedOwn++;
             }
             runs++;
+            assertThat(runs).as("500 timers at batchSize=100 must drain, not loop forever")
+                .isLessThanOrEqualTo(20);
         }
 
-        assertThat(PgItIsolation.dueTimerIdsAmong(jdbc, ownIds)).as("no own timer may be lost").isEmpty();
+        assertThat(totalProcessedOwn).as("every timer of this test must be processed exactly once")
+            .isEqualTo(500);
         assertThat(runs).as("500 timers at batchSize=100 need at least 5 runs").isGreaterThanOrEqualTo(5);
-        assertThat(totalProcessed).isEqualTo(500);
     }
 
     /**
