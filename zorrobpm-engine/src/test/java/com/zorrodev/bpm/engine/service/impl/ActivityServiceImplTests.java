@@ -109,7 +109,8 @@ public class ActivityServiceImplTests {
         var eventTrigger = new com.zorrodev.bpm.engine.handler.EventTrigger(
             dbService, bpmnService, scriptService, flowNavigator, elementSupport,
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.repository.TimerJobRepository.class),
-            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.CancelingPhaseService.class));
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.CancelingPhaseService.class),
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler.class));
         try {
             var etField = ActivityServiceImpl.class.getDeclaredField("eventTrigger");
             etField.setAccessible(true);
@@ -155,7 +156,9 @@ public class ActivityServiceImplTests {
         // CompleteServiceTask phase-first branch, covered by ITs, not here).
         // WO-C8-33: 11th arg — mocked ad-hoc handler, 12th — mocked mapper (ad-hoc
         // scope-job completions go through completeAdHocScopeJob, covered by ITs, not here).
-        // WO-ENG-29: 12th arg — mocked IncidentService (output-mapping FEEL failure →
+        // WO-C8-35 (CR-09 ШАГ 3): 12th arg — mocked InclusiveGatewayHandler (the parked-join
+        // re-check it performs on every deactivation tail is covered by ITs, not here).
+        // WO-ENG-29: 13th arg — mocked IncidentService (output-mapping FEEL failure →
         // incident in the service-task tail; covered by Eng29 ITs, not here).
         var completionService = new com.zorrodev.bpm.engine.handler.CompletionService(
             dbService, bpmnService, serviceTaskEnqueueService, elementSupport, multiInstanceExecutor,
@@ -163,6 +166,7 @@ public class ActivityServiceImplTests {
             new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.ElementListenerPhaseService.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.AdHocSubProcessHandler.class),
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.IncidentService.class),
             org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.metrics.BpmMetrics.class),

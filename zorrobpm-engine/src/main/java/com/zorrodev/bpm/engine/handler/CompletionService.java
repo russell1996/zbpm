@@ -53,6 +53,7 @@ public class CompletionService {
     private final UserTaskHandler userTaskHandler;
     private final ElementListenerPhaseService elementListenerPhaseService;
     private final AdHocSubProcessHandler adHocSubProcessHandler;
+    private final InclusiveGatewayHandler inclusiveGatewayHandler;
     private final IncidentService incidentService;
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final BpmMetrics bpmMetrics;
@@ -393,6 +394,11 @@ public class CompletionService {
         // WO-C8-34 (CR-06): a finished user-task handler may unpark a
         // waitForCompletion thrower (same resume as the service-task tail).
         resumeParkedCompensationThrowers(processInstanceId, executor);
+        // WO-C8-35 (CR-09, ШАГ 3/B2): a completed task is a DEACTIVATION — the last possible
+        // deliverer of a parked inclusive-join may have just died (e.g. its XOR took the other
+        // branch). Without this re-check the parked token never woke up (BLOCKER-2 red-team:
+        // the instance stayed RUNNING forever, with no incident).
+        inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, token, bpmn, executor);
         flowNavigator.proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement, executor);
         triggerConditionalEvents(processInstanceId, executor);
     }
@@ -1260,6 +1266,8 @@ public class CompletionService {
         // A null executor still skips the resume — reachable only from tests, visibly.
         if (executor != null) {
             resumeParkedCompensationThrowers(processInstanceId, executor);
+            // WO-C8-35 (CR-09, ШАГ 3/B2) — the same re-check as the user-task tail.
+            inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, tokenId, bpmn, executor);
         }
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
         triggerConditionalEvents(processInstanceId, executor);
@@ -1871,6 +1879,12 @@ public class CompletionService {
         if (executor != null) {
             resumeParkedCompensationThrowers(activity.getProcessInstanceId(), executor,
                 java.util.Set.of(activity.getBpmnElementId()));
+            // WO-C8-35 (CR-09, ШАГ 3/B2): the failed task is dead — if it was the last
+            // deliverer of a parked inclusive-join, that join must be re-evaluated here too.
+            ProcessInstance failedPi = dbService.getProcessInstance(activity.getProcessInstanceId());
+            inclusiveGatewayHandler.resumeParkedInclusiveJoins(activity.getProcessInstanceId(),
+                activity.getToken(),
+                bpmnService.getProcessDefinitionModelById(failedPi.getProcessDefinitionId()), executor);
         }
     }
 
