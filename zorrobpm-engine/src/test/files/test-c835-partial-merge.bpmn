@@ -15,13 +15,24 @@
       <bpmn:outgoing>fB</bpmn:outgoing>
       <bpmn:outgoing>fC</bpmn:outgoing>
     </bpmn:inclusiveGateway>
-    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="isplit" targetRef="j1" />
-    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="isplit" targetRef="j1" />
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="isplit" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="isplit" targetRef="taskB" />
     <bpmn:sequenceFlow id="fC" name="fC" sourceRef="isplit" targetRef="taskC" />
 
-    <bpmn:inclusiveGateway id="j1" name="j1">
+    <bpmn:userTask id="taskA" name="taskA">
       <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>fA2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fA2" name="fA2" sourceRef="taskA" targetRef="j1" />
+    <bpmn:userTask id="taskB" name="taskB">
       <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fB2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fB2" name="fB2" sourceRef="taskB" targetRef="j1" />
+
+    <bpmn:inclusiveGateway id="j1" name="j1">
+      <bpmn:incoming>fA2</bpmn:incoming>
+      <bpmn:incoming>fB2</bpmn:incoming>
       <bpmn:outgoing>jOut</bpmn:outgoing>
     </bpmn:inclusiveGateway>
     <bpmn:sequenceFlow id="jOut" name="jOut" sourceRef="j1" targetRef="j2" />

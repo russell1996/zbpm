@@ -39,15 +39,7 @@
         <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT10H</bpmn:timeDuration>
       </bpmn:timerEventDefinition>
     </bpmn:boundaryEvent>
-    <bpmn:sequenceFlow id="gB" name="gB" sourceRef="tmrCheck" targetRef="taskHold" />
-    <bpmn:userTask id="taskHold" name="taskHold">
-      <bpmn:incoming>gB</bpmn:incoming>
-      <bpmn:outgoing>fHoldEnd</bpmn:outgoing>
-    </bpmn:userTask>
-    <bpmn:sequenceFlow id="fHoldEnd" name="fHoldEnd" sourceRef="taskHold" targetRef="endHold" />
-    <bpmn:endEvent id="endHold" name="endHold">
-      <bpmn:incoming>fHoldEnd</bpmn:incoming>
-    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="gB" name="gB" sourceRef="tmrCheck" targetRef="join" />
 
     <bpmn:inclusiveGateway id="join" name="join">
       <bpmn:incoming>fC</bpmn:incoming>

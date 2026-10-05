@@ -394,12 +394,18 @@ public class CompletionService {
         // WO-C8-34 (CR-06): a finished user-task handler may unpark a
         // waitForCompletion thrower (same resume as the service-task tail).
         resumeParkedCompensationThrowers(processInstanceId, executor);
+        flowNavigator.proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement, executor);
         // WO-C8-35 (CR-09, ШАГ 3/B2): a completed task is a DEACTIVATION — the last possible
         // deliverer of a parked inclusive-join may have just died (e.g. its XOR took the other
         // branch). Without this re-check the parked token never woke up (BLOCKER-2 red-team:
         // the instance stayed RUNNING forever, with no incident).
+        //
+        // AFTER proceedToOutgoing, deliberately: the dying element's OWN continuation is still a
+        // possible deliverer until it has run. Re-checking earlier fired the join while the dead
+        // element's gateway had not chosen yet — in the valid=true case it fires on a single
+        // arrival and then fires AGAIN when the true branch arrives (found by the B2 test's RED:
+        // "expected: 0 but was: 1").
         inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, token, bpmn, executor);
-        flowNavigator.proceedToOutgoing(processInstanceId, token, bpmn, bpmnElement, executor);
         triggerConditionalEvents(processInstanceId, executor);
     }
 
@@ -1266,10 +1272,13 @@ public class CompletionService {
         // A null executor still skips the resume — reachable only from tests, visibly.
         if (executor != null) {
             resumeParkedCompensationThrowers(processInstanceId, executor);
-            // WO-C8-35 (CR-09, ШАГ 3/B2) — the same re-check as the user-task tail.
-            inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, tokenId, bpmn, executor);
         }
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
+        // WO-C8-35 (CR-09, ШАГ 3/B2) — the same re-check, and the same AFTER-the-continuation
+        // ordering as the user-task tail.
+        if (executor != null) {
+            inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, tokenId, bpmn, executor);
+        }
         triggerConditionalEvents(processInstanceId, executor);
     }
 
