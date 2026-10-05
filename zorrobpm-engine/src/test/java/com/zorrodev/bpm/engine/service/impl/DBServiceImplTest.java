@@ -10,9 +10,11 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.dto.Token;
+import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.dto.MessageSubscription;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.dto.TimerJob;
@@ -462,6 +464,99 @@ class DBServiceImplTest {
         v.setValue(value);
         v.setType(type);
         return v;
+    }
+
+    // ── WO-C8-35 (CR-09, ШАГ D): outlet на НЕСКОЛЬКИХ хостах ──────────────────────────────────
+    //
+    // Один и тот же outlet element id (boundary event id) бывает взведён на нескольких живых
+    // хостах: у MI-хоста каждая копия — своя activity-строка и своя timer-job на тот же
+    // boundaryElementId; то же при возврате цикла в ту же задачу. Прежняя реализация держала
+    // Map<String, UUID> и заполняла его через putIfAbsent, то есть ПЕРВЫЙ увиденный хост выигрывал
+    // навсегда: как только он умирал, outlet молча пропадал из воображаемой «вселенной» — и join,
+    // в который этот outlet мог ещё доставить ветвь, объявлялся готовым и срабатывал РАНЬШЕ
+    // времени. Ровно та ошибка, ради которой armed-множество и появилось, только с другой стороны.
+
+    private TimerJobEntity armedJob(UUID hostId, String boundaryElementId) {
+        TimerJobEntity job = new TimerJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setActivityId(hostId);
+        job.setBoundaryElementId(boundaryElementId);
+        job.setFired(false);
+        return job;
+    }
+
+    private Activity hostInStatus(UUID id, ActivityStatus status) {
+        Activity a = new Activity();
+        a.setId(id);
+        a.setStatus(status);
+        return a;
+    }
+
+    @Test
+    void getArmedTriggerElementIds_sameOutletOnTwoHosts_staysArmedWhileAnyHostIsAlive() {
+        UUID pi = UUID.randomUUID();
+        UUID firstHost = UUID.randomUUID();   // первым прочитан — он и выигрывал при putIfAbsent
+        UUID secondHost = UUID.randomUUID();
+        when(timerDbOperations.findArmedTimerJobs(pi)).thenReturn(List.of(
+            armedJob(firstHost, "tmrCheck"),
+            armedJob(secondHost, "tmrCheck")));
+        when(messageSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
+        when(signalSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
+        when(activityDbOperations.getActivity(firstHost)).thenReturn(hostInStatus(firstHost, ActivityStatus.COMPLETED));
+        when(activityDbOperations.getActivity(secondHost)).thenReturn(hostInStatus(secondHost, ActivityStatus.CREATED));
+
+        assertThat(dbService.getArmedTriggerElementIds(pi))
+            .as("второй хост ещё жив — outlet обязан остаться взведённым, иначе join сработает раньше времени")
+            .containsExactly("tmrCheck");
+    }
+
+    @Test
+    void getArmedTriggerElementIds_sameOutletOnTwoHosts_dropsOnlyWhenEveryHostIsDead() {
+        UUID pi = UUID.randomUUID();
+        UUID firstHost = UUID.randomUUID();
+        UUID secondHost = UUID.randomUUID();
+        when(timerDbOperations.findArmedTimerJobs(pi)).thenReturn(List.of(
+            armedJob(firstHost, "tmrCheck"),
+            armedJob(secondHost, "tmrCheck")));
+        when(messageSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
+        when(signalSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
+        when(activityDbOperations.getActivity(firstHost)).thenReturn(hostInStatus(firstHost, ActivityStatus.CANCELLED));
+        when(activityDbOperations.getActivity(secondHost)).thenReturn(hostInStatus(secondHost, ActivityStatus.COMPLETED));
+
+        assertThat(dbService.getArmedTriggerElementIds(pi))
+            .as("оба хоста мертвы — граница на этом хосте больше не выстрелит, outlet обязан исчезнуть")
+            .isEmpty();
+    }
+
+    @Test
+    void getArmedTriggerElementIds_startTriggerOfEventSubProcess_isNotADeliverer() {
+        // Решение CTO 2: старт event-subprocess доставляет ветвь в СВОЙ scope-токен, а не в join
+        // родительского scope, поэтому его outlet не должен попадать во вселенную «ещё может доставить».
+        UUID pi = UUID.randomUUID();
+        UUID host = UUID.randomUUID();
+        MessageSubscriptionEntity evSub = new MessageSubscriptionEntity();
+        evSub.setId(UUID.randomUUID());
+        evSub.setProcessInstanceId(pi);
+        evSub.setMessageName("ping");
+        evSub.setConsumed(false);
+        evSub.setEventSubprocessId("pingHandler");
+        MessageSubscriptionEntity boundary = new MessageSubscriptionEntity();
+        boundary.setId(UUID.randomUUID());
+        boundary.setProcessInstanceId(pi);
+        boundary.setMessageName("escalate");
+        boundary.setConsumed(false);
+        boundary.setActivityId(host);
+        boundary.setBoundaryElementId("msgBnd");
+        when(timerDbOperations.findArmedTimerJobs(pi)).thenReturn(List.of());
+        when(messageSubscriptionDbOperations.findPendingSubscriptions(pi))
+            .thenReturn(List.of(evSub, boundary));
+        when(signalSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
+        when(activityDbOperations.getActivity(host)).thenReturn(hostInStatus(host, ActivityStatus.CREATED));
+
+        assertThat(dbService.getArmedTriggerElementIds(pi))
+            .as("правило «не доставщик» действует на outlet, а не на весь read: граничная подписка "
+                + "в том же наборе остаётся взведённой, старт event-subprocess — нет")
+            .containsExactly("msgBnd");
     }
 
 }
