@@ -1,0 +1,37 @@
+databaseChangeLog:
+  - logicalFilePath: 20261005-117
+  - changeSet:
+      id: 20261005-117
+      author: zorrodev
+      comment: "WO-C8-36 (H-2): durable-дедуп completionId. В памяти JVM дедуп не работал при N>1 (docker-compose.multi.yml — 3 реплики на одном PG): у каждой реплики своё множество, и confirm-loss-переотправка одной отправки списывала бюджет ретраев по разу на каждой. Правило проекта — состояние завершения живёт в БД. Маркер ставится INSERT-ом в той же транзакции, что и списание бюджета: откат транзакции убирает его сам (ручной remove и обход 'red-team 1.4' не нужны). PK на completion_id — сам факт вставки и есть захват: конкурентный INSERT одного и того же id падает на уникальном индексе, и ПРОИГРАВШИЙ откатывается, а не продолжает работу."
+      changes:
+        - createTable:
+            tableName: completion_dedup
+            columns:
+              - column:
+                  name: completion_id
+                  type: varchar(255)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+        - sql:
+            dbms: postgresql
+            sql: CREATE INDEX IF NOT EXISTS idx_completion_dedup_created_at ON completion_dedup (created_at)
+        - sql:
+            dbms: h2
+            sql: CREATE INDEX IF NOT EXISTS idx_completion_dedup_created_at ON completion_dedup (created_at)
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON TABLE completion_dedup IS 'Дедуп отправок результата задачи (WO-C8-36 H-2): durable-маркер уже обработанного completionId, работает при N>1 репликах движка';
+              COMMENT ON COLUMN completion_dedup.completion_id IS 'completionId конкретной отправки результата (PK: сам факт вставки = захват, дубль отсекается уникальным индексом)';
+              COMMENT ON COLUMN completion_dedup.created_at IS 'Момент вставки маркера (TTL-очистка по нему, CompletionDedupStore.deleteExpiredBefore)';
+      rollback:
+        # WO-OPS-15: index + COMMENTs умирают вместе с таблицей.
+        - dropTable:
+            tableName: completion_dedup

@@ -1,7 +1,5 @@
 package com.zorrodev.bpm.engine.handler;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementExtensionModel;
@@ -25,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -61,27 +58,19 @@ public class CompletionService {
     private final BpmMetrics bpmMetrics;
 
     /**
-     * WO-C8-36 (red-team HOLD-1): уже обработанные completionId (дедуп FAILED-дубликатов
-     * открытой фазы). Только in-process память: Caffeine bounded 10k/10m — тот же паттерн,
-     * что resultCache воркера (F38). Рестарт очищает сет — осознанно (см. failSharedBudgetOnce).
-     *
-     * <p>WO-C8-36 (red-team 1.4): маркер снимается при откате транзакции, иначе
-     * потерявшийся (не списанный) сбой невозможно переиграть до истечения TTL.
-     * Чего in-memory НЕ даёт (осознанная граница, отчёт §Границы): рестарт движка
-     * очищает сет — после него переигранный confirm-loss может списать бюджет
-     * повторно. Устранение этого требует durable-inbox (миграция схемы, G-C) —
-     * вне объёма этого WO; practical impact ограничен окном рестарта.
+     * WO-C8-36 (H-2): durable-дедуп отправок в {@code completion_dedup} — в БД, а не
+     * в памяти JVM (in-memory не работал при N&gt;1 репликах, см. javadoc стора).
      */
-    private final Cache<String, Boolean> processedCompletionIds =
-        Caffeine.newBuilder()
-            .maximumSize(10_000)
-            .expireAfterAccess(Duration.ofMinutes(10))
-            .build();
+    private final com.zorrodev.bpm.engine.service.CompletionDedupStore completionDedupStore;
 
-    /** WO-C8-36: тест-хук — сколько completionId сейчас помнит дедуп. */
-    int processedCompletionIdsForTest() {
-        return processedCompletionIds.asMap().size();
-    }
+    /**
+     * WO-C8-36 (H-2): окно жизни маркера дедупа. Совпадает с TTL-очисткой
+     * ({@code CompletionDedupCleanupJob}) — иначе маркер мог бы быть удалён
+     * раньше, чем брокер переотдаст ту же отправку.
+     */
+    @org.springframework.beans.factory.annotation.Value(
+        "${zorrobpm.engine.completion-dedup.ttl-seconds:3600}")
+    private long completionDedupTtlSeconds = 3600L;
 
     /**
      * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
@@ -1579,25 +1568,16 @@ public class CompletionService {
      */
     private void failSharedBudgetOnce(UUID serviceTaskId, Integer retries, String message, Activity activity,
             String completionId, TokenExecutor executor) {
-        if (completionId != null && processedCompletionIds.asMap().putIfAbsent(completionId, Boolean.TRUE) != null) {
+        // WO-C8-36 (H-2): захват решает БД (INSERT в ЭТОЙ транзакции), поэтому
+        // откат транзакции убирает маркер сам — ручного remove не осталось
+        // (это же и закрывало «red-team 1.4»).
+        if (!completionDedupStore.claim(completionId, completionDedupTtlSeconds)) {
             log.info("Ignoring duplicate failure of service task {} (completionId={} already processed)",
                 serviceTaskId, completionId);
             bpmMetrics.activityTransitionIgnored("duplicate_completion");
             return;
         }
-        try {
-            failSharedBudget(serviceTaskId, retries, message, activity, executor);
-        } catch (RuntimeException | Error e) {
-            // Маркер дедупа НЕЛЬЗЯ оставлять при откате транзакции: бюджет не списан,
-            // re-dispatch не создан, а воркер переиграет ТОТ ЖЕ completionId из
-            // resultCache — и уйдёт в игнор, потеряв сбой целиком до истечения TTL
-            // (red-team 1.4). Снимаем маркер только если он всё ещё наш (чужой,
-            // успешно записанный параллельно, не трогаем).
-            if (completionId != null) {
-                processedCompletionIds.asMap().remove(completionId, Boolean.TRUE);
-            }
-            throw e;
-        }
+        failSharedBudget(serviceTaskId, retries, message, activity, executor);
     }
 
     /**
