@@ -1583,10 +1583,20 @@ public class CompletionService {
      * WO-C8-36 (red-team HOLD-1): дедуп дубликатов ОТКРЫТОЙ фазы по completionId.
      * Первый FAILED с этим id идёт в failSharedBudget (бюджет −1, редispatch —
      * НОВАЯ отправка воркера получит НОВЫЙ completionId, цикл не застревает);
-     * повтор с тем же id — игнор. Null id = legacy без дедупа. Память — только
-     * in-process (см. поле {@code processedCompletionIds}); рестарт движка
-     * очищает сет, но confirm-loss переотправка приходит в ТОТ ЖЕ живой процесс
-     * (redelivery hot-loop), так что окно дедупа покрывает именно этот случай.
+     * повтор с тем же id — игнор. Null id = legacy без дедупа.
+     *
+     * <p>WO-C8-36 (H-2, правка раунда 3): маркер ЖИВЁТ В БД
+     * ({@link com.zorrodev.bpm.engine.service.CompletionDedupStore}), а не в памяти
+     * процесса — раньше здесь стояло «память — только in-process, рестарт движка
+     * очищает сет», и это было верно для ПЕРВОЙ версии фикса, но уже не для текущей:
+     * in-memory дедуп не работал на топологии N&gt;1 (проект гоняет три реплики на одном
+     * PG в {@code docker-compose.multi.yml}), где каждый процесс держал своё множество.
+     * Поле {@code processedCompletionIds} в дереве больше не существует — упоминание
+     * осталось только здесь и было враньём для следующего читателя.
+     *
+     * <p>Подтверждено на живом PostgreSQL двумя реальными транзакциями
+     * ({@code CompletionDedupClusterPgIT.criterionF1_twoRealTransactions_…}): ровно
+     * один расход бюджета, обе транзакции целы.
      */
     private void failSharedBudgetOnce(UUID serviceTaskId, Integer retries, String message, Activity activity,
             String completionId, TokenExecutor executor) {
