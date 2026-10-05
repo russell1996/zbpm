@@ -273,35 +273,35 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
 
     // ==================== Criterion #4: not-due timer not captured ====================
 
-/**
- * A timer that is not due yet is never a claim candidate — while a timer that IS due is.
- *
- * <p>WO-QW-13: the old form asserted that the scheduler query returns an EMPTY list, i.e. it asserted a
- * property of the whole shared {@code timer_jobs} table. Any due row left behind by another class — or
- * written by the live background poller between this test's insert and its query — made it fail with
- * {@code Expecting empty but was: [<uuid>]} on a row it never created.
- *
- * <p>The candidate set comes from the PRODUCTION query {@link TimerJobRepository#findDueLocked}
- * (not from a copy of its WHERE clause): this test decides what it owns, the engine decides what is
- * claimable, and the assertion asks about the intersection. So breaking the production predicate breaks
- * this test, and both halves of the criterion are pinned: the not-due row is absent, the due row of the
- * same pair is present — it cannot degenerate into "nothing is ever returned".
- */
-@Test
-@Transactional
-void notDueTimer_notInFindDue() {
-    Instant now = Instant.now();
-    UUID futureJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.plusSeconds(3600));
-    UUID dueJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.minusSeconds(10));
+    /**
+     * A timer that is not due yet is never a claim candidate — while a timer that IS due is.
+     *
+     * <p>WO-QW-13: the old form asserted that the scheduler query returns an EMPTY list, i.e. it asserted a
+     * property of the whole shared {@code timer_jobs} table. Any due row left behind by another class — or
+     * written by the live background poller between this test's insert and its query — made it fail with
+     * {@code Expecting empty but was: [<uuid>]} on a row it never created.
+     *
+     * <p>The candidate set comes from the PRODUCTION query {@link TimerJobRepository#findDueLocked}
+     * (not from a copy of its WHERE clause): this test decides what it owns, the engine decides what is
+     * claimable, and the assertion asks about the intersection. So breaking the production predicate breaks
+     * this test, and both halves of the criterion are pinned: the not-due row is absent, the due row of the
+     * same pair is present — it cannot degenerate into "nothing is ever returned".
+     */
+    @Test
+    @Transactional
+    void notDueTimer_notInFindDue() {
+        Instant now = Instant.now();
+        UUID futureJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.plusSeconds(3600));
+        UUID dueJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.minusSeconds(10));
 
-    List<UUID> claimedByEngine = timerJobRepository.findDueLocked(now, 100).stream()
-        .map(TimerJobEntity::getId)
-        .toList();
-    List<UUID> claimedByMe = PgItIsolation.ownRowsAmong(List.of(futureJobId, dueJobId), claimedByEngine);
+        List<UUID> claimedByEngine = timerJobRepository.findDueLocked(now, 100).stream()
+            .map(TimerJobEntity::getId)
+            .toList();
+        List<UUID> claimedByMe = PgItIsolation.ownRowsAmong(List.of(futureJobId, dueJobId), claimedByEngine);
 
-    assertThat(claimedByMe).containsExactly(dueJobId);
-    assertThat(claimedByMe).doesNotContain(futureJobId);
-}
+        assertThat(claimedByMe).containsExactly(dueJobId);
+        assertThat(claimedByMe).doesNotContain(futureJobId);
+    }
 
     // ==================== WO-REL-11: batch-size LIMIT ====================
 

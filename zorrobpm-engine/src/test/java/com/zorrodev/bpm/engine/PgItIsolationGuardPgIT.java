@@ -120,7 +120,15 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
 
             // The premise of the old assertion — "the table has no due rows I did not create" — is
             // provably false in a shared database. This is why `isEmpty()` could not be the criterion.
-            // Snapshot first: the writer thread keeps appending while we read.
+            //
+            // Known residual risk (@verifier, round 2 finding 7, NOT reproduced): this read is the only
+            // assertion in the class that does not depend on our own ids, and a LIVE TimerScheduler in
+            // another cached context can hold those very rows FOR UPDATE. Its SKIP LOCKED query would
+            // then skip them and this diagnostic could fail on a busy runner. Not reproduced in a full
+            // suite plus three targeted runs, and the window is narrow because processBatch() does not
+            // claim rows with a broken activity_id — but it is the one place where this guard depends on
+            // shared state. If it ever fires, the fix is to assert the premise on a fresh snapshot with
+            // a retry-free, id-scoped query rather than to delete the assertion.
             List<UUID> writtenSnapshot = List.copyOf(writtenByWriter);
             assertThat(PgItIsolation.allDueTimerIds(jdbc))
                 .contains(foreignLeftover)
