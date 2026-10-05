@@ -9,6 +9,8 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
+import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -70,6 +72,12 @@ public class EventSubProcessInclusiveJoinIntegrationTests {
 
     @Autowired
     private ActivityService activityService;
+
+    @Autowired
+    private DBService dbService;
+
+    @Autowired
+    private MessageSubscriptionRepository messageSubscriptionRepository;
 
     private UUID start(String file) throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/" + file));
@@ -155,5 +163,95 @@ public class EventSubProcessInclusiveJoinIntegrationTests {
         assertThat(incidents(pi))
             .as("no incident: the round-3-bis attempt produced one and blocked the handler's start")
             .isEqualTo(0L);
+    }
+
+    /**
+     * Решение CTO 2, тест (a): непрерывающий armed event-subprocess НЕ держит join в родительском
+     * scope вечно.
+     *
+     * <p>Подписка непрерывающего event-subprocess не consume'ится никогда — её outlet висит в
+     * armed-множестве до конца инстанса. Если считать его «ещё может доставить», любой join,
+     * достижимый из него, не удовлетворяет {@code isInclusiveJoinReady} НИКОГДА: инстанс висит
+     * RUNNING без инцидента, и никакая последующая доставка его не разбудит (перепроверка резюма
+     * тут не помогает — armed-множество само по себе остаётся непустым).
+     *
+     * <p>Условие, на котором решение CTO 2 держится: запуск event-subprocess создаёт СВОЙ
+     * scope-токен ({@code EventTrigger.triggerEventSubprocess}), то есть в join родительского scope
+     * токен не доставляется.
+     */
+    @Transactional
+    @Test
+    void nonInterruptingEventSubProcess_doesNotHoldTheParentScopeJoinForever() throws Exception {
+        UUID pi = start("test-c835-nonevsub-incl-join.bpmn");
+
+        // The PREMISE, pinned: the non-interrupting handler's subscription really is never
+        // consumed, so its trigger really is armed for the rest of the instance. Without this the
+        // assertion below could pass for the wrong reason (a consumed subscription).
+        assertThat(messageSubscriptionRepository.findByProcessInstanceIdAndConsumedFalse(pi))
+            .as("premise: the non-interrupting event-subprocess subscription stays pending")
+            .isNotEmpty();
+        assertThat(dbService.getArmedTriggerElementIds(pi))
+            .as("Решение CTO 2: the event-subprocess START trigger is not a pending deliverer — its "
+                + "own start runs in a separate scope token and never hands a branch to a join")
+            .doesNotContain("pingHandler");
+
+        complete(pi, "taskMain");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("taskHold is still live and reaches the join — the branch parks")
+            .isEqualTo(0L);
+
+        // The handler fires once here: its subscription is armed the whole time and is never
+        // consumed, which is exactly the permanent "possible deliverer" the rule must not count.
+        activityService.correlateMessage("ping", pi, List.of());
+        assertThat(countOf(pi, "evEnd", ActivityStatus.COMPLETED)).isEqualTo(1L);
+
+        complete(pi, "taskHold");
+
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("both parent-scope branches arrived — the never-consumed event-subprocess trigger "
+                + "must not keep the join parked forever")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskNotify", ActivityStatus.CREATED))
+            .as("downstream of the join must run once the last parent-scope branch is in")
+            .isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
+
+        complete(pi, "taskNotify");
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+    }
+
+    /**
+     * Решение CTO 2, тест (b): join ВНУТРИ event-subprocess не ждёт собственный стартовый триггер.
+     *
+     * <p>Новый запуск event-subprocess — это новый scope-экземпляр, а не «ещё одна ветвь того же
+     * join»: старт доставляет первую ветвь ВНУТРЬ своего scope и ничего не обещает join'у, который
+     * в этом scope уже идёт.
+     */
+    @Transactional
+    @Test
+    void inclusiveJoinInsideEventSubProcess_doesNotWaitForItsOwnStartTrigger() throws Exception {
+        UUID pi = start("test-c835-evsub-inner-join.bpmn");
+
+        activityService.correlateMessage("ping", pi, List.of());
+        assertThat(countOf(pi, "evTaskA", ActivityStatus.CREATED)).isEqualTo(1L);
+        assertThat(countOf(pi, "evTaskB", ActivityStatus.CREATED)).isEqualTo(1L);
+
+        complete(pi, "evTaskA");
+        assertThat(countOf(pi, "evJoin", ActivityStatus.COMPLETED))
+            .as("evTaskB is live and reaches evJoin — the inner join must wait for it")
+            .isEqualTo(0L);
+
+        complete(pi, "evTaskB");
+        assertThat(countOf(pi, "evJoin", ActivityStatus.COMPLETED))
+            .as("both inner branches arrived — the sub-process's own start trigger must not be "
+                + "counted as a third pending arrival")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "evNotifyTask", ActivityStatus.CREATED)).isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
+
+        complete(pi, "evNotifyTask");
+        assertThat(countOf(pi, "evEnd", ActivityStatus.COMPLETED))
+            .as("the handler ran to its own end inside its own scope")
+            .isEqualTo(1L);
     }
 }

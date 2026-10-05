@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c835_evsub_inner" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="msgPing" name="ping" />
+  <bpmn:process id="test-c835-evsub-inner-join" name="test-c835-evsub-inner-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="mainTask" />
+    <bpmn:userTask id="mainTask" name="mainTask">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="mainTask" targetRef="mainEnd" />
+    <bpmn:endEvent id="mainEnd" name="mainEnd">
+      <bpmn:incoming>flow2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- NON-INTERRUPTING event sub-process whose OWN body contains a two-branch INCLUSIVE join.
+         Per WO-C8-35 Решение 2 the inner join must not wait for the sub-process's own start
+         trigger: the start delivers the first arrival INTO this scope instance, it is not a
+         pending third arrival from outside. -->
+    <bpmn:subProcess id="pingHandler" name="pingHandler" triggeredByEvent="true">
+      <bpmn:startEvent id="evStart" name="evStart" isInterrupting="false">
+        <bpmn:outgoing>flowE0</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="med1" messageRef="msgPing" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowE0" name="flowE0" sourceRef="evStart" targetRef="evFork" />
+
+      <bpmn:parallelGateway id="evFork" name="evFork">
+        <bpmn:incoming>flowE0</bpmn:incoming>
+        <bpmn:outgoing>evc</bpmn:outgoing>
+        <bpmn:outgoing>evd</bpmn:outgoing>
+      </bpmn:parallelGateway>
+      <bpmn:sequenceFlow id="evc" name="evc" sourceRef="evFork" targetRef="evTaskA" />
+      <bpmn:sequenceFlow id="evd" name="evd" sourceRef="evFork" targetRef="evTaskB" />
+
+      <bpmn:userTask id="evTaskA" name="evTaskA">
+        <bpmn:incoming>evc</bpmn:incoming>
+        <bpmn:outgoing>evfA</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="evfA" name="evfA" sourceRef="evTaskA" targetRef="evJoin" />
+      <bpmn:userTask id="evTaskB" name="evTaskB">
+        <bpmn:incoming>evd</bpmn:incoming>
+        <bpmn:outgoing>evfB</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="evfB" name="evfB" sourceRef="evTaskB" targetRef="evJoin" />
+
+      <bpmn:inclusiveGateway id="evJoin" name="evJoin">
+        <bpmn:incoming>evfA</bpmn:incoming>
+        <bpmn:incoming>evfB</bpmn:incoming>
+        <bpmn:outgoing>evNotify</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="evNotify" name="evNotify" sourceRef="evJoin" targetRef="evNotifyTask" />
+      <bpmn:userTask id="evNotifyTask" name="evNotifyTask">
+        <bpmn:incoming>evNotify</bpmn:incoming>
+        <bpmn:outgoing>evfN</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="evfN" name="evfN" sourceRef="evNotifyTask" targetRef="evEnd" />
+      <bpmn:endEvent id="evEnd" name="evEnd">
+        <bpmn:incoming>evfN</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>
