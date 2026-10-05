@@ -161,6 +161,25 @@ public class JobCompletionListener implements MessageListener {
     }
 
     /**
+     * WO-C8-36 (H-1, п.е): сколько входящих заданий не удалось прочитать.
+     *
+     * <p>Раньше этот случай был ТИХИМ: {@code log.error} без счётчика, после
+     * которого метод возвращается — то есть контейнер ACK'ает, и задание
+     * исчезает. Строка лога сама по себе не считается наблюдаемостью: при
+     * массовом апгрейде движка «новые поля» уезжают в лог сотнями строк, и
+     * без числа нельзя ни заметить масштаб, ни доказать, что после правки
+     * маршрута поток прекратился. Ошибка при этом логируется на ERROR с
+     * классом и причиной — версия движка больше не угадывается по тексту.
+     */
+    private final java.util.concurrent.atomic.AtomicLong malformedCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** WO-C8-36 (H-1, п.е): непрочитанные задания (тихий ACK на стороне брокера). */
+    public long malformedCountForTest() {
+        return malformedCount.get();
+    }
+
+    /**
      * WO-C8-36: доступны ли publisher confirms на фабрике шаблона.
      * {@code waitForConfirmsOrDie} на канале без confirms кидает ПОСЛЕ успешной
      * публикации → каждый redelivery публиковал бы ещё один дубликат (поймано
@@ -198,8 +217,21 @@ public class JobCompletionListener implements MessageListener {
         try {
             model = objectMapper.readValue(message.getBody(), JobDetailModel.class);
         } catch (Exception e) {
-            // Malformed payload: тихо, без отправки, без проброса (см. javadoc).
-            log.error("Skipping malformed message for queue {}: {}", queueName, e.getMessage());
+            // Malformed payload: без отправки, без проброса (см. javadoc) — иначе
+            // poison-сообщение ретраилось бы вечно. ACK при этом всё равно
+            // происходит (чистый возврат), поэтому исход обязан быть виден в
+            // телеметрии: счётчик + ERROR с классом/причиной (WO-C8-36 H-1 п.е).
+            // Самый частый источник — не битый JSON, а поле от более нового
+            // движка, поэтому в тексте прямо назван этот сценарий: без
+            // ignoreUnknown на DTO и толерантного reader'а (см.
+            // HandlerAutoConfiguration.createJobBodyReader) апгрейд движка раньше
+            // воркеров терял здесь каждое задание.
+            long n = malformedCount.incrementAndGet();
+            log.error("Malformed job message dropped without completion (queue={}, dropped total={}): "
+                    + "{}: {}. If this appeared right after an engine upgrade, the engine is "
+                    + "newer than this worker — check dispatch-phase stamping flag "
+                    + "(zorrobpm.engine.dispatch-phase-stamping) and worker version",
+                queueName, n, e.getClass().getName(), e.getMessage(), e);
             return;
         }
 

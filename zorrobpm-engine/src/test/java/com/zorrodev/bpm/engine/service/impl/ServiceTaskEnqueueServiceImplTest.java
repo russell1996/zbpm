@@ -52,6 +52,50 @@ class ServiceTaskEnqueueServiceImplTest {
     @InjectMocks
     private ServiceTaskEnqueueServiceImpl service;
 
+    /**
+     * WO-C8-36 (H-1, п.б/д): флаг {@code zorrobpm.engine.dispatch-phase-stamping}
+     * выключен по умолчанию — тело задания при выключенном флаге побайтно то же,
+     * что до WO (golden-JSON ниже). Ставится явно, потому что дефолт проверяется
+     * отдельным тестом на прод-дефолте свойства, а не на угаданном значении.
+     */
+    private ServiceTaskEnqueueServiceImpl serviceWithStamping(boolean enabled) {
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
+            realElementSupport(), mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        sut.setDispatchPhaseStampingEnabled(enabled);
+        return sut;
+    }
+
+    private void stubPlainServiceTask(UUID serviceTaskId, UUID processInstanceId,
+            UUID processDefinitionId, String bpmnElementId, String job, String bpmn) {
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob(job);
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
+        model.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(model);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+    }
+
     // WO-C8-9: реальный ElementSupport поверх мокнутого DBService — резолв гоняет прод-код
     // (литерал/blank не трогают DB вообще, стабы не нужны), а не дефолты Mockito
     // (mock.resolvePriority вернул бы 0 для Integer — ассерт зависел бы от мока, не от кода).
@@ -718,6 +762,110 @@ class ServiceTaskEnqueueServiceImplTest {
         verify(dbService, never()).getServiceTaskPendingEndListenerIndex(any());
     }
 
+    /**
+     * WO-C8-36 (H-1, п.д — golden-JSON): при ВЫКЛЮЧЕННОМ флаге тело задания
+     * побайтно то же, что до этого WO. Это и есть содержание решения CTO
+     * «сначала воркеры, потом флаг»: старый воркер не должен получать поле,
+     * которого его класс не знает, пока оператор не включил флаг осознанно.
+     *
+     * <p>Ассерт — на ОТСУТСТВИЕ ключей в РЕАЛЬНОМ outbox-JSON (реальный Jackson,
+     * прод-сериализация), а не на null геттера: нулевой геттер при
+     * {@code JsonInclude.ALWAYS} всё равно сериализовался бы в
+     * {@code "dispatchPhase":null} — то есть тело изменилось бы, а ассерт на
+     * null был бы зелёным.
+     */
+    @Test
+    void enqueueAfterCommit_stampingFlagOff_jobBodyIsByteIdenticalToPreWo() {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        stubPlainServiceTask(serviceTaskId, processInstanceId, processDefinitionId,
+            "svcGoldenOff", "send-email", "golden-off");
+
+        serviceWithStamping(false).enqueueAfterCommit(serviceTaskId);
+
+        String payload = capturedPayload();
+        assertThat(payload)
+            .as("при выключенном флаге тело задания не содержит полей phased-штампа — "
+                + "старый воркер читает его как раньше")
+            .doesNotContain("dispatchPhase")
+            .doesNotContain("dispatchIndex");
+        // ...и всё остальное тело на месте (ассерт не проходит на пустом payload).
+        assertThat(payload).contains("\"serviceTaskId\":\"" + serviceTaskId + "\"");
+        assertThat(payload).contains("\"job\":\"send-email\"");
+    }
+
+    /**
+     * WO-C8-36 (H-1, п.б): при ВКЛЮЧЁННОМ флаге штамп возвращается — иначе флаг
+     * был бы декоративным (проверить это, сняв вызов setDispatchPhase, обязана
+     * ронять ЭТОТ тест, а не зелёный golden-тест).
+     */
+    @Test
+    void enqueueAfterCommit_stampingFlagOn_listenerJobCarriesPhaseAndIndex() {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "svcGoldenOn";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(0);
+
+        serviceWithStamping(true).enqueueAfterCommit(serviceTaskId);
+
+        String payload = capturedPayload();
+        assertThat(payload)
+            .as("при включённом флаге phased-штамп обязателен в теле задания")
+            .contains("\"dispatchPhase\":\"start\"")
+            .contains("\"dispatchIndex\":0");
+    }
+
+    /**
+     * WO-C8-36 (H-1, п.б — реальный дефолт): прод-дефолт флага ВЫКЛЮЧЕН.
+     * Проверяется на настоящем бине в Spring-контексте (application-test не
+     * переопределяет свойство), потому что «дефолт выключен, иначе старый
+     * воркер падает» — это ровно то свойство, на котором держится порядок
+     * обновления, выбранный CTO. Смена дефолта на true обязана ронять этот тест.
+     */
+    @Test
+    void dispatchPhaseStamping_defaultOffOnRealBean() {
+        // Новый экземпляр без явного вызова сеттера = прод-дефолт поля.
+        ServiceTaskEnqueueServiceImpl fresh = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
+            realElementSupport(), mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        assertThat(fresh.isDispatchPhaseStampingEnabled())
+            .as("прод-дефолт phased-штампа ВЫКЛЮЧЕН: старый воркер не должен получать "
+                + "незнакомые поля до осознанного включения флага")
+            .isFalse();
+    }
+
+    private String capturedPayload() {
+        ArgumentCaptor<OutboxEntry> captor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxRepository).save(captor.capture());
+        return captor.getValue().getPayload();
+    }
+
     @Test
     void enqueueAfterCommit_listenerInFlight_stampsStartPhaseAndIndex() throws Exception {
         // WO-C8-36 (CR-01, п.1): отправка listener-вызова штампуется фазой start/0 —
@@ -761,6 +909,9 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(0);
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
+        // WO-C8-36 (H-1, п.б): штамп теперь за флагом — тест шалтлит его ВКЛЮЧИТЬ
+        // и проверяет то же самое (конкретные значения), что и до флага.
+        sut.setDispatchPhaseStampingEnabled(true);
         sut.enqueueAfterCommit(serviceTaskId);
 
         ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
@@ -810,6 +961,9 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(null);
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
+        // WO-C8-36 (H-1, п.б): тот же флаг — иначе тест проверял бы путь,
+        // который в проде по умолчанию выключен.
+        sut.setDispatchPhaseStampingEnabled(true);
         sut.enqueueAfterCommit(serviceTaskId);
 
         ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);

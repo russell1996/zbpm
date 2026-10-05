@@ -17,6 +17,7 @@ import com.zorrodev.bpm.exchange.ServiceTaskDispatchPhase;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,6 +50,29 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
     private final ElementSupport elementSupport;
     private final com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository phaseRepository;
     private final TracingSupport tracing;
+
+    /**
+     * WO-C8-36 (H-1, п.б): штампить ли {@code dispatchPhase}/{@code dispatchIndex}
+     * в тело задания.
+     *
+     * <p>Порядок обновления выбран CTO: СНАЧАЛА воркеры, ПОТОМ флаг. Пока флаг
+     * выключен, тело задания побайтно то же, что до CR-01, и старый воркер
+     * (строгий reader, голый {@code new ObjectMapper()}) читает его без изменений.
+     * Движок при этом принимает phased-сообщения (движок↔воркер асимметрично
+     * терпим), так что включать флаг можно, обновив ВСЕ воркеры, а не раньше.
+     * В нашем же стеке (engine и http-connector — один релиз) compose ставит
+     * флаг в true.
+     */
+    @Value("${zorrobpm.engine.dispatch-phase-stamping:false}")
+    private boolean dispatchPhaseStamping = false;
+
+    void setDispatchPhaseStampingEnabled(boolean enabled) {
+        this.dispatchPhaseStamping = enabled;
+    }
+
+    boolean isDispatchPhaseStampingEnabled() {
+        return dispatchPhaseStamping;
+    }
 
     @Transactional
     @Override
@@ -239,8 +263,14 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         detail.setVariables(variables);
         detail.setTaskHeaders(taskHeaders);
         detail.setPriority(priority);
-        detail.setDispatchPhase(dispatchPhase);
-        detail.setDispatchIndex(dispatchIndex);
+        // WO-C8-36 (H-1, п.б): вне флага phased-поля в тело НЕ пишутся — тело
+        // задания остаётся побайтно тем же, что до CR-01 (golden-JSON-тест ниже
+        // падает, если эту ветку снять). Флаг default false = порядок
+        // «сначала воркеры, потом флаг», выбранный CTO.
+        if (dispatchPhaseStamping) {
+            detail.setDispatchPhase(dispatchPhase);
+            detail.setDispatchIndex(dispatchIndex);
+        }
 
         writeOutboxEntry(serviceTaskId, detail);
     }
@@ -289,8 +319,12 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
         // WO-C8-36 (CR-01): фазовая отправка штампуется как element_start —
         // приём идёт по PK фазы (DONE-маркер ElementListenerPhaseService),
         // штамп здесь — для единой схемы наблюдаемости/отладки.
-        detail.setDispatchPhase(ServiceTaskDispatchPhase.ELEMENT_START);
-        detail.setDispatchIndex(index);
+        // WO-C8-36 (H-1, п.б): под тем же флагом, что и обычная отправка — иначе
+        // приём по фазе работал бы у одного элемента и не работал у другого.
+        if (dispatchPhaseStamping) {
+            detail.setDispatchPhase(ServiceTaskDispatchPhase.ELEMENT_START);
+            detail.setDispatchIndex(index);
+        }
 
         writeOutboxEntry(phaseId, detail);
     }

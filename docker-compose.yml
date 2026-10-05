@@ -185,6 +185,11 @@ services:
       # WO-ENG-30: strict io-mapping compat flag (default false in
       # application.properties; empty = property default applies).
       IO_MAPPING_STRICT_MISSING: ${IO_MAPPING_STRICT_MISSING:-}
+      # WO-C8-36 (H-1): phased-штамп вызова в теле задания. В нашем стеке engine
+      # и http-connector released together, все воркеры этого релиза новые —
+      # поэтому true (прод-дефолт в application.properties остаётся false для
+      # внешних воркеров: порядок «сначала воркеры, потом флаг» именно из-за них).
+      ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING: ${ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING:-true}
       # WO-ENG-31 Фаза 2: HTTP-коннектор (дефолты fail-closed: выключен + deny-all;
       # пусто = дефолт свойства; compose пробрасывает явно — WO-INT-6 класс).
       ZORROBPM_HTTP_CONNECTOR_ENABLED: ${ZORROBPM_HTTP_CONNECTOR_ENABLED:-false}
