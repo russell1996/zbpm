@@ -60,6 +60,11 @@ class CompletionReliablePublishTest {
         // Lenient: confirmsDisabled-тест коротит до probe (стабы не вызываются).
         org.mockito.Mockito.lenient().when(cf.isPublisherConfirms()).thenReturn(true);
         org.mockito.Mockito.lenient().when(rabbitTemplate.getConnectionFactory()).thenReturn(cf);
+        // WO-C8-36 (M-1): backoff-переотправки тут не проверяется (его тест —
+        // отдельный класс), но он существует в боевом пути и иначе реально
+        // СПИТ 1с на каждом падении: подменяем sleeper'ом-заглушкой, темп
+        // проверяется там, где он и является предметом проверки.
+        listener.setRedeliveryBackoff(new CompletionRedeliveryBackoff(millis -> { }));
     }
 
     private static String jobJson(UUID serviceTaskId) {
@@ -140,6 +145,33 @@ class CompletionReliablePublishTest {
             .isInstanceOf(AmqpException.class)
             .hasMessageContaining("was not confirmed within "
                 + JobCompletionListener.MIN_CONFIRM_TIMEOUT_MS + "ms");
+    }
+
+    /**
+     * WO-C8-36 (M-2): потолок ожидания confirm. Значение сверху зажимается, иначе
+     * воркер на дефолтных настройках контейнера (одна нить потребителя) молча
+     * вставал бы на этот таймаут на каждом задании — и warn'а не было бы вовсе
+     * (warn стоял только на полу). Ассерт на конкретное значение в сообщении:
+     * future по-прежнему не завершаем, поэтому «потолок» читается из текста
+     * таймаута, а не из «ошибки не было».
+     */
+    @Test
+    void confirmTimeout_aboveCeiling_clamped_notUnboundedWait() {
+        // Проверяется ПРИМЕНЁННОЕ значение, а не «ошибка была»: ждать потолок
+        // (60с) в юните бессмысленно дорого, а именно значение уходит в
+        // future.get(...). Мутация «снять потолок» возвращает 3_600_000 и
+        // роняет ассерт; соседний confirmTimeout_throws_inputNotAcked
+        // доказывает, что это значение реально применяется в ожидании.
+        listener.setConfirmTimeoutMs(3_600_000L);
+
+        assertThat(listener.confirmTimeoutMsForTest())
+            .as("час ожидания на однопоточном воркере — это нерабочий воркер; "
+                + "значение сверху потолка зажимается с warn'ом")
+            .isEqualTo(JobCompletionListener.MAX_CONFIRM_TIMEOUT_MS);
+
+        // И в пределах потолка значение проходит без изменений (ручка не «съедает» нормальные).
+        listener.setConfirmTimeoutMs(7_500L);
+        assertThat(listener.confirmTimeoutMsForTest()).isEqualTo(7_500L);
     }
 
     @Test
