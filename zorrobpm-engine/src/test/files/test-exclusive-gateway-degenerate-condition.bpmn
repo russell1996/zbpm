@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-35 (CR-10 ч.1): 1-in/1-out exclusive gateway whose single outgoing flow
+     carries a conditionExpression that is FALSE. The documented decision: 1/1 is an
+     unconditional no-op, so the condition is not consulted and the process completes.
+     Pinned by ExclusiveGatewayUnsupportedShapeIntegrationTests so the choice cannot
+     quietly turn into a forgotten gap. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_degcond" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-exclusive-gateway-degenerate-condition" name="test-exclusive-gateway-degenerate-condition" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" name="flowStart" sourceRef="startEvent" targetRef="xor" />
+    <bpmn:exclusiveGateway id="xor" name="xor">
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowEnd</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="flowEnd" name="flowEnd" sourceRef="xor" targetRef="endEvent">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=go = "A"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flowEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
