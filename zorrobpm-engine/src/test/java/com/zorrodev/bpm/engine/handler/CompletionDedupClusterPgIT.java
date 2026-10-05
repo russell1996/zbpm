@@ -20,7 +20,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 import javax.sql.DataSource;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -62,7 +69,7 @@ class CompletionDedupClusterPgIT extends PostgresIT {
 
     /** Вторая «реплика»: свой JdbcTemplate на тот же PG, никакой общей памяти. */
     private CompletionDedupStore storeB() {
-        return new CompletionDedupStore(new JdbcTemplate(pgDataSource));
+        return new CompletionDedupStore(new JdbcTemplate(pgDataSource), pgDataSource);
     }
 
     private void cleanup(String completionId) {
@@ -189,6 +196,140 @@ class CompletionDedupClusterPgIT extends PostgresIT {
         } finally {
             cleanup(completionId);
         }
+    }
+
+    /**
+     * WO-C8-36 (F-1, red-team раунда 2): конфликт дедупа НЕ обнуляет транзакцию
+     * вызывающего на PostgreSQL.
+     *
+     * <p>Воспроизведение дефекта, которое red-team принёс на живой СУБД: дубль PK
+     * (SQLState 23505) переводит транзакцию в aborted, {@code commit()} pgjdbc
+     * возвращает {@code ROLLBACK} <b>без исключения</b>, и Spring считает, что
+     * закоммитилось. Итог — всё, что записано до claim'а, исчезает молча.
+     *
+     * <p>Здесь claim вызывается ПОСЛЕ записи в той же транзакции — то есть
+     * ровно та позиция, которая сегодня пуста. Это делает проверку сильнее
+     * требования «инвариант „claim — первая операция“ соблюдён“: тест не
+     * полагается на него, а показывает, что конфликт безопасен в ЛЮБОЙ позиции.
+     * Мутация «вернуть {@code catch DuplicateKeyException} на PG» (старая
+     * реализация) валит оба ассерта этого теста: маркер-проба исчезает.
+     */
+    @Test
+    void criterionF1_duplicateClaim_keepsCallerTransactionWritable() {
+        String claimed = "f1-claimed-" + UUID.randomUUID();
+        String probe = "f1-probe-" + UUID.randomUUID();
+        TransactionTemplate tx = new TransactionTemplate(txManager);
+        try {
+            // Реплика A первой захватывает id (в своей транзакции — autocommit у JdbcTemplate
+            // без Spring-транзакции, поэтому маркер сразу виден всем).
+            assertThat(storeA.claim(claimed, 60)).isTrue();
+
+            // Реплика B: её собственная запись В ТОЙ ЖЕ транзакции, затем дубль claim'а.
+            tx.executeWithoutResult(status -> {
+                assertThat(storeA.claim(probe, 60))
+                    .as("запись вызывающего до конфликта — обычный захват")
+                    .isTrue();
+                assertThat(storeB().claim(claimed, 60))
+                    .as("этот id уже занят репликой A — дубль")
+                    .isFalse();
+                assertThat(jdbc.update(
+                        "UPDATE completion_dedup SET created_at = created_at WHERE completion_id = ?", probe))
+                    .as("транзакция после дубля обязана остаться пригодной к записи — "
+                        + "на PG aborted-состояние отвергло бы эту команду с 25P02")
+                    .isEqualTo(1);
+            });
+
+            assertThat(storeA.isClaimed(probe))
+                .as("запись реплики B до конфликта обязана пережить commit. С откатом "
+                    + "DuplicateKeyException она исчезала бы МОЛЧА: commit() на aborted-"
+                    + "транзакции возвращается без ошибки, и Spring не узнаёт о потере")
+                .isTrue();
+        } finally {
+            cleanup(claimed);
+            cleanup(probe);
+        }
+    }
+
+    /**
+     * WO-C8-36 (F-1): два РЕАЛЬНЫХ потока, каждый в своей транзакции, ловят ОДИН
+     * {@code completionId} — ровно один расход бюджета, и ни одна транзакция не
+     * теряет собственные записи.
+     *
+     * <p>Почему это не «два JdbcTemplate без транзакций» (как было в
+     * {@code criterionWO2_duplicateFailureAcrossReplicas}): там проигравший не
+     * имеет ничего, что можно потерять, поэтому aborted-транзакция была
+     * невидима. Здесь у каждого потока своя запись-проба, сделанная ДО claim'а, —
+     * ровно то, что в бою потерялось бы на PG. Заодно это настоящая
+     * конкуренция: {@code CyclicBarrier} стартует оба потока одновременно.
+     */
+    @Test
+    void criterionF1_twoRealTransactions_duplicateSpendsBudgetOnceAndLosesNoWrites()
+            throws Exception {
+        UUID definitionId = deployOnce();
+        UUID piId = runtimeService.startProcessInstance(startDto(definitionId)).getId();
+        UUID activityId = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(piId) && a.getBpmnElementId().equals("svc"))
+            .map(a -> a.getId()).findFirst().orElseThrow();
+        String completionId = "f1-concurrent-" + UUID.randomUUID();
+        TransactionTemplate setup = new TransactionTemplate(txManager);
+        setup.executeWithoutResult(s -> runtimeService.completeServiceTask(activityId,
+            java.util.List.of(), ServiceTaskDispatchPhase.START, 0));
+        int budgetBefore = retries(activityId);
+
+        String probeA = "f1-probe-a-" + UUID.randomUUID();
+        String probeB = "f1-probe-b-" + UUID.randomUUID();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            CyclicBarrier startTogether = new CyclicBarrier(2);
+            List<Future<?>> results = new ArrayList<>();
+            for (String probe : List.of(probeA, probeB)) {
+                results.add(pool.submit(() -> {
+                    startTogether.await(20, TimeUnit.SECONDS);
+                    // СВОЯ транзакция этого потока и СВОЯ запись в ней (проба), затем —
+                    // настоящий боевой путь движка с ОБЩИМ completionId.
+                    TransactionTemplate own = new TransactionTemplate(txManager);
+                    own.executeWithoutResult(status -> {
+                        storeA.claim(probe, 60);
+                        runtimeService.failServiceTask(activityId, "boom", null,
+                            ServiceTaskDispatchPhase.REAL, null, completionId);
+                    });
+                    return null;
+                }));
+            }
+            for (Future<?> f : results) {
+                f.get(30, TimeUnit.SECONDS);
+            }
+        } catch (Exception e) {
+            throw new AssertionError("конкурентные транзакции дедупа упали: " + e, e);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(storeA.isClaimed(probeA))
+            .as("собственная запись транзакции A пережила commit — на старой реализации "
+                + "25P02 делал транзакцию aborted, и commit() молча уводил её в ROLLBACK")
+            .isTrue();
+        assertThat(storeA.isClaimed(probeB))
+            .as("собственная запись транзакции B пережила commit")
+            .isTrue();
+        assertThat(jdbc.queryForObject(
+            "SELECT count(*) FROM completion_dedup WHERE completion_id = ?",
+            Integer.class, completionId))
+            .as("маркер на логический сбой ровно один")
+            .isEqualTo(1);
+        assertThat(retries(activityId))
+            .as("два РЕАЛЬНЫХ конкурентных failServiceTask с одним completionId тратят "
+                + "бюджет ровно один раз")
+            .isEqualTo(budgetBefore - 1);
+
+        // НОВАЯ отправка (редispatch) приходит с новым id — цикл ретраев не застревает.
+        TransactionTemplate tx = new TransactionTemplate(txManager);
+        String nextSend = "f1-next-" + UUID.randomUUID();
+        tx.executeWithoutResult(s -> runtimeService.failServiceTask(activityId, "boom again", null,
+            ServiceTaskDispatchPhase.REAL, null, nextSend));
+        assertThat(retries(activityId))
+            .as("новая отправка расходует бюджет — цикл ретраев не застревает")
+            .isEqualTo(budgetBefore - 2);
     }
 
     private int retries(UUID activityId) {
