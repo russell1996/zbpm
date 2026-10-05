@@ -236,16 +236,21 @@ public class EventTrigger {
      * (MI instances genuinely share one token — WO-ENG-3 semantics).
      */
     private boolean isMultiInstanceHost(BpmnElementModel hostElement) {
-        return Optional.ofNullable(hostElement.getExtensions())
+        // null-safe like isScopeContainerHost: the host element itself may be missing
+        // from the model (stale deployment, hand-edited XML), and this check runs FIRST
+        // in the interrupting cascade — an NPE here would mask the cancel semantics
+        // entirely. (CTO, HOLD 2026-10-05, п.5.)
+        return hostElement != null && Optional.ofNullable(hostElement.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
             .isPresent();
     }
 
     /**
      * WO-C8-34 (CR-05): does {@code tokenId} carry live activities OTHER than the
-     * host — i.e. would token-wide cancel leak past the host? Plain hosts use it to
-     * switch to host-only cancel; MI hosts use it to switch to own-instances-only
-     * cancel (red-team M2). See the callers.
+     * host — i.e. would a token-wide cancel leak past the host? Plain (non-MI) hosts
+     * use it to switch to host-only cancel; MI hosts use it to switch to
+     * own-instances-only cancel (red-team M2). Both callers ask the same question and
+     * branch differently, which is why the predicate lives here once.
      * by the caller (they keep token-wide cancel); here any extra activity counts.
      */
     private boolean isPlainHostOnSharedToken(UUID processInstanceId, UUID tokenId, Activity host) {

@@ -397,21 +397,8 @@ public class CompletionService {
         if (resumeElementListenerPhase(serviceTaskId, variables, executor)) {
             return;
         }
-        // WO-C8-34 (CR-06): the resume hook needs the REAL executor (it
-        // continues parked throwers' outgoing flows, not just bookkeeping).
-        // Stash it for the tail: the tail receives only ids, and threading the
-        // executor through finishServiceTaskCompletion's signature would ripple
-        // across every phase-resume caller. Thread-local with try/finally —
-        // the tail runs in the same thread, same transaction.
-        resumeExecutorHolder.set(executor);
-        try {
-            completeServiceTaskInner(serviceTaskId, variables, executor);
-        } finally {
-            resumeExecutorHolder.remove();
-        }
+        completeServiceTaskInner(serviceTaskId, variables, executor);
     }
-
-    private static final ThreadLocal<TokenExecutor> resumeExecutorHolder = new ThreadLocal<>();
 
     private void completeServiceTaskInner(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
         Activity activity = elementSupport.lockInstanceFirst(serviceTaskId);
@@ -990,12 +977,14 @@ public class CompletionService {
         }
         // WO-C8-34 (CR-06): a finished compensation handler may unpark a
         // waitForCompletion thrower (resume completes it + continues outgoing).
-        // The REAL executor rides the thread-local (set at completeServiceTask
-        // entry): the tail signature carries only ids, and the resume must run
-        // the outgoing flow, not just bookkeeping.
-        TokenExecutor resumeExecutor = resumeExecutorHolder.get();
-        if (resumeExecutor != null) {
-            resumeParkedCompensationThrowers(processInstanceId, resumeExecutor);
+        // The executor is THIS method's own parameter — the tail already carries it,
+        // so the resume reuses it instead of a thread-local. The ThreadLocal this
+        // replaced was a silent hang generator: any future caller reaching the tail
+        // without going through completeServiceTask got null, the resume was skipped
+        // and the thrower stayed parked with no log line (CTO HOLD 2026-10-05 п.3).
+        // A null executor still skips the resume — reachable only from tests, visibly.
+        if (executor != null) {
+            resumeParkedCompensationThrowers(processInstanceId, executor);
         }
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
         triggerConditionalEvents(processInstanceId, executor);
@@ -1158,17 +1147,13 @@ public class CompletionService {
     }
 
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, TokenExecutor executor) {
-        // WO-C8-34 (CR-06, red-team B2): stashed like in completeServiceTask — releasing a
-        // parked thrower has to continue its outgoing flow, which needs a real executor.
-        resumeExecutorHolder.set(executor);
-        try {
-            failServiceTaskInner(serviceTaskId, errorMessage, retries);
-        } finally {
-            resumeExecutorHolder.remove();
-        }
+        // WO-C8-34 (CR-06, red-team B2): the executor travels as a parameter, not a
+        // thread-local — releasing a parked thrower has to continue its outgoing flow.
+        failServiceTaskInner(serviceTaskId, errorMessage, retries, executor);
     }
 
-    private void failServiceTaskInner(UUID serviceTaskId, String errorMessage, Integer retries) {
+    private void failServiceTaskInner(UUID serviceTaskId, String errorMessage, Integer retries,
+            TokenExecutor executor) {
         if (failElementListenerPhase(serviceTaskId, errorMessage, retries)) {
             return;
         }
@@ -1182,7 +1167,7 @@ public class CompletionService {
         if (handleUserTaskListenerFailure(serviceTaskId, retries, message, activity)) {
             return;
         }
-        failSharedBudget(serviceTaskId, retries, message, activity);
+        failSharedBudget(serviceTaskId, retries, message, activity, executor);
     }
 
     /**
@@ -1417,7 +1402,8 @@ public class CompletionService {
      * semantics, re-dispatch while retries remain, incident when exhausted. Verbatim block
      * (void, zero-touch); called last.
      */
-    private void failSharedBudget(UUID serviceTaskId, Integer retries, String message, Activity activity) {
+    private void failSharedBudget(UUID serviceTaskId, Integer retries, String message, Activity activity,
+            TokenExecutor executor) {
         // Camunda failJob semantics: an explicit retries value sets the budget (0 -> incident now); otherwise -1
         int remaining;
         if (retries != null) {
@@ -1441,11 +1427,10 @@ public class CompletionService {
         // WO-C8-34 red-team B2: a compensation handler that exhausted its retries must
         // not leave its waitForCompletion thrower parked forever — ERROR + incident IS
         // the outcome, the operator sees it, the flow has to be released. failServiceTask
-        // is not a completion tail, so the resume is requested here; the real executor
-        // rides the thread-local, and this path's own verdict is passed in explicitly.
-        TokenExecutor failResumeExecutor = resumeExecutorHolder.get();
-        if (failResumeExecutor != null) {
-            resumeParkedCompensationThrowers(activity.getProcessInstanceId(), failResumeExecutor,
+        // is not a completion tail, so the resume is requested here with this path's own
+        // executor (a parameter, not a thread-local) and its own verdict passed in explicitly.
+        if (executor != null) {
+            resumeParkedCompensationThrowers(activity.getProcessInstanceId(), executor,
                 java.util.Set.of(activity.getBpmnElementId()));
         }
     }
