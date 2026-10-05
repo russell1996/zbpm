@@ -1265,7 +1265,10 @@ public class ElementSupport {
      * downstream side effect twice with no incident anywhere.
      *
      * <p>Read as a set of outlet element ids ({@code DBService.getArmedTriggerElementIds}):
-     * armed timer jobs, message/signal boundary subscriptions and event-subprocess triggers.
+     * armed timer jobs and message/signal BOUNDARY subscriptions. The start trigger of an
+     * event sub-process is deliberately NOT in that set (WO-C8-35 Решение 2, round 4): it delivers a
+     * branch into its own scope token, never into a join, and its subscription is never consumed —
+     * counting it would pin every reachable join for the whole instance.
      */
     public boolean hasArmedTriggerReaching(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel join) {

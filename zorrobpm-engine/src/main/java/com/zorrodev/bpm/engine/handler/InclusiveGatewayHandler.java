@@ -139,8 +139,15 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
         dbService.clearParallelGatewayArrivals(processInstanceId, bpmnElement.getId());
         // Раунд 4 (Решение 1): getToken() — это findToken().orElseThrow(). Строка токена могла
         // исчезнуть между резолвом в резюме и здесь (retention-cleanup / гонка отмены), и бросок
-        // из join'а уронил бы хвост вызывающего на ровном месте. Отсутствующий токен = нечем
-        // продолжать — WARN и выход, arrivals уже очищены, повторного зависания не будет.
+        // из join'а уронил бы хвост вызывающего на ровном месте.
+        //
+        // ЦЕНА ЭТОГО РЕШЕНИЯ, названная прямо (находка @verifier раунда 4, п.9): arrivals уже
+        // очищены, а join не сработал — то есть нисходящая работа этого join'а теряется ТИХО, и
+        // никто её потом не разбудит (повторного зависания не будет, но и повторной попытки нет).
+        // Это цена fail-safe, предписанного Решением 1; альтернатива (бросок) роняла весь хвост
+        // вызывающего, что и было исходным регрессом раунда 3-bis. Путь до срабатывания: токен
+        // должен исчезнуть между решением «join готов» и этой строкой — гонка cleanup/отмены.
+        // Наблюдаемо по WARN в логе; зелёного состояния «тихо потерян join» быть не может.
         Token token = tokenId == null ? null : dbService.findToken(tokenId).orElse(null);
         if (token == null) {
             log.warn("{}/{}: inclusive join {} not completed — its continuation token is gone (requested {})",

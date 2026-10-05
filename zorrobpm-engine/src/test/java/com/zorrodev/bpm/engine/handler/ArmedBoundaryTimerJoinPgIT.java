@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Здесь выстрел настоящий и боевой: {@code TimerBatchProcessor.processBatch()} → выборка
  * {@code findDueLocked} (FOR UPDATE SKIP LOCKED) → {@code TimerJobExecutor.fire} →
  * {@code claimTimerJob} (UPDATE ... fired = true) → {@code fireBoundaryTimer}. Доказательство
- * claim'а — сама строка в БД ({@code fired = true} после батча), а не только счётчик下游.
+ * claim'а — сама строка в БД ({@code fired = true} после батча), а не только счётчик ниже по потоку.
  *
  * <p>Почему PostgreSQL обязателен: выстрел идёт через {@code REQUIRES_NEW}-транзакции
  * ({@code TimerJobExecutor.fire}) и реальные блокировки строк — на H2 этот путь не воспроизводится

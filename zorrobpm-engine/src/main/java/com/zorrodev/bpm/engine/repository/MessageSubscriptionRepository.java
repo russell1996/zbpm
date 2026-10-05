@@ -49,9 +49,12 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
     }
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1): unconsumed message subscriptions of this instance that are a
-     * BOUNDARY event or an event-sub-process trigger (the two forms that continue somewhere
-     * else). A plain message catch is excluded \u2014 its activity row already covers it.
+     * WO-C8-35 (CR-09, ШАГ 2/B1; раунд 4 — контракт уточнён): this instance's unconsumed
+     * message subscriptions, UNFILTERED — the query returns EVERY pending row of the instance
+     * (boundary trigger, event-sub-process trigger and plain catch alike). Callers narrow it: only
+     * a row with a non-null boundary element id is an armed trigger, and the event-sub-process start
+     * trigger is deliberately not counted as a branch deliverer (Решение 2). A plain message catch needs
+     * no entry here because its host activity row already covers it in the live-execution universe.
      */
     List<MessageSubscriptionEntity> findByProcessInstanceIdAndConsumedFalse(UUID processInstanceId);
 

@@ -482,17 +482,19 @@ public interface DBService {
 
     /**
      * WO-C8-35 (CR-09, ШАГ 1/3): gateway element ids of this instance that still hold OPEN arrival
-     * rows \u2014 ветви, которые пришли к шлюзу и ждут, пока он сработает. Читается движком при
+     * rows — ветви, которые пришли к шлюзу и ждут, пока он сработает. Читается движком при
      * перепроверке припаркованных join'ов (см. {@code InclusiveGatewayHandler.resumeParkedInclusiveJoins}).
      */
     java.util.Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId);
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1): element ids of this instance's still-ARMED event triggers that
-     * continue somewhere else \u2014 boundary timer/message/signal и event-subprocess. Именно они
+     * WO-C8-35 (CR-09, ШАГ 2/B1; раунд 4 — Решение 2): element ids of this instance's still-ARMED
+     * event triggers that continue somewhere else — ТОЛЬКО boundary timer/message/signal. Именно они
      * делают «доставка ещё возможна» невидимой для {@code getActiveActivities}: у взведённого
      * boundary-события нет строки activity, потому что оно ещё не выстрелило.
-     * Catch-события (message/signal/timer catch) исключены \u2014 их покрывает живая activity хоста.
+     * Catch-события (message/signal/timer catch) исключены — их покрывает живая activity хоста.
+     * Старт event-subprocess исключён (Решение 2 раунда 4): он доставляет ветвь в СВОЙ scope-токен
+     * ({@code EventTrigger.triggerEventSubprocess}), а не в join, поэтому доставщиком ветви не является.
      */
     java.util.Set<String> getArmedTriggerElementIds(UUID processInstanceId);
 }
