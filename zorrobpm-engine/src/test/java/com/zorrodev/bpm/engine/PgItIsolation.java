@@ -6,7 +6,9 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -134,22 +136,21 @@ public final class PgItIsolation {
         return id;
     }
 
-    /**
-     * The isolated form of the claim query: due rows <b>among the ids this test owns</b>.
-     *
-     * <p>Same predicate the scheduler uses ({@code fired = false AND due_at <= now()}), narrowed by
-     * {@code id IN (...)}. A row any other test class (or the live poller) owns simply is not a
-     * candidate, so the verdict cannot change under us — the whole point of WO-QW-13.
-     */
-    public static List<UUID> dueTimerIdsAmong(JdbcTemplate jdbc, Collection<UUID> ownIds) {
-        if (ownIds.isEmpty()) {
-            return List.of();
-        }
-        String placeholders = ownIds.stream().map(id -> "?").collect(Collectors.joining(", "));
-        return jdbc.queryForList(
-            "SELECT id FROM timer_jobs WHERE id IN (" + placeholders + ") AND fired = false AND due_at <= now()",
-            UUID.class, ownIds.toArray());
-    }
+/**
+ * The isolated form of the scheduler's claim query: <b>the rows the production query returned, minus
+ * everybody else's</b>.
+ *
+ * <p>It takes the production result as its argument on purpose — it does NOT re-implement the
+ * selection. {@code TimerJobRepository.findDueLocked} (native SQL: {@code fired = false AND due_at <=
+ * :now ORDER BY due_at ASC LIMIT :batchSize FOR UPDATE SKIP LOCKED}) decides WHICH rows are candidates;
+ * this only narrows that answer to the ids the caller owns. A test therefore judges the real query:
+ * break the production predicate and the caller's assertion fails, instead of passing because the test
+ * carries its own copy of the WHERE clause.
+ */
+public static List<UUID> ownRowsAmong(Collection<UUID> ownIds, Collection<UUID> returnedIds) {
+    Set<UUID> mine = new HashSet<>(ownIds);
+    return returnedIds.stream().filter(mine::contains).toList();
+}
 
     /** Deletes exactly the given timer rows — the self-cleanup counterpart of {@link #insertCatchTimerJob}. */
     public static void deleteTimerJobs(JdbcTemplate jdbc, Collection<UUID> ids) {
@@ -164,7 +165,13 @@ public final class PgItIsolation {
         jdbc.update("DELETE FROM " + table + " WHERE id IN (" + placeholders + ")", ids.toArray());
     }
 
-    /** Every due unfired row in the table — for tests that deliberately assert on scheduler-wide state. */
+    /**
+     * Every due unfired row in the table — a DIAGNOSTIC read, deliberately NOT the claim query.
+     *
+     * <p>It exists to let a test state the premise it is immune to ("the shared due set demonstrably
+     * contains foreign rows"), never to decide a verdict about its own rows. For that, use the
+     * production query {@code findDueLocked} and narrow its result with {@link #ownRowsAmong}.
+     */
     public static List<UUID> allDueTimerIds(JdbcTemplate jdbc) {
         return jdbc.queryForList(
             "SELECT id FROM timer_jobs WHERE fired = false AND due_at <= now()", UUID.class);

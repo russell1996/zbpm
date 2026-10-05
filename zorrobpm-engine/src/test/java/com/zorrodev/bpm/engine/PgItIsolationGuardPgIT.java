@@ -1,13 +1,17 @@
 package com.zorrodev.bpm.engine;
 
+import com.zorrodev.bpm.engine.entity.TimerJobEntity;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -43,6 +47,7 @@ import static org.assertj.core.api.Assertions.within;
 public class PgItIsolationGuardPgIT extends PostgresIT {
 
     @Autowired JdbcTemplate jdbc;
+    @Autowired TimerJobRepository timerJobRepository;
 
     /** The poller is parked so the guard measures the tests' own doing, not a racing scheduler. */
     @DynamicPropertySource
@@ -51,17 +56,24 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
     }
 
     /**
-     * Criterion 1: own claim set is immune to (a) a leftover due row and (b) a concurrent writer —
-     * the live poller of another cached context, reproduced here by a thread that inserts due rows for
-     * the duration of the query.
+     * Criterion 1: the claim set of THIS test is immune to (a) a leftover due row and (b) a concurrent
+     * writer — the live poller of another cached context, reproduced here by a thread that inserts due
+     * rows while the test reads.
+     *
+     * <p>The candidate set is produced by the PRODUCTION query
+     * {@link TimerJobRepository#findDueLocked} (G-N: a test must judge the real query, not a copy of its
+     * WHERE clause) and then narrowed to this test's own ids by
+     * {@link PgItIsolation#ownRowsAmong}. So breaking the production predicate turns this test red, while
+     * rows this test never created cannot.
      */
     @Test
+    @Transactional
     void criterion1_claimSetScopedByOwnIds_ignoresForeignAndConcurrentlyWrittenDueRows() throws Exception {
         UUID foreignLeftover = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
             Instant.now().minusSeconds(30));
         AtomicBoolean writerRunning = new AtomicBoolean(true);
         AtomicReference<Throwable> writerError = new AtomicReference<>();
-        List<UUID> writtenByWriter = new java.util.ArrayList<>();
+        List<UUID> writtenByWriter = new ArrayList<>();
         // WO-OPS-11 pattern: coordinate by FACT, never by a fixed sleep — the writer signals after its
         // first committed insert, so the assertion below can never lose a race with thread start-up.
         CountDownLatch firstWrite = new CountDownLatch(1);
@@ -99,8 +111,11 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
             PgItIsolation.insertCatchTimerJob(jdbc, ownFuture, UUID.randomUUID(), now.plusSeconds(3600));
             PgItIsolation.insertCatchTimerJob(jdbc, ownDue, UUID.randomUUID(), now.minusSeconds(10));
 
-            List<UUID> claimed = PgItIsolation.dueTimerIdsAmong(jdbc, List.of(ownFuture, ownDue));
-            assertThat(claimed).as("only this test's own due row is a claim candidate")
+            List<UUID> claimedByEngine = timerJobRepository.findDueLocked(now, 100).stream()
+                .map(TimerJobEntity::getId)
+                .toList();
+            List<UUID> claimedByMe = PgItIsolation.ownRowsAmong(List.of(ownFuture, ownDue), claimedByEngine);
+            assertThat(claimedByMe).as("only this test's own due row is a claim candidate")
                 .containsExactly(ownDue);
 
             // The premise of the old assertion — "the table has no due rows I did not create" — is
@@ -113,7 +128,7 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         } finally {
             writerRunning.set(false);
             writer.join(5000);
-            List<UUID> toDelete = new java.util.ArrayList<>();
+            List<UUID> toDelete = new ArrayList<>();
             toDelete.add(foreignLeftover);
             toDelete.add(ownFuture);
             toDelete.add(ownDue);
