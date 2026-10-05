@@ -151,10 +151,46 @@ class CompletionServiceTest {
 
         when(elementSupport.lockInstanceFirst(serviceTaskId)).thenReturn(activity);
 
+        // WO-C8-36 (F-5): phased-сообщение (dispatchPhase задан) — это stale_status.
+        // Legacy-вариант того же игнора помечен отдельно, см. тест ниже.
         completionService.completeServiceTask(serviceTaskId, java.util.List.of(),
+            com.zorrodev.bpm.exchange.ServiceTaskDispatchPhase.REAL, 0, "cid-1",
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.TokenExecutor.class));
 
         verify(bpmMetrics).activityTransitionIgnored("stale_status");
+    }
+
+    /**
+     * WO-C8-36 (F-5): тот же игнор по статусу, но для сообщения БЕЗ идентификатора
+     * вызова (legacy fail-open путь) обязан получить ОТДЕЛЬНЫЙ тег причины.
+     *
+     * <p>Почему это не «косметика метрики»: принятый риск E-3 (fail-open без
+     * CR-01) измеряется счётчиком, и если его игноры падают в общий счётчик с
+     * phased-игнорами и stale_status, то доля трафика вне защиты по метрике не
+     * считается — а именно ради измеримости риск и принимался.
+     *
+     * <p>Мутация «вернуть один тег на оба случая» валит этот тест; мутация
+     * «не считать legacy вовсе» — тоже (verify требует сам факт вызова).
+     */
+    @Test
+    void staleStatusCompletion_withoutCallIdentifier_taggedLegacyNullPhase() {
+        UUID serviceTaskId = UUID.randomUUID();
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setStatus(ActivityStatus.COMPLETED);
+        activity.setProcessInstanceId(UUID.randomUUID());
+        activity.setToken(UUID.randomUUID());
+        activity.setBpmnElementId("serviceTask1");
+
+        when(elementSupport.lockInstanceFirst(serviceTaskId)).thenReturn(activity);
+
+        // dispatchPhase = null — ровно legacy-путь старого воркера / REST.
+        completionService.completeServiceTask(serviceTaskId, java.util.List.of(), null, null, null,
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.TokenExecutor.class));
+
+        verify(bpmMetrics).activityTransitionIgnored("legacy_null_phase");
+        verify(bpmMetrics, never()).activityTransitionIgnored("stale_status");
     }
 
     /**
