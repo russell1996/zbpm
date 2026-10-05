@@ -50,6 +50,7 @@ public class EventTrigger {
     private final ElementSupport elementSupport;
     private final TimerJobRepository timerJobRepository;
     private final CancelingPhaseService cancelingPhaseService;
+    private final InclusiveGatewayHandler inclusiveGatewayHandler;
 
     // WO-REL-17: explicit business zone for cycle re-arm resolution (same as TimerJobExecutor)
     @Value("${zorrobpm.business-timezone:Asia/Almaty}")
@@ -207,6 +208,10 @@ public class EventTrigger {
             }
             log.info("{}/{}: Boundary {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
             flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary, executor);
+            // WO-C8-35 (CR-09, ШАГ 3/B2): the interrupted host was just DEACTIVATED and may have
+            // been the last possible deliverer of a parked inclusive-join — re-check, or the parked
+            // token stays asleep forever (BLOCKER-2 class, boundary-fire variant).
+            inclusiveGatewayHandler.resumeParkedInclusiveJoins(processInstanceId, tokenId, bpmn, executor);
         } else {
             Token branch = dbService.createToken(tokenId);
             log.info("{}/{}: Boundary {} firing non-interrupting on host {} (branch token {})", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId(), branch.getId());
