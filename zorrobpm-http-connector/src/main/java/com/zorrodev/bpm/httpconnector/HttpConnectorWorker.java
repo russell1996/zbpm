@@ -81,6 +81,64 @@ public class HttpConnectorWorker implements JobHandler {
     private static final Set<String> FILTERED_RESPONSE_HEADERS = Set.of("set-cookie");
 
     /**
+     * WO-QW-11 (CR-11): верхняя граница диагностического сообщения, уходящего в
+     * лог и переменные процесса. Санитизация ({@link #sanitizeDiag}) идёт ДО
+     * усечения: усечение ограничивает размер, а не прячет секреты.
+     */
+    static final int MAX_DIAG_CHARS = 300;
+
+    /**
+     * WO-QW-11 (CR-11): ЕДИНСТВЕННАЯ точка diag-санитизации модуля (зеркало
+     * {@code HttpSsrfGate} — единственной точки SSRF-проверки). Любой текст,
+     * который может попасть в лог или переменные процесса (сообщения исключений
+     * про кривой URL/редирект/заголовки/транспорт, итоговые URI), проходит
+     * ТОЛЬКО через этот метод — правки в отдельных catch-блоках запрещены.
+     *
+     * <p>Что режет (порядок важен — сначала секреты, потом размер):
+     * <ol>
+     *   <li>значения query-параметров ({@code ?name=value} / {@code &name=value} /
+     *       {@code #name=value}) — секрет apiKey-in-query живёт именно там;</li>
+     *   <li>userinfo ({@code scheme://user:pass@host});</li>
+     *   <li>схемы {@code Bearer}/{@code Basic} — в кавычках (форма JDK
+     *       {@code invalid header value: "Bearer ..."} с возможным {@code \n}
+     *       внутри цитаты) и голые;</li>
+     *   <li>усечение до {@link #MAX_DIAG_CHARS}.</li>
+     * </ol>
+     *
+     * <p>Перекос сознательный: ложное срабатывание (обычный {@code a=b} после
+     * {@code ?} в тексте) превращается в {@code ***}, а не в утечку.
+     */
+    static String sanitizeDiag(String raw) {
+        String s = raw == null ? "" : raw;
+        s = QUERY_VALUE.matcher(s).replaceAll("$1=***");
+        s = USERINFO.matcher(s).replaceAll("://***@");
+        s = BARE_CREDENTIAL.matcher(s).replaceAll("$1 ***");
+        s = QUOTED_CREDENTIAL.matcher(s).replaceAll("$1 ***\"");
+        s = QUOTED_SECRET_VALUE.matcher(s).replaceAll("\"***\"");
+        if (s.length() > MAX_DIAG_CHARS) {
+            s = s.substring(0, MAX_DIAG_CHARS) + "…(truncated)";
+        }
+        return s;
+    }
+
+    private static final java.util.regex.Pattern QUERY_VALUE =
+        java.util.regex.Pattern.compile("([?&#][^?&#=\\s\"']+)=([^?&#\\s\"']*(?:\\s+[^?&#\\s\"']*)*)");
+    private static final java.util.regex.Pattern USERINFO =
+        java.util.regex.Pattern.compile("://[^/\\s\"']*@");
+    private static final java.util.regex.Pattern QUOTED_CREDENTIAL =
+        java.util.regex.Pattern.compile("((?i)Bearer|Basic)\\s+[^\"]*\"");
+    private static final java.util.regex.Pattern QUOTED_SECRET_VALUE =
+        // Red-team WO-QW-11 находка 2: apiKey-in-header с произвольным именем —
+        // JDK цитирует сырое значение ("..."), без префикса Bearer/Basic.
+        // Lookahead исключает Bearer/Basic-форму (её чинят два паттерна выше) и
+        // уже-санитизированное "***"; порог {8,} не трогает короткие цитаты.
+        java.util.regex.Pattern.compile("\"((?!Bearer |Basic |[^\"]*\\*\\*\\*)[^\"]{8,})\"");
+    private static final java.util.regex.Pattern BARE_CREDENTIAL =
+        // Без кавычек в классе: иначе съедает закрывающую кавычку JDK-цитаты
+        // ("Bearer tok..." → "Bearer ***) — кавычечную форму чинит следующий паттерн.
+        java.util.regex.Pattern.compile("((?i)Bearer|Basic)\\s+[^\\s\"]+");
+
+    /**
      * NEW5-06: watchdog для чтения тела. {@code HttpRequest.timeout} в JDK действует
      * только до получения ЗАГОЛОВКОВ — тело через {@code BodyHandlers.ofInputStream()}
      * читается уже без срока, и медленный allowlisted-сервер (1 байт/с) держит поток
@@ -160,19 +218,27 @@ public class HttpConnectorWorker implements JobHandler {
             return execute(model);
         } catch (HttpSsrfGate.SsrfRejectedException | HttpConnectorConfigException e) {
             // Детерминированно: ретраить бессмысленно — BPMN-ошибка без пустых ретраев.
+            // WO-QW-11: в лог и переменные — только санитизированный текст (секрет
+            // из authRef мог попасть в сообщение через склеенный URI/Location/заголовок).
             String code = e instanceof HttpSsrfGate.SsrfRejectedException ? ERR_CONFIG : ((HttpConnectorConfigException) e).errorCode;
-            log.warn("HTTP connector deterministic error for task {}: {}", model.getServiceTaskId(), e.getMessage());
+            log.warn("HTTP connector deterministic error for task {}: {}", model.getServiceTaskId(),
+                sanitizeDiag(e.getMessage()));
             activityService.throwServiceTaskError(model.getServiceTaskId(), code,
-                List.of(contractErrorVar(e.getMessage())));
+                List.of(contractErrorVar(sanitizeDiag(e.getMessage()))));
             return List.of();
         } catch (IllegalArgumentException e) {
             // Red-team (G-H): URI.create/resolve/header-builder кидают unchecked IAE
             // (внутренний пробел в URL, кривой Location с allowlisted-сервера) — это
             // детерминированный невалидный вход, а не транзиент: та же BPMN-ошибка,
             // иначе пустые FAILED-ретраи вопреки решению CTO п.3.
-            log.warn("HTTP connector invalid input for task {}: {}", model.getServiceTaskId(), e.getMessage());
+            // WO-QW-11: сообщение IAE цитирует вход (URI.create) / значение заголовка —
+            // в лог и переменные только санитизированное.
+            // Префикс — стабильный код причины (НЕ класс исключения: имя класса наружу
+            // не отдаём, маппинг по нему хрупок и шумит в контракт ошибки).
+            log.warn("HTTP connector invalid input for task {}: {}", model.getServiceTaskId(),
+                sanitizeDiag(e.getMessage()));
             activityService.throwServiceTaskError(model.getServiceTaskId(), ERR_CONFIG,
-                List.of(contractErrorVar("invalid URL or redirect location: " + e.getMessage())));
+                List.of(contractErrorVar(sanitizeDiag("invalid URL or redirect location: " + e.getMessage()))));
             return List.of();
         } catch (IOException | InterruptedException e) {
             // Транзиентно: проброс → FAILED → failServiceTask (ретраи/инцидент — engine).
@@ -182,7 +248,10 @@ public class HttpConnectorWorker implements JobHandler {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new IllegalStateException("HTTP connector transient failure: " + e.getMessage(), e);
+            // WO-QW-11: транзиентное сообщение уходит в FAILED-completion движка
+            // (инцидент с текстом) — санитизируем здесь же, а не у потребителя.
+            throw new IllegalStateException(
+                "HTTP connector transient failure: " + sanitizeDiag(e.getMessage()), e);
         }
     }
 
@@ -315,7 +384,8 @@ public class HttpConnectorWorker implements JobHandler {
             return new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), null, null, null);
         } catch (java.net.URISyntaxException e) {
             // Схема/хост уже проверены ssrfGate.validate и URI.create — сюда не дойти.
-            throw new IllegalArgumentException("cannot derive origin of " + uri, e);
+            // WO-QW-11: полный URI в сообщение не кладём (в query мог быть секрет).
+            throw new IllegalArgumentException("cannot derive origin of validated URI", e);
         }
     }
 
@@ -408,13 +478,17 @@ public class HttpConnectorWorker implements JobHandler {
 
     private URI buildUri(String url, Map<String, String> queryParameters, AuthHeader auth) {
         String base = url.strip();
+        // WO-QW-11 (CR-11): голый URL валидируется ПЕРВЫМ, секрет приклеивается
+        // ПОСЛЕ. Иначе URI.create цитирует полный вход (включая api_key=...) в
+        // тексте исключения — секрет уходит в лог и переменные процесса.
+        URI baseUri = URI.create(base);
         StringBuilder query = new StringBuilder();
         queryParameters.forEach((k, v) -> appendQueryParam(query, k, v));
         if (auth.queryParam != null) {
             appendQueryParam(query, auth.queryParam.name(), auth.queryParam.value());
         }
         if (query.length() == 0) {
-            return URI.create(base);
+            return baseUri;
         }
         String separator = base.contains("?") ? (base.endsWith("?") || base.endsWith("&") ? "" : "&") : "?";
         return URI.create(base + separator + query);

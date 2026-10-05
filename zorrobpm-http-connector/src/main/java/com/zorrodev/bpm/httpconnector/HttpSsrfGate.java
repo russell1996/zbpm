@@ -89,7 +89,10 @@ public class HttpSsrfGate {
                     + address.getHostAddress() + ") which is not allowed");
             }
         }
-        log.debug("SSRF gate passed for {} ({} address(es))", uri, resolved.length);
+        // WO-QW-11 (CR-11): в debug НЕ печатаем полный URI — там query с секретом
+        // (apiKey-in-query). Для диагностики достаточно scheme://host.
+        log.debug("SSRF gate passed for {}://{} ({} address(es))",
+            uri.getScheme(), uri.getHost(), resolved.length);
     }
 
     /** Package-visible для тестов: разбор allowlist (trim, lowercase, без пустых). */
