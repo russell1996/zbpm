@@ -529,7 +529,8 @@ class ListenerDuplicateCompletionTests {
         UUID legacyActivity = activity(legacyPi).getId();
         runtimeService.completeServiceTask(legacyActivity, List.of());
         assertThat(counterValue("zbpm.completion.legacy.unphased"))
-            .as("legacy-проход обязан попасть в счётчик — принятый риск должен быть измерим")
+            .as("legacy-проход обязан попасть в счётчик: без числа доля трафика вне "
+                + "защиты CR-01 не измеряется вовсе")
             .isEqualTo(legacyBefore + 1);
 
         // 2) Phased-вызов (новый воркер, с идентификатором вызова) — НЕ считается:
