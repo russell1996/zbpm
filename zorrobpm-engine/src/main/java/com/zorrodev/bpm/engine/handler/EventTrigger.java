@@ -247,11 +247,18 @@ public class EventTrigger {
 
     /**
      * WO-C8-34 (CR-05): does {@code tokenId} carry live activities OTHER than the
-     * host — i.e. would a token-wide cancel leak past the host? Plain (non-MI) hosts
-     * use it to switch to host-only cancel; MI hosts use it to switch to
-     * own-instances-only cancel (red-team M2). Both callers ask the same question and
-     * branch differently, which is why the predicate lives here once.
-     * by the caller (they keep token-wide cancel); here any extra activity counts.
+     * host — i.e. would a token-wide cancel leak past the host? Any extra activity on
+     * the token counts, whoever put it there.
+     *
+     * <p>Both interrupting-cancel callers ask this question and branch differently,
+     * which is why the predicate lives here once:
+     * <ul>
+     *   <li>a plain (non-container, non-MI) host switches to host-only cancel;</li>
+     *   <li>an MI host switches to own-instances-only cancel (red-team M2) — MI
+     *       siblings still die, a sibling fork branch on the same token does not.</li>
+     * </ul>
+     * The scope-container branch does not consult it: a container's extent is the
+     * scope chain, not the token.
      */
     private boolean isPlainHostOnSharedToken(UUID processInstanceId, UUID tokenId, Activity host) {
         return dbService.getActiveActivities(processInstanceId).stream()
