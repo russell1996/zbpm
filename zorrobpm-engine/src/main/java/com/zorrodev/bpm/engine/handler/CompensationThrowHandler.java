@@ -84,7 +84,7 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
             // tails) completes it when the last launched handler finishes.
             // With zero launched handlers there is nothing to wait for —
             // complete immediately (old path, no leak).
-            if (!havePendingHandlers(processInstanceId, activityId, bpmn, targets)) {
+            if (!elementSupport.compensationThrowerHasPending(processInstanceId, activityId, bpmn, targets)) {
                 dbService.completeActivity(activityId);
                 flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
             }
@@ -92,101 +92,6 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
         }
         dbService.completeActivity(activityId);
         flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
-    }
-
-    /**
-     * WO-C8-34 (CR-06): did this throw launch any compensation handler that is
-     * still unfinished? For each launched handler the LATEST row (by completedAt,
-     * then by id for same-millisecond ties) decides: COMPLETED latest → done;
-     * anything else latest (CREATED/IN_PROGRESS row, or no row at all) →
-     * pending. Latest-row-wins closes the same-transaction snapshot hole
-     * (a just-completed handler whose bulk UPDATE is invisible to the
-     * repeatable-read snapshot still shows its CREATED row — but the COMPLETED
-     * row has a NEWER id, and exactly one of them is latest).
-     */
-    private boolean havePendingHandlers(UUID processInstanceId, UUID throwActivityId,
-            BpmnProcessDefinitionModel bpmn, List<Activity> targets) {
-        Map<String, BpmnElementModel> boundaryIndex = indexCompensationBoundaries(bpmn);
-        for (Activity target : targets) {
-            BpmnElementModel boundary = boundaryIndex.get(target.getBpmnElementId());
-            if (boundary == null) {
-                continue;
-            }
-            String handlerId = Optional.ofNullable(boundary.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getCompensationHandlerId)
-                .orElse(null);
-            if (handlerId == null || bpmn.getElement(handlerId) == null) {
-                continue;
-            }
-            if (isHandlerPending(processInstanceId, handlerId)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * WO-C8-34 (CR-06): latest-row-wins for one handler element. Compares the
-     * newest COMPLETED row against the newest ACTIVE (CREATED/IN_PROGRESS) row
-     * by completedAt (fallback: createdAt for active rows, which never have
-     * completedAt), then by id for same-millisecond ties. Pending unless a
-     * COMPLETED row exists AND no ACTIVE row is newer than it. Same-millisecond
-     * completes-then-recreates ties are vanishingly rare and fail CLOSED
-     * (parked, healed by the next resume) — never silently continued.
-     */
-    private boolean isHandlerPending(UUID processInstanceId, String handlerId) {
-        java.time.Instant newestCompleted = null;
-        java.util.UUID newestCompletedId = null;
-        for (Activity a : dbService.getCompletedActivities(processInstanceId)) {
-            if (!handlerId.equals(a.getBpmnElementId())) {
-                continue;
-            }
-            if (newestCompleted == null || compareActivityRecency(a.getCompletedAt(), a.getId(),
-                    newestCompleted, newestCompletedId) > 0) {
-                newestCompleted = a.getCompletedAt();
-                newestCompletedId = a.getId();
-            }
-        }
-        java.time.Instant newestActive = null;
-        java.util.UUID newestActiveId = null;
-        for (Activity a : dbService.getActiveActivities(processInstanceId)) {
-            if (!handlerId.equals(a.getBpmnElementId())) {
-                continue;
-            }
-            if (newestActive == null || compareActivityRecency(a.getCreatedAt(), a.getId(),
-                    newestActive, newestActiveId) > 0) {
-                newestActive = a.getCreatedAt();
-                newestActiveId = a.getId();
-            }
-        }
-        if (newestCompleted == null) {
-            // launched (boundary maps it) but never finished — still pending.
-            return true;
-        }
-        if (newestActive == null) {
-            return false;
-        }
-        // both exist: pending only if the active row is strictly newer.
-        return compareActivityRecency(newestActive, newestActiveId, newestCompleted, newestCompletedId) > 0;
-    }
-
-    private static int compareActivityRecency(java.time.Instant t1, java.util.UUID id1,
-            java.time.Instant t2, java.util.UUID id2) {
-        if (t1 != null && t2 != null) {
-            int c = t1.compareTo(t2);
-            if (c != 0) {
-                return c;
-            }
-        } else if (t1 != null) {
-            return 1;
-        } else if (t2 != null) {
-            return -1;
-        }
-        if (id1 != null && id2 != null) {
-            return id1.compareTo(id2);
-        }
-        return 0;
     }
 
     /**
@@ -208,7 +113,7 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
         // placement too and would sort timestamp-less activities FIRST.
         completed.sort(Comparator.comparing(Activity::getCompletedAt,
             Comparator.nullsLast(Comparator.reverseOrder())));
-        Map<String, BpmnElementModel> boundaryIndex = indexCompensationBoundaries(bpmn);
+        Map<String, BpmnElementModel> boundaryIndex = elementSupport.compensationBoundaryIndex(bpmn);
         for (Activity activity : completed) {
             BpmnElementModel boundary = boundaryIndex.get(activity.getBpmnElementId());
             if (boundary == null) {
@@ -236,31 +141,5 @@ public class CompensationThrowHandler implements ElementHandler, TypedElementHan
                     e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : ""));
             }
         }
-    }
-
-    /**
-     * WO-REL-40 (B-7): one pass over the model builds host-id → boundary; the
-     * loop above is then O(1) per activity instead of O(N) per lookup.
-     */
-    private Map<String, BpmnElementModel> indexCompensationBoundaries(BpmnProcessDefinitionModel bpmn) {
-        Map<String, BpmnElementModel> index = new HashMap<>();
-        for (BpmnElementModel element : bpmn.getElements()) {
-            if (element.getType() != BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
-                continue;
-            }
-            String attached = Optional.ofNullable(element.getExtensions())
-                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
-                .map(BoundaryEventExtensionModel::getAttachedToRef)
-                .orElse(null);
-            if (attached != null) {
-                index.putIfAbsent(attached, element);
-            }
-        }
-        return index;
-    }
-
-    /** Finds the compensation boundary attached to {@code hostId}, or null if none. */
-    private BpmnElementModel findCompensationBoundary(BpmnProcessDefinitionModel bpmn, String hostId) {
-        return indexCompensationBoundaries(bpmn).get(hostId);
     }
 }

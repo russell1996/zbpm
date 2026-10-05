@@ -11,6 +11,8 @@ import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
+import com.zorrodev.bpm.engine.dto.Token;
+import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FeelBudget;
 import com.zorrodev.bpm.engine.service.ScriptService;
@@ -935,5 +937,200 @@ public class ElementSupport {
             return out;
         }
         return v;
+    }
+
+    // ── WO-C8-34 (CR-06): compensation thrower bookkeeping ────────────────────
+    //
+    // These used to exist TWICE — once in CompensationThrowHandler (throw side) and
+    // once in CompletionService (resume side) — and the copies had already DIVERGED:
+    // the throw side snapshotted its candidate list, the resume side recomputed it, so
+    // a target that completed AFTER the throw (handler never launched) kept the parked
+    // thrower waiting forever (red-team B1). One implementation, both callers.
+
+    /**
+     * Candidates one compensation thrower owns: scope-confined completed activities
+     * (the CancelEndHandler pattern) plus the pre-existing {@code activityRef} filter.
+     * {@code tokenId} is the thrower's own token — its {@code scopeActivityId} decides
+     * the scope.
+     */
+    public List<Activity> compensationTargets(UUID processInstanceId, UUID tokenId, BpmnElementModel bpmnElement) {
+        String activityRef = Optional.ofNullable(bpmnElement.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel::getReference)
+            .orElse(null);
+        Token throwToken = dbService.findToken(tokenId).orElse(null);
+        UUID scopeActivityId = throwToken == null ? null : throwToken.getScopeActivityId();
+        List<Activity> targets = dbService.getCompletedActivities(processInstanceId);
+        if (scopeActivityId != null) {
+            targets = filterActivitiesInScope(processInstanceId, targets, scopeActivityId);
+        }
+        if (activityRef != null) {
+            String ref = activityRef;
+            targets = targets.stream().filter(a -> ref.equals(a.getBpmnElementId())).toList();
+        }
+        return targets;
+    }
+
+    public boolean compensationThrowerHasPending(UUID processInstanceId, UUID throwActivityId,
+            BpmnProcessDefinitionModel bpmn, List<Activity> targets) {
+        return compensationThrowerHasPending(processInstanceId, throwActivityId, bpmn, targets, java.util.Set.of());
+    }
+
+    /**
+     * WO-C8-34 (CR-06, red-team B1): does {@code throwActivityId} still wait for a
+     * compensation handler?
+     *
+     * <p>The throw side snapshotted its candidate list; a resume that recomputes the list
+     * sees MORE completed activities than the throw did (anything finished afterwards),
+     * and such a target's handler was never launched — so "no row for the handler" read
+     * as "pending" and the thrower parked forever. The thrower's own row creation time IS
+     * the snapshot: a target belongs to this throw iff it completed at or before the
+     * throw. The tie (same millisecond) fails closed — the row is kept, we still wait.
+     *
+     * @param forceTerminalHandlerIds handler elements the CALLER has just declared
+     *        finished-with-failure (the retry-exhausted path). Their row may still read
+     *        CREATED/IN_PROGRESS inside the same transaction — {@code errorActivity} is a
+     *        bulk UPDATE that the repeatable-read snapshot of the following query does not
+     *        see (the same hole WO-ENG-23 hit in {@code IncidentService}). The failing
+     *        path is the authority on its own outcome, so it passes the verdict in rather
+     *        than hoping the snapshot agrees.
+     */
+    public boolean compensationThrowerHasPending(UUID processInstanceId, UUID throwActivityId,
+            BpmnProcessDefinitionModel bpmn, List<Activity> targets,
+            java.util.Set<String> forceTerminalHandlerIds) {
+        Activity throwerRow = throwActivityId == null ? null : dbService.getActivity(throwActivityId);
+        Instant thrownAt = throwerRow == null ? null : throwerRow.getCreatedAt();
+        List<Activity> owned = targets;
+        if (thrownAt != null) {
+            final Instant cut = thrownAt;
+            owned = targets.stream()
+                .filter(a -> a.getCompletedAt() == null || !a.getCompletedAt().isAfter(cut))
+                .toList();
+        }
+        Map<String, BpmnElementModel> boundaryIndex = compensationBoundaryIndex(bpmn);
+        for (Activity target : owned) {
+            String handlerId = compensationHandlerId(boundaryIndex, bpmn, target.getBpmnElementId());
+            if (handlerId == null || forceTerminalHandlerIds.contains(handlerId)) {
+                continue;
+            }
+            if (isCompensationHandlerPending(processInstanceId,
+                    throwerRow == null ? null : throwerRow.getToken(), handlerId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** host-id → its compensation boundary event (one pass over the model). */
+    public Map<String, BpmnElementModel> compensationBoundaryIndex(BpmnProcessDefinitionModel bpmn) {
+        Map<String, BpmnElementModel> index = new HashMap<>();
+        for (BpmnElementModel element : bpmn.getElements()) {
+            if (element.getType() != com.zorrodev.bpm.engine.bpmn.model.BpmnElementType.COMPENSATION_BOUNDARY_EVENT) {
+                continue;
+            }
+            String attached = Optional.ofNullable(element.getExtensions())
+                .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+                .map(com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel::getAttachedToRef)
+                .orElse(null);
+            if (attached != null) {
+                index.putIfAbsent(attached, element);
+            }
+        }
+        return index;
+    }
+
+    /** handler element id for a compensated host, or null when it has none. */
+    public String compensationHandlerId(Map<String, BpmnElementModel> boundaryIndex,
+            BpmnProcessDefinitionModel bpmn, String hostElementId) {
+        BpmnElementModel boundary = boundaryIndex.get(hostElementId);
+        if (boundary == null) {
+            return null;
+        }
+        String handlerId = Optional.ofNullable(boundary.getExtensions())
+            .map(BpmnElementExtensionModel::getBoundaryEventExtension)
+            .map(com.zorrodev.bpm.engine.bpmn.model.BoundaryEventExtensionModel::getCompensationHandlerId)
+            .orElse(null);
+        return handlerId == null || bpmn.getElement(handlerId) == null ? null : handlerId;
+    }
+
+    /**
+     * Latest-row-wins for one compensation handler element. Pending unless a COMPLETED
+     * row exists AND no row is newer than it.
+     *
+     * <p>WO-C8-34 red-team B2: a handler whose retries ran out is ERROR + incident. That
+     * IS the outcome the operator sees, so the waiting thrower must not hang on it (nor on
+     * a handler cancelled by an unrelated interrupting boundary). Those rows are in
+     * neither instance-wide list ({@code getActiveActivities} = CREATED/IN_PROGRESS,
+     * {@code getCompletedActivities} = COMPLETED), so they are read with one token-scoped
+     * query — handlers run on the thrower's own token ({@code runCompensation} passes it
+     * to {@code executor.execute}). A null token finds no terminal rows and fails closed.
+     */
+    public boolean isCompensationHandlerPending(UUID processInstanceId, UUID tokenId, String handlerId) {
+        Instant newestCompleted = null;
+        UUID newestCompletedId = null;
+        Instant newestActive = null;
+        UUID newestActiveId = null;
+        Instant newestFailed = null;
+        UUID newestFailedId = null;
+        for (Activity a : dbService.getCompletedActivities(processInstanceId)) {
+            if (handlerId.equals(a.getBpmnElementId())
+                && (newestCompleted == null || compareActivityRecency(a.getCompletedAt(), a.getId(),
+                    newestCompleted, newestCompletedId) > 0)) {
+                newestCompleted = a.getCompletedAt();
+                newestCompletedId = a.getId();
+            }
+        }
+        if (tokenId != null) {
+            for (Activity a : dbService.getActivitiesByTokenAndBpmnElementId(tokenId, handlerId)) {
+                if (a.getStatus() != ActivityStatus.ERROR && a.getStatus() != ActivityStatus.CANCELLED) {
+                    continue;
+                }
+                if (newestFailed == null || compareActivityRecency(a.getCompletedAt(), a.getId(),
+                    newestFailed, newestFailedId) > 0) {
+                    newestFailed = a.getCompletedAt();
+                    newestFailedId = a.getId();
+                }
+            }
+        }
+        for (Activity a : dbService.getActiveActivities(processInstanceId)) {
+            if (handlerId.equals(a.getBpmnElementId())
+                && (newestActive == null || compareActivityRecency(a.getCreatedAt(), a.getId(),
+                    newestActive, newestActiveId) > 0)) {
+                newestActive = a.getCreatedAt();
+                newestActiveId = a.getId();
+            }
+        }
+        if (newestFailed != null
+            && (newestCompleted == null || compareActivityRecency(newestFailed, newestFailedId,
+                newestCompleted, newestCompletedId) > 0)
+            && (newestActive == null || compareActivityRecency(newestFailed, newestFailedId,
+                newestActive, newestActiveId) > 0)) {
+            return false; // newest word on this handler is "failed/cancelled" — waiting is over
+        }
+        if (newestCompleted == null) {
+            return true; // launched (boundary maps it) but never finished — still pending
+        }
+        if (newestActive == null) {
+            return false;
+        }
+        return compareActivityRecency(newestActive, newestActiveId, newestCompleted, newestCompletedId) > 0;
+    }
+
+    /** Timestamp-then-id ordering; a null timestamp sorts as the older one. */
+    public static int compareActivityRecency(Instant t1, UUID id1, Instant t2, UUID id2) {
+        if (t1 != null && t2 != null) {
+            int c = t1.compareTo(t2);
+            if (c != 0) {
+                return c;
+            }
+        } else if (t1 != null) {
+            return 1;
+        } else if (t2 != null) {
+            return -1;
+        }
+        if (id1 != null && id2 != null) {
+            return id1.compareTo(id2);
+        }
+        return 0;
     }
 }

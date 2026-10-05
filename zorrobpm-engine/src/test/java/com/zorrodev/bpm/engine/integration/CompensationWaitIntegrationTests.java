@@ -131,4 +131,75 @@ public class CompensationWaitIntegrationTests {
         assertThat(activityStatus(pi, "afterComp")).isEqualTo(ActivityStatus.COMPLETED);
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
     }
+
+    /**
+     * WO-C8-34 red-team B1 (blocker): the resume side must reason about the targets
+     * THIS thrower snapshotted, not about everything completed by resume time.
+     *
+     * <p>The fork parks two compensable tasks; {@code work} completes first (the throw
+     * fires and parks), {@code laterWork} completes AFTERWARDS — it would join a
+     * recomputed candidate set, and since its handler was never launched it read as
+     * "pending" forever. After the real handler completes, the thrower must be
+     * released and the continuation must run.
+     */
+    @Transactional
+    @Test
+    void waitForCompletionTrue_targetCompletingAfterTheThrow_doesNotStrandTheThrower() throws Exception {
+        UUID pi = deployAndStart("src/test/files/test-c834-comp-drift.bpmn");
+
+        ServiceTask work = serviceTask(pi, "drift-work-job");
+        ServiceTask later = serviceTask(pi, "drift-later-job");
+        assertThat(work).as("first branch parked").isNotNull();
+        assertThat(later).as("second branch parked").isNotNull();
+
+        // throw fires: handler launched, thrower parked
+        runtimeService.completeServiceTask(work.getId(), List.of());
+        ServiceTask handler = serviceTask(pi, "drift-handler-job");
+        assertThat(handler).as("compensation handler launched").isNotNull();
+        assertThat(activityStatus(pi, "compThrow")).isEqualTo(ActivityStatus.CREATED);
+
+        // the DRIFT: a second compensable task completes after the throw
+        runtimeService.completeServiceTask(later.getId(), List.of());
+        assertThat(activityStatus(pi, "compThrow"))
+            .as("still parked while the handler is open").isEqualTo(ActivityStatus.CREATED);
+
+        // handler completes → thrower released despite laterWork being completed
+        runtimeService.completeServiceTask(handler.getId(), List.of());
+
+        assertThat(activityStatus(pi, "compThrow"))
+            .as("thrower released — a target that completed after the throw is not its own")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(activityStatus(pi, "afterComp")).isEqualTo(ActivityStatus.COMPLETED);
+    }
+
+    /**
+     * WO-C8-34 red-team B2 (blocker): a compensation handler whose retries are
+     * exhausted ends in ERROR + incident. That IS the outcome the operator sees, so
+     * the waiting thrower must be released — {@code failServiceTask} is not a
+     * completion tail, and without the release the process hangs on a failed
+     * compensation forever (fixture: handler job carries retries="0").
+     */
+    @Transactional
+    @Test
+    void waitForCompletionTrue_failedHandlerReleasesTheThrower() throws Exception {
+        UUID pi = deployAndStart("src/test/files/test-c834-comp-failhandler.bpmn");
+
+        ServiceTask work = serviceTask(pi, "comp-wait-job");
+        assertThat(work).as("work job parked").isNotNull();
+        runtimeService.completeServiceTask(work.getId(), List.of());
+
+        ServiceTask handler = serviceTask(pi, "comp-handler-job");
+        assertThat(handler).as("compensation handler job launched").isNotNull();
+        assertThat(activityStatus(pi, "compThrow")).isEqualTo(ActivityStatus.CREATED);
+
+        // the worker gives up: retries exhausted → ERROR + incident
+        runtimeService.failServiceTask(handler.getId(), "compensation worker crashed", 0);
+
+        assertThat(activityStatus(pi, "compHandler")).isEqualTo(ActivityStatus.ERROR);
+        assertThat(activityStatus(pi, "compThrow"))
+            .as("a failed compensation must not park the thrower forever")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(activityStatus(pi, "afterComp")).isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+    }
 }

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-34 red-team B1: the resume path used to RECOMPUTE the compensated
+     candidate set, while the throw path SNAPSHOTT it. A second compensable
+     activity completing AFTER the throw therefore joined the candidate set on
+     resume — and since its handler was never launched ("no row"), it read as
+     "still pending" and the parked thrower waited forever.
+
+     This fixture makes that drift reachable: a fork parks TWO compensable tasks.
+     The test completes the first (throw fires), completes the second LATER (the
+     drifting target), then completes the handler and demands that the thrower
+     is released. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c834drift" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c834-comp-drift" name="c834-comp-drift" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="fork1" />
+    <bpmn:parallelGateway id="fork1" name="fork1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="fork1" targetRef="work" />
+    <bpmn:serviceTask id="work" name="work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="drift-work-job" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="bWork" name="bWork" attachedToRef="work">
+      <bpmn:compensateEventDefinition id="ced_work_drift" />
+    </bpmn:boundaryEvent>
+    <bpmn:association id="assocWork" sourceRef="bWork" targetRef="compHandler" />
+    <bpmn:serviceTask id="compHandler" name="compHandler" isForCompensation="true">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="drift-handler-job" retries="3" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="fork1" targetRef="laterWork" />
+    <bpmn:serviceTask id="laterWork" name="laterWork">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="drift-later-job" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:outgoing>f5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="bLater" name="bLater" attachedToRef="laterWork">
+      <bpmn:compensateEventDefinition id="ced_later_drift" />
+    </bpmn:boundaryEvent>
+    <bpmn:association id="assocLater" sourceRef="bLater" targetRef="laterHandler" />
+    <bpmn:serviceTask id="laterHandler" name="laterHandler" isForCompensation="true">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="drift-later-handler-job" retries="3" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f4" name="f4" sourceRef="work" targetRef="compThrow" />
+    <bpmn:intermediateThrowEvent id="compThrow" name="compThrow">
+      <bpmn:incoming>f4</bpmn:incoming>
+      <bpmn:outgoing>f6</bpmn:outgoing>
+      <bpmn:compensateEventDefinition id="ced_throw_drift" waitForCompletion="true" />
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="f6" name="f6" sourceRef="compThrow" targetRef="afterComp" />
+    <bpmn:scriptTask id="afterComp" name="afterComp" scriptFormat="feel" resultVariable="done">
+      <bpmn:incoming>f6</bpmn:incoming>
+      <bpmn:outgoing>f7</bpmn:outgoing>
+      <bpmn:script>1</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f7" name="f7" sourceRef="afterComp" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="f5" name="f5" sourceRef="laterWork" targetRef="endLater" />
+    <bpmn:endEvent id="endLater" name="endLater">
+      <bpmn:incoming>f5</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f7</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

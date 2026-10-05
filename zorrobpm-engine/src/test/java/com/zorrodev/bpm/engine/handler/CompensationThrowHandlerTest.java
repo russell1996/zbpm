@@ -10,7 +10,6 @@ import com.zorrodev.bpm.engine.service.DBService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -34,10 +33,22 @@ class CompensationThrowHandlerTest {
 
     @Mock private DBService dbService;
     @Mock private FlowNavigator flowNavigator;
-    @Mock private ElementSupport elementSupport;
     @Mock private TokenExecutor executor;
+    @Mock private com.zorrodev.bpm.engine.service.ScriptService scriptService;
+    @Mock private com.zorrodev.bpm.engine.service.FeelBudget feelBudget;
+    @Mock private tools.jackson.databind.ObjectMapper objectMapper;
 
-    @InjectMocks private CompensationThrowHandler handler;
+    // WO-C8-34 red-team round 2: a MOCKED ElementSupport made runCompensation see an
+    // empty boundary index, so all three ordering/isolation tests below passed against
+    // "no handler at all" (they only checked verify(executor) AFTER the fix switched the
+    // boundary lookup to ElementSupport). The real component reads the model — mocking it
+    // tests the mock (P-22). Its DBService stays mocked: only model walking is exercised.
+    private final ElementSupport elementSupport = new ElementSupport(dbService, scriptService, feelBudget, objectMapper,
+            java.time.ZoneId.of("Asia/Almaty"), false);
+
+    private CompensationThrowHandler handler() {
+        return new CompensationThrowHandler(dbService, flowNavigator, elementSupport);
+    }
 
     private static BpmnElementModel boundary(String id, String attachedTo, String handlerId) {
         BpmnElementModel boundary = new BpmnElementModel();
@@ -91,7 +102,7 @@ class CompensationThrowHandlerTest {
         Activity b = activity("taskB", Instant.ofEpochMilli(200), Instant.ofEpochMilli(150));
 
         // When
-        handler.runCompensation(pi, runToken, bpmn, List.of(a, b), executor);
+        handler().runCompensation(pi, runToken, bpmn, List.of(a, b), executor);
 
         // Then — latest-completed (A) compensates first
         InOrder inOrder = inOrder(executor);
@@ -115,7 +126,7 @@ class CompensationThrowHandlerTest {
             .thenReturn(incidentActivityId);
 
         // When
-        handler.runCompensation(pi, runToken, bpmn, List.of(a, b), executor);
+        handler().runCompensation(pi, runToken, bpmn, List.of(a, b), executor);
 
         // Then — B still compensated, A's failure parked as an incident
         verify(executor).execute(eq(pi), eq(runToken), eq(bpmn), eq(bpmn.getElement("handlerB")));
@@ -133,7 +144,7 @@ class CompensationThrowHandlerTest {
         Activity b = activity("taskB", Instant.ofEpochMilli(50), null);
 
         // When
-        handler.runCompensation(pi, runToken, bpmn, List.of(b, a), executor);
+        handler().runCompensation(pi, runToken, bpmn, List.of(b, a), executor);
 
         // Then — completed A first, timestamp-less B last
         InOrder inOrder = inOrder(executor);

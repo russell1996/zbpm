@@ -198,7 +198,9 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
 
     @Override
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries) {
-        completionService.failServiceTask(serviceTaskId, errorMessage, retries);
+        // WO-C8-34 red-team B2: the executor rides in like completeServiceTask's — a failed
+        // compensation handler must be able to RELEASE its parked waitForCompletion thrower.
+        completionService.failServiceTask(serviceTaskId, errorMessage, retries, this);
     }
 
     @Override
