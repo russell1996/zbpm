@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c835_escparent" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:escalation id="esc1" name="overdue" escalationCode="ESC-1" />
+  <bpmn:process id="test-c835-escbnd-stranded-join-parent" name="test-c835-escbnd-stranded-join-parent" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+
+    <!-- Тот же BLOCKER-4 на ESCALATION-семействе: прерывающая ESCALATION-граница на
+         call activity убивает строку call activity В РОДИТЕЛЕ, а соседняя ветвь уже
+         припарковала join. Без перепроверки в ErrorEscalationThrower.throwEscalation
+         (:246 — cancelActivity(callActivity)) join в родителе спит вечно. -->
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fCall</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="pfork" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fCall" name="fCall" sourceRef="pfork" targetRef="callSub" />
+
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>gC</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="gC" name="gC" sourceRef="taskA" targetRef="join" />
+
+    <bpmn:callActivity id="callSub" name="callSub">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="CHILD_KEY" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fCall</bpmn:incoming>
+      <bpmn:outgoing>fCallJoin</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="fCallJoin" name="fCallJoin" sourceRef="callSub" targetRef="join" />
+
+    <bpmn:boundaryEvent id="escBoundary" name="escBoundary" attachedToRef="callSub" cancelActivity="true">
+      <bpmn:outgoing>fEscape</bpmn:outgoing>
+      <bpmn:escalationEventDefinition id="eed2" escalationRef="esc1" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fEscape" name="fEscape" sourceRef="escBoundary" targetRef="escapeEnd" />
+    <bpmn:endEvent id="escapeEnd" name="escapeEnd">
+      <bpmn:incoming>fEscape</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>gC</bpmn:incoming>
+      <bpmn:incoming>fCallJoin</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
