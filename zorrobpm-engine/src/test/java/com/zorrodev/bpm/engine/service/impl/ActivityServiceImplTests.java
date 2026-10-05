@@ -133,10 +133,9 @@ public class ActivityServiceImplTests {
             }
             return dbService.getActivityForUpdate(id);
         });
-        // fireBoundary/signal-пути по-прежнему идут через lockAndReload
-        // (WO-REL-59 их не трогал) — та же делегация без instance-lock.
-        org.mockito.Mockito.lenient().when(elementSupport.lockAndReload(any(java.util.UUID.class))).thenAnswer(invocation ->
-            dbService.getActivityForUpdate(invocation.getArgument(0)));
+        // WO-REL-63: fireBoundary/signal-пути переведены на тот же
+        // lockInstanceFirst, поэтому отдельного стаба lockAndReload больше нет —
+        // он удалён вместе с последним продакшн-вызовом (ElementSupport).
         org.mockito.Mockito.lenient().when(dbService.findToken(any(java.util.UUID.class))).thenAnswer(invocation -> {
             Token t = new Token();
             t.setId(invocation.getArgument(0));
@@ -1227,5 +1226,32 @@ public class ActivityServiceImplTests {
             .isInstanceOf(com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent.class);
         assertThat(handlerRegistry.get(BpmnElementType.ESCALATION_THROW_EVENT))
             .isInstanceOf(com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent.class);
+    }
+
+    /**
+     * WO-REL-63 P-46 anchor: ручной throw BPMN-ошибки из сервис-таски —
+     * восьмой путь, переведённый на единый порядок instance→activity. Отдельный
+     * RED на потребителя: возврат на activity-only лок валит ровно этот тест.
+     *
+     * <p>Здесь нет {@code never(getActivityForUpdate)} — в отличие от
+     * {@code CompletionServiceTest}/{@code EventTriggerTest}, стаб этого класса
+     * САМ делегирует в {@code dbService} (см. setUp), повторяя реальный метод,
+     * поэтому такой запрет был бы ложным. Якорь здесь — сам вызов
+     * {@code lockInstanceFirst} тем же id.
+     */
+    @Test
+    void throwServiceTaskError_takesInstanceLock() {
+        UUID serviceTaskId = UUID.randomUUID();
+        var activity = new com.zorrodev.bpm.engine.dto.Activity();
+        activity.setId(serviceTaskId);
+        activity.setStatus(com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED);
+        when(dbService.getActivity(any(java.util.UUID.class))).thenReturn(activity);
+        when(dbService.getActivityForUpdate(any(java.util.UUID.class))).thenReturn(activity);
+
+        // Stale task → 409 THROW_ERROR_STALE сразу после захвата.
+        assertThatThrownBy(() -> activityService.throwServiceTaskError(serviceTaskId, "E1", List.of()))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.ApiException.class);
+
+        verify(elementSupport, times(1)).lockInstanceFirst(serviceTaskId);
     }
 }

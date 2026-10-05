@@ -422,7 +422,9 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     @Override
     public com.zorrodev.bpm.engine.dto.ThrowServiceTaskErrorResult throwServiceTaskError(UUID serviceTaskId,
             String errorCode, List<ProcessVariable> variables) {
-        com.zorrodev.bpm.engine.dto.Activity activity = elementSupport.lockAndReload(serviceTaskId);
+        // WO-REL-63: instance-lock ПЕРВЫМ (единый порядок захвата, см.
+        // ElementSupport.lockInstanceFirst).
+        com.zorrodev.bpm.engine.dto.Activity activity = elementSupport.lockInstanceFirst(serviceTaskId);
         if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
             throw new com.zorrodev.bpm.contract.exception.ApiException(
                 org.springframework.http.HttpStatus.CONFLICT, "THROW_ERROR_STALE",
