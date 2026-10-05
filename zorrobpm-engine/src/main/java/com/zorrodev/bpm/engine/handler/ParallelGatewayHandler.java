@@ -41,10 +41,19 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
         List<String> incomings = bpmnElement.getIncoming();
         List<String> outgoings = bpmnElement.getOutgoing();
 
-        if (incomings.size() == 1 && outgoings.size() == 1) {
+        // WO-C8-34 (crit 7, V7-finding): degenerate FORMS are explicit
+        // pass-throughs (mirrors InclusiveGatewayHandler's else) — NOT forks.
+        // 1/1 (fork+join collapsed) and 1-out self-loops (the single outgoing
+        // flow points back at this gateway) continue on the SAME token. A
+        // self-loop MUST NOT fork: forking re-executes the gateway on a child
+        // token ad infinitum (StackOverflow instead of the depth guard — the
+        // child call happens before the depth check in execute()). Forking a
+        // child token + pendingBranches counter for these forms only re-labels
+        // the token.
+        if ((incomings.size() == 1 && outgoings.size() == 1) || isSelfLoop(bpmn, bpmnElement, outgoings)) {
             UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
             dbService.completeActivity(activityId);
-            log.info("{}/{}: Entering and completing {}: {}/{} (degenerate 1/1 pass-through)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
+            log.info("{}/{}: Entering and completing {}: {}/{} (degenerate pass-through)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
             flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
             return;
         }
@@ -92,5 +101,16 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
                 log.info("{}/{}: Parallel Gateway Not ready yet {}: {}", processInstanceId, tokenId, bpmnElement.getType(), bpmnElement.getId());
             }
         }
+    }
+
+    /**
+     * WO-C8-34 (crit 7): the single outgoing flow points back at this gateway.
+     */
+    private boolean isSelfLoop(BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement, List<String> outgoings) {
+        if (outgoings.size() != 1) {
+            return false;
+        }
+        BpmnFlowModel flow = bpmn.getFlow(outgoings.get(0));
+        return flow != null && bpmnElement.getId().equals(flow.getTargetRef());
     }
 }
