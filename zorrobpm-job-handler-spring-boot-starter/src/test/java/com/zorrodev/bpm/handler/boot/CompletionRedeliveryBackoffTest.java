@@ -138,8 +138,29 @@ class CompletionRedeliveryBackoffTest {
             .hasSize(1);
     }
 
+    /**
+     * WO-C8-36 (F-4): что этот тест ДОКАЗЫВАЕТ на самом деле.
+     *
+     * <p>Раньше он назывался {@code redeliveryBackoff_isPerJob_otherJobsNotDelayed}
+     * и утверждал, что «разные задания не замедляют друг друга». Это неверно:
+     * sleeper — это {@code Thread.sleep} на потоке потребителя, а контейнер
+     * воркера по умолчанию однопоточный, поэтому задержка одного задания
+     * ДЕЙСТВИТЕЛЬНО стоит всей очереди хендлера (≤30с за попытку). Обещать
+     * изоляцию в javadoc и в имени теста было ровно то расхождение, которое
+     * поймала рецензия.
+     *
+     * <p>Что остаётся по существу и проверяется здесь: шкала задержек ведётся
+     * ПО ОТПРАВКЕ, а не на процесс. У «горячего» задания накоплено две неудачи,
+     * и его третье ждало бы 4с — но чужое задание начинает свою шкалу с 1с.
+     * Именно это и означает per-job: не «не замедляет очередь», а «не наследует
+     * чужой счётчик».
+     *
+     * <p>Реальная блокировка очереди зафиксирована отдельным тестом
+     * {@code #redeliveryBackoff_singleConsumerThread_blocksHeadOfLine}, чтобы
+     * утверждение о ней было доказано, а не только описано в javadoc.
+     */
     @Test
-    void redeliveryBackoff_isPerJob_otherJobsNotDelayed() {
+    void redeliveryBackoff_isKeyedPerSend_otherJobStartsFromFirstSecond() {
         everyConfirmLost();
         Message hot = message(jobJson(), "corr-hot");
         Message fresh = message(jobJson(), "corr-fresh");
@@ -152,9 +173,84 @@ class CompletionRedeliveryBackoffTest {
         assertThatThrownBy(() -> listener.onMessage(fresh)).isInstanceOf(AmqpException.class);
 
         assertThat(slept)
-            .as("backoff ведётся на отправку, а не на процесс: чужое задание "
-                + "не должно ждать после уже накопленных чужих неудач")
+            .as("шкала задержек ведётся на отправку, а не на процесс: чужое задание "
+                + "не наследует накопленные неудачи")
             .containsExactly(1_000L, 2_000L, 1_000L);
+    }
+
+    /**
+     * WO-C8-36 (F-4): блокировка head-of-line — РЕАЛЬНАЯ, и тест это показывает
+     * измерением времени, а не комментарием.
+     *
+     * <p>Sleeper здесь настоящий ({@code Thread.sleep}), как в проде, — иначе
+     * измерять было бы нечего. Один поток (как контейнер воркера на дефолтах
+     * Spring) обрабатывает два задания: первое задерживает поток на 1с, и
+     * второе не может начаться раньше. Замер идёт по времени старта ВТОРОГО
+     * {@code onMessage}, то есть по реальному порядку на том же потоке.
+     *
+     * <p>Что это доказывает и чего не доказывает: ДОКАЗЫВАЕТ, что задержка
+     * блокирует поток потребителя (то есть очередь хендлера), и тем самым что
+     * обещание «разные задания не замедляют друг друга» было неверным. НЕ
+     * доказывает, что блокировка приемлема — это решение CTO (F-4), зафиксировано
+     * в javadoc и в §10.2 отчёта.
+     */
+    @Test
+    void redeliveryBackoff_singleConsumerThread_blocksHeadOfLine() throws Exception {
+        everyConfirmLost();
+        listener.setRedeliveryBackoff(new CompletionRedeliveryBackoff(CompletionRedeliveryBackoffTest::realSleep));
+        Message hot = message(jobJson(), "corr-hot");
+        Message other = message(jobJson(), "corr-other");
+
+        assertThatThrownBy(() -> listener.onMessage(hot)).isInstanceOf(AmqpException.class);
+
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> listener.onMessage(other)).isInstanceOf(AmqpException.class);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+
+        assertThat(elapsedMs)
+            .as("на одном потоке потребителя задержка первого задания СТОИТ второму — "
+                + "значит обещание изоляции в javadoc было неверным, и это измерено, "
+                + "а не объявлено")
+            .isGreaterThanOrEqualTo(CompletionRedeliveryBackoff.INITIAL_DELAY_MS - 50);
+    }
+
+    private static void realSleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * WO-C8-36 (F-6): карта счётчиков ограничена — 10k ключей, вытеснение по
+     * {@code maximumSize}. Мусорные {@code correlationId} (а у отравленного
+     * задания успешной доставки не будет НИКОГДА, то есть и reset не придёт)
+     * не могут расти в памяти без предела.
+     */
+    @Test
+    void redeliveryBackoff_trackedKeys_areBounded() {
+        CompletionRedeliveryBackoff backoff = new CompletionRedeliveryBackoff(slept::add);
+        int overflow = 500;
+        for (int i = 0; i < CompletionRedeliveryBackoff.MAX_TRACKED_KEYS + overflow; i++) {
+            backoff.recordFailedAttempt("corr-" + i);
+        }
+        assertThat(backoff.trackedKeysForTest())
+            .as("карта счётчиков обязана быть ограничена — иначе каждый новый отравленный "
+                + "correlationId добавлял вечную запись (успешного reset у него не будет)")
+            .isLessThanOrEqualTo(CompletionRedeliveryBackoff.MAX_TRACKED_KEYS);
+    }
+
+    /** Контроль: потолок не «съел» саму функцию — лимит выше нуля и счётчик считает. */
+    @Test
+    void redeliveryBackoff_keyLimitIsPositiveAndCountingStillWorks() {
+        CompletionRedeliveryBackoff backoff = new CompletionRedeliveryBackoff(slept::add);
+        assertThat(CompletionRedeliveryBackoff.MAX_TRACKED_KEYS).isPositive();
+        assertThat(backoff.recordFailedAttempt("corr-x")).isEqualTo(1);
+        assertThat(backoff.recordFailedAttempt("corr-x")).isEqualTo(2);
+        assertThat(backoff.attemptsFor("corr-x")).isEqualTo(2);
+        backoff.reset("corr-x");
+        assertThat(backoff.attemptsFor("corr-x")).isZero();
     }
 
     @Test

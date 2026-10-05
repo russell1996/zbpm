@@ -3,8 +3,6 @@ package com.zorrodev.bpm.handler.boot;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongConsumer;
 
@@ -35,10 +33,29 @@ import java.util.function.LongConsumer;
  * ровно ту потерю, которую CR-13 закрыл.
  *
  * <p>Ключ счётчика попыток — {@code correlationId} входящего задания (он же
- * ключ идемпотентности результата): разные задания не замедляют друг друга.
- * Успешная публикация сбрасывает счётчик, иначе одно задание, у которого сначала
- * был немаршрутизируемый маршрут (долгий потолок), а потом всё починилось,
- * осталось бы навсегда на 30с.
+ * ключ идемпотентности результата): шкала отсчёта ВЕДЁтся на отправку, а не на
+ * процесс, то есть у задания, у которого уже было пять неудач, свежая отправка
+ * начинается с первой секунды. Успешная публикация сбрасывает счётчик, иначе одно
+ * задание, у которого сначала был немаршрутизируемый маршрут (долгий потолок),
+ * а потом всё починилось, осталось бы навсегда на 30с.
+ *
+ * <p><b>WO-C8-36 (F-4) — честно про блокировку очереди.</b> Задержка
+ * реализована {@code Thread.sleep} на потоке потребителя
+ * ({@code JobCompletionListener.sleepQuietly}), а контейнер в
+ * {@code HandlerAutoConfiguration} собирается без {@code setConcurrentConsumers}
+ * — на дефолтах Spring это ОДИН поток на хендлер. Поэтому одно отравленное
+ * задание задерживает ВСЮ очередь этого хендлера: до 30с за попытку, а число
+ * попыток не ограничено (no-DLQ/no-drop — осознанно, см. выше), то есть простой
+ * во времени не ограничен. Раньше здесь стояло «разные задания не замедляют
+ * друг друга», и это было неверно: не замедляют друг друга только ШКАЛЫ, сама
+ * очередь стоит. Это принято осознанно (горячий цикл хуже), а решение по
+ * устранению — отложенная доставка/DLQ, отдельная задача.
+ *
+ * <p>WO-C8-36 (F-6): карта счётчиков ограничена — {@link #MAX_TRACKED_KEYS} ключей
+ * с {@code expireAfterAccess}. Без потолка каждый новый отравленный
+ * {@code correlationId} добавлял вечную запись (успешной доставки у него не
+ * будет никогда), то есть утечка памяти, пропорциональная числу мусорных
+ * сообщений, — при том что сам {@code resultCache} в этом же классе ограничен.
  */
 @Slf4j
 class CompletionRedeliveryBackoff {
@@ -50,8 +67,21 @@ class CompletionRedeliveryBackoff {
     /** Множитель экспоненты. */
     static final double MULTIPLIER = 2.0d;
 
+    /**
+     * WO-C8-36 (F-6): потолок ключей счётчика. 10k отправок в полёте — с запасом
+     * больше любого разумного окна воркера, но конечное число: иначе каждый новый
+     * отравленный {@code correlationId} жил бы в памяти вечно.
+     */
+    static final int MAX_TRACKED_KEYS = 10_000;
+    /** Отсчёт после последнего обращения — «мёртвая» отправка вытесняется сама. */
+    static final java.time.Duration KEY_IDLE_EXPIRY = java.time.Duration.ofHours(1);
+
     /** Задержка перед N-й попыткой (N=1 — первая). */
-    private final Map<String, AtomicInteger> attempts = new ConcurrentHashMap<>();
+    private final com.github.benmanes.caffeine.cache.Cache<String, AtomicInteger> attempts =
+        com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+            .maximumSize(MAX_TRACKED_KEYS)
+            .expireAfterAccess(KEY_IDLE_EXPIRY)
+            .build();
     private final LongConsumer sleeper;
 
     CompletionRedeliveryBackoff(LongConsumer sleeper) {
@@ -72,23 +102,28 @@ class CompletionRedeliveryBackoff {
 
     /** Регистрирует ещё одну неудачную попытку публикации для ключа. */
     int recordFailedAttempt(String key) {
-        return attempts.computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
+        return attempts.asMap().computeIfAbsent(key, k -> new AtomicInteger()).incrementAndGet();
     }
 
     /** Публикация удалась — ключ больше не задерживается. */
     void reset(String key) {
-        attempts.remove(key);
+        attempts.invalidate(key);
     }
 
     /** Сколько неудачных попыток публикации было у ключа (0 — ни одной/сброшено). */
     int attemptsFor(String key) {
-        AtomicInteger n = attempts.get(key);
+        AtomicInteger n = attempts.getIfPresent(key);
         return n == null ? 0 : n.get();
     }
 
-    /** Размер счётчика (тест-хук: не должен расти без ограничения). */
+    /**
+     * Размер счётчика — тест-хук на предел. Caffeine считает размер лениво, поэтому
+     * перед выдачей прогоняем maintenance: иначе тест на границу видел бы устаревшее
+     * число и проходил бы по счастливому совпадению.
+     */
     int trackedKeysForTest() {
-        return attempts.size();
+        attempts.cleanUp();
+        return (int) attempts.estimatedSize();
     }
 
     /** Задержка для N-й попытки: 1с, 2с, 4с, 8с, 16с, 30с, 30с… */
