@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-34 (CR-04): child of test-c834-call-boundary-timer.bpmn — parks on a
+     user task so the call-activity container stays active. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c834callchild" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c834-call-child" name="c834-call-child" isExecutable="true">
+    <bpmn:startEvent id="childStart" name="childStart">
+      <bpmn:outgoing>cf1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="cf1" name="cf1" sourceRef="childStart" targetRef="childWork" />
+    <bpmn:userTask id="childWork" name="childWork">
+      <bpmn:incoming>cf1</bpmn:incoming>
+      <bpmn:outgoing>cf2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="cf2" name="cf2" sourceRef="childWork" targetRef="childEnd" />
+    <bpmn:endEvent id="childEnd" name="childEnd">
+      <bpmn:incoming>cf2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

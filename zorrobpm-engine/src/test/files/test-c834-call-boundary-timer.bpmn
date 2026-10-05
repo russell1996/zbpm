@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-34 (CR-04): the review's second scenario — PT1H boundary timer on a
+     CALL ACTIVITY. The child parks on a user task, so the call-activity container
+     stays active while the timer is armed. cancelActivity is ABSENT (BPMN default
+     = interrupting). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c834calltimer" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c834-call-boundary-timer" name="c834-call-boundary-timer" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="call1" />
+    <bpmn:callActivity id="call1" name="call1">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="c834-call-child" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:boundaryEvent id="callTimeout" name="callTimeout" attachedToRef="call1">
+      <bpmn:outgoing>fCallTimeout</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tedCall">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fCallTimeout" name="fCallTimeout" sourceRef="callTimeout" targetRef="afterTimeout" />
+    <bpmn:serviceTask id="afterTimeout" name="afterTimeout">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c834-after-timeout-job" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fCallTimeout</bpmn:incoming>
+      <bpmn:outgoing>fAfterTimeout</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fAfterTimeout" name="fAfterTimeout" sourceRef="afterTimeout" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="call1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:incoming>fAfterTimeout</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

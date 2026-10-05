@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-34 (criterion 6): the SAME embedded-subprocess container as
+     test-c834-sub-boundary-timer.bpmn, but the boundary is NON-interrupting
+     (cancelActivity="false"). BoundaryScheduler must schedule it anyway — the
+     interrupting/non-interrupting split belongs to EventTrigger.fireBoundary,
+     not to registration (the old javadoc claimed the opposite). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c834subtimerni" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c834-sub-boundary-timer-ni" name="c834-sub-boundary-timer-ni" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow1" name="subFlow1" sourceRef="subStart" targetRef="work" />
+      <bpmn:userTask id="work" name="work">
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:outgoing>subFlow2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="subFlow2" name="subFlow2" sourceRef="work" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subFlow2</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:boundaryEvent id="subTimeoutNi" name="subTimeoutNi" attachedToRef="sub1" cancelActivity="false">
+        <bpmn:outgoing>subFlowTimeout</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="tedSubNi">
+          <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="subFlowTimeout" name="subFlowTimeout" sourceRef="subTimeoutNi" targetRef="endTimeout" />
+      <bpmn:endEvent id="endTimeout" name="endTimeout">
+        <bpmn:incoming>subFlowTimeout</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

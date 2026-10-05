@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-34 (CR-04): PT1H boundary timer on a MANUAL task host. The manual
+     task completes in the same synchronous call, so the armed job self-skips at
+     fire time (host already terminal) — registration is the wiring under test. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c834manualtimer" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c834-manual-boundary-timer" name="c834-manual-boundary-timer" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="manual1" />
+    <bpmn:manualTask id="manual1" name="manual1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:manualTask>
+    <bpmn:boundaryEvent id="manualTimeout" name="manualTimeout" attachedToRef="manual1">
+      <bpmn:outgoing>fTimeout</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tedManual">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="manual1" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="fTimeout" name="fTimeout" sourceRef="manualTimeout" targetRef="endTimeout" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endTimeout" name="endTimeout">
+      <bpmn:incoming>fTimeout</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
