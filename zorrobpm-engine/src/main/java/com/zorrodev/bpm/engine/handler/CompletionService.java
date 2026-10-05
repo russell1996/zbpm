@@ -540,6 +540,33 @@ public class CompletionService {
      *
      * <p>При совпадении — делегация в существующую handle-ветку (она перечитывает
      * ту же колонку и находит её in-range, тело мутации общее, дублирования нет).
+     *
+     * <p><b>Возврат обработчика больше НЕ выбрасывается (WO-C8-36 H-3).</b> exact-match
+     * выполнен, а обработчик всё равно может вернуть {@code false}: индекс оказался ВНЕ
+     * диапазона новой модели (модель передеплоена без этого слушателя, пока воркер
+     * отвечает) либо объявление фазы исчезло совсем. На этом месте legacy-цепочка
+     * fall-through'ит дальше (fail-open, «completes and moves the token» — комментарий
+     * {@code handleStartListeners}), и расхождение фазовой семантики с legacy было бы
+     * ровно тем тихим зависанием, которое описал red-team: ни переменных, ни
+     * {@code completeActivity}/{@code proceedToOutgoing}, ни лога, ни метрики, токен
+     * паркован навсегда. Поэтому {@code false} = «продолжить по-legacy», а не возврат.
+     *
+     * <p>Почему именно {@link #completeLegacyChain}, а не прямой
+     * {@code finishServiceTaskCompletion} (как в ветке END):
+     * <ul>
+     *   <li>для START ветка END недостижима — там {@code false} это «последний
+     *       end-listener отработал, иди в хвост» с УЖЕ очищенной колонкой, повторный
+     *       проход переоткрыл бы end-фазу (поймано живьём, комментарий в её ветке);</li>
+     *   <li>для user-task фаз прямой хвост недопустим вовсе: у user-task нет строки
+     *       {@code service_tasks}, {@code dbService.completeServiceTask} упал бы
+     *       orElseThrow, тогда как legacy молча уходит в
+     *       {@code rejectPhaseOnlyCompletion} (USER_TASK в PHASE_ONLY_ELEMENT_TYPES);</li>
+     *   <li>в остальном полный проход — это буквально тот же путь, который проходит
+     *       legacy на том же входе, включая открытие end-фазы у START.</li>
+     * </ul>
+     * Повторный вызов упавшего обработчика безвреден: вернуть {@code false} он может
+     * только на ветке, которая НИЧЕГО не мутирует (все мутации — в in-range ветках,
+     * вернувших {@code true}).
      */
     private void completePhased(UUID serviceTaskId, List<ProcessVariable> variables,
             String dispatchPhase, Integer dispatchIndex, String completionId,
@@ -549,7 +576,11 @@ public class CompletionService {
             case ServiceTaskDispatchPhase.START -> {
                 Integer pending = dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
                 if (pending != null && pending.equals(dispatchIndex)) {
-                    handleStartListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity);
+                    if (!handleStartListeners(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmnElement, activity)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
                 }
@@ -575,7 +606,11 @@ public class CompletionService {
             case ServiceTaskDispatchPhase.CREATING -> {
                 Integer pending = dbService.getPendingCreatingListenerIndex(serviceTaskId);
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
-                    handleCreatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity);
+                    if (!handleCreatingListeners(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmnElement, activity)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
                 }
@@ -583,8 +618,11 @@ public class CompletionService {
             case ServiceTaskDispatchPhase.COMPLETING -> {
                 Integer pending = dbService.getPendingCompletingListenerIndex(serviceTaskId);
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
-                    handleCompletingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
-                        bpmnElement, activity, executor);
+                    if (!handleCompletingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
                 }
@@ -592,7 +630,11 @@ public class CompletionService {
             case ServiceTaskDispatchPhase.ASSIGNING -> {
                 Integer pending = dbService.getPendingAssigningListenerIndex(serviceTaskId);
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
-                    handleAssigningListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity);
+                    if (!handleAssigningListeners(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmnElement, activity)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
                 }
@@ -600,8 +642,11 @@ public class CompletionService {
             case ServiceTaskDispatchPhase.UPDATING -> {
                 Integer pending = dbService.getPendingUpdatingListenerIndex(serviceTaskId);
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
-                    handleUpdatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement,
-                        activity, executor);
+                    if (!handleUpdatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement,
+                            activity, executor)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
                 }
@@ -609,8 +654,11 @@ public class CompletionService {
             case ServiceTaskDispatchPhase.CANCELING -> {
                 Integer pending = dbService.getPendingCancelingListenerIndex(serviceTaskId);
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
-                    handleCancelingListeners(serviceTaskId, processInstanceId, tokenId, bpmn, bpmnElement,
-                        activity, executor);
+                    if (!handleCancelingListeners(serviceTaskId, processInstanceId, tokenId, bpmn, bpmnElement,
+                            activity, executor)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
                 }
@@ -1376,7 +1424,7 @@ public class CompletionService {
      * {@code ActivityServiceImpl.failServiceTask} (legacy/REST-путь) едет через него.
      */
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, TokenExecutor executor) {
-        failServiceTask(serviceTaskId, errorMessage, retries, null, null, executor);
+        failServiceTask(serviceTaskId, errorMessage, retries, null, null, null, executor);
     }
 
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries,
@@ -1406,8 +1454,9 @@ public class CompletionService {
 
     /**
      * Единственная рабочая точка входа: идентификатор вызова и executor — параметрами.
+     * Видна {@code ActivityServiceImpl} (другой пакет) — он и есть прод-путь fail.
      */
-    private void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries,
+    public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries,
             String dispatchPhase, Integer dispatchIndex, String completionId, TokenExecutor executor) {
         if (failElementListenerPhase(serviceTaskId, errorMessage, retries)) {
             return;
@@ -1495,7 +1544,7 @@ public class CompletionService {
                 BpmnProcessDefinitionModel failBpmn =
                     bpmnService.getProcessDefinitionModelById(failPi.getProcessDefinitionId());
                 if (allListenerPhasesClosed(serviceTaskId, failBpmn.getElement(activity.getBpmnElementId()))) {
-                    failLegacyTail(serviceTaskId, retries, message, activity, executor);
+                    failSharedBudgetOnce(serviceTaskId, retries, message, activity, completionId, executor);
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, null);
                 }

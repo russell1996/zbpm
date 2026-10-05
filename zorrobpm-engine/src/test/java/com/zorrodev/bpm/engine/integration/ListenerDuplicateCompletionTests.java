@@ -7,6 +7,8 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
+import com.zorrodev.bpm.engine.service.BpmnParseService;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -62,6 +64,10 @@ class ListenerDuplicateCompletionTests {
     private org.springframework.transaction.PlatformTransactionManager txManager;
     @Autowired
     private com.zorrodev.bpm.engine.handler.CancelingPhaseService cancelingPhaseService;
+    @Autowired
+    private BpmnService bpmnService;
+    @Autowired
+    private BpmnParseService bpmnParseService;
 
     private static String bpmn() throws Exception {
         // Та же фикстура, что у соседа (C8-11), минус end-listener — изолируем START-фазу.
@@ -406,6 +412,96 @@ class ListenerDuplicateCompletionTests {
             .filter(a -> a.getProcessInstanceId().equals(piId))
             .filter(a -> a.getBpmnElementId().equals(elementId))
             .findFirst().orElseThrow();
+    }
+
+    /**
+     * WO-C8-36 (H-3, red-team): phased-ветка {@code completePhased} ВЫБРАСЫВАЛА
+     * возврат {@code handle*Listeners}. Совпадение по фазе есть, а обработчик
+     * решил «не моё» и вернул {@code false} — legacy-цепочка на этом месте
+     * fall-through'ит в хвост (fail-open, {@code :1113} «completes and moves the
+     * token»), а phased-путь просто возвращался: тихая зависшая фаза, ни
+     * переменных, ни {@code completeActivity}, ни лога, ни метрики.
+     *
+     * <p>Воспроизведение — ровно сценарий red-team: <b>модель передеплоена без
+     * этого слушателя, пока воркер отвечает</b>. Стартуем инстанс на модели с
+     ДВУМЯ start-слушателями, закрываем фазу 0 (открывается 1 — «в полёте»),
+     * затем деплоим ту же модель БЕЗ второго слушателя и отвечаем фазой
+     * {@code start}/{@code 1}: exact-match выполнен, но {@code handleStartListeners}
+     * видит {@code startListeners.size()==1} при {@code pending==1} → out-of-bounds
+     * → {@code false}.
+     *
+     * <p>Ассерт РАЗЛИЧАЮЩИЙ (не «объект не null»): до фикса активность остаётся
+     * {@code CREATED} и инстанс незавершённым; после — {@code COMPLETED} с
+     * {@code completedAt}, ровно как на legacy-пути с тем же входом.
+     */
+    @Test
+    @Transactional
+    void phasedMatchHandlerDeclines_modelRedeployedWithoutListener_fallsThroughLikeLegacy() throws Exception {
+        UUID piId = startTwoStartListeners();
+        UUID activityId = activity(piId).getId();
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId))
+            .as("фаза start/0 открыта на старте").isEqualTo(0);
+
+        // Слушатель 0 отработал — фаза 1 открыта, её job в полёте.
+        runtimeService.completeServiceTask(activityId, List.of(),
+            ServiceTaskDispatchPhase.START, 0);
+        assertThat(dbService.getServiceTaskPendingListenerIndex(activityId))
+            .as("после start/0 открыта фаза 1").isEqualTo(1);
+        assertThat(activity(piId).getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+        // Модель передеплоена БЕЗ второго start-слушателя, пока воркер в полёте.
+        redeploySameKeyWithoutSecondStartListener(piId);
+
+        // Ответ воркера по старему job'у: exact-match (pending==1) выполнен,
+        // обработчик возвращает false (индекс вне диапазона новой модели).
+        runtimeService.completeServiceTask(activityId, List.of(),
+            ServiceTaskDispatchPhase.START, 1);
+
+        assertThat(activity(piId).getStatus())
+            .as("matched-но-не-обработанная фаза обязана падать в хвост, как legacy, "
+                + "а не висеть молча")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(queryService.getProcessInstance(piId).getCompletedAt())
+            .as("инстанс завершён — токен сдвинут")
+            .isNotNull();
+    }
+
+    /**
+     * Старт инстанса на модели с двумя start-слушателями (второй нужен, чтобы
+     * фаза 1 вообще могла открыться).
+     */
+    private UUID startTwoStartListeners() throws Exception {
+        String xml = Files.readString(Paths.get("src/test/files/test-c8-execution-listeners-two-starts.bpmn"))
+            .replace("c8-exec-listeners-2", "c8dupredeploy-" + UUID.randomUUID().toString().substring(0, 8));
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(model.getId());
+        return runtimeService.startProcessInstance(dto).getId();
+    }
+
+    /**
+     * Передеплой ТОЙ ЖЕ модели без второго start-слушателя.
+     *
+     * <p>Честная оговорка о достижимости: обычный деплой той же модели создаёт
+     * НОВУЮ версию с новым id, а инстанс держит свой {@code processDefinitionId}
+     * (WO-C8-36 отчёт, §H-3) — поэтому штатный redeploy по сети сам по себе
+     * подмену модели в полёте не даёт. Состояние «pending=1 при модели в одном
+     * слушателе» nonetheless достижимо иначе: фазовая колонка пишется по
+     * модели на момент открытия фазы, а читается по модели на момент ответа.
+     * Здесь оно воспроизводится ЧЕРЕЗ ПРОД-ЧТЕНИЕ/ПРОД-ЗАПИСЬ модели того же
+     * definition id ({@code BpmnService.addProcessDefinition} — тот же
+     * post-commit путь, что и деплой), то есть ровно тем контрактом, которым
+     * движок берёт модель в полёте. Проверено мутацией: снятие проброса
+     * {@code handle*Listeners} в {@code completePhased} возвращает активность в
+     * {@code CREATED} и роняет этот тест.
+     */
+    private void redeploySameKeyWithoutSecondStartListener(UUID piId) throws Exception {
+        UUID definitionId = queryService.getProcessInstance(piId).getProcessDefinitionId();
+        String key = processDefinitionService.getProcessDefinitionById(definitionId).orElseThrow().getKey();
+        String xml = Files.readString(Paths.get("src/test/files/test-c8-execution-listeners-two-starts.bpmn"))
+            .replace("c8-exec-listeners-2", key)
+            .replace("          <zeebe:executionListener eventType=\"start\" type=\"listener-job-2\" />\n", "");
+        bpmnService.addProcessDefinition(definitionId, bpmnParseService.parse(xml));
     }
 
     @Test
