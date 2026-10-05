@@ -94,6 +94,13 @@ class ServiceTaskJobTypeQueryFilterIT {
             .containsExactlyInAnyOrder(ALPHA_JOB, BETA_JOB);
     }
 
+    /** A padded query parameter is trimmed before comparison (the trim() in the implementation). */
+    @Test
+    void serviceTasks_withPaddedJobType_matchesTheJobType() throws Exception {
+        assertThat(serviceTasks(" " + ALPHA_JOB + " ", null)).extracting(this::jobOf)
+            .containsExactly(ALPHA_JOB);
+    }
+
     /** jobType + completed over HTTP: both axes must apply. */
     @Test
     void serviceTasks_withJobTypeAndCompleted_narrowsOnBothAxes() throws Exception {
