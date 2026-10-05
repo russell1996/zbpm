@@ -80,9 +80,9 @@ class CompletionDedupClusterPgIT extends PostgresIT {
     void criterion1_twoInstances_sameCompletionId_claimedExactlyOnce() {
         String completionId = "cluster-" + UUID.randomUUID();
         try {
-            assertThat(storeA.claim(completionId, 60))
+            assertThat(storeA.claim(completionId))
                 .as("реплика A первой видит id — маркер её").isTrue();
-            assertThat(storeB().claim(completionId, 60))
+            assertThat(storeB().claim(completionId))
                 .as("реплика B обязан увидеть durable-маркер A и отклонить дубль — "
                     + "при in-memory кэше B был бы пуст и оба вызова прошли бы")
                 .isFalse();
@@ -100,7 +100,7 @@ class CompletionDedupClusterPgIT extends PostgresIT {
         TransactionTemplate tx = new TransactionTemplate(txManager);
         try {
             tx.executeWithoutResult(status -> {
-                assertThat(storeA.claim(completionId, 60)).isTrue();
+                assertThat(storeA.claim(completionId)).isTrue();
                 status.setRollbackOnly();
             });
             assertThat(jdbc.queryForObject(
@@ -109,7 +109,7 @@ class CompletionDedupClusterPgIT extends PostgresIT {
                 .as("откат транзакции убирает маркер САМ — потерявшийся сбой "
                     + "обязан остаться переигрываемым тем же completionId")
                 .isEqualTo(0);
-            assertThat(storeB().claim(completionId, 60))
+            assertThat(storeB().claim(completionId))
                 .as("после отката тот же id принимается заново — это и есть смысл "
                     + "INSERT-first в той же транзакции вместо ручного remove")
                 .isTrue();
@@ -123,8 +123,8 @@ class CompletionDedupClusterPgIT extends PostgresIT {
         String stale = "stale-" + UUID.randomUUID();
         String fresh = "fresh-" + UUID.randomUUID();
         try {
-            storeA.claim(stale, 60);
-            storeA.claim(fresh, 3600);
+            storeA.claim(stale);
+            storeA.claim(fresh);
             // Backdate the stale marker past the cleanup TTL instead of sleeping.
             jdbc.update("UPDATE completion_dedup SET created_at = now() - interval '2 hours' "
                 + "WHERE completion_id = ?", stale);
@@ -179,7 +179,7 @@ class CompletionDedupClusterPgIT extends PostgresIT {
             assertThat(retries(activityId)).isEqualTo(budgetBefore - 1);
 
             // Реплика B (другой инстанс дедупа): confirm-loss переотдал ту же отправку.
-            assertThat(storeB().claim(completionId, 60))
+            assertThat(storeB().claim(completionId))
                 .as("вторая реплика видит durable-маркер первой")
                 .isFalse();
             assertThat(retries(activityId))
@@ -222,14 +222,14 @@ class CompletionDedupClusterPgIT extends PostgresIT {
         try {
             // Реплика A первой захватывает id (в своей транзакции — autocommit у JdbcTemplate
             // без Spring-транзакции, поэтому маркер сразу виден всем).
-            assertThat(storeA.claim(claimed, 60)).isTrue();
+            assertThat(storeA.claim(claimed)).isTrue();
 
             // Реплика B: её собственная запись В ТОЙ ЖЕ транзакции, затем дубль claim'а.
             tx.executeWithoutResult(status -> {
-                assertThat(storeA.claim(probe, 60))
+                assertThat(storeA.claim(probe))
                     .as("запись вызывающего до конфликта — обычный захват")
                     .isTrue();
-                assertThat(storeB().claim(claimed, 60))
+                assertThat(storeB().claim(claimed))
                     .as("этот id уже занят репликой A — дубль")
                     .isFalse();
                 assertThat(jdbc.update(
@@ -289,7 +289,7 @@ class CompletionDedupClusterPgIT extends PostgresIT {
                     // настоящий боевой путь движка с ОБЩИМ completionId.
                     TransactionTemplate own = new TransactionTemplate(txManager);
                     own.executeWithoutResult(status -> {
-                        storeA.claim(probe, 60);
+                        storeA.claim(probe);
                         runtimeService.failServiceTask(activityId, "boom", null,
                             ServiceTaskDispatchPhase.REAL, null, completionId);
                     });
