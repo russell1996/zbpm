@@ -46,6 +46,27 @@ public class HandlerAutoConfiguration {
     @Value("${zorrobpm.worker.completion-confirm-timeout:5000}")
     private long completionConfirmTimeoutMs = 5_000L;
 
+    /**
+     * WO-REL-64: после стольких неудачных публикаций подряд результат паркуется
+     * в poison-очередь (см. {@code CompletionPoisonRetryListener}), а вход
+     * подтверждается — основная очередь продолжает работать. Дефолт 10: при
+     * шкале 1с→…→30с это ~минута горячих попыток на отравленный результат до
+     * парковки (1+2+4+8+16+30+30+30+30 = 151с), дальше — тихий цикл повтора из
+     * poison с растущей задержкой. Границы зажимает сам слушатель
+     * ({@code MIN/MAX_MAX_COMPLETION_ATTEMPTS}, та же дисциплина, что у
+     * confirm-таймаута).
+     */
+    @Value("${zorrobpm.worker.completion-max-attempts:10}")
+    private int completionMaxAttempts = 10;
+
+    /**
+     * WO-REL-64: выключатель парковки. {@code false} — осознанный opt-out в
+     * семантику WO-C8-36 (бесконечный backoff 1с→30с на потоке потребителя,
+     * отравленный результат держит очередь вечно). Новых required-env нет.
+     */
+    @Value("${zorrobpm.worker.completion-poison-enabled:true}")
+    private boolean completionPoisonEnabled = true;
+
     private ObjectMapper objectMapper;  // shared instance (CRIT-5)
 
     /**
@@ -182,10 +203,69 @@ public class HandlerAutoConfiguration {
                 new JobCompletionListener(handler, rabbitTemplate, objectMapper, queueName);
             jobListener.setEnsurePublisherConfirms(ensurePublisherConfirms);
             jobListener.setConfirmTimeoutMs(completionConfirmTimeoutMs);
+            // WO-REL-64: потолок попыток публикации + парковка отравленного
+            // результата — из тех же пропертей, что выше.
+            jobListener.setMaxCompletionAttempts(completionMaxAttempts);
+            jobListener.setPoisonParkingEnabled(completionPoisonEnabled);
             container.setMessageListener(jobListener);
             container.start();
         }
 
+        // WO-REL-64: слушатель poison-очереди — на ОТДЕЛЬНОМ потоке потребителя:
+        // его попытки (с растущей задержкой через delay-очередь) не держат
+        // основную очередь. Стартует всегда при включённой парковке — в т.ч. при
+        // нуле хендлеров: припаркованное чужим воркером забирает любой живой.
+        if (completionPoisonEnabled) {
+            try {
+                declarePoisonTopology(amqpAdmin);
+            } catch (RuntimeException e) {
+                log.warn("RabbitMQ unreachable at startup, poison topology not declared "
+                    + "(will declare on reconnect): {}", e.getMessage());
+            }
+            SimpleMessageListenerContainer poisonContainer =
+                connectionFactory.createListenerContainer();
+            poisonContainer.setQueueNames(CompletionPoisonRetryListener.POISON_QUEUE);
+            poisonContainer.setMissingQueuesFatal(false);
+            poisonContainer.setFailedDeclarationRetryInterval(RETRY_DECLARATION_INTERVAL_MS);
+            CompletionPoisonRetryListener retryListener = new CompletionPoisonRetryListener(
+                rabbitTemplate, objectMapper, JobCompletionListener.COMPLETE_QUEUE);
+            retryListener.setEnsurePublisherConfirms(ensurePublisherConfirms);
+            retryListener.setConfirmTimeoutMs(completionConfirmTimeoutMs);
+            poisonContainer.setMessageListener(retryListener);
+            poisonContainer.start();
+            log.info("Subscribing to {}", CompletionPoisonRetryListener.POISON_QUEUE);
+        }
+
+    }
+
+    /**
+     * WO-REL-64: топология парковки отравленных результатов.
+     *
+     * <p>{@code zorrobpm.completion.poison} — durable, без DLX: каждая копия
+     * ACK'ается слушателем явно (успех — доставлена движку, неудача —
+     * перепакована в delay, битая оболочка — терминально). DLX здесь означал
+     * бы «потеря по истечении», что противоречит «не дропается никогда».
+     *
+     * <p>{@code zorrobpm.completion.retry-delay} — durable с
+     * {@code x-dead-letter-routing-key} на poison (без
+     * {@code x-dead-letter-exchange} — возврат идёт через default exchange, что
+     * валидно и не требует именовать exchange): копия с per-message TTL по
+     * истечении возвращается в poison — автоповтор с растущей задержкой без
+     * единого таймера в коде.
+     */
+    static void declarePoisonTopology(AmqpAdmin amqpAdmin) {
+        amqpAdmin.declareQueue(
+            org.springframework.amqp.core.QueueBuilder
+                .durable(CompletionPoisonRetryListener.POISON_QUEUE).build());
+        amqpAdmin.declareQueue(
+            org.springframework.amqp.core.QueueBuilder
+                .durable(CompletionPoisonRetryListener.RETRY_DELAY_QUEUE)
+                .withArgument("x-dead-letter-routing-key",
+                    CompletionPoisonRetryListener.POISON_QUEUE)
+                .build());
+        log.info("Poison topology declared ({} + {})",
+            CompletionPoisonRetryListener.POISON_QUEUE,
+            CompletionPoisonRetryListener.RETRY_DELAY_QUEUE);
     }
 
     /**
@@ -244,6 +324,11 @@ public class HandlerAutoConfiguration {
                 }
                 try {
                     declareQueue(handler, queueName);
+                    // WO-REL-64: стартовый declare яда тоже мог не пройти
+                    // (брокер лежал) — добираем здесь же, идемпотентно.
+                    if (completionPoisonEnabled) {
+                        declarePoisonTopology(amqpAdmin);
+                    }
                     if (cachingCf.removeConnectionListener(self[0])) {
                         log.info("Queue {} declared on reconnect, redeclare listener removed",
                             queueName);
