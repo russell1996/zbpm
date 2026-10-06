@@ -1,0 +1,64 @@
+databaseChangeLog:
+  - logicalFilePath: 20261005-117
+  - changeSet:
+      id: 20261005-117-boundary-timer-jobs-instance-pg
+      author: zorrodev
+      dbms: postgresql
+      runInTransaction: false
+      comment: >-
+        WO-C8-35 (CR-09, раунд 6, BLOCKER-6): индекс под чтение граничных таймеров инстанса
+        (TimerJobRepository.findBoundaryTimerTriggers — WHERE process_instance_id = ? AND
+        boundary_element_id IS NOT NULL, БЕЗ фильтра по fired). Правило готовности
+        inclusive-join спрашивает не «взведена ли граница», а «исчерпана ли она», то есть
+        нужны ВЫСТРЕЛИВШИЕ и ОЖИДАЮЩИЕ строки одновременно: исчерпан outlet, по которому
+        есть fired = true И НЕТ fired = false (повторяющийся цикл и multi-instance держат
+        невыстрелившую строку). Частичный предикат — ровно этот запрос.
+        Индекса по process_instance_id у timer_jobs не было вообще (все три существующих
+        индекса ведут от activity_id / fired+due_at), поэтому выборка шла полным Seq Scan по
+        растущей таблице — подтверждено EXPLAIN на живой БД: «Seq Scan on timer_jobs
+        (Filter: ((boundary_element_id IS NOT NULL) AND (process_instance_id = ...)))».
+        Чтение на горячем пути: «ещё может доставить» опрашивается на КАЖДЫЙ приход ветви и
+        на каждой деактивации, то есть на каждый элемент инстанса за его жизнь.
+        Раунд 5 удалял armed-запросы, и индекс вместе с ними считался мёртвым (решение CTO);
+        раунд 6 вернул чтение граничных таймеров в инвертированном виде — индекс снова
+        не мёртв, но предикат стал другим (без fired = false), и он переписан здесь, а не
+        добавлен вторым: changeset не смержен, checksum на прод не менялся.
+        CREATE INDEX CONCURRENTLY + runInTransaction:false — создание не блокирует запись
+        на проде (та же форма, что в 20260928-116: CONCURRENTLY структурно не выполняется
+        внутри транзакции). PostgreSQL-only: H2 не понимает ни CONCURRENTLY, ни WHERE в
+        CREATE INDEX.
+      changes:
+        - sql:
+            sql: >-
+              CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_timer_jobs__boundary_by_instance
+              ON timer_jobs (process_instance_id)
+              WHERE boundary_element_id IS NOT NULL
+        - sql:
+            sql: >-
+              COMMENT ON INDEX idx_timer_jobs__boundary_by_instance IS 'WO-C8-35: индекс под
+              чтение граничных таймеров инстанса для правила готовности inclusive-join
+              (только строки с outlet-границей, независимо от fired)'
+      rollback:
+        - sql:
+            sql: DROP INDEX CONCURRENTLY IF EXISTS idx_timer_jobs__boundary_by_instance
+
+  - changeSet:
+      id: 20261005-117-boundary-timer-jobs-instance-h2
+      author: zorrodev
+      dbms: h2
+      comment: >-
+        WO-C8-35 (CR-09, раунд 6): тестовый профиль. H2 не выражает ни CONCURRENTLY, ни
+        частичный предикат — обычный индекс по process_instance_id даёт ту же форму запроса
+        для локальных прогонов; настоящая гарантия (Seq Scan → Index Scan) и сам частичный
+        предикат проверяются на PostgreSQL (ArmedBoundaryTimerJoinPgIT, job test:pg).
+      changes:
+        - createIndex:
+            tableName: timer_jobs
+            indexName: idx_timer_jobs__boundary_by_instance
+            columns:
+              - column:
+                  name: process_instance_id
+      rollback:
+        - dropIndex:
+            tableName: timer_jobs
+            indexName: idx_timer_jobs__boundary_by_instance
