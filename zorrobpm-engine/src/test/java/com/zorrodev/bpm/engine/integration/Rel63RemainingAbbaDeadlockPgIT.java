@@ -125,6 +125,9 @@ public class Rel63RemainingAbbaDeadlockPgIT extends PostgresIT {
             + "(SELECT id FROM activities WHERE process_instance_id = ?)", piId);
         jdbc.update("DELETE FROM timer_jobs WHERE process_instance_id = ?", piId);
         jdbc.update("DELETE FROM message_subscriptions WHERE process_instance_id = ?", piId);
+        // WO-IN-3: кандидаты — ДЕТИ user_tasks, FK RESTRICT → дети раньше родителя.
+        jdbc.update("DELETE FROM user_task_candidates WHERE user_task_id IN "
+            + "(SELECT id FROM user_tasks WHERE process_instance_id = ?)", piId);
         jdbc.update("DELETE FROM user_tasks WHERE process_instance_id = ?", piId);
         jdbc.update("DELETE FROM service_tasks WHERE process_instance_id = ?", piId);
         List<UUID> tokens = jdbc.queryForList(

@@ -71,6 +71,10 @@ public class RepeatingBoundaryTimerPgIT extends PostgresIT {
         jdbc.execute("DELETE FROM signal_subscriptions");
         jdbc.execute("DELETE FROM parallel_gateways");
         jdbc.execute("DELETE FROM incidents");
+        // WO-IN-3: кандидаты — ДЕТИ user_tasks, FK на них RESTRICT. Этот клиенс обходит
+        // retention и чистит руками, поэтому дети уходят раньше родителя — ровно тот же
+        // порядок, что в RetentionBatchProcessor.deleteRowsForInstances.
+        jdbc.execute("DELETE FROM user_task_candidates");
         jdbc.execute("DELETE FROM user_tasks");
         jdbc.execute("DELETE FROM service_tasks");
         jdbc.execute("DELETE FROM variables");

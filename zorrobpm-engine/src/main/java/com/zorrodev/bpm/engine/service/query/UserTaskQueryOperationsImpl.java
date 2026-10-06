@@ -40,15 +40,6 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
         "createdAt", "completedAt", "priority", "dueDate", "followUpDate",
         "assignee", "bpmnElementId", "formKey", "id");
 
-    /**
-     * WO-IN-2 MEDIUM-3: the candidate filter builds one un-indexed {@code LIKE} per group, so its
-     * cost is LINEAR in the number of groups (red-team measurement on 1M rows: 1 group 77 ms,
-     * 100 groups 3982 ms, plus a COUNT of the same price). 20 groups is far past anything a real
-     * candidate list holds and bounds one request to 20 scans' worth of work; a caller asking about
-     * a person with more is told so instead of being served a multi-second query.
-     */
-    static final int MAX_PERSON_GROUPS = 20;
-
     private final UserTaskRepository userTaskRepository;
     private final UserTaskMapper userTaskMapper;
     private final QueryPaginationSupport queryPaginationSupport;
@@ -162,6 +153,24 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
      * rows, and the resource layer authorizes the VALUE of {@code relatesTo} before this runs
      * ({@code QueryResource.getUserTasks}) — the same trust model as {@code allowedPdIds} itself.
      *
+     * <p>WO-IN-3: потолка «не больше 20 групп» больше НЕТ, и это не «ослабили проверку на
+     * всякий случай», а снятие охраны, чья предпосылка отменена. Потолок появился в WO-IN-2
+     * (MEDIUM-3) потому, что фильтр строил ПО ОДНОМУ неиндексированному {@code LIKE} на группу —
+     * цена линейно росла по K, и на 1M строк красная команда меряла 77 мс при K=1 и 3982 мс при
+     * K=100. Теперь это ОДИН {@code EXISTS} по индексу {@code (kind, candidate, user_task_id)},
+     * и весь линейный по K член исчез: замер на своём postgres:16, 1M задач и 600k строк
+     * кандидатов, страница из 50 — K=1: 14 мс, K=20: 44 мс, K=100: 58 мс, K=500: 138 мс
+     * (старая форма на тех же данных: 28 / 230 / 1532 / 4064 мс). Наклон новой формы — около
+     * 0.25 мс на группу, то есть даже абсурдные 500 групп остаются в пределах сотни миллисекунд
+     * там, где старая форма уже уходила в секунды. Ограничивать человека, который в 25 группах,
+     * из-за защиты от несуществующей уже проблемы — это функциональный дефект, а не осторожность.
+     *
+     * <p>Честно про то, что НЕ изменилось: член «по числу строк» остался. На 1M задач без
+     * фильтра по определению процесса планировщик всё так же читает user_tasks (в замере —
+     * Parallel Seq Scan, а кандидаты берутся Index Only Scan по своему индексу). Этот WO убрал
+     * линейность по числу групп, а не по числу строк; второе — отдельная работа, если
+     * понадобится.
+     *
      * <p>Both guards below run BEFORE the specification is built, so neither a rejected request nor
      * an oversized one ever reaches SQL: MEDIUM-3 bounds how many {@code LIKE}s one request may
      * cost, LOW-5 refuses a group name the column cannot represent.
@@ -171,12 +180,6 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
             .map(UiUserEntity::getUsername)
             .orElse(null);
         Set<String> groups = new LinkedHashSet<>(userGroupRepository.findGroupNamesByUserId(userId));
-        if (groups.size() > MAX_PERSON_GROUPS) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "TOO_MANY_PERSON_GROUPS",
-                "relatesTo: the person belongs to more than " + MAX_PERSON_GROUPS + " groups",
-                Map.of("groups", groups.size(), "max", MAX_PERSON_GROUPS,
-                    "relatesTo", userId.toString()));
-        }
         return new PersonRoles(username, groups.stream().map(UserTaskQueryOperationsImpl::storableGroupName).toList());
     }
 

@@ -12,6 +12,7 @@ import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.db.UserTaskCandidateWriter;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -67,6 +68,7 @@ public class UserTaskRelatesToPaginationPgIT extends PostgresIT {
     @Autowired private RuntimeService runtimeService;
     @Autowired private QueryService queryService;
     @Autowired private UserTaskRepository userTaskRepository;
+    @Autowired private UserTaskCandidateWriter userTaskCandidateWriter;
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private UserGroupRepository userGroupRepository;
     @Autowired private PasswordHasher passwordHasher;
@@ -143,7 +145,11 @@ public class UserTaskRelatesToPaginationPgIT extends PostgresIT {
         row.setAssignee(assignee);
         row.setCandidateGroups(candidateGroups);
         row.setCreatedAt(SHARED_CREATED_AT);
-        return userTaskRepository.save(row).getId();
+        UUID taskId = userTaskRepository.save(row).getId();
+        // WO-IN-3: relatesTo читает таблицу кандидатов, поэтому фикстура обязана писать её тем же
+        // рабочим кодом, что и движок. Стирать нечего: в BPMN этой фикстуры кандидатов нет.
+        userTaskCandidateWriter.writeCandidates(taskId, candidateGroups, null);
+        return taskId;
     }
 
     private PagedDataDTO<UserTask> page(int index) {

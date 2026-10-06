@@ -188,7 +188,7 @@ public class UserTaskQueryGuardrailsIntegrationTests {
             });
     }
 
-    // ===== MEDIUM-3 — the person's group count is bounded before it reaches SQL =====
+    // ===== MEDIUM-3 — потолок групп СНЯТ (WO-IN-3), и это проверяется, а не объявляется =====
 
     @Transactional
     @Test
@@ -201,25 +201,41 @@ public class UserTaskQueryGuardrailsIntegrationTests {
     }
 
     /**
-     * RED on the pre-fix code: 21 groups were OR-ed into 21 un-indexed {@code LIKE}s over the
-     * whole {@code user_tasks} table — the red-team measured 3982 ms at 100 groups on 1M rows.
+     * Заменяет {@code relatesTo_personInMoreThan20Groups_isRefusedWith400} — тот тест утверждал
+     * отказ, который WO-IN-3 снял (потолок 20 групп стоял на предпосылке «K неиндексированных
+     * LIKE», а она отменена переходом на ОДИН EXISTS по индексу; замер в javadoc
+     * {@code UserTaskQueryOperationsImpl.resolveRoles}).
+     *
+     * <p>Теперь утверждается ОБРАТНОЕ: человек со 100 группами (вчетверо выше прежнего потолка)
+     * получает СВОЮ задачу, а не 400. Это проверка на «ограничение не вернулось» и на то, что
+     * 100 имён в IN-списке не ломают совпадение.
+     *
+     * <p>Мутация, которая должна покраснить: вернуть потолок (или сузить IN до первых 20) —
+     * упадёт второй ассерт, потому что задача перестанет находиться.
      */
     @Transactional
     @Test
-    void relatesTo_personInMoreThan20Groups_isRefusedWith400() throws Exception {
-        UiUserEntity user = createUser(uniqueName("twentyone"));
-        names(21).forEach(g -> addToGroup(user.getId(), g));
-        taskWith("alice", "in2g20", "twentyone-form");
+    void relatesTo_personWithFarMoreThan20Groups_stillFindsTheirTask() throws Exception {
+        UiUserEntity user = createUser(uniqueName("hundred"));
+        names(100).forEach(g -> addToGroup(user.getId(), g));
+        UserTaskEntity task = taskWith("someone-else", "in2g42", "hundred-form");
 
-        assertThatThrownBy(() -> queryService.findUserTasks(
-            relatesToQuery(user.getId()), List.of(pdId)))
-            .isInstanceOf(ApiException.class)
-            .satisfies(ex -> {
-                ApiException api = (ApiException) ex;
-                assertThat(api.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
-                assertThat(api.getCode()).isEqualTo("TOO_MANY_PERSON_GROUPS");
-                assertThat(api.getParams()).containsEntry("groups", 21);
-            });
+        assertThat(idsByRelatesTo(user.getId())).containsExactly(task.getId());
+    }
+
+    /**
+     * Ровно та же форма, что и раньше, но группа человека — ПОСЛЕДНЯЯ в списке из 100: сужение
+     * IN-списка «до первых N» поймало бы именно этот случай, а проверка по попаданию в любую
+     * группу — нет.
+     */
+    @Transactional
+    @Test
+    void relatesTo_lastOfManyGroups_isNotTheOneThatGetsDropped() throws Exception {
+        UiUserEntity user = createUser(uniqueName("last"));
+        names(100).forEach(g -> addToGroup(user.getId(), g));
+        UserTaskEntity task = taskWith("someone-else", "in2g99", "last-form");
+
+        assertThat(idsByRelatesTo(user.getId())).containsExactly(task.getId());
     }
 
     // ==================== helpers ====================
