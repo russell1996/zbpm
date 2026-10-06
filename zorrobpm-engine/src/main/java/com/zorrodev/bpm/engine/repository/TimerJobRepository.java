@@ -56,20 +56,24 @@ public interface TimerJobRepository extends JpaRepository<TimerJobEntity, UUID>,
     void deleteByProcessInstanceId(@Param("processInstanceId") UUID processInstanceId);
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1; раунд 4 — сужено): element ids of this instance's ARMED timer
-     * triggers that continue somewhere else — a boundary timer's boundary element. Catch timers
-     * (no boundary) are excluded: the host activity row already represents them in the
-     * live-execution universe.
+     * WO-C8-35 раунд 6 (BLOCKER-6): ВСЕ строки граничных таймеров инстанса — и выстрелившие, и
+     * ещё ожидающие. Правило готовности inclusive-join больше не спрашивает «взведена ли граница»,
+     * а «исчерпана ли она»: одноразовый таймер после {@code claimTimerJob} больше не выстрелит,
+     * значит граница отдала свою единственную ветвь и больше доставить не может.
      *
-     * <p>Раунд 4, Решение 2: стартовый триггер event-subprocess ИСКЛЮЧЁН — контейнер
-     * event-subprocess по BPMN не имеет исходящих потоков, поэтому как outlet он ничего не мог
-     * сообщить движку, а подписка непрерывающего event-subprocess при этом висит до конца инстанса.
-     * Условие выборки сужено до {@code boundaryElementId IS NOT NULL}, чтобы индекс
-     * {@code idx_timer_jobs__armed_by_instance} (Liquibase 20261005-117) использовался.
+     * <p>Выстрелившие и ожидающие строки нужны ВМЕСТЕ, а не по отдельности: повторяющийся
+     * цикл ({@code timeCycle}) после срабатывания получает НОВУЮ строку с {@code fired = false},
+     * а multi-instance хост — по строке на копию. Граница исчерпана только когда по её outlet
+     * есть выстрелившая строка И НЕТ ни одной невыстрелившей (решение считается в
+     * {@code DBServiceImpl.getExhaustedBoundaryElementIds}).
+     *
+     * <p>Условие {@code boundaryElementId IS NOT NULL} — то же, что было у
+     * {@code findArmedTimerJobs}: catch-таймеры (без границы) не имеют outlet'а и в правиле
+     * готовности join не участвуют, их представляет строка activity хоста.
      */
     @Query("SELECT t FROM TimerJobEntity t WHERE t.processInstanceId = :processInstanceId "
-        + "AND t.fired = false AND t.boundaryElementId IS NOT NULL")
-    List<TimerJobEntity> findArmedTimerJobs(UUID processInstanceId);
+        + "AND t.boundaryElementId IS NOT NULL")
+    List<TimerJobEntity> findBoundaryTimerTriggers(UUID processInstanceId);
 
     static Specification<TimerJobEntity> byProcessInstanceId(UUID processInstanceId) {
         return (root, query, cb) -> cb.equal(root.get("processInstanceId"), processInstanceId);

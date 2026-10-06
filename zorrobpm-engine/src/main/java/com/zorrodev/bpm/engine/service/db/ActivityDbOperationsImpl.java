@@ -270,6 +270,12 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
     }
 
     @Override
+    public java.util.List<String> findDeadElementIds(UUID processInstanceId, java.util.Collection<String> elementIds,
+                                                     java.util.Collection<com.zorrodev.bpm.engine.entity.ActivityStatus> liveStatuses) {
+        return activityRepository.findDeadElementIds(processInstanceId, elementIds, liveStatuses);
+    }
+
+    @Override
     public List<Activity> getActiveActivities(UUID processInstanceId) {
         // WO-REL-31 CR-3: deterministic id-ASC order (see repo method javadoc)
         return activityRepository.findByProcessInstanceIdAndStatusInOrderByIdAsc(

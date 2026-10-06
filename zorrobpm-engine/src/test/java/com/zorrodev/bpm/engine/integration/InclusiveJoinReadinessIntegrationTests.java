@@ -274,8 +274,20 @@ public class InclusiveJoinReadinessIntegrationTests {
             .as("taskX is live and its armed timer can still deliver — the join must keep waiting")
             .isEqualTo(0L);
 
-        // The boundary fires for real and delivers the second arrival.
+        // The boundary fires and delivers the second arrival (log: "fB => from
+        // BOUNDARY_TIMER_EVENT/tmrX to INCLUSIVE_GATEWAY/join").
         activityService.fireBoundaryTimer(taskXId, "tmrX");
+
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("nothing else can deliver: the only outstanding arrival is already in the join. "
+                + "Честно: принудительный fireBoundaryTimer НЕ claim'ит job (claim делает только "
+                + "TimerBatchProcessor на боевом пути), поэтому у tmrX нет fired=true и правило "
+                + "«исчерпана» по нему не срабатывает — join добьёт последний уход хоста. Состояние "
+                + "«отстрелял» после НАСТОЯЩЕГО claim проверяется PG-IT на реальном PostgreSQL "
+                + "(ArmedBoundaryTimerJoinPgIT) и юнит-тестами слоя данных.")
+            .isEqualTo(0L);
+
+        complete(pi, "taskX");
 
         assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
             .as("the boundary delivered the second branch — the join must pass through EXACTLY ONCE")
