@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (в, критерий 5): a conditional start event. The condition was parsed and stored, but
+     nothing ever read it for a START, so the element became an ordinary none-start and the process
+     began unconditionally. Worse, it also spent the "at most one plain start event" budget, so a
+     model with one plain + one conditional start used to be refused for the wrong reason.
+
+     The fixture keeps the plain start on purpose: it is the natural modelling shape, and it proves
+     the refusal now names the CONDITIONAL START rather than the start-count rule. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_condstart" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-eng34-conditional-start" name="test-eng34-conditional-start" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="userTask" />
+
+    <bpmn:startEvent id="conditionalStart" name="conditionalStart">
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:conditionalEventDefinition id="ced" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+        <bpmn:condition xsi:type="bpmn:tFormalExpression" language="feel">enabled = true</bpmn:condition>
+      </bpmn:conditionalEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="conditionalStart" targetRef="userTask" />
+
+    <bpmn:userTask id="userTask" name="userTask">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="userTask" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (критерий 4, точность): the flow fSub points at "endTask", an element of the PARENT
+     scope, not of the sub-process it starts in. The parser flattens sub-process bodies into a single
+     scope, so this resolves at runtime — the deploy gate must NOT call it dangling. This fixture is
+     the false-positive guard for the ref check: a scan that resolved refs against the parsed element
+     set, or one that did not recurse into containers, would either refuse this model or miss the
+     dangling twin (test-eng34-nested-ref-dangling.bpmn). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_nested_ok" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-eng34-nested-ref-ok" name="test-eng34-nested-ref-ok" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub" />
+    <bpmn:subProcess id="sub" name="sub">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>fSub</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="fSub" name="fSub" sourceRef="subStart" targetRef="endTask" />
+      <bpmn:endEvent id="subEnd" name="subEnd" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="sub" targetRef="endTask" />
+    <bpmn:endEvent id="endTask" name="endTask">
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:incoming>fSub</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

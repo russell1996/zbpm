@@ -67,6 +67,21 @@ public class BpmnProcessDefinitionModel {
     private final Map<String, BpmnFlowModel> flows = new HashMap<>();
 
     /**
+     * WO-ENG-34: executable constructs this engine does NOT implement that the source XML asked for
+     * (standard loop, complex gateway, multi-instance on a container, conditional start event,
+     * several {@code <process>} in one resource, sequence flow pointing at a node that is not in
+     * the model). Empty for a fully supported model.
+     *
+     * <p>Recorded, never thrown: parsing must keep working for models stored by an earlier release,
+     * so that an upgrade cannot make a running process unparseable. The refusal lives in
+     * {@code ProcessDefinitionServiceImpl.addProcessDefinition} — the single deploy gate, same
+     * place and shape as {@code SERVICE_TASK_MISSING_JOB}.
+     */
+    @Getter
+    @Setter
+    private List<UnsupportedBpmnConstruct> unsupportedConstructs = List.of();
+
+    /**
      * Adds an element to the process. The process-level start event is set explicitly by the parser
      * (see {@code BpmnParseService}) — it is NOT inferred here, because flattened nested start events
      * (e.g. inside an embedded subprocess) must not be mistaken for the process start.

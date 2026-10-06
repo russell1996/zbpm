@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (критерий 4): f2 points at "ghost", an element that does not exist. The definition
+     deployed fine and only parked the running instance on a "not found" incident at the first token
+     that followed the flow. Deploy must refuse the model instead.
+     The end event is reachable through f3 so nothing else about this model is broken — the refusal
+     can only come from the unresolvable ref. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_dangling" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-eng34-dangling-ref" name="test-eng34-dangling-ref" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="s1" />
+
+    <bpmn:scriptTask id="s1" name="s1" scriptFormat="feel" resultVariable="x">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:script>1</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="s1" targetRef="ghost" />
+
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="startEvent" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

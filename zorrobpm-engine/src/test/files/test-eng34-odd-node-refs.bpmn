@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (High-1 ревью): три формы узлов, которые ПЕРВАЯ версия проверки ref называла
+     висячими, хотя они прямо объявлены в документе. Здесь НИ ОДНОЙ находки быть не должно,
+     и это проверяется тестом, а не обещанием:
+
+     1. <bpmn:implicitThrowEvent> — узел потока по BPMN 2.0 XSD (Semantic.xsd:833,
+        substitutionGroup="flowElement"); движок его не моделирует, но документ его объявляет.
+     2. <bpmn:messageStartEvent>/<bpmn:timerStartEvent> — теговая форма, которую выгружают
+        Zeebe/Camunda; JAXB-класс биндит только <startEvent>, поэтому такой старт исчезает
+        на парсинге — но он ЕСТЬ в документе.
+     3. <bpmn:terminateEndEvent> — тоже не BPMN 2.0 элемент, тоже встречается в выгрузках.
+
+     Отказ здесь означал бы 400 с текстом «matches no flow node of the process», то есть
+     отправлял бы автора искать опечатку, которой нет. Побочный эффект, честно: старты в
+     теговой форме и implicitThrowEvent по-прежнему НЕ исполняются движком — это отдельная
+     находка для CTO (см. отчёт, «находки рядом»). Здесь проверяется только то, что сообщение
+     не лжёт.
+
+     Обычные <startEvent>/<endEvent> оставлены намеренно: без них checkBpmn отвергает модель
+     («No start events…»), и такой отказ не имел бы ничего общего с проверкой ref. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_oddref" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="M1" name="eng34-odd-message" />
+  <bpmn:process id="test-eng34-odd-node-refs" name="test-eng34-odd-node-refs" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>fStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="fStart" name="fStart" sourceRef="startEvent" targetRef="sub" />
+
+    <!-- 2: потоки ВЫХОДЯТ из стартов в теговой форме -->
+    <bpmn:messageStartEvent id="msgStart" name="msgStart">
+      <bpmn:outgoing>fMsg</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med1" messageRef="M1" />
+    </bpmn:messageStartEvent>
+    <bpmn:sequenceFlow id="fMsg" name="fMsg" sourceRef="msgStart" targetRef="sub" />
+
+    <bpmn:timerStartEvent id="tmrStart" name="tmrStart">
+      <bpmn:outgoing>fTmr</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="ted1">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:timerStartEvent>
+    <bpmn:sequenceFlow id="fTmr" name="fTmr" sourceRef="tmrStart" targetRef="sub" />
+
+    <bpmn:subProcess id="sub" name="sub">
+      <bpmn:incoming>fStart</bpmn:incoming>
+      <bpmn:incoming>fMsg</bpmn:incoming>
+      <bpmn:incoming>fTmr</bpmn:incoming>
+      <bpmn:outgoing>fImpl</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>fToImplicit</bpmn:outgoing>
+      </bpmn:startEvent>
+      <!-- 1: поток ВХОДИТ в implicitThrowEvent — узел объявлен, значит резолвится -->
+      <bpmn:sequenceFlow id="fToImplicit" name="fToImplicit" sourceRef="subStart" targetRef="implicit" />
+    </bpmn:subProcess>
+    <bpmn:implicitThrowEvent id="implicit" name="implicit">
+      <bpmn:outgoing>fFromImplicit</bpmn:outgoing>
+    </bpmn:implicitThrowEvent>
+    <!-- 3: поток ВХОДИТ в конец в теговой форме -->
+    <bpmn:sequenceFlow id="fFromImplicit" name="fFromImplicit" sourceRef="implicit" targetRef="terminateEnd" />
+    <bpmn:terminateEndEvent id="terminateEnd" name="terminateEnd" />
+
+    <bpmn:sequenceFlow id="fImpl" name="fImpl" sourceRef="sub" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fImpl</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

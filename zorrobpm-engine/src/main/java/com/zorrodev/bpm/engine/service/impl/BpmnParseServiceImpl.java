@@ -416,6 +416,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
 
+            // WO-ENG-34: record the executable constructs this engine does not implement, so deploy
+            // can refuse the model instead of running it with changed meaning. Recording, not
+            // throwing — models stored by an earlier release keep parsing (this parser is ALSO the
+            // runtime loader: BpmnServiceImpl re-parses the stored file per definition, so throwing
+            // here would make an already-deployed model unloadable on upgrade); the refusal lives in
+            // ProcessDefinitionServiceImpl, the single deploy gate.
+            pd.setUnsupportedConstructs(BpmnSupportScanner.scan(bpmn));
+
             return pd;
         } catch (Exception e) {
             throw new BpmnParseException(e);
@@ -1248,6 +1256,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             .filter(e -> e.getMessageEventDefinition()==null)
             .filter(e -> e.getTimerEventDefinition()==null)
             .filter(e -> e.getSignalEventDefinition()==null)
+            // WO-ENG-34: a conditional start is NOT a plain (none) start — counting it here spent the
+            // "at most one plain start" budget and made the error name the wrong defect. Leaving it out
+            // keeps the count honest; the model is then refused by name, with the conditional start
+            // named, in the unsupported-construct check below.
+            .filter(e -> e.getConditionalEventDefinition()==null)
             .count();
         // at most one plain (none) start is allowed; a process may instead start via message/timer/
         // signal start events, so zero plain starts is valid as long as some start event exists

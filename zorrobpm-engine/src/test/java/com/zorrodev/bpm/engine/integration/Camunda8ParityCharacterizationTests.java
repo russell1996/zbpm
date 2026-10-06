@@ -3706,20 +3706,31 @@ public class Camunda8ParityCharacterizationTests {
 
     // ==================== критерий 4: Complex Gateway ====================
 
+    /**
+     * WO-ENG-34 (CR-08, criterion 2) — the characterization INVERTED on purpose, and this is the one
+     * place where the previous statement was a real divergence from Camunda 8.
+     *
+     * <p>What did NOT change: {@code complexGateway} is still not a supported element kind, so the
+     * element is still not executed (Zeebe parity). What DID change: such a model is now REFUSED AT
+     * DEPLOY, instead of being accepted and parking the first token that reached the gateway on a
+     * {@code Target element 'cg' ... not found} incident. Camunda 8 rejects unsupported elements at
+     * deploy too — so the honest characterization of parity moved one step earlier in the lifecycle,
+     * and the incident that used to be the only symptom is no longer reachable by deploy.
+     *
+     * <p>Renamed accordingly; the runtime guard itself keeps its coverage where it is still
+     * reachable — {@link GraphRobustnessIntegrationTests} for a missing target, and the incident
+     * assertions of this class for the other Zeebe-parity drop cases.
+     */
     @Test
     @Transactional
-    void complexGateway_isDropped_flowParksOnMissingTarget() throws Exception {
+    void complexGateway_isRefusedAtDeploy_insteadOfParkingOnMissingTarget() throws Exception {
         String key = uniq("c8cg");
         String xml = bpmn("test-c8-complex-gateway.bpmn").replace("c8-complex-gateway", key);
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
 
-        UUID piId = start(model.getId(), List.of());
-
-        // <bpmn:complexGateway> не парсится (как и у Zeebe): поток упирается в missing target.
-        assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
-        List<IncidentEntity> incidents = incidentsOfInstance(piId);
-        assertThat(incidents).hasSize(1);
-        assertThat(incidents.get(0).getMessage()).contains("cg").contains("not found");
+        assertThatThrownBy(() -> processDefinitionService.addProcessDefinition(xml))
+            .isInstanceOf(com.zorrodev.bpm.contract.exception.ApiException.class)
+            .satisfies(ex -> assertThat(((com.zorrodev.bpm.contract.exception.ApiException) ex).getCode())
+                .isEqualTo("UNSUPPORTED_COMPLEX_GATEWAY"));
     }
 
     // ==================== критерий 4: Pools/Lanes ====================
