@@ -33,7 +33,13 @@ export RABBIT_USER="${RABBIT_USER:-zorrodev}"
 export RABBIT_PASSWORD="${RABBIT_PASSWORD:-zorrodev}"
 # WO-INT-9: Management API base for the provisioning tests (mirror of the
 # AMQP plumbing below — P-23: surefire/failsafe forks inherit env reliably).
-export RABBITMQ_MGMT_BASE_URL="${RABBITMQ_MGMT_BASE_URL:-http://127.0.0.1:${RABBIT_MGMT_PORT}}"
+# WO-QW-12: путь /rabbitmq обязателен — CI-брокер поднимается с тем же conf.d, что и
+# прод (ci/docker-compose.rabbit.yml монтирует 30-management-path-prefix.conf), а
+# management-HTTP без префикса на таком брокере отвечает 404. Ссылка на константу
+# префикса живёт в конфиге брокера; продублирована здесь строкой намеренно (скрипт
+# обязан знать, куда смотреть, иначе «брокер готов» ≠ «Management API доступен»).
+MGMT_PATH_PREFIX="/rabbitmq"
+export RABBITMQ_MGMT_BASE_URL="${RABBITMQ_MGMT_BASE_URL:-http://127.0.0.1:${RABBIT_MGMT_PORT}${MGMT_PATH_PREFIX}}"
 
 # WO-OPS-11 F26: тот же развод, что в run-pg-tests.sh (суффикс + сдвиг порта).
 if [ -n "${CI_PIPELINE_ID:-}" ]; then
@@ -44,7 +50,7 @@ if [ -n "${CI_PIPELINE_ID:-}" ]; then
   # WO-INT-9: mgmt-порт сдвигается вместе с AMQP (та же арифметика развода).
   RABBIT_MGMT_PORT="$((15673 + (SUFFIX % 2000)))"
   export RABBIT_MGMT_PORT
-  RABBITMQ_MGMT_BASE_URL="http://127.0.0.1:${RABBIT_MGMT_PORT}"
+  RABBITMQ_MGMT_BASE_URL="http://127.0.0.1:${RABBIT_MGMT_PORT}${MGMT_PATH_PREFIX}"
   export RABBITMQ_MGMT_BASE_URL
 else
   PROJECT="zbpm-rabbitci"
@@ -84,6 +90,30 @@ until docker compose -f "$COMPOSE" -p "$PROJECT" exec -T -u rabbitmq rabbitmq ra
   sleep 2
 done
 echo "=== rabbitmq is ready ==="
+
+# WO-QW-12: AMQP-ping выше НЕ означает, что Management API слушает. rabbitmq-diagnostics
+# ping отвечает про AMQP-коннект, а HTTP-слушатель rabbitmq_management поднимается позже
+# (поймано в QW-12 на стенде: правка кейса «все ассеты OK» с нулевым числом находок —
+# брокер ещё не слушал 15672, тест рапортовал «до брокера не дошло», не проверив ничего).
+# До его готовности ПЕРВЫЙ провижининг-тест упал бы 503 — то есть гонка выглядела бы как
+# регрессия. Ждём именно HTTP 200 на ПРЕФИКСОВАННЫЙ путь: заодно это проверка того,
+# что management.path_prefix из conf.d действительно применился (иначе 404 — и падение
+# будет диагностичным, а не загадочным 503 в середине сьюта).
+echo "=== Waiting for RabbitMQ Management HTTP under ${MGMT_PATH_PREFIX} ==="
+MGMT_RETRIES=60
+until [ "$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${RABBIT_MGMT_PORT}${MGMT_PATH_PREFIX}/" 2>/dev/null)" = "200" ]; do
+  MGMT_RETRIES=$((MGMT_RETRIES - 1))
+  if [ "$MGMT_RETRIES" -le 0 ]; then
+    echo "ERROR: RabbitMQ management HTTP did not answer 200 at ${MGMT_PATH_PREFIX}/ in time"
+    echo "       (prefix-less path would be 404 — check that 30-management-path-prefix.conf is mounted)"
+    docker compose -f "$COMPOSE" -p "$PROJECT" logs rabbitmq | tail -20
+    exit 1
+  fi
+  echo "  waiting for management HTTP... ($MGMT_RETRIES retries left)"
+  sleep 2
+done
+echo "=== rabbitmq management HTTP is ready (${RABBITMQ_MGMT_BASE_URL}) ==="
 
 # Run rabbit-only tests inside a Maven container with --network host to reach the
 # broker published on 127.0.0.1:$RABBIT_PORT. -Dgroups=rabbit selects @Tag("rabbit");

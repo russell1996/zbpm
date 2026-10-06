@@ -130,7 +130,17 @@ services:
       RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-zorrodev}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-zorrodev}
       # WO-INT-9: Management API для per-system провижининга (внутри сети — имя сервиса).
-      RABBITMQ_MGMT_BASE_URL: ${RABBITMQ_MGMT_BASE_URL:-http://rabbitmq:15672}
+      # WO-QW-12 (ДОПОЛНЕНИЕ CTO): путь /rabbitmq ОБЯЗАТЕЛЕН и не косметика. Брокер
+      # стартует с management.path_prefix = /rabbitmq (старый conf.d выше), а сам
+      # management-HTTP без префикса на таком брокере отвечает 404 — проверено живым
+      # прогоном: GET/PUT/DELETE /api/users/<login> -> 404, /rabbitmq/api/... -> 200/201.
+      # Без префикса в base-url провижининг SYSTEM-юзера падал бы fail-closed 503
+      # (getBrokerUser читал бы 404 «нет аккаунта», PUT /api/users -> 404 -> 503) —
+      # то есть выдача и отзыв брокерских учёток воркеров были бы сломаны на проде.
+      # Инвариант «монтируется ли 30-management-path-prefix.conf этому брокеру» ⇔
+      # «есть ли /rabbitmq в RABBITMQ_MGMT_BASE_URL» проверяется тестом
+      # RabbitMqMgmtPathPrefixWiringGuardTest (zorrobpm-app), а не только комментарием.
+      RABBITMQ_MGMT_BASE_URL: ${RABBITMQ_MGMT_BASE_URL:-http://rabbitmq:15672/rabbitmq}
       # WO-SEC-86: кому приложение доверяет заголовок X-Real-IP для per-IP
       # rate-limit бакетов (иначе все «per-IP» бюджеты — один общий бакет на всю
       # инсталляцию: TCP-пир app всегда frontend-контейнер). Класс WO-INT-6: var
