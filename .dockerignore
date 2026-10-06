@@ -13,7 +13,13 @@
 README.md
 # The frontend builds from its own context (zorrobpm-frontend/Dockerfile); keep it out of the backend image
 zorrobpm-frontend
-docs
+# 2026-10-06: docs исключаем КРОМЕ одного файла — C836WorkerConfirmEnvBindingTest (starter) читает
+# docs/guides/integration-quickstart.md от корня репозитория; в `docker build --target test` его не было
+# (test:backend красный на 03752e3b). Каталог исключается как `docs/*`, иначе внутри ничего не вернуть.
+docs/*
+!docs/guides
+docs/guides/*
+!docs/guides/integration-quickstart.md
 # 2026-10-06: C836WorkerConfirmEnvBindingTest (WO-C8-36) читает docs/guides/integration-quickstart.md в test-стадии `docker build`;
 # без исключения файл исчезал вместе с docs/ и test:backend краснел только в CI (тот же класс, что docker-compose.yml для HttpConnectorComposeWiringTest).
 !docs/guides/integration-quickstart.md
