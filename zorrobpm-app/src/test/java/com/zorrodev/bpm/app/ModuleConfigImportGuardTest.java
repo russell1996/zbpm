@@ -82,6 +82,29 @@ class ModuleConfigImportGuardTest {
      */
     private static final Set<String> MODULES_OUTSIDE_APP_ASSEMBLY = Set.of("zorrobpm-client");
 
+    /**
+     * Переменные, для которых умолчание compose НАМЕРЕННО расходится с умолчанием
+     * properties-файла. Без этого списка Guard D проверял бы равенство умолчаний повсюду и
+     * требовал бы их совпадения — а расхождение здесь осознанное.
+     *
+     * <p>Почему список вообще нужен, а не «проверять всё подряд»: механизированная проверка
+     * равенства умолчаний раньше принадлежала гейту G15, но его glob — {@code application*.properties},
+     * и после переименования файла движка в {@code zorrobpm-engine.properties} он туда больше не
+     * попадает. Без списка и этой проверки равенство держалось бы только на дисциплине, то есть
+     * ровно на том, что этот WO и чинит в других местах.
+     *
+     * <p>Единственная запись: флаг CR-01. Свойство по умолчанию {@code false} — порядок выката
+     * «сначала воркеры, потом флаг»; наш compose (движок и http-connector одного релиза) включает
+     * его в {@code true}. Обоснование — в самом {@code docker-compose.yml} рядом с объявлением.
+     */
+    private static final Map<String, String> ALLOWED_DEFAULT_DIVERGENCE = Map.of(
+        "ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING",
+        "свойство по умолчанию false (порядок выката «сначала воркеры, потом флаг»), наш compose "
+            + "включает CR-01 в true — engine и http-connector одного релиза",
+        "RABBITMQ_MGMT_BASE_URL",
+        "внутри docker-сети Management API доступен по имени сервиса (http://rabbitmq:15672), "
+            + "а умолчание файла — localhost для локального запуска вне compose");
+
     /** Модули репозитория, у которых есть {@code src/main/resources}. */
     private static List<Path> modulesWithMainResources() throws IOException {
         Path root = repoRoot();
@@ -233,11 +256,15 @@ class ModuleConfigImportGuardTest {
      *       {@link EmptyEnvVarBreaksContextTest}). Раньше это касалось девяти ручек.</li>
      * </ul>
      *
-     * <p>Чего проверка НЕ делает и почему: равенства умолчания compose и properties-файла.
-     * Расхождение там — законный deployment override (в multi это {@code RABBITMQ_HOST: rabbitmq},
-     * {@code APP_FILES_DIR: /app/files}, management-url через имя сервиса), и compose по
-     * определению побеждает файл. «Правильным» тут может быть только одно — чтобы пустого
-     * значения не было, а это и есть D2.
+     *   <li><b>D3 — умолчание совпадает.</b> Если compose объявляет переменную как
+     *       {@code ${VAR:-литерал}} (без вложенных подстановок), то этот литерал обязан совпадать с
+     *       умолчанием properties-файла — иначе «правильным» станет неверное значение, потому что
+     *       compose побеждает файл. Литералы-исключения перечислены в
+     *       {@link #ALLOWED_DEFAULT_DIVERGENCE} вместе с причиной; там же — почему проверка нужна
+     *       именно вручную после переименования файла движка (glob гейта G15 его больше не видит).
+     *       Вложенные подстановки (например {@code ${DB_URL:-jdbc:…/${DB_NAME:-…}}}) и голые
+     *       литералы (например {@code RABBITMQ_HOST: rabbitmq} в soak-риге) D3 не проверяет: это
+     *       осознанный deployment override, а не «умолчание properties-файла».</p>
      *
      * <p>Раньше D1+D2 механизировал гейт G15 по glob'у {@code application*.properties}; после
      * переименования файла движка этот glob его больше не видит, поэтому проверка возвращена
@@ -251,7 +278,7 @@ class ModuleConfigImportGuardTest {
         for (String compose : List.of("docker-compose.yml", "docker-compose.multi.yml")) {
             String yaml = read(root.resolve(compose));
             String appService = appServiceBlock(yaml);
-            Map<String, String> declared = composeDeclarations(appService);
+            Map<String, Declared> declared = composeDeclarations(appService);
             boolean envFilePassesEverything = yaml.contains("env_file");
 
             for (String moduleFile : List.of(
@@ -275,12 +302,32 @@ class ModuleConfigImportGuardTest {
                         }
                         continue;
                     }
-                    if (declared.get(envName).equals(EMPTY_DEFAULT)) {
+                    Declared declaration = declared.get(envName);
+                    String composeValue = declaration.value();
+                    if (composeValue.equals(EMPTY_DEFAULT)) {
                         problems.add(compose + ": " + envName + " объявлен как ${" + envName
                             + ":-} и в контейнер уходит ПУСТОЙ СТРОКОЙ. Spring применяет "
                             + "умолчание ${VAR:default} только когда переменной нет, а для "
                             + "пустой отдаёт пустую строку — умолчание " + entry.getKey()
                             + " будет затёрто (см. EmptyEnvVarBreaksContextTest)");
+                    } else {
+                        // D3: равенство умолчаний там, где compose объявляет «${VAR:-литерал}».
+                        // Голые литералы — явные значения развёртывания, а не умолчания, и
+                        // вложенные подстановки — вычисляемое выражение; и то и то выходит за
+                        // предмет проверки.
+                        String fileDefault = defaultOf(entry.getValue());
+                        if (declaration.defaulted()
+                                && fileDefault != null && !fileDefault.isEmpty()
+                                && composeValue.indexOf("${") < 0
+                                && !composeValue.equals(fileDefault)
+                                && !ALLOWED_DEFAULT_DIVERGENCE.containsKey(envName)) {
+                            problems.add(compose + ": " + envName + " умолчание '" + composeValue
+                                + "' разошлось с умолчанием properties-файла '" + fileDefault
+                                + "' для ключа " + entry.getKey() + " — compose побеждает файл, "
+                                + "поэтому действующим окажется неверное значение. Либо выравнивай, "
+                                + "либо (если расхождение осознанное) внеси его в "
+                                + "ALLOWED_DEFAULT_DIVERGENCE этого стража с причиной");
+                        }
                     }
                 }
             }
@@ -315,8 +362,8 @@ class ModuleConfigImportGuardTest {
      * {@code rabbitmq} или вложенным {@code ${DB_URL:-jdbc:...}}), либо {@link #EMPTY_DEFAULT},
      * если оно записано как «пусто, когда не задано».
      */
-    private static Map<String, String> composeDeclarations(String appService) {
-        Map<String, String> result = new LinkedHashMap<>();
+    private static Map<String, Declared> composeDeclarations(String appService) {
+        Map<String, Declared> result = new LinkedHashMap<>();
         Matcher m = Pattern.compile("(?m)^\\s+([A-Z][A-Z0-9_]+):\\s*(.+?)\\s*$").matcher(appService);
         while (m.find()) {
             String raw = m.group(2);
@@ -324,12 +371,20 @@ class ModuleConfigImportGuardTest {
                 String inner = raw.substring(2, raw.length() - 1);
                 int colon = inner.indexOf(":-");
                 String defaults = colon >= 0 ? inner.substring(colon + 2) : "";
-                result.put(m.group(1), defaults.isEmpty() ? EMPTY_DEFAULT : defaults);
+                result.put(m.group(1),
+                    new Declared(defaults.isEmpty() ? EMPTY_DEFAULT : defaults, true));
             } else {
-                result.put(m.group(1), raw);
+                // Голый литерал (RABBITMQ_HOST: rabbitmq, APP_FILES_DIR: /app/files) — это НЕ
+                // умолчание, а явное значение развёртывания. Сравнивать его с умолчанием
+                // properties-файла бессмысленно, и D3 такое объявление не проверяет.
+                result.put(m.group(1), new Declared(raw, false));
             }
         }
         return result;
+    }
+
+    /** Что именно compose объявил: значение и было ли оно подставкой «иначе умолчание». */
+    private record Declared(String value, boolean defaulted) {
     }
 
     /**
@@ -465,6 +520,15 @@ class ModuleConfigImportGuardTest {
             }
         }
         return keys;
+    }
+
+    /** Умолчание внутри плейсхолдера {@code ${VAR:…}}, либо {@code null}, если умолчания нет. */
+    private static String defaultOf(String placeholder) {
+        Matcher m = ENV_PLACEHOLDER.matcher(placeholder);
+        if (!m.matches() || m.group(2) == null || m.group(2).length() <= 1) {
+            return null;
+        }
+        return m.group(2).substring(1);
     }
 
     static Map<String, String> envPlaceholderKeys(String properties) {
