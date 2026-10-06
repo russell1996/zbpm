@@ -433,7 +433,7 @@ class CamundaHttpJsonWorkerTest {
 
         localWorker().handleJob(model);
 
-                assertConfigError(model.getServiceTaskId());
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
@@ -521,8 +521,11 @@ class CamundaHttpJsonWorkerTest {
      * значит `http.authType` не ставится, делегат берёт дефолт `none` — и НЕАУТЕНТИФИЦИРОВАННЫЙ
      * запрос уходит на allowlisted-хост, молча и без ошибки.
      *
-     * <p>Здесь это отвергается РАНЬШЕ тихо-аутентифицированного поведения и раньше
-     * проверки `enabled`, так что тест ловит именно снятие охранника.
+     * <p>Проверка `enabled` в коде идёт ПЕРВОЙ (см.
+     * {@link #connectorDisabled_camundaElementReportsDisabledNotConfigError}), а охранник
+     * инлайн-конфигурации — внутри перевода, после неё. Здесь коннектор включён, поэтому
+     * отказ даёт именно охранник, и снятие его роняет этот тест. Утверждение «отвергается
+     * раньше проверки enabled» было бы неверно — так написать нельзя.
      */
     @Test
     void criterion3_camundaCredentialConfigurationInput_rejectedAndServerNeverCalled() {

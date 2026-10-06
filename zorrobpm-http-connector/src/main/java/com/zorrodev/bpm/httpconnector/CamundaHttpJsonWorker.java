@@ -76,7 +76,8 @@ import java.util.UUID;
  * taskHeaders {@code elementTemplateId}/{@code elementTemplateVersion}.
  *
  * <p>Отдельная оговорка: taskHeaders {@code retryBackoff} и {@code jobTimeout} тоже
- * игнорируются, но их не понимает и движок (греп по дереву — ни одного упоминания):
+ * игнорируются, но их не понимает и движок (греп по `zorrobpm-engine`, `zorrobpm-rest`,
+ * `zorrobpm-contract` — ни одного упоминания):
  * ретраи идут по {@code retries} из {@code zeebe:taskDefinition}. Поддержка backoff —
  * отдельная задача движка, не эта.
  */
@@ -208,18 +209,18 @@ public class CamundaHttpJsonWorker implements JobHandler {
         copy(byLowerName, translated, "connectiontimeoutinseconds", "http.connectionTimeout");
         copy(byLowerName, translated, "readtimeoutinseconds", "http.readTimeout");
 
-        JobDetailModel copy = new JobDetailModel();
-        copy.setServiceTaskId(model.getServiceTaskId());
-        copy.setProcessInstanceId(model.getProcessInstanceId());
-        copy.setProcessDefinitionId(model.getProcessDefinitionId());
-        copy.setServiceTaskKey(model.getServiceTaskKey());
-        copy.setJob(model.getJob());
-        copy.setVariables(translated);
-        copy.setTaskHeaders(model.getTaskHeaders());
-        copy.setPriority(model.getPriority());
-        copy.setDispatchPhase(model.getDispatchPhase());
-        copy.setDispatchIndex(model.getDispatchIndex());
-        return copy;
+        JobDetailModel translatedModel = new JobDetailModel();
+        translatedModel.setServiceTaskId(model.getServiceTaskId());
+        translatedModel.setProcessInstanceId(model.getProcessInstanceId());
+        translatedModel.setProcessDefinitionId(model.getProcessDefinitionId());
+        translatedModel.setServiceTaskKey(model.getServiceTaskKey());
+        translatedModel.setJob(model.getJob());
+        translatedModel.setVariables(translated);
+        translatedModel.setTaskHeaders(model.getTaskHeaders());
+        translatedModel.setPriority(model.getPriority());
+        translatedModel.setDispatchPhase(model.getDispatchPhase());
+        translatedModel.setDispatchIndex(model.getDispatchIndex());
+        return translatedModel;
     }
 
     /**
