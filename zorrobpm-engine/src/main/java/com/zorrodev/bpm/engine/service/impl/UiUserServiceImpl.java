@@ -55,6 +55,14 @@ public class UiUserServiceImpl implements UiUserService {
     private final PlatformTransactionManager transactionManager;
     /** WO-SEC-83 (NEW4-04): отзыв брокер-доступа при деактивации SYSTEM-аккаунта. */
     private final com.zorrodev.bpm.engine.service.RabbitMqProvisioningService rabbitMqProvisioningService;
+    /**
+     * WO-QW-14: single owner of the server-side page clamp. This service used to hand
+     * {@code Math.max(0, query.getPageIndex())} straight to {@code PageRequest.of}, so the index was
+     * never bounded and {@code PageableUtils.getOffsetAsInteger} threw
+     * {@code Page offset exceeds Integer.MAX_VALUE} on {@code ?pageIndex=2147483647} — a 500 out of
+     * caller input. Sharing the helper is the P-24 requirement: one implementation of the guard.
+     */
+    private final QueryPaginationSupport queryPaginationSupport;
 
     /**
      * WO-AUTH-1: вход по username ИЛИ email в поле {@code LoginDTO.username} (поле НЕ
@@ -133,11 +141,11 @@ public class UiUserServiceImpl implements UiUserService {
         List<Specification<UiUserEntity>> specs = new LinkedList<>();
         if (query.getUsername() != null) specs.add(UiUserRepository.byUsernameContains(query.getUsername()));
         if (query.getActive() != null) specs.add(UiUserRepository.byActive(query.getActive()));
-        int clampedPageIndex = query.getPageIndex() != null ? Math.max(0, query.getPageIndex()) : 0;
-        int clampedPageSize = com.zorrodev.bpm.engine.service.query.QueryPaginationSupport.MAX_PAGE_SIZE;
-        int reqSize = query.getPageSize() != null ? query.getPageSize() : 10;
-        clampedPageSize = Math.min(QueryPaginationSupport.MAX_PAGE_SIZE, Math.max(1, reqSize));
-        PageRequest page = PageRequest.of(clampedPageIndex, clampedPageSize, Sort.by("username").ascending());
+        // WO-QW-14: the size clamp, the negative-index floor and the int-offset clamp are ALL owned by the
+        // shared helper — the raw caller values go in, nothing is pre-clamped here (P-24: no copy of
+        // the guard). Null pageIndex/pageSize fall to the helper's own defaults (0 / 10).
+        PageRequest page = queryPaginationSupport.clampedPage(
+            query.getPageIndex(), query.getPageSize(), Sort.by("username").ascending());
         Page<UiUserEntity> result = repository.findAll(Specification.allOf(specs), page);
 
         PagedDataDTO<UiUser> dto = new PagedDataDTO<>();

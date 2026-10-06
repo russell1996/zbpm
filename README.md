@@ -181,7 +181,10 @@ docker compose up -d --build
 - База API: `http://localhost:8080`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - OpenAPI JSON: `http://localhost:8080/v3/api-docs`
-- Management UI RabbitMQ: `http://localhost:9300` (по умолчанию `zorrodev`/`zorrodev`)
+- Management UI RabbitMQ: `http://localhost:9300` (по умолчанию `zorrodev`/`zorrodev`).
+  Брокер запущен с `management.path_prefix = /rabbitmq` (WO-QW-12), поэтому корень
+  отдаёт 301 на `/rabbitmq/`, а management-API живёт по путям `/rabbitmq/api/…`
+  (без префикса — 404, редиректа нет)
 
 Остановить: `docker compose down` (добавьте `-v`, чтобы удалить тома с данными).
 

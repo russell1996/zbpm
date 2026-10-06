@@ -32,7 +32,10 @@ DLQ: один статический routing key в policy НЕ обслужив
 VHOST=%2f   # default vhost; для другого — urlencode имя
 TYPE=billing
 Q="zorrobpm.jobs.$TYPE"
-API=https://<mgmt-host>:15671/api   # или http://…:15672
+API=https://<mgmt-host>:15671/rabbitmq/api   # или http://…:15672/rabbitmq
+# WO-QW-12: /rabbitmq в базе обязателен — брокер запущен с management.path_prefix
+# (ci/rabbitmq/conf.d/30-management-path-prefix.conf). Без него management-API
+# отвечает 404 (редиректа нет, -L не помогает).
 A='<mgmt-user>:<mgmt-password>'     # basic auth; пароль не светить в истории
 
 # 1. DLQ + биндинг (те же имена, что создаёт JobQueueDeclarer — Scheme REL-45).

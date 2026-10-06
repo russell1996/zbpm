@@ -97,6 +97,72 @@ class QueryPaginationSupportTest {
         assertThat(pr.getOffset()).isEqualTo(10000L);
     }
 
+    /**
+     * WO-QW-14, DoD «юнит на хелпер: {@code pageIndex*pageSize} никогда не выходит за int НИ ПРИ
+     * КАКОМ индексе». The pre-existing {@link #clampedPage_offsetNeverOverflowsInt_whateverTheIndex}
+     * samples three sizes × three indexes; this one sweeps <b>every</b> legal page size (1…200 — the
+     * whole {@link #MAX_PAGE_SIZE} range) crossed with the indexes that matter: the int extremes,
+     * negative values, and the exact {@code Integer.MAX_VALUE / size} boundary where the clamp
+     * starts biting. The invariant asserted is the one Spring Data actually breaks on, its
+     * {@code PageableUtils.getOffsetAsInteger} cast — i.e. the OFFSET, not the page number.
+     *
+     * <p>Mutation: deleting {@code page = Math.min(page, Integer.MAX_VALUE / size)} from the helper
+     * makes this test RED for every size ≥ 2 (only size 1 survives, since 1×MAX_VALUE still fits),
+     * which is why the sweep spans sizes rather than repeating one.
+     */
+    @Test
+    void clampedPage_offsetNeverOverflowsInt_forEveryLegalSizeAndExtremeIndex() {
+        int[] extremeIndexes = {
+            Integer.MIN_VALUE, Integer.MIN_VALUE + 1, -1, 0, 1,
+            Integer.MAX_VALUE / 200, Integer.MAX_VALUE / 2, Integer.MAX_VALUE - 1, Integer.MAX_VALUE
+        };
+        for (int size = 1; size <= QueryPaginationSupport.MAX_PAGE_SIZE; size++) {
+            for (int index : extremeIndexes) {
+                PageRequest pr = support.clampedPage(index, size, Sort.unsorted());
+                assertThat(pr.getOffset())
+                        .as("offset for index=%d size=%d must survive the PageableUtils int cast",
+                                index, size)
+                        .isBetween(0L, (long) Integer.MAX_VALUE);
+                assertThat(pr.getPageNumber())
+                        .as("page number must stay non-negative for index=%d size=%d", index, size)
+                        .isGreaterThanOrEqualTo(0);
+            }
+        }
+    }
+
+    /**
+     * The boundary itself, pinned from both sides: an index exactly at
+     * {@code MAX_VALUE / size} is legal and must be kept verbatim, and the next one must be pulled
+     * down to it. Without this the guard could pass the sweep above while silently degrading every
+     * legal page (e.g. clamping everything to 0), which is the failure mode the
+     * {@code processDefinitions_distantButLegalIndex_…} IT guards on the HTTP side.
+     */
+    @Test
+    void clampedPage_indexBoundary_keptExactlyAndOneMoreIsPulledDown() {
+        int size = 10;
+        int boundary = Integer.MAX_VALUE / size;
+
+        assertThat(support.clampedPage(boundary, size, Sort.unsorted()).getPageNumber())
+                .as("the boundary index itself is legal and must not be moved")
+                .isEqualTo(boundary);
+        assertThat(support.clampedPage(boundary + 1, size, Sort.unsorted()).getPageNumber())
+                .as("one past the boundary is pulled down to it, never above")
+                .isEqualTo(boundary);
+    }
+
+    /**
+     * Nulls are the caller's normal case on these two endpoints ({@code ?pageIndex=} binds to null),
+     * and before WO-QW-14 {@code Math.max(0, parameters.getPageIndex())} would have NPE'd on them —
+     * {@code ProcessDefinitionServiceImpl} still does that inline in neither branch, but the
+     * guard is now the helper's job, so it is pinned here for both null and negative input.
+     */
+    @Test
+    void clampedPage_nullAndNegativeCallerValuesNeverThrow() {
+        assertThat(support.clampedPage(null, null, Sort.unsorted()).getPageNumber()).isZero();
+        assertThat(support.clampedPage(-1, -1, Sort.unsorted()).getPageNumber()).isZero();
+        assertThat(support.clampedPage(null, -1, Sort.unsorted()).getPageSize()).isEqualTo(1);
+    }
+
     // --- emptyPage ---
     @Test
     void emptyPage_returnsEmpty() {

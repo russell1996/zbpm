@@ -48,6 +48,15 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final DeploymentArtifactRegistrar artifactRegistrar;
     private final DeploymentPostCommitActions postCommitActions;
     private final AdvisoryDeployLock advisoryDeployLock;
+    /**
+     * WO-QW-14: single owner of the server-side page clamp. This class used to inline
+     * {@code PageRequest.of(Math.max(0, index), Math.min(200, …), sort)}, which clamped the SIZE
+     * but let the index reach Spring Data as-is — and {@code PageableUtils.getOffsetAsInteger} then
+     * threw {@code Page offset exceeds Integer.MAX_VALUE} for {@code ?pageIndex=2147483647}, i.e.
+     * a 500 straight out of caller input. Routing both overloads through the shared helper is the
+     * P-24 requirement (one implementation of the guard, not a rewritten copy of it).
+     */
+    private final com.zorrodev.bpm.engine.service.query.QueryPaginationSupport queryPaginationSupport;
 
     @Override
     public Optional<ProcessDefinition> getProcessDefinitionById(UUID id) {
@@ -289,10 +298,10 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
 
     @Override
     public PagedDataDTO<ProcessDefinition> getProcessDefinitions(ProcessDefinitionsQueryParameters parameters) {
-        int maxPageSize = 200; // WO-A-05: clamp
-        PageRequest pageRequest = PageRequest.of(
-            Math.max(0, parameters.getPageIndex()),
-            Math.min(maxPageSize, Math.max(1, parameters.getPageSize())),
+        // WO-QW-14: the WO-A-05 size clamp and the index clamp now both live in the shared helper.
+        PageRequest pageRequest = queryPaginationSupport.clampedPage(
+            parameters.getPageIndex(),
+            parameters.getPageSize(),
             buildSort(parameters));
 
         List<Specification<ProcessDefinitionEntity>> specifications = new LinkedList<>();
@@ -345,10 +354,11 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
             return empty;
         }
         if (allowedPdIds != null) {
-            int maxPageSize = 200;
-            PageRequest pageRequest = PageRequest.of(
-                Math.max(0, parameters.getPageIndex()),
-                Math.min(maxPageSize, Math.max(1, parameters.getPageSize())),
+            // WO-QW-14: same shared clamp as the overload above — this second entry point built its
+            // own PageRequest and was the one the REST resource actually calls.
+            PageRequest pageRequest = queryPaginationSupport.clampedPage(
+                parameters.getPageIndex(),
+                parameters.getPageSize(),
                 buildSort(parameters));
 
             java.util.List<Specification<ProcessDefinitionEntity>> specs = new java.util.LinkedList<>();
