@@ -99,7 +99,9 @@ class ProcessDefinitionServiceImplTest {
             versioning,
             artifactRegistrar,
             postCommitActions,
-            advisoryDeployLock
+            advisoryDeployLock,
+            // WO-QW-14: the REAL page-clamp helper this service now delegates to.
+            new com.zorrodev.bpm.engine.service.query.QueryPaginationSupport()
         );
     }
 
