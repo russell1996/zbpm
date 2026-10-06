@@ -30,8 +30,10 @@
 | `incident.resolved` | инцидент разрешён | ✅ | `{ incidentId }` |
 
 > **assignee/candidateGroups (в проде):** `assignee` кладётся только если задача назначена (иначе ключа нет);
-> `candidateGroups` — строка через запятую (`"managers,admins"`), НЕ массив. `candidateUsers` НЕ эмитится (в модели
-> user-task такого поля нет). Так внешний бэкенд роутит событие сотруднику без доспроса `GET /user-tasks/{id}`.
+> `candidateGroups` — строка через запятую (`"managers,admins"`), НЕ массив. `candidateUsers` НЕ эмитится:
+> в СОБЫТИИ такого ключа нет, хотя в модели он теперь есть — с WO-IN-3 кандидаты хранятся нормализованно
+> в `user_task_candidates` (роль `USER`/`GROUP`), и по `candidateUsers` работает фильтр `GET /user-tasks`.
+> Так внешний бэкенд роутит событие сотруднику без доспроса `GET /user-tasks/{id}`.
 > Смена assignee после создания (claim/reassign/unclaim) эмитит `user-task.assigned`/`user-task.unassigned` (WO-INT-5).
 
 ## Поля конверта (одинаковы у всех событий)

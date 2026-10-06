@@ -61,6 +61,12 @@ databaseChangeLog:
         # CHECK через sql (не addCheckConstraint): в этом репозитории addCheckConstraint не
         # используется ни разу, а raw sql — проверенная практика (см. 20261005-117). Плюс его
         # приходится дублировать по dbms ради H2, как и комментарии ниже.
+        #
+        # ПОЧЕМУ sql, А НЕ COMMENT ON ИЛИ ЧТО-ТО ПОЖЕСТЧЕ: у PostgreSQL синтаксис
+        # COMMENT ON INDEX <index> IS '...' — БЕЗ имени таблицы после индекса. Написание
+        # «COMMENT ON INDEX x ON table IS …» падает с "syntax error at or near ON" и роняет
+        # СТАРТ ПРИЛОЖЕНИЯ (Liquibase HALT). Это поймал PgIT; полный clean verify на H2
+        # проходил зелёным, потому что changeset на H2 не применяется вовсе.
         - sql:
             dbms: postgresql
             sql: >-
@@ -86,7 +92,7 @@ databaseChangeLog:
               COMMENT ON COLUMN user_task_candidates.user_task_id IS 'Задача-владелец строки кандидата (FK на user_tasks.id, RESTRICT — удаляет retention)';
               COMMENT ON COLUMN user_task_candidates.kind IS 'Роль кандидата: USER — конкретный пользователь, GROUP — группа. Иных значений не бывает (CHECK)';
               COMMENT ON COLUMN user_task_candidates.candidate IS 'Имя кандидата: имя пользователя для kind=USER, имя группы для kind=GROUP. Нормализация — trim по краям элемента, как в CandidateGroups (общая семантика с авторизацией)';
-              COMMENT ON INDEX idx_user_task_candidates__kind_candidate ON user_task_candidates IS 'Обслуживает EXISTS-проверку «задача имеет кандидата такого-то» для candidateGroup/candidateUser/relatesTo';
+              COMMENT ON INDEX idx_user_task_candidates__kind_candidate IS 'Обслуживает EXISTS-проверку «задача имеет кандидата такого-то» для candidateGroup/candidateUser/relatesTo';
         - sql:
             dbms: h2
             sql: >-
