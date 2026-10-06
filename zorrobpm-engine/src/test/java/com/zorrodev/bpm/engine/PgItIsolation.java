@@ -157,6 +157,11 @@ public final class PgItIsolation {
         deleteById(jdbc, "timer_jobs", ids);
     }
 
+    /** Same for timer-START jobs: a due armed one is claimed by another context's live poller. */
+    public static void deleteTimerStartJobs(JdbcTemplate jdbc, Collection<UUID> ids) {
+        deleteById(jdbc, "timer_start_jobs", ids);
+    }
+
     private static void deleteById(JdbcTemplate jdbc, String table, Collection<UUID> ids) {
         if (ids.isEmpty()) {
             return;
