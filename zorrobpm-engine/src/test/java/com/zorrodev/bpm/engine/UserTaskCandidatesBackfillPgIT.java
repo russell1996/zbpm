@@ -56,6 +56,11 @@ class UserTaskCandidatesBackfillPgIT {
         LEGACY.put("sales", List.of("sales"));
         LEGACY.put(" sales , east ", List.of("sales", "east"));
         LEGACY.put("a,,b", List.of("a", "b"));
+        // WO-IN-3r3 (Б-1): легаси с табами/переводами строк по краям элементов. Java trim()
+        // (CandidateGroups.parse, авторизация, писатель) режет ВСЁ ≤ U+0020, а SQL-btrim — только
+        // пробелы: без паритета 'sales\t' лежит в таблице, а ищется 'sales' (narrower-дефект).
+        LEGACY.put("sales\t,east", List.of("sales", "east"));
+        LEGACY.put("\n sales \r,\t east \t", List.of("sales", "east"));
         LEGACY.put(null, List.of());
         LEGACY.put("", List.of());
     }
@@ -188,7 +193,7 @@ class UserTaskCandidatesBackfillPgIT {
         seedLegacyRows();
         runMaster();
 
-        assertThat(countByKind("GROUP")).as("до повтора кандидаты на месте").isEqualTo(5);
+        assertThat(countByKind("GROUP")).as("до повтора кандидаты на месте").isEqualTo(9);
 
         forgetBackfillChangeset();
         runMaster();
@@ -196,7 +201,7 @@ class UserTaskCandidatesBackfillPgIT {
         assertThat(groupCandidatesByLegacyValue().get(groupKey("sales")))
             .as("повторный прогон не задублировал кандидатов")
             .containsExactly("sales");
-        assertThat(countByKind("GROUP")).isEqualTo(5);
+        assertThat(countByKind("GROUP")).isEqualTo(9);
     }
 
     /**
@@ -217,7 +222,7 @@ class UserTaskCandidatesBackfillPgIT {
         assertThat(countByKind("USER"))
             .as("у пользователей не было ни одной записи — значит и бэкфиллить нечего")
             .isZero();
-        assertThat(countByKind("GROUP")).isEqualTo(5);
+        assertThat(countByKind("GROUP")).isEqualTo(9);
     }
 
     // ==================== helpers ====================
