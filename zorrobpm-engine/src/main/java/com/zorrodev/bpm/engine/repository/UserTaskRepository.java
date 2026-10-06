@@ -125,30 +125,42 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
      * <ul>
      *   <li>delimiters — the stored list is wrapped in {@code ,} and the pattern carries the same
      *       delimiters, so group {@code sales} does NOT match a task holding {@code sales-east};</li>
-     *   <li>whitespace — spaces are stripped from BOTH sides before comparing, because
-     *       {@code AuthorizationService.parseCandidateGroups} TRIMS each element: a hand-written
+     *   <li>whitespace AROUND the delimiters — stripped from BOTH sides of every comma before
+     *       comparing, because {@code AuthorizationService} trims each element: a hand-written
      *       {@code candidateGroups="sales ,east"} makes the user a candidate of {@code east} for
      *       authorization, so a filter that did not match it would hide a task the person may
      *       really claim (the two must not answer different questions).</li>
      * </ul>
      *
+     * <p>Whitespace INSIDE a name is deliberately NOT removed (red-team LOW-5): the earlier
+     * {@code replace(candidate_groups, ' ', '')} collapsed the group {@code sa les} into
+     * {@code sales}, so the filter answered a WIDER question than the authorization — a person in
+     * {@code sa les} saw the tasks of {@code sales}, a group they are not in. Names with a space
+     * are legal ({@code UserGroupEntity.groupName} is free text), so only the space adjacent to a
+     * delimiter is dropped. Normalized on the Java side by the same rule — {@link String#trim()}
+     * per element, see {@code CandidateGroups}.
+     *
      * <p>LIKE metacharacters in the group name are escaped with the same backslash convention as
      * {@code UiUserRepository.byUsernameContains} (WO-SEC-17) — a group literally called
      * {@code sales%} stays a literal, never a wildcard. Case is left alone on purpose:
-     * {@code parseCandidateGroups} compares group names case-SENSITIVELY.
+     * {@code AuthorizationService} compares group names case-SENSITIVELY.
      */
     private static Predicate candidateGroupToken(Root<UserTaskEntity> root, CriteriaBuilder cb, String group) {
-        String token = escapeLike(group.replace(" ", ""));
-        // replace(x,' ','') keeps NULL NULL, so a task without candidate groups stays excluded
+        String token = escapeLike(group.trim());
+        // Only the space ADJACENT to a delimiter is dropped — the element boundary the
+        // authorization side sees after trimming. replace(x,…) keeps NULL NULL, so a task without
+        // candidate groups stays excluded. A space INSIDE a name is kept on purpose (see above).
         var normalized = cb.function("replace", String.class,
-            root.get("candidateGroups"), cb.literal(" "), cb.literal(""));
+            cb.function("replace", String.class, root.get("candidateGroups"),
+                cb.literal(" ,"), cb.literal(",")),
+            cb.literal(", "), cb.literal(","));
         var padded = cb.concat(cb.concat(",", normalized), ",");
         return cb.like(padded, "%," + token + ",%", '\\');
     }
 
     /**
      * WO-SEC-17 escaping convention: backslash first, then the two LIKE wildcards. Case is left
-     * alone on purpose — {@code AuthorizationService.parseCandidateGroups} compares group names
+     * alone on purpose — {@code AuthorizationService} compares group names
      * case-SENSITIVELY, so a case-insensitive filter here would answer a wider question than the
      * authorization side actually grants.
      */

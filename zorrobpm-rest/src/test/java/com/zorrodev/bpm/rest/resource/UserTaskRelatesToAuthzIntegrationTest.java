@@ -214,7 +214,63 @@ class UserTaskRelatesToAuthzIntegrationTest {
         assertThat(ids).doesNotContain(strangerTaskInBobOnly, strangerTaskInForeign);
     }
 
+    // ===== HIGH-1 (red-team, sha 22af7705): the 403 is NOT a person-level boundary =====
+
+    /**
+     * Characterization test for the honest formulation CTO demanded on 2026-10-06. It pins what
+     * the endpoint actually does, so nobody can read the {@code relatesTo} guard as a security
+     * boundary again: Bob is refused the QUESTION about Alice, and then receives exactly the same
+     * rows through the PRE-EXISTING {@code assignee} parameter, because {@code assignee} is
+     * applied without any authorization of its value (pre-existing on master — V7, not introduced
+     * here). Person-level visibility is WO-ACL-23, not this WO.
+     *
+     * <p>Mutation that must redden this test: drop {@code mayAskAboutUser} in
+     * {@code QueryResource.getUserTasks} (the first assertion flips to 200).
+     */
+    @Test
+    void personLevelBoundary_doesNotExist_assigneeHandsOutTheSameRowsRelatesToRefuses() throws Exception {
+        mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + bobToken)
+                        .param("relatesTo", aliceId.toString()))
+            .andExpect(status().isForbidden());
+
+        MvcResult result = mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + bobToken)
+                        .param("assignee", aliceName)
+                        .param("pageSize", "200"))
+            .andExpect(status().isOk())
+            .andReturn();
+
+        List<UUID> byAssignee = new ArrayList<>();
+        for (JsonNode node : mapper.readTree(result.getResponse().getContentAsString()).get("data")) {
+            byAssignee.add(UUID.fromString(node.get("id").asText()));
+        }
+
+        // the very rows the guard refused to name, reachable by username
+        assertThat(byAssignee).contains(aliceTaskInVisible);
+    }
+
     // ===== the new filters are reachable over HTTP and validated there =====
+
+    /** C0.2 / E-IN2-1 variant B: refused out loud over HTTP, never answered with "everything". */
+    @Test
+    void candidateUserParam_overHttp_is400_notSilentlyIgnored() throws Exception {
+        mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("candidateUser", strangerName))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("UNSUPPORTED_CANDIDATE_USER_FILTER"));
+    }
+
+    /** MEDIUM-2 over HTTP: a caller-supplied index must answer an empty page, never a 500. */
+    @Test
+    void pageIndexMaxValue_overHttp_is200_andNotA500() throws Exception {
+        mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("pageIndex", String.valueOf(Integer.MAX_VALUE)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data").isArray());
+    }
 
     @Test
     void candidateGroupParam_overHttp_filtersRows() throws Exception {

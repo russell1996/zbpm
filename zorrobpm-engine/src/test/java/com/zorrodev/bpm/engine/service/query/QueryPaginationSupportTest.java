@@ -70,6 +70,33 @@ class QueryPaginationSupportTest {
         assertThat(pr.getSort()).isEqualTo(sort);
     }
 
+    /**
+     * WO-IN-2 red-team MEDIUM-2: {@code pageIndex} was only {@code Math.max(0, …)} while the size
+     * was clamped, so a large index overflowed {@code pageIndex*pageSize} and Spring Data JPA's
+     * {@code PageableUtils.getOffsetAsInteger} threw {@code InvalidDataAccessApiUsageException}
+     * — a 500 straight out of caller input. Every endpoint using this method shares the guard, so
+     * the assertion is on the OFFSET ITSELF, not on the returned page number.
+     */
+    @Test
+    void clampedPage_offsetNeverOverflowsInt_whateverTheIndex() {
+        for (int size : new int[]{1, 10, 200}) {
+            for (int index : new int[]{Integer.MAX_VALUE, Integer.MAX_VALUE / 2, 1_000_000_000}) {
+                PageRequest pr = support.clampedPage(index, size, Sort.unsorted());
+                assertThat(pr.getOffset())
+                    .as("offset for index=%d size=%d", index, size)
+                    .isLessThanOrEqualTo(Integer.MAX_VALUE);
+            }
+        }
+    }
+
+    /** The clamp must not swallow a legal page: index 1000 at size 10 stays where it was. */
+    @Test
+    void clampedPage_keepsEveryLegalPageIndex() {
+        PageRequest pr = support.clampedPage(1000, 10, Sort.unsorted());
+        assertThat(pr.getPageNumber()).isEqualTo(1000);
+        assertThat(pr.getOffset()).isEqualTo(10000L);
+    }
+
     // --- emptyPage ---
     @Test
     void emptyPage_returnsEmpty() {

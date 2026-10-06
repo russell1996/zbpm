@@ -67,10 +67,23 @@ public class QueryPaginationSupport {
         };
     }
 
-    /** WO-A-05: server-side clamp — safety net even if validation annotations are bypassed */
+    /**
+     * WO-A-05: server-side clamp — safety net even if validation annotations are bypassed.
+     *
+     * <p>WO-IN-2 red-team MEDIUM-2: the SIZE was clamped, the INDEX only got {@code Math.max(0, …)}.
+     * Spring Data passes {@code pageIndex*pageSize} as the SQL OFFSET through
+     * {@code PageableUtils.getOffsetAsInteger}, which throws
+     * {@code InvalidDataAccessApiUsageException: Page offset exceeds Integer.MAX_VALUE} for anything
+     * above {@code 2147483647} — so {@code ?pageIndex=2147483647} escaped as a <b>500</b> out of
+     * plain caller input (the endpoint's own contract is "bad input → 400", not 500). Clamping the
+     * index to {@code Integer.MAX_VALUE / size} keeps the product inside int for every size, so the
+     * call degrades to an ordinary far-beyond-the-end page — an empty 200, which is also the honest
+     * answer: no table on this planet holds row number 2.1 billion of a paged window.
+     */
     public PageRequest clampedPage(Integer pageIndex, Integer pageSize, Sort sort) {
-        int page = Math.max(0, pageIndex != null ? pageIndex : 0);
         int size = Math.min(MAX_PAGE_SIZE, Math.max(1, pageSize != null ? pageSize : 10));
+        int page = Math.max(0, pageIndex != null ? pageIndex : 0);
+        page = Math.min(page, Integer.MAX_VALUE / size);
         return PageRequest.of(page, size, sort);
     }
 

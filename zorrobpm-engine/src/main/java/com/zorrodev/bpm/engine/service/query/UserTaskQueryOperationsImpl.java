@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.mapper.UserTaskMapper;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.security.CandidateGroups;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -38,6 +39,15 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
     private static final Set<String> SORTABLE_FIELDS = Set.of(
         "createdAt", "completedAt", "priority", "dueDate", "followUpDate",
         "assignee", "bpmnElementId", "formKey", "id");
+
+    /**
+     * WO-IN-2 MEDIUM-3: the candidate filter builds one un-indexed {@code LIKE} per group, so its
+     * cost is LINEAR in the number of groups (red-team measurement on 1M rows: 1 group 77 ms,
+     * 100 groups 3982 ms, plus a COUNT of the same price). 20 groups is far past anything a real
+     * candidate list holds and bounds one request to 20 scans' worth of work; a caller asking about
+     * a person with more is told so instead of being served a multi-second query.
+     */
+    static final int MAX_PERSON_GROUPS = 20;
 
     private final UserTaskRepository userTaskRepository;
     private final UserTaskMapper userTaskMapper;
@@ -79,7 +89,19 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
         // task of the caller. null/blank = "no filter" — the same rule as jobType in
         // ServiceTaskQueryOperationsImpl (WO-IN-1), so an absent parameter keeps the old page.
         if (hasText(query.getCandidateGroup())) {
-            specifications.add(UserTaskRepository.byCandidateGroup(query.getCandidateGroup().trim()));
+            specifications.add(
+                UserTaskRepository.byCandidateGroup(storableGroupName(query.getCandidateGroup())));
+        }
+        // WO-IN-2 C0.2 — the same defect one parameter over: ?candidateUser= was DECLARED and read
+        // nowhere, so it silently answered with MORE than was asked for. There is no
+        // user_tasks.candidate_users column and no candidates table (escalation E-IN2-1), so this
+        // WO creates neither. CTO decision 2026-10-06 — variant (B): refuse the request out loud
+        // instead of pretending to filter. A silently ignored filter is strictly worse than a
+        // broken call, and a blank value stays "no filter" like every other optional parameter.
+        if (hasText(query.getCandidateUser())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_CANDIDATE_USER_FILTER",
+                "candidateUser is not supported: candidate users are not stored",
+                Map.of("candidateUser", query.getCandidateUser()));
         }
         // WO-IN-2 criterion 3
         if (hasText(query.getBpmnElementId())) {
@@ -96,8 +118,7 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
                 return queryPaginationSupport.emptyPage(query);
             }
             specifications.add(UserTaskRepository.relatesTo(roles.username(), roles.groups()));
-        }
-        Specification<UserTaskEntity> all = Specification.allOf(specifications);
+        }        Specification<UserTaskEntity> all = Specification.allOf(specifications);
         PageRequest page = queryPaginationSupport.clampedPage(
             query.getPageIndex(), query.getPageSize(), resolveSort(query));
         return queryPaginationSupport.toDTOBulk(userTaskRepository.findAll(all, page), userTaskMapper::toDTOs);
@@ -142,13 +163,46 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
      * <p>Who may ASK about which user is NOT decided here: {@code allowedPdIds} still scopes the
      * rows, and the resource layer authorizes the VALUE of {@code relatesTo} before this runs
      * ({@code QueryResource.getUserTasks}) — the same trust model as {@code allowedPdIds} itself.
+     *
+     * <p>Both guards below run BEFORE the specification is built, so neither a rejected request nor
+     * an oversized one ever reaches SQL: MEDIUM-3 bounds how many {@code LIKE}s one request may
+     * cost, LOW-5 refuses a group name the column cannot represent.
      */
     private PersonRoles resolveRoles(UUID userId) {
         String username = uiUserRepository.findById(userId)
             .map(UiUserEntity::getUsername)
             .orElse(null);
         Set<String> groups = new LinkedHashSet<>(userGroupRepository.findGroupNamesByUserId(userId));
-        return new PersonRoles(username, List.copyOf(groups));
+        if (groups.size() > MAX_PERSON_GROUPS) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "TOO_MANY_PERSON_GROUPS",
+                "relatesTo: the person belongs to more than " + MAX_PERSON_GROUPS + " groups",
+                Map.of("groups", groups.size(), "max", MAX_PERSON_GROUPS,
+                    "relatesTo", userId.toString()));
+        }
+        return new PersonRoles(username, groups.stream().map(UserTaskQueryOperationsImpl::storableGroupName).toList());
+    }
+
+    /**
+     * WO-IN-2 LOW-5: a group name is one name — it may not carry the list delimiter.
+     *
+     * <p>Red-team proof on a live PostgreSQL: with the name {@code a,b} the LIKE pattern became
+     * {@code ,a,b,}, which also matched the task holding {@code x,a,b,y} — i.e. the filter handed
+     * out tasks of two groups the request never named, and of which the person is not a candidate
+     * ({@code AuthorizationService} compares whole names and finds no {@code a,b}). Refusing is
+     * the honest answer; guessing which of the two names was meant is not.
+     *
+     * <p>Unreachable through the REST layer today — nothing in the {@code src/main} trees writes
+     * {@code user_group} (there is no group-management endpoint), so this only guards the moment a
+     * group UI appears (group-UI, EPIC-EXTERNAL-INTEGRATION).
+     */
+    private static String storableGroupName(String groupName) {
+        String trimmed = groupName.trim();
+        if (!CandidateGroups.isStorable(trimmed)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_GROUP_NAME",
+                "A group name may not contain the '" + CandidateGroups.DELIMITER + "' list delimiter",
+                Map.of("group", groupName));
+        }
+        return trimmed;
     }
 
     private static boolean hasText(String value) {

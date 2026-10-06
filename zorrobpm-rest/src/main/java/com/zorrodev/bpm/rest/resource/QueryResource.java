@@ -58,20 +58,34 @@ public class QueryResource implements QueryContract {
 
     public PagedDataDTO<UserTask> getUserTasks(@ParameterObject UserTaskQuery query) {
         Collection<UUID> allowedPdIds = resolveAllowedPdIds();
-        // WO-IN-2 criterion 4: "tasks that concern person X" is a QUESTION ABOUT ANOTHER USER, so
-        // the value of relatesTo needs its own authorization — the allowedPdIds filter above only
-        // answers "which processes may this caller read". Default DENY (G-L): asking about your own
-        // tasks is always fine, asking about someone else's needs a principal that can already see
-        // everything (allowedPdIds == null, i.e. SUPER_ADMIN per WO-SEC-54), because such a caller
-        // loses nothing: the unfiltered list already contains those rows. A ServicePrincipal has no
-        // user id at all (RuntimeOperationSupport.resolvePrincipalId writes its apiKeyId into
-        // `assignee`), so it gets no `relatesTo` support rather than a wrong one.
+        // WO-IN-2 criterion 4 — and an HONEST boundary statement (red-team HIGH-1, 2026-10-06):
+        // this check is a conservative default for the NEW parameter, NOT a security boundary.
+        // The access model of this endpoint is per PROCESS (`allowedPdIds`): any participant of a
+        // process sees that process's tasks. Person-level visibility does not exist here at all —
+        // the pre-existing `assignee` filter is applied without any authorization of its value
+        // (UserTaskQueryOperationsImpl.byAssignee), so a participant reaches the very same rows by
+        // naming a username, and this guard does not stop that. What it does stop is the ability to
+        // ASK the question "tasks that concern person X" — a smaller thing, and the honest name for
+        // it is a UX restriction.
+        //
+        // Rules: your own userId always; a see-all principal (allowedPdIds == null, i.e. SUPER_ADMIN
+        // per WO-SEC-54) always — such a caller loses nothing, the unfiltered list already holds
+        // those rows. A ServicePrincipal has no user id at all (RuntimeOperationSupport
+        // .resolvePrincipalId writes its apiKeyId into `assignee`), so it gets no `relatesTo`
+        // support rather than a wrong one.
+        //
+        // Person-level visibility is WO-ACL-23 (owner's decision), not this WO.
         if (query.getRelatesTo() != null && !mayAskAboutUser(query.getRelatesTo(), allowedPdIds)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
         return queryService.findUserTasks(query, allowedPdIds);
     }
 
+    /**
+     * WHO MAY ASK ABOUT WHICH USER — see the honest boundary statement in
+     * {@link #getUserTasks}: this refuses the QUESTION, it is not a person-level security
+     * boundary (`assignee` reaches the same rows). Default DENY (G-L).
+     */
     private boolean mayAskAboutUser(UUID targetUserId, Collection<UUID> allowedPdIds) {
         if (allowedPdIds == null) {
             return true; // see-all principal (SUPER_ADMIN)
