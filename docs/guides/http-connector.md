@@ -39,7 +39,7 @@ service-task с `jobType="zorrobpm:http"`. Появился в WO-ENG-31 (Фаз
 | `http.headers` | нет | `{"X-Tenant":"t1"}` | JSON-объект заголовков. Литеральные секреты здесь запрещены — только `http.authRef` |
 | `http.queryParameters` | нет | `{"page":"2"}` | JSON-объект query-параметров |
 | `http.body` | нет | `{"a":1}` | тело запроса (`POST/PUT/PATCH`) |
-| `http.connectTimeout` / `http.readTimeout` | нет | `5` | перекрывают дефолт модели **в пределах капа** |
+| `http.connectionTimeout` / `http.readTimeout` | нет | `5` | перекрывают дефолт модели **в пределах капа** |
 | `http.authType` | нет | `none` | `none` / `bearer` / `basic` / `apiKey` |
 | `http.authRef` | при `authType != none` | `svc` | ИМЯ секрета, не сам секрет |
 
@@ -111,6 +111,66 @@ HTTP-вызов в проде.
   отклоняются — только `authRef`.
 - Коннектор включается оператором и работает только с заранее разрешёнными хостами;
   авторизацию на стороне сервиса он не заменяет (токен уходит, куда настроен).
+
+## Camunda-совместимость: `io.camunda:http-json:1`
+
+Элемент, смоделированный штатным темплейтом **Camunda Modeler → REST Connector**
+(`io.camunda.connectors.HttpJson.v2`), исполняется **как есть** — переписывать его на
+наш диалект не нужно. В шаблоне записан
+`<zeebe:taskDefinition type="io.camunda:http-json:1" />`; движок отдаёт такую задачу
+**второму** воркеру-алиасу, который переводит camunda-входы в `http.*` и уходит в **тот
+же** `HttpConnectorWorker` — тот же SSRF-гейт, те же секреты, те же капы, те же ошибки.
+Второго пути исполнения нет.
+
+Единственное, что надо поменять в элементе: **ничего**. Разве что при авторизации —
+см. таблицу ниже.
+
+### Что переводится
+
+| Вход Camunda (`zeebe:input`) | Наш вход | Примечание |
+|---|---|---|
+| `url` | `http.url` | обязательный |
+| `method` | `http.method` | тот же белый список `GET/POST/PUT/PATCH/DELETE` |
+| `headers` | `http.headers` | литеральный `Authorization` внутри — отклоняется, как и на нашем диалекте |
+| `queryParameters` | `http.queryParameters` | |
+| `body` | `http.body` | только для `POST/PUT/PATCH`, как и на нашем диалекте |
+| `connectionTimeoutInSeconds` | `http.connectionTimeout` | те же капы сверху |
+| `readTimeoutInSeconds` | `http.readTimeout` | те же капы сверху |
+| `authentication.type` | `http.authType` | `noAuth`→`none`, `basic`, `bearer`, `apiKey`→`apikey` |
+| — | `http.authRef` | **в шаблоне такого входа нет** — автор дописывает один input с target `http.authRef` и значением = ИМЯ секрета |
+
+### Что НЕ поддерживается (и что будет, если оставить)
+
+| Вход / taskHeader | Поведение | Почему |
+|---|---|---|
+| `authentication.token`, `.password`, `.value`, `.clientSecret`, `.refreshToken`, `.username`, `.name`, `.apiKeyLocation`, `.scopes`, `.audience`, … — **любой** `authentication.*`, кроме `.type` | `HTTP_CONNECTOR_CONFIG` | инлайн-секреты в модели процесса не принимаются; секрет живёт на сервере, в модели — только имя (`http.authRef`) |
+| `clientTls.*` (материал клиентского сертификата) | `HTTP_CONNECTOR_CONFIG` | client TLS (взаимный) не реализован — отдельная задача |
+| `authentication.type = oauth-*` (оба типа шаблона) | `HTTP_CONNECTOR_CONFIG` с текстом «отдельный WO» | OAuth не реализован; молчаливый «без авторизации» недопустим |
+| `followRedirects = true` | `HTTP_CONNECTOR_CONFIG` | бюджет редиректов задаёт администратор (`max-redirects`), расширять его из BPMN нельзя. `followRedirects=false` (дефолт шаблона, приходит всегда) — обычный путь |
+| taskHeader `resultVariable` (заполненный) | `HTTP_CONNECTOR_CONFIG` | «положить ответ в переменную X» мы выполнить не можем и не молчим об этом. Замените на output io-mapping: `<zeebe:output source="http.body" target="myResponseBody" />` |
+| taskHeader `errorExpression` (заполненный) | `HTTP_CONNECTOR_CONFIG` | логику ошибок коннектора мы не исполняем; non-2xx всегда даёт строгую `HTTP_<status>` (её ловит boundary error event) |
+| taskHeader `resultExpression` | **игнорируется, в лог уходит WARN** | FEEL-выражения не исполняются (второй движок выражений не заводим). Ответ — в `http.status/http.headers/http.body`, выбирается output io-mapping. WARN, а не отказ, потому что это свойство с НЕПУСТЫМ значением по умолчанию: оно есть у каждого элемента, к которому применён шаблон, и отказ здесь означал бы, что «применить шаблон» не работает никогда |
+| `storeResponse`, `ignoreNullValues`, `skipEncoding`, `documentReturnFormat.*`, `urlOverride`, `retryBackoff`, `jobTimeout`, `elementTemplateId`, `elementTemplateVersion` | игнорируются | на результат не влияют и никаких переменных не обещают |
+
+### Известные границы
+
+- **Версия типа.** Поддержан ровно `io.camunda:http-json:1` — тот, что пишет текущий
+  шаблон. На `io.camunda:http-json:2` воркера не будет, и задача будет ждать воркера
+  вечно, без инцидента: это сегодняшнее поведение движка для ЛЮБОГО неизвестного
+  job-type, deploy-валидатор «известный job-type» — отдельная задача.
+- **Имена переменных процесса.** Входы камундовского диалекта — обычные имена
+  (`url`, `body`, `method`, `headers`, `queryParameters`, `authentication`,
+  `connectionTimeoutInSeconds`, `readTimeoutInSeconds`). Перевод читает ровно их, поэтому
+  переменная процесса с таким именем будет принята за вход коннектора. Camunda
+  предупреждает ровно об этом в своей документации; здесь это то же самое.
+- **`body` при `GET`.** Наш диалект (и переведённый путь) отклоняет тело при
+  `GET/DELETE` — как и раньше, `HTTP_CONNECTOR_CONFIG`.
+
+### Точка расширения
+
+Следующий камундовский коннектор добавляется одним бином `JobHandler` (имя очереди
+строится стартером из `getJob()`), который так же строит перевод в `http.*` и уходит в
+тот же `HttpConnectorWorker`. Ничего в движке и в `HttpConnectorWorker` трогать не надо.
 
 ## Ограничения
 
