@@ -96,18 +96,24 @@ class LoopCharacteristicsSpellingDeployTests {
      * {@code serviceTask}/{@code userTask} — the two kinds that DO implement MI — the direct
      * spelling binds the MI extension and this one does not, so the marker is dropped and the
      * activity runs once (proved in this file's javadoc and in the report). Refused on every host.
+     *
+     * <p>The code differs by host on purpose. On a refused container the truthful reason is the
+     * container rule, so that is what the author is told; everywhere else the marker is refused
+     * because it is UNREADABLE, and the code says exactly that instead of blaming the host kind.
      */
     @Test
     void multiInstanceWrittenAsAbstractHeadElement_rejectedOnEveryHostKind() {
         for (String host : HOST_KINDS) {
             ApiException refusal = catchThrowableOfDeploy(bpmnWith(host, headElementMultiInstance()));
+            String expected = CONTAINER_KINDS.contains(host)
+                ? "UNSUPPORTED_MULTI_INSTANCE_CONTAINER"
+                : "UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE";
 
             assertThat(refusal)
                 .as("%s + <loopCharacteristics xsi:type=tMultiInstanceLoopCharacteristics> must be refused"
                     , host)
                 .isNotNull();
-            assertThat(refusal.getCode()).as("%s code", host)
-                .isEqualTo("UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE");
+            assertThat(refusal.getCode()).as("%s code", host).isEqualTo(expected);
             assertThat(refusal.getParams().get("elementIds")).as("%s elementIds", host)
                 .asList().containsExactly("loopTask");
         }
@@ -253,6 +259,63 @@ class LoopCharacteristicsSpellingDeployTests {
                 .as("%s without a loop marker must not produce a finding", host)
                 .isEmpty();
         }
+    }
+
+    /**
+     * A head element whose type cannot be resolved to a BPMN loop type must produce NO finding —
+     * a deliberate decision, pinned so that a later change to it is a conscious one.
+     *
+     * <p>The principle is the same one that keeps a foreign-namespace type out of the verdict
+     * (see {@link #xsiTypeIsResolvedThroughTheNamespace_notThePrefixText}): resolve the type, and
+     * if there is no BPMN loop type behind it, there is no loop construct the scanner can name.
+     * Guessing here would refuse a model over a type the scanner cannot read.
+     *
+     * <p>The three forms are all XSD-invalid — {@code tLoopCharacteristics} is abstract, so the head
+     * spelling is legal only WITH a type that derives from it — and this engine does not validate
+     * deploys against the BPMN XSD at all (a pre-existing property of the deploy path, recorded in
+     * the report as a hardening follow-up). They are pinned because the answer must stay
+     * "undeclared loop, nothing to refuse" rather than drift into either silent acceptance of a
+     * declared loop or a verdict invented from an unresolvable name.
+     */
+    @Test
+    void headElementWithAnUnresolvableType_reportsNoFindings() {
+        String noType = "<bpmn:loopCharacteristics loopMaximum=\"3\" />";
+        String abstractSelfReference =
+            "<bpmn:loopCharacteristics xsi:type=\"bpmn:tLoopCharacteristics\" loopMaximum=\"3\" />";
+        String undeclaredPrefix =
+            "<bpmn:loopCharacteristics xsi:type=\"nope:tStandardLoopCharacteristics\" loopMaximum=\"3\" />";
+
+        for (String marker : List.of(noType, abstractSelfReference, undeclaredPrefix)) {
+            BpmnProcessDefinitionModel model = bpmnParseService.parse(bpmnWith("scriptTask", marker));
+
+            assertThat(model.getUnsupportedConstructs())
+                .as("%s declares no BPMN loop type, so there is no construct to refuse", marker)
+                .isEmpty();
+        }
+    }
+
+    /**
+     * One host, both loop kinds, written directly — the two codes must stay distinct, and the
+     * code chosen must be the one whose message is TRUE for that host. Folding them into one code
+     * would tell a service-task author to move the marker inside a container, which is nonsense
+     * there.
+     */
+    @Test
+    void theTwoMultiInstanceRefusals_carryDifferentCodes() {
+        ApiException onContainer = catchThrowableOfDeploy(bpmnWith("subProcess", headElementMultiInstance()));
+        ApiException onTask = catchThrowableOfDeploy(bpmnWith("userTask", headElementMultiInstance()));
+
+        assertThat(onContainer).isNotNull();
+        assertThat(onTask).isNotNull();
+        assertThat(onContainer.getCode()).isEqualTo("UNSUPPORTED_MULTI_INSTANCE_CONTAINER");
+        assertThat(onTask.getCode()).isEqualTo("UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE");
+        assertThat(onContainer.getMessage())
+            .as("the container message keeps naming the container problem")
+            .contains("Move the multi-instance marker onto a task inside the container");
+        assertThat(onTask.getMessage())
+            .as("the unreadable-spelling message must not blame the container")
+            .doesNotContain("inside the container")
+            .contains("Write the concrete element");
     }
 
     /**
