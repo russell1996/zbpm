@@ -50,19 +50,31 @@ public final class BpmnSupportScanner {
     private static final Set<String> MULTI_INSTANCE_UNSUPPORTED_HOSTS =
         Set.of("subProcess", "transaction", "adHocSubProcess", "callActivity");
 
+    /**
+     * The BPMN 2.0 flow-node kinds — the only elements a {@code sequenceFlow} may legally point at,
+     * so the only ones that make a {@code sourceRef}/{@code targetRef} resolvable. An explicit list
+     * on purpose: an absent element kind would silently turn every flow that points at it into a
+     * false "dangling" finding, which is the failure mode this scan must not have (see
+     * {@link #unresolvedFlows}).
+     */
+    private static final Set<String> FLOW_NODE_NAMES = Set.of(
+        // events
+        "startEvent", "endEvent", "boundaryEvent", "intermediateCatchEvent", "intermediateThrowEvent",
+        // activities
+        "task", "serviceTask", "userTask", "scriptTask", "manualTask", "businessRuleTask",
+        "sendTask", "receiveTask", "subProcess", "transaction", "adHocSubProcess", "callActivity",
+        // gateways
+        "exclusiveGateway", "inclusiveGateway", "parallelGateway", "complexGateway",
+        "eventBasedGateway");
+
     private BpmnSupportScanner() {
     }
 
     /**
-     * @param bpmn                 the raw XML exactly as it was deployed
-     * @param resolvableNodeIds    ids of the flow nodes the parser actually put into the executable
-     *                             model ({@code BpmnProcessDefinitionModel.getElements()}) — sequence
-     *                             flow refs are resolved against THIS set, not against every {@code id}
-     *                             in the document, because a ref into a graphical-DI shape or a node
-     *                             the engine drops is exactly the unresolvable case
+     * @param bpmn  the raw XML exactly as it was deployed
      * @return findings in a fixed order (see {@link #CODES}); empty when the model is fully supported
      */
-    public static List<UnsupportedBpmnConstruct> scan(String bpmn, Set<String> resolvableNodeIds) {
+    public static List<UnsupportedBpmnConstruct> scan(String bpmn) {
         Document document = SecureXmlParser.parseDocument(bpmn);
         List<UnsupportedBpmnConstruct> findings = new ArrayList<>();
 
@@ -127,9 +139,9 @@ public final class BpmnSupportScanner {
                     + "Use a message or timer start event."));
         }
 
-        // 6. sequence flow refs that resolve to nothing in the executable model: accepted at deploy,
-        //    parked the instance on an incident at the first token that followed the flow.
-        List<String> danglingFlows = unresolvedFlows(document, resolvableNodeIds);
+        // 6. sequence flow refs that resolve to nothing in the process they belong to: accepted at
+        //    deploy, parked the instance on an incident at the first token that followed the flow.
+        List<String> danglingFlows = unresolvedFlows(document);
         if (!danglingFlows.isEmpty()) {
             findings.add(new UnsupportedBpmnConstruct(
                 UnsupportedBpmnConstructCodes.UNRESOLVED_SEQUENCE_FLOW_REF, danglingFlows,
@@ -178,14 +190,61 @@ public final class BpmnSupportScanner {
     }
 
     /**
-     * Flows whose {@code sourceRef}/{@code targetRef} is absent, or points at an id the executable
-     * model does not contain. Reported per FLOW (one id, both endpoints folded in) so the message
+     * Flows of one {@code <process>} whose {@code sourceRef}/{@code targetRef} names no flow node
+     * THAT PROCESS declares. Reported per FLOW (one id, both endpoints folded in) so the message
      * names the thing the modeller has to edit.
+     *
+     * <p>Resolution is against the DOCUMENT, per process, and deliberately NOT against the ids the
+     * parser put into the executable model. Two reasons, both learned from a live run:
+     * <ul>
+     *   <li>the message must be TRUE — "matches no flow node of the process" cannot be said about a
+     *       node the document plainly declares (see {@link #FLOW_NODE_NAMES} for the kinds this
+     *       check cares about); a node the parser happens not to model is a DIFFERENT defect, and it
+     *       has its own finding or its own WO — mislabelling it here hid the real cause;</li>
+     *   <li>resolving against the parsed model produced FALSE POSITIVES on valid models: the JAXB
+     *       process model binds {@code <startEvent>} only, so a model written with the equally legal
+     *       {@code <messageStartEvent>} tag (what Zeebe/Camunda exports) loses those start events at
+     *       parse time, and every flow out of them was reported as dangling. Refusing such a model
+     *       with the sentence "matches no flow node" would be a lie — the author would go looking
+     *       for a typo that is not there.</li>
+     * </ul>
+     * Per process rather than per document: a flow pointing into ANOTHER {@code <process>} of the
+     * same resource is genuinely broken (each deployment holds one process), and that is exactly
+     * what criterion 4 asks for.
      */
-    private static List<String> unresolvedFlows(Document document, Set<String> resolvableNodeIds) {
+    private static List<String> unresolvedFlows(Document document) {
         List<String> flows = new ArrayList<>();
-        collectFlows(document.getDocumentElement(), flows, resolvableNodeIds);
+        for (Element process : localNameElements(document.getDocumentElement(), "process")) {
+            collectFlows(process, flows, flowNodeIdsOf(process));
+        }
         return flows;
+    }
+
+    /** Ids of the flow nodes one {@code <process>} declares, nested containers included. */
+    private static Set<String> flowNodeIdsOf(Element process) {
+        Set<String> ids = new LinkedHashSet<>();
+        collectFlowNodeIds(process, ids);
+        return ids;
+    }
+
+    private static void collectFlowNodeIds(Element element, Set<String> ids) {
+        NodeList children = element.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() != Node.ELEMENT_NODE || !isBpmn((Element) child)) {
+                continue;
+            }
+            Element childElement = (Element) child;
+            if (FLOW_NODE_NAMES.contains(localName(childElement))) {
+                String id = childElement.getAttribute("id");
+                if (id != null && !id.isBlank()) {
+                    ids.add(id);
+                }
+            }
+            // recurse: a node nested in a sub-process/transaction/adHoc body belongs to the SAME
+            // process and is therefore a legal endpoint for a flow of that process
+            collectFlowNodeIds(childElement, ids);
+        }
     }
 
     private static void collectFlows(Element element, List<String> flows, Set<String> resolvable) {
@@ -227,12 +286,17 @@ public final class BpmnSupportScanner {
     }
 
     private static List<String> localNames(Element root, String name) {
-        List<String> found = new ArrayList<>();
-        collectNames(root, found, name);
+        return localNameElements(root, name).stream().map(BpmnSupportScanner::label).toList();
+    }
+
+    /** The BPMN elements of one kind, in document order (the {@code <process>} elements, gateways). */
+    private static List<Element> localNameElements(Element root, String name) {
+        List<Element> found = new ArrayList<>();
+        collectElements(root, found, name);
         return found;
     }
 
-    private static void collectNames(Element element, List<String> found, String name) {
+    private static void collectElements(Element element, List<Element> found, String name) {
         NodeList children = element.getChildNodes();
         for (int i = 0; i < children.getLength(); i++) {
             Node child = children.item(i);
@@ -244,9 +308,9 @@ public final class BpmnSupportScanner {
                 continue;
             }
             if (name.equals(localName(childElement))) {
-                found.add(label(childElement));
+                found.add(childElement);
             }
-            collectNames(childElement, found, name);
+            collectElements(childElement, found, name);
         }
     }
 

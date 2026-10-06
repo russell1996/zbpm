@@ -3,8 +3,13 @@
      the engine has no loop field anywhere and ran the script task exactly ONCE.
      Everything else here is supported on purpose, so the deploy refusal can only come from
      the loop: plain start + message start + timer start (so the refusal also proves that no
-     subscription/timer job would have been registered), one service task with a job, and
-     fully resolvable sequence flows. -->
+     subscription/timer job would have been registered), one script task, and fully resolvable
+     sequence flows.
+
+     The two triggering starts are written as <bpmn:startEvent> + <bpmn:*EventDefinition> — the
+     spelling this engine binds (it has no list for <bpmn:messageStartEvent>/<bpmn:timerStartEvent>).
+     In the tag form those starts vanish at parse time and their outgoing flows are reported as
+     dangling, so the fixture would be proving two things at once. -->
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_loop" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:message id="Msg_eng34" name="eng34-loop-message" />
   <bpmn:process id="test-eng34-standard-loop" name="test-eng34-standard-loop" isExecutable="true">
@@ -13,18 +18,18 @@
     </bpmn:startEvent>
     <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="loopTask" />
 
-    <bpmn:messageStartEvent id="msgStart" name="msgStart">
+    <bpmn:startEvent id="msgStart" name="msgStart">
       <bpmn:outgoing>f2</bpmn:outgoing>
       <bpmn:messageEventDefinition id="medMsg" messageRef="Msg_eng34" />
-    </bpmn:messageStartEvent>
+    </bpmn:startEvent>
     <bpmn:sequenceFlow id="f2" name="f2" sourceRef="msgStart" targetRef="loopTask" />
 
-    <bpmn:timerStartEvent id="tmrStart" name="tmrStart">
+    <bpmn:startEvent id="tmrStart" name="tmrStart">
       <bpmn:outgoing>f3</bpmn:outgoing>
       <bpmn:timerEventDefinition id="tedTmr">
         <bpmn:timeDuration>PT1H</bpmn:timeDuration>
       </bpmn:timerEventDefinition>
-    </bpmn:timerStartEvent>
+    </bpmn:startEvent>
     <bpmn:sequenceFlow id="f3" name="f3" sourceRef="tmrStart" targetRef="loopTask" />
 
     <bpmn:scriptTask id="loopTask" name="loopTask" scriptFormat="feel" resultVariable="x">

@@ -41,12 +41,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 @Service
 @Slf4j
@@ -419,12 +417,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
 
             // WO-ENG-34: record the executable constructs this engine does not implement, so deploy
-            // can refuse the model instead of running it with changed meaning. Runs at the END of
-            // parse on purpose: the flow-ref half resolves against pd.getElements(), which is only
-            // complete once every element (including sub-process bodies) has been flattened in.
-            // Recording, not throwing — models stored by an earlier release keep parsing (no runtime
-            // regression on upgrade); ProcessDefinitionServiceImpl is the single refusal point.
-            pd.setUnsupportedConstructs(BpmnSupportScanner.scan(bpmn, parsedElementIds(pd)));
+            // can refuse the model instead of running it with changed meaning. Recording, not
+            // throwing — models stored by an earlier release keep parsing (this parser is ALSO the
+            // runtime loader: BpmnServiceImpl re-parses the stored file per definition, so throwing
+            // here would make an already-deployed model unloadable on upgrade); the refusal lives in
+            // ProcessDefinitionServiceImpl, the single deploy gate.
+            pd.setUnsupportedConstructs(BpmnSupportScanner.scan(bpmn));
 
             return pd;
         } catch (Exception e) {
@@ -1234,17 +1232,6 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 pd.addFlow(toFlowModel(flow));
             }
         }
-    }
-
-    /** WO-ENG-34: the ids the executable model can actually navigate to (sub-process bodies included). */
-    private static Set<String> parsedElementIds(com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd) {
-        Set<String> ids = new HashSet<>();
-        for (com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel element : pd.getElements()) {
-            if (element.getId() != null) {
-                ids.add(element.getId());
-            }
-        }
-        return ids;
     }
 
     private BpmnFlowModel toFlowModel(BpmnSequenceFlowModel flow) {

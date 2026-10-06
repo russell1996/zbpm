@@ -47,6 +47,9 @@ public class UnsupportedConstructDeployIntegrationTests {
     private ProcessDefinitionService processDefinitionService;
 
     @Autowired
+    private com.zorrodev.bpm.engine.service.BpmnParseService bpmnParseService;
+
+    @Autowired
     private ProcessDefinitionRepository processDefinitionRepository;
 
     @Autowired
@@ -148,6 +151,33 @@ public class UnsupportedConstructDeployIntegrationTests {
             .noneMatch(pd -> pd.getKey().startsWith("test-eng34-dangling-ref"));
     }
 
+    @Test
+    void criterion4_danglingRefInsideASubProcess_isFoundToo() {
+        // the scan must RECURSE into container bodies: a top-level-only scan would accept this model
+        String bpmn = readBpmn("test-eng34-nested-ref-dangling.bpmn");
+
+        assertThatThrownBy(() -> processDefinitionService.addProcessDefinition(bpmn))
+            .isInstanceOf(ApiException.class)
+            .satisfies(ex -> {
+                ApiException api = (ApiException) ex;
+                assertThat(api.getCode()).isEqualTo("UNRESOLVED_SEQUENCE_FLOW_REF");
+                assertThat(api.getParams().get("elementIds")).asList().containsExactly("fGhost");
+            });
+    }
+
+    @Test
+    void criterion4_refToANodeOfTheParentScopeInsideASubProcess_isNotDangling() {
+        // the false-positive twin of the test above: fSub points OUT of the sub-process at a node of
+        // the same process. The parser flattens the body into one scope, so this resolves — a scan
+        // that resolved refs per CONTAINER, or against a set that missed parent-scope nodes, would
+        // refuse a perfectly good model.
+        String bpmn = readBpmn("test-eng34-nested-ref-ok.bpmn");
+
+        ProcessDefinition deployed = processDefinitionService.addProcessDefinition(bpmn);
+
+        assertThat(deployed.getId()).isNotNull();
+    }
+
     // ─── Criterion 5: conditional start event ─────────────────────────────
 
     @Test
@@ -238,6 +268,52 @@ public class UnsupportedConstructDeployIntegrationTests {
         assertThat(processDefinitionRepository.findById(deployed.getId()))
             .as("the supported model was really persisted")
             .isPresent();
+    }
+
+    /**
+     * The FALSE-POSITIVE guard, and the one this WO's own first cut failed: a scan that resolves
+     * sequence-flow refs against the ids the parser put into the executable model reports valid
+     * models as broken whenever the parser legitimately models fewer elements than the document
+     * declares. It did exactly that for message/timer/signal starts written in the
+     * {@code <bpmn:messageStartEvent>} tag form (which Zeebe/Camunda exports produce and which the
+     * JAXB process model has no list for): every flow out of such a start came back as dangling.
+     *
+     * <p>Each fixture below deploys TODAY; a false positive refuses it. They are the supported
+     * cousins of the six refused constructs, which is the only honest way to pin a rejection
+     * feature — its real failure mode is eating working models, not missing bad ones.
+     */
+    @Test
+    void criterion6_supportedModelsProduceNoFindingsAtAll() {
+        List<String> supported = List.of(
+            // message / timer / signal starts, in the spelling the engine binds (<startEvent> + def)
+            "test-message-start.bpmn", "test-timer-start.bpmn", "test-signal-start-receiver.bpmn",
+            "process-with-events.bpmn", "test-rel15-msg-deploy.bpmn", "test-rel15-timer-deploy.bpmn",
+            "test-scale4-batch-race.bpmn",
+            // event sub-processes (message / timer / signal triggered)
+            "test-event-subprocess.bpmn", "test-event-subprocess-timer.bpmn",
+            "test-event-subprocess-signal.bpmn", "test-event-subprocess-noninterrupting.bpmn",
+            // conditional events on kinds that DO implement them (boundary / intermediate catch)
+            "test-conditional-boundary.bpmn", "test-conditional-catch.bpmn",
+            // multi-instance on every supported kind, incl. the intermediate-throw parity case
+            // that keeps today's behaviour (not refused — see the report's "найдено рядом")
+            "test-c8-mi-throw.bpmn", "test-multi-instance.bpmn", "test-multi-instance-sequential.bpmn",
+            "test-multi-instance-service.bpmn", "test-mi-reenter.bpmn",
+            "test-eng-8-completioncondition.bpmn", "test-eng34-mi-on-tasks.bpmn",
+            // gateways, boundaries, sub-processes, call activity
+            "test-boundary.bpmn", "test-inclusive-end.bpmn", "controlProcess.bpmn",
+            "test-eng34-nested-ref-ok.bpmn");
+
+        List<String> dirty = new java.util.ArrayList<>();
+        for (String fixture : supported) {
+            var model = bpmnParseService.parse(readBpmn(fixture));
+            if (!model.getUnsupportedConstructs().isEmpty()) {
+                dirty.add(fixture + " -> " + model.getUnsupportedConstructs().stream()
+                    .map(c -> c.code() + c.elementIds()).toList());
+            }
+        }
+        assertThat(dirty)
+            .as("a rejection feature that eats working models is worse than the defect it closes")
+            .isEmpty();
     }
 
     // ─── Criterion 7: the error shape ─────────────────────────────────────
