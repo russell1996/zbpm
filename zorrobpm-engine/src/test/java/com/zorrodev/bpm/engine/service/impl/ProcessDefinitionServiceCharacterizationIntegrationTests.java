@@ -362,47 +362,69 @@ class ProcessDefinitionServiceCharacterizationIntegrationTests {
      * end must hold no rows.
      */
     @Test
-    void qw14_unfilteredOverload_indexBeyondIntOffset_isAnEmptyPage_notAServerError() {
+    void qw14_unfilteredOverload_indexBeyondIntOffset_isAnEmptyPage_notAServerError() throws Exception {
+        // Own row + key filter so the first-page total is deterministic (P-59): with no key filter
+        // the count would depend on what else the shared module database already holds.
+        String key = uniq("qw14u");
+        ProcessDefinition own = service.addProcessDefinition(plainBpmn(key, key));
+        cleanupPdIds.add(own.getId());
+        cleanupKeys.add(key);
+
         ProcessDefinitionsQueryParameters first = new ProcessDefinitionsQueryParameters();
         first.setPageIndex(0);
         first.setPageSize(20);
-        long totalAtFirstPage = service.getProcessDefinitions(first).getTotalElements();
+        first.setProcessDefinitionKey(key);
+        PagedDataDTO<ProcessDefinition> firstPage = service.getProcessDefinitions(first);
+        assertThat(firstPage.getTotalElements()).as("sanity: the legal page found the deployed row").isEqualTo(1L);
 
         ProcessDefinitionsQueryParameters far = new ProcessDefinitionsQueryParameters();
         far.setPageIndex(Integer.MAX_VALUE);
         far.setPageSize(20);
+        far.setProcessDefinitionKey(key);
 
         PagedDataDTO<ProcessDefinition> page = service.getProcessDefinitions(far);
         assertThat(page.getTotalElements())
                 .as("same count as the first page — the query ran, this is not a stubbed page")
-                .isEqualTo(totalAtFirstPage);
+                .isEqualTo(firstPage.getTotalElements());
         assertThat(page.getData()).isEmpty();
     }
 
     /**
-     * The same guard on the <b>other</b> branch — the one {@code ProcessDefinitionResource} actually
-     * calls ({@code resolveAllowedPdIds()} is non-empty for an authenticated principal). The two
-     * branches each built their own {@code PageRequest}, so they each needed their own mutation to
-     * prove; this test dies if only the one-argument branch is repaired.
+     * The same guard on the <b>other</b> branch — the one taken only when
+     * {@code allowedPdIds != null}, i.e. for a {@code ServicePrincipal} (API key), since
+     * {@code visibleDefinitionIds} returns {@code null} ("see all") for a user principal. This test
+     * deploys its OWN definition and scopes the query to exactly its id on purpose: the overload
+     * short-circuits on an EMPTY allowed set, so a test that passed {@code findAll()} (possibly
+     * empty, depending on what else ran in the shared module database) would stop at that
+     * short-circuit and never execute the {@code PageRequest} line at all — green for the wrong
+     * reason (P-59 order dependence, P-67 vacuous assertion). The key filter plus the exact-id
+     * allowed set guarantees the mutated line is reached, and the first-page total is non-zero so
+     * the "same count, no rows" assertions cannot be satisfied by an empty short-circuit either.
      */
     @Test
-    void qw14_allowedPdIdsOverload_indexBeyondIntOffset_isAnEmptyPage_notAServerError() {
-        List<UUID> everyDefinition = processDefinitionRepository.findAll().stream()
-                .map(ProcessDefinitionEntity::getId).toList();
+    void qw14_allowedPdIdsOverload_indexBeyondIntOffset_isAnEmptyPage_notAServerError() throws Exception {
+        String key = uniq("qw14");
+        ProcessDefinition own = service.addProcessDefinition(plainBpmn(key, key));
+        java.util.List<UUID> onlyMine = java.util.List.of(own.getId());
+        cleanupPdIds.add(own.getId());
+        cleanupKeys.add(key);
 
         ProcessDefinitionsQueryParameters first = new ProcessDefinitionsQueryParameters();
         first.setPageIndex(0);
         first.setPageSize(20);
-        PagedDataDTO<ProcessDefinition> firstPage =
-                service.getProcessDefinitions(first, everyDefinition);
-        long totalAtFirstPage = firstPage.getTotalElements();
+        first.setProcessDefinitionKey(key);
+        long totalAtFirstPage = service.getProcessDefinitions(first, onlyMine).getTotalElements();
+        assertThat(totalAtFirstPage).as("sanity: the legal page really found the deployed row").isEqualTo(1L);
 
         ProcessDefinitionsQueryParameters far = new ProcessDefinitionsQueryParameters();
         far.setPageIndex(Integer.MAX_VALUE);
         far.setPageSize(20);
+        far.setProcessDefinitionKey(key);
 
-        PagedDataDTO<ProcessDefinition> page = service.getProcessDefinitions(far, everyDefinition);
-        assertThat(page.getTotalElements()).isEqualTo(totalAtFirstPage);
+        PagedDataDTO<ProcessDefinition> page = service.getProcessDefinitions(far, onlyMine);
+        assertThat(page.getTotalElements())
+                .as("same count as the first page — the query ran, this is not a stubbed page")
+                .isEqualTo(totalAtFirstPage);
         assertThat(page.getData()).isEmpty();
     }
 }
