@@ -350,4 +350,59 @@ class ProcessDefinitionServiceCharacterizationIntegrationTests {
         cleanupPdIds.add(a.getId());
         cleanupPdIds.add(b.getId());
     }
+
+    // ===== WO-QW-14 — the two PageRequest branches must both go through the shared clamp =====
+
+    /**
+     * RED before the fix on the branch reached with {@code allowedPdIds == null}, which delegates to
+     * the one-argument overload: the index reached Spring Data unclamped and
+     * {@code PageableUtils.getOffsetAsInteger} threw {@code Page offset exceeds
+     * Integer.MAX_VALUE}. Asserted on the returned page, not on "the service did not throw": the
+     * total must equal the total of the first page (the query really ran) and the window past the
+     * end must hold no rows.
+     */
+    @Test
+    void qw14_unfilteredOverload_indexBeyondIntOffset_isAnEmptyPage_notAServerError() {
+        ProcessDefinitionsQueryParameters first = new ProcessDefinitionsQueryParameters();
+        first.setPageIndex(0);
+        first.setPageSize(20);
+        long totalAtFirstPage = service.getProcessDefinitions(first).getTotalElements();
+
+        ProcessDefinitionsQueryParameters far = new ProcessDefinitionsQueryParameters();
+        far.setPageIndex(Integer.MAX_VALUE);
+        far.setPageSize(20);
+
+        PagedDataDTO<ProcessDefinition> page = service.getProcessDefinitions(far);
+        assertThat(page.getTotalElements())
+                .as("same count as the first page — the query ran, this is not a stubbed page")
+                .isEqualTo(totalAtFirstPage);
+        assertThat(page.getData()).isEmpty();
+    }
+
+    /**
+     * The same guard on the <b>other</b> branch — the one {@code ProcessDefinitionResource} actually
+     * calls ({@code resolveAllowedPdIds()} is non-empty for an authenticated principal). The two
+     * branches each built their own {@code PageRequest}, so they each needed their own mutation to
+     * prove; this test dies if only the one-argument branch is repaired.
+     */
+    @Test
+    void qw14_allowedPdIdsOverload_indexBeyondIntOffset_isAnEmptyPage_notAServerError() {
+        List<UUID> everyDefinition = processDefinitionRepository.findAll().stream()
+                .map(ProcessDefinitionEntity::getId).toList();
+
+        ProcessDefinitionsQueryParameters first = new ProcessDefinitionsQueryParameters();
+        first.setPageIndex(0);
+        first.setPageSize(20);
+        PagedDataDTO<ProcessDefinition> firstPage =
+                service.getProcessDefinitions(first, everyDefinition);
+        long totalAtFirstPage = firstPage.getTotalElements();
+
+        ProcessDefinitionsQueryParameters far = new ProcessDefinitionsQueryParameters();
+        far.setPageIndex(Integer.MAX_VALUE);
+        far.setPageSize(20);
+
+        PagedDataDTO<ProcessDefinition> page = service.getProcessDefinitions(far, everyDefinition);
+        assertThat(page.getTotalElements()).isEqualTo(totalAtFirstPage);
+        assertThat(page.getData()).isEmpty();
+    }
 }
