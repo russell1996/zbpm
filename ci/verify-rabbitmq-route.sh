@@ -34,8 +34,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-pass() { echo "PASS  $*"; }
-fail() { echo "FAIL  $*"; FAILED=1; }
+CHECKS=0
+FAILED_COUNT=0
+FAILED_NAMES=""
+pass() { CHECKS=$((CHECKS+1)); echo "PASS  $*"; }
+fail() {
+  CHECKS=$((CHECKS+1)); FAILED_COUNT=$((FAILED_COUNT+1))
+  FAILED_NAMES="${FAILED_NAMES}
+[ERROR]   $*"
+  echo "FAIL  $*"; FAILED=1
+}
 
 # wget -S печатает строку состояния И строку ошибки ("wget: server returned error: HTTP/1.1 401
 # ..."), поэтому awk по ПОСЛЕДНЕМУ совпадению отдавал слово "server" вместо кода. Берём первую
@@ -48,14 +56,40 @@ code_of() {
 # Sends the URL byte-for-byte: curl would resolve ".." on the CLIENT side before the request
 # leaves, which would silently test a different path than the one written here. --path-as-is
 # keeps the traversal in the request line, where nginx's own normalisation is what we test.
+#
+# ⚠️ Vacuous-green guard. "No broker content in the body" is ALSO what you get when the broker is
+# not serving at all: nginx then answers 502/504 and error_page hands out the 404 stub, which
+# contains no marker either. So a 5xx is treated as a FAILURE, not as a pass — an unreachable broker
+# must never be able to make a red-team probe look green. (Seen live: two RED runs of the same
+# mutation reported 3 and then 2 failures, because the broker's HTTP listener had not come back up
+# yet after the criterion-4 restart.) Anonymous probes legitimately answer 302 (login redirect) and
+# authenticated non-admin probes 403 — those are the real refusals this function is checking for.
 expect_not_broker() {
   local desc="$1"; shift
-  local body
-  if [ "${1:-}" = "--path-raw" ]; then shift; body="$(curl -s --path-as-is "$@")"; else body="$(curl -s "$@")"; fi
+  local body code
+  if [ "${1:-}" = "--path-raw" ]; then shift; body="$(curl -s --path-as-is -w $'\n%{http_code}' "$@")"; else body="$(curl -s -w $'\n%{http_code}' "$@")"; fi
+  code="$(printf '%s' "${body}" | tail -1)"
+  body="$(printf '%s' "${body}" | sed '$d')"
   case "${body}" in
     *"${MARKER}"*) fail "${desc} -> BROKER CONTENT LEAKED (marker present)" ;;
-    *) pass "${desc} -> no broker content" ;;
+    *) case "${code}" in
+         5??) fail "${desc} -> vacuous green: broker not serving (HTTP ${code}), the answer is not the gate's" ;;
+         *)   pass "${desc} -> refused (HTTP ${code}), no broker content" ;;
+       esac ;;
   esac
+}
+
+# The management HTTP listener comes up LATER than AMQP, so `rabbitmq-diagnostics ping` is not a
+# readiness signal. Used both at startup and after the criterion-4 restart.
+wait_for_mgmt_http() {
+  local label="$1" up=0
+  echo -n "waiting for management HTTP ${label}"
+  for _ in $(seq 1 40); do
+    if [ "$(code_of "http://rabbitmq:15672/rabbitmq/" "")" = "200" ]; then up=1; echo " up"; return 0; fi
+    echo -n .; sleep 3
+  done
+  echo
+  return 1
 }
 
 # $1 = expected status, $2 = description, rest = curl args
@@ -151,14 +185,7 @@ if [ "${BROKER_UP}" -eq 1 ]; then
   # между ними есть окно, в котором /rabbitmq/ отвечает 502 -> наш 404-заглушкой, и критерий 3
   # «падает» на неготовом брокере (видел это живьём: ping=ok, страница=404). Поэтому ждём
   # именно HTTP: код 200 на /rabbitmq/ из того же docker network.
-  MGMT_UP=0
-  echo -n "waiting for management HTTP"
-  for _ in $(seq 1 40); do
-    if [ "$(code_of "http://rabbitmq:15672/rabbitmq/" "")" = "200" ]; then MGMT_UP=1; echo " up"; break; fi
-    echo -n .; sleep 3
-  done
-  if [ "${MGMT_UP}" -ne 1 ]; then
-    echo
+  if ! wait_for_mgmt_http ""; then
     fail "management HTTP listener never answered 200 on /rabbitmq/; aborting instead of testing the 404 stub"
     exit 1
   fi
@@ -247,6 +274,14 @@ expect_status 302 "criterion 4: rest of nginx still alive (/ -> /ui/)" "${BASE}/
 expect_status 200 "criterion 4: SPA docroot still served behind the same config" "${BASE}/healthz"
 docker start "${PREFIX}-rabbit" >/dev/null 2>&1
 for _ in $(seq 1 60); do docker exec "${PREFIX}-rabbit" rabbitmq-diagnostics -q ping >/dev/null 2>&1 && break; sleep 3; done
+# AMQP is back; the management HTTP listener is a separate, LATER startup step, and every red-team
+# probe below decides "did the request reach the broker" from the response body. Without this wait a
+# not-yet-serving broker would hand out the 404 stub and make all of them pass without testing
+# anything — a vacuous green that already made one RED run report fewer failures than it should.
+if ! wait_for_mgmt_http "(after restart)"; then
+  fail "management HTTP listener did not come back after the criterion-4 restart; aborting instead of reporting vacuous red-team passes"
+  exit 1
+fi
 
 echo
 echo "=== G-H red-team probes (обход гейта) ==="
@@ -254,6 +289,18 @@ echo "=== G-H red-team probes (обход гейта) ==="
 # A distinctive string that exists ONLY inside the broker's own pages. "Did the probe reach the
 # broker" is then a fact about the response body, not a guess about which status nginx picks.
 MARKER="<title>RabbitMQ Management</title>"
+
+# NEGATIVE CONTROL before the probes: the very same path must still reach the broker for a
+# SUPER_ADMIN session. If even that fails, the probes below would all answer "no broker content"
+# for the trivial reason that nothing is being proxied at all — so the stand refuses to continue
+# rather than reporting eight passes that prove nothing.
+control_code="$(curl -s -o /dev/null -w '%{http_code}' "${ADMIN[@]}" "${BASE}/rabbitmq/")"
+control_body="$(curl -s "${ADMIN[@]}" "${BASE}/rabbitmq/")"
+case "${control_code}:${control_body}" in
+  200:*"${MARKER}"*) pass "RT control: the same path DOES reach the broker for SUPER_ADMIN (HTTP 200, marker present)" ;;
+  *) fail "RT control: SUPER_ADMIN no longer reaches the broker (HTTP ${control_code}) — probes below would pass vacuously; aborting"
+     exit 1 ;;
+esac
 
 # Anonymous is refused with 302-to-login by design (error_page 401 -> @rabbitmq_login_redirect),
 # so 302 is the correct "refused" answer here; 200 or the broker marker would be the failure.
@@ -270,6 +317,25 @@ expect_not_broker "RT: non-admin cannot read the broker API either" "${USERROLE[
 leaked="$(curl -s "${ADMIN[@]}" -H 'X-Auth-Role: ATTACKER' -o /dev/null -w '%header{x-auth-role}' "${BASE}/rabbitmq/" 2>/dev/null)"
 pass "RT: forged X-Auth-Role is not reflected into the response (value='${leaked:-<none>}')"
 
+# Сводка стенда. Форма строк повторяет surefire намеренно: каждая проверка выше — это утверждение
+# о наблюдаемом поведении с вердиктом PASS/FAIL, то есть по существу тест, и сводке нужно указать
+# своё число. Числа НЕ выдуманы — считаются переменными CHECKS/FAILED_COUNT, которые инкрементятся
+# в pass()/fail(). Категорий "Errors"/"Skipped" стенд не ведёт, поэтому их в строке нет: нечего
+# верить — не пишем.
+#
+# ⚠️ Это вывод СТЕНДА, а НЕ вывод Maven/surefire. Поэтому шапка ниже называет источник прямо, а в
+# отчёте эти строки помечены как вывод стенда. Никогда не выдавать их за прогон `mvn test`.
 echo
+echo "=== WO-QW-12 stand summary — ci/verify-rabbitmq-route.sh (свой счётчик проверок, НЕ Maven surefire) ==="
+echo "[INFO] Results:"
+if [ "${FAILED_COUNT}" -gt 0 ]; then
+  echo "[ERROR] Failures:"
+  echo "${FAILED_NAMES}"
+  # Maven печатает итоговую сводку с префиксом [ERROR], когда прогон красный, и [INFO], когда
+  # зелёный. Здесь то же правило, потому что префикс здесь — не украшение, а признак вердикта.
+  echo "[ERROR] Tests run: ${CHECKS}, Failures: ${FAILED_COUNT} -- in WO-QW-12 stand (ci/verify-rabbitmq-route.sh)"
+else
+  echo "[INFO] Tests run: ${CHECKS}, Failures: 0 -- in WO-QW-12 stand (ci/verify-rabbitmq-route.sh)"
+fi
 if [ "${FAILED}" -eq 0 ]; then echo "STAND RESULT: ALL CHECKS PASSED"; else echo "STAND RESULT: FAILURES PRESENT"; fi
 exit "${FAILED}"
