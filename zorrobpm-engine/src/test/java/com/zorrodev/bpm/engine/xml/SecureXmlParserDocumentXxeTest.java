@@ -39,9 +39,14 @@ class SecureXmlParserDocumentXxeTest {
 
     @Test
     void xxePayload_isRejectedThroughTheDomEntryPoint() {
+        // The assertion names the PRIMARY barrier's exact message, not merely "DOCTYPE": the JAXP
+        // feature disallow-doctype-decl produces its own error that also contains the word DOCTYPE, so
+        // a looser assertion stays green with rejectDoctype deleted — i.e. it would not pin the layer
+        // this method exists to pin (caught by review round 3: the loose form passed 3/3 after the
+        // string reject was removed).
         assertThatThrownBy(() -> SecureXmlParser.parseDocument(XXE_BPMN))
             .isInstanceOf(EngineException.class)
-            .hasMessageContaining("DOCTYPE");
+            .hasMessageContaining("DOCTYPE declarations are not allowed");
     }
 
     @Test
