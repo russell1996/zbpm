@@ -50,9 +50,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * задеплоенном приложении ОТСУТСТВОВАЛИ в Environment, значения оператора игнорировались —
  * без ошибки и без предупреждения. Проверено на реальном собранном jar, а не чтением
  * исходников. Числа сходятся так: 24 engine-only ключа = 23 с операторским именем переменной
- * (они в {@link #CONTAINER_ENV}) + {@code spring.rabbitmq.host}, имя переменной у которого общее
- * с app-файлом ({@code RABBITMQ_HOST}); всего в файле движка 31 плейсхолдер — 23 этих плюс
- * 8, объявленных ещё и в app-файле.
+ * (они в {@link #CONTAINER_ENV}) + {@code spring.rabbitmq.host}, имя переменной у которого
+ * ({@code RABBITMQ_HOST}) общее с app-файлом, хотя сам ключ там не объявлен — там
+ * {@code spring.rabbitmq.addresses}. Всего в файле движка 31 плейсхолдер = 23 + 1 + 7, где 7 —
+ * объявленные ещё и в app-файле (DB_URL, DB_USERNAME, DB_PASSWORD,
+ * RABBITMQ_USERNAME/PASSWORD/PORT, APP_FILES_DIR).
  *
  * <p><b>Почему это боевая проверка, а не юнит (V11).</b> Контекст поднимается
  * {@code @SpringBootTest(classes = APP.class)} — тем же классом, что и в проде, с тем же
@@ -476,8 +478,9 @@ class Cfg1EnginePropertiesEnvBindingTest {
         }
 
         // Число плейсхолдеров в файле движка — контроль на то, что переименование файла
-        // ничего в нём не изменило (31 = 23 операторских + 8 общих с app-файлом: DB_URL,
-        // DB_USERNAME, DB_PASSWORD, RABBITMQ_HOST/USERNAME/PASSWORD/PORT, APP_FILES_DIR).
+        // ничего в нём не изменило (31 = 23 операторских + spring.rabbitmq.host + 7 общих с
+        // app-файлом: DB_URL, DB_USERNAME, DB_PASSWORD, RABBITMQ_USERNAME/PASSWORD/PORT,
+        // APP_FILES_DIR).
         assertThat(declared)
             .as("в zorrobpm-engine.properties 31 ${ENV}-плейсхолдер — расхождение означает, что "
                 + "переименование файла изменило его содержимое (ключи терять нельзя, WO-CFG-1)")
