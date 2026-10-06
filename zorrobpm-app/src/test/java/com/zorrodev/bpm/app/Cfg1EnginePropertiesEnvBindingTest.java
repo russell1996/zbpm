@@ -4,6 +4,7 @@ import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.retention.RetentionConfig;
 import com.zorrodev.bpm.engine.scheduler.OutboxBatchProcessor;
 import com.zorrodev.bpm.engine.scheduler.StuckServiceTaskWatchdog;
+import com.zorrodev.bpm.engine.service.CompletionDedupCleanupJob;
 import com.zorrodev.bpm.engine.service.PasswordResetRateLimiter;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.service.SelfRegistrationService;
@@ -409,16 +410,15 @@ class Cfg1EnginePropertiesEnvBindingTest {
                 + "в StuckServiceTaskWatchdog:37 читает это выражение из Environment контекста")
             .isEqualTo("330000");
 
-        // WO-C8-36: два ключа, добавленных последним. Их ручки уже проверялись на НАСТОЯЩИХ
-        // бинах в C836ComposeEnvBindingTest (модуль engine, полный контекст), и здесь важно
-        // другое: что в СОБРАННОМ ПРИЛОЖЕНИИ эти ключи вообще видны.
+        // WO-C8-36: два ключа, добавленных последним.
         //
-        // По полю ServiceTaskEnqueueServiceImpl здесь НЕ проверяется, и это не слабость, а
-        // свойство бина: он помечен @Profile("!test") (строка 43), то есть в тестовом профиле
-        // его в контексте нет, и «достать» его можно было бы только руками — ровно тот приём,
-        // который red-team уже ловил (C8-36, находка verifier'а №5 про F-2: тест крутил сеттер
-        // и утверждал «на настоящем бине», ничего не поднимая). Поэтому здесь — Environment,
-        // из которого этот бин и берёт значение.
+        // По полю ServiceTaskEnqueueServiceImpl первый проверять НЕЛЬЗЯ, и это не слабость, а
+        // свойство бина: он помечен @Profile("!test") (строка 43), то есть в тестовом профиле его
+        // в контексте нет, и «достать» его можно было бы только руками — ровно тот приём, который
+        // уже ловил красно-командный проход (C8-36, находка verifier'а про F-2: тест крутил сеттер
+        // и утверждал «на настоящем бине», ничего не поднимая). Поэтому здесь — Environment, из
+        // которого этот бин и берёт значение; доездку до настоящего бина доказывает
+        // C836ComposeEnvBindingTest в модуле engine.
         assertThat(environment.resolvePlaceholders(
                 "${zorrobpm.engine.dispatch-phase-stamping:false}"))
             .as("zorrobpm.engine.dispatch-phase-stamping="
@@ -426,13 +426,16 @@ class Cfg1EnginePropertiesEnvBindingTest {
                 + "@Value-полю ServiceTaskEnqueueServiceImpl.dispatchPhaseStamping и есть "
                 + "(CR-01 иначе выключен в контейнере)")
             .isEqualTo("true");
-        assertThat(environment.resolvePlaceholders(
-                "${zorrobpm.engine.completion-dedup.ttl-seconds:3600}"))
+        // completion-dedup.ttl-seconds, в отличие от флага штампа, проверяется на НАСТОЯЩЕМ бине:
+        // CompletionDedupCleanupJob — безусловный @Component с обычным @Value-полем, в тестовом
+        // профиле он в контексте есть. Находка verifier'а (раунд 3) справедлива: отказ от проверки
+        // на бине здесь был невынужденным.
+        assertThat(readField(context.getBean(CompletionDedupCleanupJob.class), "ttlSeconds"))
             .as("zorrobpm.engine.completion-dedup.ttl-seconds="
-                + "${ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS} → значение, по которому "
-                + "CompletionDedupCleanupJob реально удаляет маркеры (поведение чистки подтверждено "
-                + "C836ComposeEnvBindingTest в модуле engine; здесь — что ключ виден приложению)")
-            .isEqualTo("4321");
+                + "${ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS} → "
+                + "CompletionDedupCleanupJob.ttlSeconds (окно, по которому чистка реально удаляет "
+                + "маркеры; само удаление подтверждено C836ComposeEnvBindingTest в модуле engine)")
+            .isEqualTo(4_321);
     }
 
     /**
