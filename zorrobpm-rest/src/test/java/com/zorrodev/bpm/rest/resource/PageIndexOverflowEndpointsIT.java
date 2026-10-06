@@ -54,6 +54,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * three far-page tests RED and leaves the legal-page tests green — that asymmetry is the proof
  * that they are bound to the clamp and not to the endpoint merely existing.
  *
+ * <p><b>Which branch of {@code ProcessDefinitionServiceImpl} this endpoint reaches.</b> Verified on
+ * disk, not assumed: {@code ProcessDefinitionResource} passes {@code resolveAllowedPdIds()}, and
+ * {@code EventAuthzResolver.visibleDefinitionIds} returns {@code null} ("see all") for an
+ * authenticated <i>user</i> principal. {@code null} falls through to the one-argument overload at
+ * {@code ProcessDefinitionServiceImpl:364}, so these tests pin the one-argument {@code PageRequest}
+ * — the branch a real browser session actually takes. The {@code allowedPdIds != null} branch
+ * (API-key service principals only) is pinned separately in
+ * {@code ProcessDefinitionServiceCharacterizationIntegrationTests.qw14_allowedPdIdsOverload_…};
+ * mutating either branch alone turns exactly one of the two sets RED.
+ *
  * <p><b>Order independence (P-59).</b> The module shares one database across classes in
  * nondeterministic order, so nothing here assumes whether any process definition exists. The
  * legal-page assertions are written as {@code data.size() == min(totalElements, pageSize)} and, for
