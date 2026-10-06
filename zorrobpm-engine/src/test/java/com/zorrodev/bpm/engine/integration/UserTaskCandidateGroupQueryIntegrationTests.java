@@ -6,7 +6,9 @@ import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.UserTaskCandidateRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.db.UserTaskCandidateWriter;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -52,6 +54,8 @@ public class UserTaskCandidateGroupQueryIntegrationTests {
     private QueryService queryService;
     @Autowired
     private UserTaskRepository userTaskRepository;
+    @Autowired private UserTaskCandidateWriter userTaskCandidateWriter;
+    @Autowired private UserTaskCandidateRepository userTaskCandidateRepository;
 
     private UUID pdId;
 
@@ -71,7 +75,15 @@ public class UserTaskCandidateGroupQueryIntegrationTests {
             .findFirst().orElseThrow();
         task.setAssignee(assignee);
         task.setCandidateGroups(candidateGroups);
-        return userTaskRepository.save(task);
+        // WO-IN-3: кандидаты — ТОТ ЖЕ состав, что даёт живой путь, и пишутся они тем же
+        // рабочим кодом (UserTaskCandidateWriter). Сначала сносим то, что написала живая
+        // активация (в этой BPMN candidateGroups="sales"), иначе задача получила бы ОБА набора
+        // и перестала описывать ту единственную группу, ради которой тест написан.
+        UserTaskEntity saved = userTaskRepository.save(task);
+        userTaskCandidateRepository.deleteAll(
+            userTaskCandidateRepository.findByUserTaskId(saved.getId()));
+        userTaskCandidateWriter.writeCandidates(saved.getId(), candidateGroups, null);
+        return saved;
     }
 
     private List<UUID> idsByCandidateGroup(String group) {

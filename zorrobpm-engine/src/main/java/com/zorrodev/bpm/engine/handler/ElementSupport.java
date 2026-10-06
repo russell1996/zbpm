@@ -152,6 +152,22 @@ public class ElementSupport {
         return resolveExpression(raw, processInstanceId);
     }
 
+    /**
+     * WO-IN-3: кандидаты-ПОЛЬЗОВАТЕЛИ, зеркало {@link #resolveCandidateGroups} — та же выжимка
+     * атрибута, то же разрешение выражения (в т.ч. {@code ${переменная}}), тот же null на
+     * отсутствующем/пустом значении. Разница только в том, что значение уходит в таблицу
+     * кандидатов (роль USER), а не в колонку: до этого WO атрибут парсился в BPMN-модель и там
+     * и оставался (E-IN2-1), поэтому фильтровать по нему было нечем.
+     */
+    public String resolveCandidateUsers(UUID processInstanceId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCandidateUsers)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpression(raw, processInstanceId);
+    }
+
     public String resolveDueDate(UUID processInstanceId, BpmnElementModel element) {
         String raw = Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getUserTaskExtension)

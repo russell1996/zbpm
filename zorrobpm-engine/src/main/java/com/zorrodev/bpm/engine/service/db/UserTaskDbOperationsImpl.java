@@ -25,9 +25,11 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
     private final ActivityRepository activityRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final DomainEventEmitter domainEventEmitter;
+    /** WO-IN-3: строки-кандидаты пишутся здесь же, в том же вызове — значит в той же транзакции. */
+    private final UserTaskCandidateWriter userTaskCandidateWriter;
 
     @Override
-    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String bindingType, String dueDate, String followUpDate, Integer priority) {
+    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String candidateUsers, String formKey, String formId, String bindingType, String dueDate, String followUpDate, Integer priority) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         UserTaskEntity entity = new UserTaskEntity();
         entity.setId(activity.getId());
@@ -47,6 +49,9 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
         entity.setProcessDefinitionId(pi.getProcessDefinitionId());
 
         userTaskRepository.save(entity);
+        // WO-IN-3: сразу за строкой задачи, до выдачи наружу. Колонка candidate_groups выше
+        // остаётся на месте (её читает авторизация) — это двухфазная миграция, не замена.
+        userTaskCandidateWriter.writeCandidates(entity.getId(), candidateGroups, candidateUsers);
         domainEventEmitter.emitUserTaskCreated(activity.getProcessInstanceId(), pi.getProcessDefinitionId(), activity.getBpmnElementId(), activityId, assignee, candidateGroups);
     }
 

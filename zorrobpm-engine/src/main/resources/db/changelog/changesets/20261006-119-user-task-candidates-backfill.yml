@@ -1,0 +1,57 @@
+databaseChangeLog:
+  - logicalFilePath: 20261006-119
+  - changeSet:
+      id: 20261006-119
+      author: zorrodev
+      comment: >-
+        WO-IN-3: backfill кандидатов-ГРУПП из легаси-колонки user_tasks.candidate_groups.
+        Обязателен, потому что читатель переезжает на таблицу: без него все задачи, созданные
+        ДО этого changeset, исчезли бы из фильтров candidateGroup/relatesTo — то есть из
+        «моих задач» у всех, кто работает не на пустой базе.
+        Разбор списка СОВПАДАЕТ с тем, что делает CandidateGroups.parse на Java-стороне:
+        split по запятой, trim каждого элемента, пустые элементы выброшены. Иначе группа была бы
+        записана в таблицу в одном написании, а искалась в другом — и вопрос «мои задачи»
+        стал бы отвечать по-разному в зависимости от того, как строка была записана.
+        Trim здесь — ТОЧНО String.trim(): режутся все символы ≤ U+0020 (пробел, \t, \n, \r,
+        \f, \v и остальные управляющие), а не только пробелы, как делал бы btrim(element).
+        Проверено на живой PG16 (WO-IN-3r3, Б-1): btrim(E'sales\t') оставляет 'sales\t', а
+        regexp_replace с '^[\x00-\x20]+|[\x00-\x20]+$' даёт 'sales'; тот же regexp режет даже
+        chr(1)/chr(2), которые класс POSIX [[:space:]] оставляет. Тест с \t/\n/\r —
+        в UserTaskCandidatesBackfillPgIT.
+        Кандидаты-ПОЛЬЗОВАТЕЛИ бэкфилля не имеют и не могут иметь: до этого changeset значения
+        candidateUsers не сохранялись нигде (E-IN2-1), и легаси-данных для них не существует.
+        ON CONFLICT DO NOTHING — конфликт не является ошибкой: повторный прогон (или ручной
+        перезапуск миграции) не должен ронять деплой, и на PostgreSQL дубль PK НЕ обнуляет
+        транзакцию вызывающего, в отличие от голого INSERT.
+        ВЫКАТКА ПРИ N>1 (прочитать перед деплоем). Бэкфилл ОДНОКРАТНЫЙ: старая реплика, которая
+        ещё не знает про таблицу, продолжит создавать user_tasks с заполненной колонкой и НУЛЕМ
+        строк-кандидатов — и такие задачи невидимы в candidateGroup/candidateUser/relatesTo
+        навсегда, потому что повторного бэкфилла не будет. Окно есть только при нескольких
+        репликах (docker-compose.multi.yml — soak-app1/2/3); при одной реплике (дефолтный
+        docker-compose.yml) старый код и новый не сосуществуют. Поэтому после завершения раскатки
+        на N>1 оператор повторяет ровно этот INSERT — он идемпотентен (ON CONFLICT DO NOTHING) и
+        добирает только недостающие строки. Проверка идемпотентности:
+        UserTaskCandidatesBackfillPgIT.backfill_isRerunnable_withoutFailingOrDuplicating.
+        dbms: postgresql — unnest/string_to_array/regexp_replace это диалект PostgreSQL. На H2 changeset
+        не применяется вовсе: там схему строит Hibernate из entity, а бэкфиллить нечего (таблица
+        пустая — свежий in-memory). Прецедент разделения по dbms — P-26 / 20260809-071.
+      changes:
+        - sql:
+            dbms: postgresql
+            sql: >-
+              INSERT INTO user_task_candidates (user_task_id, kind, candidate)
+              SELECT t.id, 'GROUP',
+                regexp_replace(element, '^[\x00-\x20]+|[\x00-\x20]+$', '', 'g')
+              FROM user_tasks t
+              CROSS JOIN LATERAL unnest(string_to_array(t.candidate_groups, ',')) AS element
+              WHERE t.candidate_groups IS NOT NULL
+                AND regexp_replace(element, '^[\x00-\x20]+|[\x00-\x20]+$', '', 'g') <> ''
+              ON CONFLICT DO NOTHING
+      rollback:
+        # Откат удаляет строки, которых до бэкфилла не было. Ограничение честно названо: если
+        # между бэкфиллом и откатом писатель успел добавить свои GROUP-строки, они уйдут
+        # вместе с ними. Различать нечем — у строки нет метки времени, а ломать таблицу ради
+        # этого нельзя: откат changeset-118 всё равно сносит таблицу целиком.
+        - sql:
+            dbms: postgresql
+            sql: DELETE FROM user_task_candidates WHERE kind = 'GROUP'

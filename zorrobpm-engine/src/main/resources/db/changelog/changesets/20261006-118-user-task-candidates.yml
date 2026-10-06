@@ -1,0 +1,106 @@
+databaseChangeLog:
+  - logicalFilePath: 20261006-118
+  - changeSet:
+      id: 20261006-118
+      author: zorrodev
+      comment: >-
+        WO-IN-3: нормализованная таблица кандидатов user task. До этого кандидаты лежали строкой
+        в user_tasks.candidate_groups (varchar(512), список через запятую), а candidateUser не
+        хранился НИГДЕ — фильтр по нему пришлось отклонять 400 (эскалация E-IN2-1, вариант B).
+        Следствие старой формы, измеренное красной командой на 1M строк: один LIKE '%,token,%' на
+        группу без индекса, то есть полный скан user_tasks и линейный рост по числу групп
+        (K=1 → 77 мс, K=100 → 3982 мс).
+        Форма здесь: одна строка = один кандидат, вид роли в колонке kind. Индекс
+        (kind, candidate, user_task_id) обслуживает EXISTS-проверку «эта задача имеет кандидата
+        X» — ровно ту форму, которую задаёт WO (EXISTS, не JOIN: JOIN размножил бы строки задач
+        и сломал пагинацию).
+        ИМЯ КОЛОНКИ: WO-sketch называл её value, но это невозможно — VALUE зарезервирован H2
+        (проверено на H2 2.3.232/2.4.240: "CREATE TABLE ... value varchar(512)" → Syntax error,
+        expected "identifier"), а Liquibase генерирует DDL без кавычек, и changeset уронил бы
+        старт контекста на ВСЕХ H2-тестах. Поэтому колонка названа candidate — смысл тот же.
+        ЁМКОСТЬ 512 — как у колонки-источника: обрезать имя группы нельзя (AuthorizationService
+        сравнивает имена целиком, обрезанное имя перестало бы совпадать с авторизацией), а
+        varchar(255) поставил бы backfill на HALT для легаси-строки с длинным именем.
+        FK — RESTRICT (политика проекта, WO-OPS-12 D-1: удаление только через retention, минуя
+        его — громкая ошибка вместо тихих сирот). Поэтому RetentionBatchProcessor обязан удалять
+        кандидатов РАНЬШЕ задач — там это добавлено явно, тем же «дети раньше родителя».
+        CHECK на kind — deny-by-default на уровне БД: строка с ролью вне USER/GROUP невозможна,
+        даже если её напишет код мимо enum.
+      changes:
+        - createTable:
+            tableName: user_task_candidates
+            columns:
+              - column:
+                  name: user_task_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: kind
+                  type: varchar(8)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: candidate
+                  type: varchar(512)
+                  constraints:
+                    nullable: false
+        # Составной PK: (task, role, name) — повторная запись того же кандидата физически
+        # невозможна, поэтому писателю не нужен отдельный «а уже есть?» и дубль не создаст
+        # второй строки, которую потом пришлось бы чистить.
+        - addPrimaryKey:
+            tableName: user_task_candidates
+            columnNames: user_task_id, kind, candidate
+            constraintName: pk_user_task_candidates
+        - addForeignKeyConstraint:
+            baseTableName: user_task_candidates
+            baseColumnNames: user_task_id
+            referencedTableName: user_tasks
+            referencedColumnNames: id
+            constraintName: fk_user_task_candidates__user_task_id
+        # CHECK через sql (не addCheckConstraint): в этом репозитории addCheckConstraint не
+        # используется ни разу, а raw sql — проверенная практика (см. 20261005-117). Плюс его
+        # приходится дублировать по dbms ради H2, как и комментарии ниже.
+        #
+        # ПОЧЕМУ sql, А НЕ COMMENT ON ИЛИ ЧТО-ТО ПОЖЕСТЧЕ: у PostgreSQL синтаксис
+        # COMMENT ON INDEX <index> IS '...' — БЕЗ имени таблицы после индекса. Написание
+        # «COMMENT ON INDEX x ON table IS …» падает с "syntax error at or near ON" и роняет
+        # СТАРТ ПРИЛОЖЕНИЯ (Liquibase HALT). Это поймал PgIT; полный clean verify на H2
+        # проходил зелёным, потому что changeset на H2 не применяется вовсе.
+        - sql:
+            dbms: postgresql
+            sql: >-
+              ALTER TABLE user_task_candidates ADD CONSTRAINT ck_user_task_candidates__kind CHECK (kind IN ('USER', 'GROUP'))
+        - sql:
+            dbms: h2
+            sql: >-
+              ALTER TABLE user_task_candidates ADD CONSTRAINT ck_user_task_candidates__kind CHECK (kind IN ('USER', 'GROUP'))
+        - createIndex:
+            tableName: user_task_candidates
+            indexName: idx_user_task_candidates__kind_candidate
+            columns:
+              - column:
+                  name: kind
+              - column:
+                  name: candidate
+              - column:
+                  name: user_task_id
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON TABLE user_task_candidates IS 'Кандидаты user task в нормализованном виде (WO-IN-3): одна строка — один кандидат. Заменяет чтение списка из user_tasks.candidate_groups, индексируется и открывает фильтр candidateUser';
+              COMMENT ON COLUMN user_task_candidates.user_task_id IS 'Задача-владелец строки кандидата (FK на user_tasks.id, RESTRICT — удаляет retention)';
+              COMMENT ON COLUMN user_task_candidates.kind IS 'Роль кандидата: USER — конкретный пользователь, GROUP — группа. Иных значений не бывает (CHECK)';
+              COMMENT ON COLUMN user_task_candidates.candidate IS 'Имя кандидата: имя пользователя для kind=USER, имя группы для kind=GROUP. Нормализация — trim по краям элемента, как в CandidateGroups (общая семантика с авторизацией)';
+              COMMENT ON INDEX idx_user_task_candidates__kind_candidate IS 'Обслуживает EXISTS-проверку «задача имеет кандидата такого-то» для candidateGroup/candidateUser/relatesTo';
+        - sql:
+            dbms: h2
+            sql: >-
+              COMMENT ON TABLE user_task_candidates IS 'Кандидаты user task в нормализованном виде (WO-IN-3): одна строка — один кандидат. Заменяет чтение списка из user_tasks.candidate_groups, индексируется и открывает фильтр candidateUser';
+              COMMENT ON COLUMN user_task_candidates.user_task_id IS 'Задача-владелец строки кандидата (FK на user_tasks.id, RESTRICT — удаляет retention)';
+              COMMENT ON COLUMN user_task_candidates.kind IS 'Роль кандидата: USER — конкретный пользователь, GROUP — группа. Иных значений не бывает (CHECK)';
+              COMMENT ON COLUMN user_task_candidates.candidate IS 'Имя кандидата: имя пользователя для kind=USER, имя группы для kind=GROUP. Нормализация — trim по краям элемента, как в CandidateGroups (общая семантика с авторизацией)';
+      rollback:
+        # Индекс и CHECK умирают вместе с таблицей; FK — тоже (ссылается на неё, а не на неё).
+        - dropTable:
+            tableName: user_task_candidates

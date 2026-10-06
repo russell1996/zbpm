@@ -184,8 +184,8 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String formKey, String formId, String bindingType, String dueDate, String followUpDate, Integer priority) {
-        userTaskDbOperations.createUserTask(activityId, assignee, candidateGroups, formKey, formId, bindingType, dueDate, followUpDate, priority);
+    public void createUserTask(UUID activityId, String assignee, String candidateGroups, String candidateUsers, String formKey, String formId, String bindingType, String dueDate, String followUpDate, Integer priority) {
+        userTaskDbOperations.createUserTask(activityId, assignee, candidateGroups, candidateUsers, formKey, formId, bindingType, dueDate, followUpDate, priority);
     }
 
     @Override

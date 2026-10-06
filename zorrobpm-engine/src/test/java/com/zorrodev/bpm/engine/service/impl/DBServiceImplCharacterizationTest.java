@@ -545,8 +545,8 @@ class DBServiceImplCharacterizationTest {
     @Test
     void createUserTask_delegates() {
         UUID activityId = UUID.randomUUID();
-        dbService.createUserTask(activityId, "ivanov", "managers", "form1", null, null, null, null, null);
-        verify(userTaskDbOperations).createUserTask(activityId, "ivanov", "managers", "form1", null, null, null, null, null);
+        dbService.createUserTask(activityId, "ivanov", "managers", null, "form1", null, null, null, null, null);
+        verify(userTaskDbOperations).createUserTask(activityId, "ivanov", "managers", null, "form1", null, null, null, null, null);
     }
 
     @Test

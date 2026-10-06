@@ -10,7 +10,9 @@ import com.zorrodev.bpm.engine.entity.UserGroupEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
+import com.zorrodev.bpm.engine.repository.UserTaskCandidateRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.db.UserTaskCandidateWriter;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -39,9 +41,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>The pre-existing classes cover what the query DOES; this one covers what it REFUSES and what
  * it refuses to answer wrongly:
  * <ul>
- *   <li><b>C0.2 / E-IN2-1</b> — {@code candidateUser} was a declared filter that nothing read, so
- *       the request answered with MORE than was asked. CTO decision 2026-10-06 (variant B): no
- *       candidates table is created here, the parameter is refused with an explicit 400.</li>
+ *   <li><b>C0.2 / E-IN2-1</b> — {@code candidateUser} был объявлен и не читался, так что запрос
+ *       отвечал БОЛЬШЕ, чем спрашивали. Решение CTO 2026-10-06 (вариант B) запрещало фильтр с
+ *       явным 400, потому что таблицы кандидатов ещё не было; <b>WO-IN-3 создал её</b>, и фильтр
+ *       переехал в {@code UserTaskCandidateQueryIntegrationTests} — теперь он фильтрует.</li>
  *   <li><b>MEDIUM-2</b> — {@code pageIndex=2147483647} overflowed {@code pageIndex*pageSize} and
  *       escaped as a 500 out of Spring Data's {@code PageableUtils}; the endpoint must answer an
  *       empty page (200), never a 500, on caller input.</li>
@@ -62,6 +65,8 @@ public class UserTaskQueryGuardrailsIntegrationTests {
     @Autowired private RuntimeService runtimeService;
     @Autowired private QueryService queryService;
     @Autowired private UserTaskRepository userTaskRepository;
+    @Autowired private UserTaskCandidateWriter userTaskCandidateWriter;
+    @Autowired private UserTaskCandidateRepository userTaskCandidateRepository;
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private UserGroupRepository userGroupRepository;
     @Autowired private PasswordHasher passwordHasher;
@@ -74,47 +79,19 @@ public class UserTaskQueryGuardrailsIntegrationTests {
         pdId = processDefinitionService.addProcessDefinition(bpmn).getId();
     }
 
-    // ===== C0.2 — candidateUser: refused out loud, never silently ignored =====
+    // ===== C0.2 / E-IN2-1 — candidateUser: ПЕРЕЕХАЛ В WO-IN-3 =====
 
-    /**
-     * RED on the pre-fix code: the parameter was never read, so the query answered 200 with every
-     * task of the caller — MORE rows than the request asked for, which is the very class of defect
-     * criterion C0.1 exists to remove.
+    /*
+     * Отсюда ушли два теста, и это НЕ потеря покрытия, а смена решения CTO:
+     *   • candidateUserFilter_isRefusedWith400_notSilentlyIgnored — удалён НАВСЕГДА. 400 был
+     *     вариантом (B) из эскалации E-IN2-1 («пока таблицы кандидатов нет — откажи явно»);
+     *     WO-IN-3 — это ровно тот вариант (A), и фильтр теперь РАБОТАЕТ. Отказывать в том,
+     *     что уже поддержано, — тот же молчаливый дефект, только в другую сторону.
+     *   • candidateUserAbsentOrBlank_isNoFilter_notAnError — ПЕРЕЕХАЛ в
+     *     UserTaskCandidateQueryIntegrationTests (имя сохранено), потому что на этой фикстуре
+     *     (колонка пишется напрямую в user_tasks) кандидата-пользователя уже не существует.
+     *     Правило «absent/blank = без фильтра» живо и там, на живом пути создания задачи.
      */
-    @Transactional
-    @Test
-    void candidateUserFilter_isRefusedWith400_notSilentlyIgnored() throws Exception {
-        taskWith("alice", "sales");
-
-        UserTaskQuery q = new UserTaskQuery();
-        q.setPageSize(50);
-        q.setCandidateUser("whoever");
-
-        assertThatThrownBy(() -> queryService.findUserTasks(q, List.of(pdId)))
-            .isInstanceOf(ApiException.class)
-            .satisfies(ex -> {
-                ApiException api = (ApiException) ex;
-                assertThat(api.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
-                assertThat(api.getCode()).isEqualTo("UNSUPPORTED_CANDIDATE_USER_FILTER");
-            });
-    }
-
-    /** The project's "absent or blank = no filter" rule must keep holding for this parameter too. */
-    @Transactional
-    @Test
-    void candidateUserAbsentOrBlank_isNoFilter_notAnError() throws Exception {
-        UserTaskEntity a = taskWith("alice", "sales");
-        UserTaskEntity b = taskWith("bob", "support");
-
-        UserTaskQuery absent = new UserTaskQuery();
-        absent.setPageSize(50);
-        UserTaskQuery blank = new UserTaskQuery();
-        blank.setPageSize(50);
-        blank.setCandidateUser("   ");
-
-        assertThat(ids(absent)).containsExactlyInAnyOrder(a.getId(), b.getId());
-        assertThat(ids(blank)).containsExactlyInAnyOrder(a.getId(), b.getId());
-    }
 
     // ===== MEDIUM-2 — pageIndex must not escape as a 500 =====
 
@@ -211,7 +188,7 @@ public class UserTaskQueryGuardrailsIntegrationTests {
             });
     }
 
-    // ===== MEDIUM-3 — the person's group count is bounded before it reaches SQL =====
+    // ===== MEDIUM-3 — потолок групп СНЯТ (WO-IN-3), и это проверяется, а не объявляется =====
 
     @Transactional
     @Test
@@ -224,25 +201,41 @@ public class UserTaskQueryGuardrailsIntegrationTests {
     }
 
     /**
-     * RED on the pre-fix code: 21 groups were OR-ed into 21 un-indexed {@code LIKE}s over the
-     * whole {@code user_tasks} table — the red-team measured 3982 ms at 100 groups on 1M rows.
+     * Заменяет {@code relatesTo_personInMoreThan20Groups_isRefusedWith400} — тот тест утверждал
+     * отказ, который WO-IN-3 снял (потолок 20 групп стоял на предпосылке «K неиндексированных
+     * LIKE», а она отменена переходом на ОДИН EXISTS по индексу; замер в javadoc
+     * {@code UserTaskQueryOperationsImpl.resolveRoles}).
+     *
+     * <p>Теперь утверждается ОБРАТНОЕ: человек со 100 группами (вчетверо выше прежнего потолка)
+     * получает СВОЮ задачу, а не 400. Это проверка на «ограничение не вернулось» и на то, что
+     * 100 имён в IN-списке не ломают совпадение.
+     *
+     * <p>Мутация, которая должна покраснить: вернуть потолок (или сузить IN до первых 20) —
+     * упадёт второй ассерт, потому что задача перестанет находиться.
      */
     @Transactional
     @Test
-    void relatesTo_personInMoreThan20Groups_isRefusedWith400() throws Exception {
-        UiUserEntity user = createUser(uniqueName("twentyone"));
-        names(21).forEach(g -> addToGroup(user.getId(), g));
-        taskWith("alice", "in2g20", "twentyone-form");
+    void relatesTo_personWithFarMoreThan20Groups_stillFindsTheirTask() throws Exception {
+        UiUserEntity user = createUser(uniqueName("hundred"));
+        names(100).forEach(g -> addToGroup(user.getId(), g));
+        UserTaskEntity task = taskWith("someone-else", "in2g42", "hundred-form");
 
-        assertThatThrownBy(() -> queryService.findUserTasks(
-            relatesToQuery(user.getId()), List.of(pdId)))
-            .isInstanceOf(ApiException.class)
-            .satisfies(ex -> {
-                ApiException api = (ApiException) ex;
-                assertThat(api.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
-                assertThat(api.getCode()).isEqualTo("TOO_MANY_PERSON_GROUPS");
-                assertThat(api.getParams()).containsEntry("groups", 21);
-            });
+        assertThat(idsByRelatesTo(user.getId())).containsExactly(task.getId());
+    }
+
+    /**
+     * Ровно та же форма, что и раньше, но группа человека — ПОСЛЕДНЯЯ в списке из 100: сужение
+     * IN-списка «до первых N» поймало бы именно этот случай, а проверка по попаданию в любую
+     * группу — нет.
+     */
+    @Transactional
+    @Test
+    void relatesTo_lastOfManyGroups_isNotTheOneThatGetsDropped() throws Exception {
+        UiUserEntity user = createUser(uniqueName("last"));
+        names(100).forEach(g -> addToGroup(user.getId(), g));
+        UserTaskEntity task = taskWith("someone-else", "in2g99", "last-form");
+
+        assertThat(idsByRelatesTo(user.getId())).containsExactly(task.getId());
     }
 
     // ==================== helpers ====================
@@ -282,6 +275,12 @@ public class UserTaskQueryGuardrailsIntegrationTests {
         return taskWith(assignee, candidateGroups, null);
     }
 
+    /**
+     * WO-IN-3: фикстура пишет кандидатов ТЕМ ЖЕ рабочим кодом, что и живой путь
+     * ({@code UserTaskCandidateWriter}), а не только в колонку. Иначе фикстура описывала бы
+     * состояние, которого движок создать не может: строка без строк-кандидатов — это ровно то,
+     * что получается, когда писатель молча сломался.
+     */
     private UserTaskEntity taskWith(String assignee, String candidateGroups, String formKey) throws Exception {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(pdId);
@@ -292,7 +291,14 @@ public class UserTaskQueryGuardrailsIntegrationTests {
         task.setAssignee(assignee);
         task.setCandidateGroups(candidateGroups);
         task.setFormKey(formKey);
-        return userTaskRepository.save(task);
+        UserTaskEntity saved = userTaskRepository.save(task);
+        // СНАЧАЛА снести то, что написал живой путь (в BPMN этой фикстуры candidateGroups="sales"),
+        // и только потом записать набор фикстуры — иначе задача получила бы ОБЕ группы и
+        // перестала быть «задачей, у которой единственная группа sa les».
+        userTaskCandidateRepository.deleteAll(
+            userTaskCandidateRepository.findByUserTaskId(saved.getId()));
+        userTaskCandidateWriter.writeCandidates(saved.getId(), candidateGroups, null);
+        return saved;
     }
 
     private UiUserEntity createUser(String username) {

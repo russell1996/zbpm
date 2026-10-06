@@ -3,10 +3,14 @@ package com.zorrodev.bpm.engine.repository;
 import com.zorrodev.bpm.contract.model.BpmnElementStatistics;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
+import com.zorrodev.bpm.engine.entity.UserTaskCandidateEntity;
+import com.zorrodev.bpm.engine.entity.UserTaskCandidateKind;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -59,20 +63,32 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
     }
 
     /**
-     * WO-IN-2 C0: matches a candidate-group token inside the comma-separated
-     * {@code user_tasks.candidate_groups} column.
+     * WO-IN-3: «у задачи есть кандидат-группа с таким именем» — ОДИН EXISTS по
+     * {@code user_task_candidates}, а не {@code LIKE} по колонке-списку.
      *
-     * <p>There is NO candidate table and no {@code candidate_users} column in this schema (only
-     * {@code candidate_groups varchar(512)}, written by {@code UserTaskHandler.createTaskRow}
-     * from {@code zeebe:assignmentDefinition/@candidateGroups}) — so this cannot be an EXISTS
-     * over a normalized candidates relation; see escalation E-IN2-1/E-IN2-3. A JOIN is not an
-     * option either: it multiplies task rows and breaks pagination.
+     * <p>Почему EXISTS, а не JOIN (это прямое требование WO, и оно же единственно верное):
+     * JOIN размножил бы строку задачи по числу её кандидатов, и пагинация по страницам начала бы
+     * отдавать дубли и пропуски — ровно тот класс дефекта, который {@code relatesTo} уже чинил
+     * в WO-IN-2. Почему не LIKE: у колонки нет индекса, шаблон начинается с {@code %}, и цена
+     * запроса линейна и по числу строк, и по числу групп (замер красной команды на 1M строк:
+     * 1 группа 77 мс, 100 групп 3982 мс).
      *
-     * <p>The matching itself lives in {@link #candidateGroupToken} and is shared with
-     * {@link #relatesTo} — one implementation, so the two filters cannot drift apart.
+     * <p>Сравнение значений — ТОЧНОЕ равенство, а не LIKE, и это меняет только то, что и было
+     * источником расхождений: «sales» больше не может попасть в «sales-east», а «sa les» больше
+     * не схлопывается в «sales». Нормализацию (trim краёв элемента) теперь делает писатель
+     * ({@code CandidateGroups.parse}) — ровно так же, как и авторизация.
      */
     static Specification<UserTaskEntity> byCandidateGroup(String group) {
-        return (root, query, cb) -> candidateGroupToken(root, cb, group);
+        return (root, query, cb) -> hasCandidate(query, cb, root, UserTaskCandidateKind.GROUP, List.of(group));
+    }
+
+    /**
+     * WO-IN-3: то же для кандидата-ПОЛЬЗОВАТЕЛЯ. До этого значения не существовало ни в одной
+     * строке (E-IN2-1), поэтому параметр пришлось отклонять 400; теперь роль USER хранится рядом
+     * с GROUP и отвечает тем же EXISTS.
+     */
+    static Specification<UserTaskEntity> byCandidateUser(String user) {
+        return (root, query, cb) -> hasCandidate(query, cb, root, UserTaskCandidateKind.USER, List.of(user));
     }
 
     static Specification<UserTaskEntity> byBpmnElementId(String bpmnElementId) {
@@ -84,19 +100,20 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
     }
 
     /**
-     * WO-IN-2 criterion 1: "everything that concerns this person" as ONE query — the task's
-     * assignee is this user, OR the task's candidate-group list intersects one of the user's
-     * groups. One predicate, not several paged queries merged in the JVM: that is exactly what
-     * produced duplicates and gaps before, and a JOIN would multiply task rows and break
-     * pagination, so the roles are OR-ed inside a single specification (E-IN2-3).
+     * WO-IN-2 criterion 1, переписан WO-IN-3: "всё, что касается этого человека" — ОДИН запрос:
+     * исполнитель задачи этот человек ИЛИ у задачи есть кандидат-группа из групп человека.
      *
-     * <p>{@code assignee} holds the USERNAME, not the user id
-     * ({@code RuntimeOperationSupport.resolvePrincipalId}), and the candidate groups live in the
-     * comma-separated {@code candidate_groups} column — see {@link #byCandidateGroup} for the
-     * token-exact matching and the LIKE escaping.
+     * <p>Одна спецификация, а не несколько пагинируемых запросов, склеенных в JVM: это и было
+     * причиной дублей и пропусков, и JOIN здесь невозможен (размножил бы строки). Роли
+     * OR-ятся внутри одной спецификации (E-IN2-3).
      *
-     * <p>Fail-closed: with neither a username nor a single group there is nothing this person
-     * relates to, and the specification must match NO row rather than fall back to "see all".
+     * <p>Все группы человека проверяются ОДНИМ EXISTS с {@code IN (...)} на индекс
+     * {@code (kind, candidate, user_task_id)} — не K EXISTS по одной. Разница не в
+     * оформлении: K отдельных EXISTS — это K индексных проб, и на person's groups ~сотня это
+     * снова линейная по K цена, ради снятия которой этот WO и затевался.
+     *
+     * <p>Fail-closed: без username и без единой группы подходящих строк нет, и спецификация
+     * обязана вернуть «ничего», а не «see all».
      */
     static Specification<UserTaskEntity> relatesTo(String username, Collection<String> groups) {
         return (root, query, cb) -> {
@@ -104,12 +121,13 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
             if (username != null && !username.isBlank()) {
                 roles.add(cb.equal(root.get("assignee"), username));
             }
-            for (String group : groups == null ? List.<String>of() : groups) {
-                roles.add(candidateGroupToken(root, cb, group));
+            List<String> groupNames = groups == null ? List.of() : List.copyOf(groups);
+            if (!groupNames.isEmpty()) {
+                roles.add(hasCandidate(query, cb, root, UserTaskCandidateKind.GROUP, groupNames));
             }
             if (roles.isEmpty()) {
-                // never `disjunction()` here — an empty OR is TRUE, which would answer
-                // "everything" to a person filter that matched nothing.
+                // никогда `disjunction()` здесь — пустой OR это TRUE, то есть ответ «всё»
+                // на фильтр по человеку, который не совпал ни с чем.
                 return cb.isNull(root.get("id"));
             }
             return cb.or(roles.toArray(Predicate[]::new));
@@ -117,55 +135,28 @@ public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>,
     }
 
     /**
-     * The ONE candidate-group matcher, used by both {@link #byCandidateGroup} and
-     * {@link #relatesTo} (P-24: a shared guard must be shared, not re-implemented — a copy is a
-     * second thing that silently keeps the bug it was written to fix).
+     * ЕДИН кандидат-матчер, общий для {@link #byCandidateGroup}, {@link #byCandidateUser} и
+     * {@link #relatesTo} (P-24: общий guard должен быть общим — копия со временем сохраняет
+     * именно тот баг, который писался, чтобы убрать).
      *
-     * <p>Token-exact, twice over:
-     * <ul>
-     *   <li>delimiters — the stored list is wrapped in {@code ,} and the pattern carries the same
-     *       delimiters, so group {@code sales} does NOT match a task holding {@code sales-east};</li>
-     *   <li>whitespace AROUND the delimiters — stripped from BOTH sides of every comma before
-     *       comparing, because {@code AuthorizationService} trims each element: a hand-written
-     *       {@code candidateGroups="sales ,east"} makes the user a candidate of {@code east} for
-     *       authorization, so a filter that did not match it would hide a task the person may
-     *       really claim (the two must not answer different questions).</li>
-     * </ul>
-     *
-     * <p>Whitespace INSIDE a name is deliberately NOT removed (red-team LOW-5): the earlier
-     * {@code replace(candidate_groups, ' ', '')} collapsed the group {@code sa les} into
-     * {@code sales}, so the filter answered a WIDER question than the authorization — a person in
-     * {@code sa les} saw the tasks of {@code sales}, a group they are not in. Names with a space
-     * are legal ({@code UserGroupEntity.groupName} is free text), so only the space adjacent to a
-     * delimiter is dropped. Normalized on the Java side by the same rule — {@link String#trim()}
-     * per element, see {@code CandidateGroups}.
-     *
-     * <p>LIKE metacharacters in the group name are escaped with the same backslash convention as
-     * {@code UiUserRepository.byUsernameContains} (WO-SEC-17) — a group literally called
-     * {@code sales%} stays a literal, never a wildcard. Case is left alone on purpose:
-     * {@code AuthorizationService} compares group names case-SENSITIVELY.
+     * <p>Пустой список имён — это «совпасть не с чем», и он обязан давать ПУСТУЮ выборку
+     * ({@code isNull(id)} — заведомо ложное условие), а не {@code disjunction()}.
      */
-    private static Predicate candidateGroupToken(Root<UserTaskEntity> root, CriteriaBuilder cb, String group) {
-        String token = escapeLike(group.trim());
-        // Only the space ADJACENT to a delimiter is dropped — the element boundary the
-        // authorization side sees after trimming. replace(x,…) keeps NULL NULL, so a task without
-        // candidate groups stays excluded. A space INSIDE a name is kept on purpose (see above).
-        var normalized = cb.function("replace", String.class,
-            cb.function("replace", String.class, root.get("candidateGroups"),
-                cb.literal(" ,"), cb.literal(",")),
-            cb.literal(", "), cb.literal(","));
-        var padded = cb.concat(cb.concat(",", normalized), ",");
-        return cb.like(padded, "%," + token + ",%", '\\');
-    }
-
-    /**
-     * WO-SEC-17 escaping convention: backslash first, then the two LIKE wildcards. Case is left
-     * alone on purpose — {@code AuthorizationService} compares group names
-     * case-SENSITIVELY, so a case-insensitive filter here would answer a wider question than the
-     * authorization side actually grants.
-     */
-    static String escapeLike(String value) {
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    private static Predicate hasCandidate(CriteriaQuery<?> query, CriteriaBuilder cb,
+                                          Root<UserTaskEntity> root,
+                                          UserTaskCandidateKind kind,
+                                          Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return cb.isNull(root.get("id"));
+        }
+        Subquery<UUID> sub = query.subquery(UUID.class);
+        Root<UserTaskCandidateEntity> candidate = sub.from(UserTaskCandidateEntity.class);
+        sub.select(candidate.get("userTaskId"))
+            .where(
+                cb.equal(candidate.get("userTaskId"), root.get("id")),
+                cb.equal(candidate.get("kind"), kind),
+                candidate.get("candidate").in(names));
+        return cb.exists(sub);
     }
 
     @Modifying

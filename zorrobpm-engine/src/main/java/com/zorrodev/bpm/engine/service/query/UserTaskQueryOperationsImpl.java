@@ -40,15 +40,6 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
         "createdAt", "completedAt", "priority", "dueDate", "followUpDate",
         "assignee", "bpmnElementId", "formKey", "id");
 
-    /**
-     * WO-IN-2 MEDIUM-3: the candidate filter builds one un-indexed {@code LIKE} per group, so its
-     * cost is LINEAR in the number of groups (red-team measurement on 1M rows: 1 group 77 ms,
-     * 100 groups 3982 ms, plus a COUNT of the same price). 20 groups is far past anything a real
-     * candidate list holds and bounds one request to 20 scans' worth of work; a caller asking about
-     * a person with more is told so instead of being served a multi-second query.
-     */
-    static final int MAX_PERSON_GROUPS = 20;
-
     private final UserTaskRepository userTaskRepository;
     private final UserTaskMapper userTaskMapper;
     private final QueryPaginationSupport queryPaginationSupport;
@@ -92,16 +83,14 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
             specifications.add(
                 UserTaskRepository.byCandidateGroup(storableGroupName(query.getCandidateGroup())));
         }
-        // WO-IN-2 C0.2 — the same defect one parameter over: ?candidateUser= was DECLARED and read
-        // nowhere, so it silently answered with MORE than was asked for. There is no
-        // user_tasks.candidate_users column and no candidates table (escalation E-IN2-1), so this
-        // WO creates neither. CTO decision 2026-10-06 — variant (B): refuse the request out loud
-        // instead of pretending to filter. A silently ignored filter is strictly worse than a
-        // broken call, and a blank value stays "no filter" like every other optional parameter.
+        // WO-IN-3: candidateUser перестал быть отказом. До этого значения не существовало ни в
+        // одной строке (эскалация E-IN2-1), и CTO решил тогда не притворяться, что фильтр
+        // работает, — отказом 400 (вариант B). Вариант (A), нормализованная таблица
+        // user_task_candidates, теперь написан: роль USER хранится рядом с GROUP, и оба
+        // фильтра читают её одним EXISTS по индексу (kind, candidate, user_task_id).
         if (hasText(query.getCandidateUser())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_CANDIDATE_USER_FILTER",
-                "candidateUser is not supported: candidate users are not stored",
-                Map.of("candidateUser", query.getCandidateUser()));
+            specifications.add(
+                UserTaskRepository.byCandidateUser(storableCandidateUser(query.getCandidateUser())));
         }
         // WO-IN-2 criterion 3
         if (hasText(query.getBpmnElementId())) {
@@ -164,6 +153,24 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
      * rows, and the resource layer authorizes the VALUE of {@code relatesTo} before this runs
      * ({@code QueryResource.getUserTasks}) — the same trust model as {@code allowedPdIds} itself.
      *
+     * <p>WO-IN-3: потолка «не больше 20 групп» больше НЕТ, и это не «ослабили проверку на
+     * всякий случай», а снятие охраны, чья предпосылка отменена. Потолок появился в WO-IN-2
+     * (MEDIUM-3) потому, что фильтр строил ПО ОДНОМУ неиндексированному {@code LIKE} на группу —
+     * цена линейно росла по K, и на 1M строк красная команда меряла 77 мс при K=1 и 3982 мс при
+     * K=100. Теперь это ОДИН {@code EXISTS} по индексу {@code (kind, candidate, user_task_id)},
+     * и весь линейный по K член исчез: замер на своём postgres:16, 1M задач и 600k строк
+     * кандидатов, страница из 50 — K=1: 14 мс, K=20: 44 мс, K=100: 58 мс, K=500: 138 мс
+     * (старая форма на тех же данных: 28 / 230 / 1532 / 4064 мс). Наклон новой формы — около
+     * 0.25 мс на группу, то есть даже абсурдные 500 групп остаются в пределах сотни миллисекунд
+     * там, где старая форма уже уходила в секунды. Ограничивать человека, который в 25 группах,
+     * из-за защиты от несуществующей уже проблемы — это функциональный дефект, а не осторожность.
+     *
+     * <p>Честно про то, что НЕ изменилось: член «по числу строк» остался. На 1M задач без
+     * фильтра по определению процесса планировщик всё так же читает user_tasks (в замере —
+     * Parallel Seq Scan, а кандидаты берутся Index Only Scan по своему индексу). Этот WO убрал
+     * линейность по числу групп, а не по числу строк; второе — отдельная работа, если
+     * понадобится.
+     *
      * <p>Both guards below run BEFORE the specification is built, so neither a rejected request nor
      * an oversized one ever reaches SQL: MEDIUM-3 bounds how many {@code LIKE}s one request may
      * cost, LOW-5 refuses a group name the column cannot represent.
@@ -173,12 +180,6 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
             .map(UiUserEntity::getUsername)
             .orElse(null);
         Set<String> groups = new LinkedHashSet<>(userGroupRepository.findGroupNamesByUserId(userId));
-        if (groups.size() > MAX_PERSON_GROUPS) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "TOO_MANY_PERSON_GROUPS",
-                "relatesTo: the person belongs to more than " + MAX_PERSON_GROUPS + " groups",
-                Map.of("groups", groups.size(), "max", MAX_PERSON_GROUPS,
-                    "relatesTo", userId.toString()));
-        }
         return new PersonRoles(username, groups.stream().map(UserTaskQueryOperationsImpl::storableGroupName).toList());
     }
 
@@ -194,6 +195,9 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
      * <p>Unreachable through the REST layer today — nothing in the {@code src/main} trees writes
      * {@code user_group} (there is no group-management endpoint), so this only guards the moment a
      * group UI appears (group-UI, EPIC-EXTERNAL-INTEGRATION).
+     *
+     * <p>WO-IN-3: тело и код ошибки остались БАЙТ-ВО-БАЙТ прежними — фильтр Groups переехал на
+     * таблицу кандидатов, но контракт отказа не менялся (это публичный код ответа).
      */
     private static String storableGroupName(String groupName) {
         String trimmed = groupName.trim();
@@ -201,6 +205,22 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
             throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_GROUP_NAME",
                 "A group name may not contain the '" + CandidateGroups.DELIMITER + "' list delimiter",
                 Map.of("group", groupName));
+        }
+        return trimmed;
+    }
+
+    /**
+     * WO-IN-3: то же правило для кандидата-ПОЛЬЗОВАТЕЛЯ, отдельным кодом — контракт группы не
+     * трогаем. Причина та же: список кандидатов приходит из BPMN-атрибута через запятую, и имя с
+     * запятой в нём не представимо. Молча вернуть пустую выборку здесь нельзя — это был бы ответ
+     * «у тебя таких задач нет» на вопрос о существующей задаче.
+     */
+    private static String storableCandidateUser(String userName) {
+        String trimmed = userName.trim();
+        if (!CandidateGroups.isStorable(trimmed)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_CANDIDATE_USER_NAME",
+                "A candidate user name may not contain the '" + CandidateGroups.DELIMITER + "' list delimiter",
+                Map.of("candidateUser", userName));
         }
         return trimmed;
     }

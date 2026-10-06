@@ -234,6 +234,12 @@ public class RetentionBatchProcessor {
         total += jdbc.update("DELETE FROM parallel_gateways WHERE process_instance_id IN (:ids)", params);
         total += jdbc.update("DELETE FROM incidents WHERE activity_id IN (SELECT id FROM activities WHERE process_instance_id IN (:ids))", params);
         total += jdbc.update("DELETE FROM service_tasks WHERE process_instance_id IN (:ids)", params);
+        // WO-IN-3: кандидаты — ДЕТИ user_tasks, и FK на них RESTRICT (политика WO-OPS-12 D-1,
+        // не CASCADE). Поэтому их нужно удалить РАНЬШЕ строк задач, иначе DELETE ниже упал бы
+        // на FK-ошибке и retention сломался бы целиком. Тот же явный «дети раньше родителя»,
+        // что уже применён к service_tasks и variable_history выше/ниже.
+        total += jdbc.update("DELETE FROM user_task_candidates WHERE user_task_id IN "
+            + "(SELECT id FROM user_tasks WHERE process_instance_id IN (:ids))", params);
         total += jdbc.update("DELETE FROM user_tasks WHERE process_instance_id IN (:ids)", params);
         // WO-C8-25: done element-listener phases (open ones die with the instance anyway).
         total += jdbc.update("DELETE FROM element_listener_phase WHERE process_instance_id IN (:ids)", params);
