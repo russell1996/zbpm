@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (a): standardLoopCharacteristics — the model asks for up to 3 iterations,
+     the engine has no loop field anywhere and ran the script task exactly ONCE.
+     Everything else here is supported on purpose, so the deploy refusal can only come from
+     the loop: plain start + message start + timer start (so the refusal also proves that no
+     subscription/timer job would have been registered), one script task, and fully resolvable
+     sequence flows.
+
+     The two triggering starts are written as <bpmn:startEvent> + <bpmn:*EventDefinition> — the
+     spelling this engine binds (it has no list for <bpmn:messageStartEvent>/<bpmn:timerStartEvent>).
+     In the tag form those starts vanish at parse time and their outgoing flows are reported as
+     dangling, so the fixture would be proving two things at once. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_loop" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_eng34" name="eng34-loop-message" />
+  <bpmn:process id="test-eng34-standard-loop" name="test-eng34-standard-loop" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="loopTask" />
+
+    <bpmn:startEvent id="msgStart" name="msgStart">
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="medMsg" messageRef="Msg_eng34" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="msgStart" targetRef="loopTask" />
+
+    <bpmn:startEvent id="tmrStart" name="tmrStart">
+      <bpmn:outgoing>f3</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tedTmr">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="tmrStart" targetRef="loopTask" />
+
+    <bpmn:scriptTask id="loopTask" name="loopTask" scriptFormat="feel" resultVariable="x">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+      <bpmn:script>1</bpmn:script>
+      <bpmn:standardLoopCharacteristics testBefore="false" loopMaximum="3">
+        <bpmn:loopCondition xsi:type="bpmn:tFormalExpression"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">&lt; 3</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f4" name="f4" sourceRef="loopTask" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f4</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

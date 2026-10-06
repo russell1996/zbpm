@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (критерий 4): the DANGLING twin of test-eng34-nested-ref-ok.bpmn — fGhost, inside
+     the sub-process, names nothing in the process. Proves the ref check RECURSES into container
+     bodies: a scan that only looked at top-level flows would accept this model and the running
+     instance would park on a "target element 'ghostInsideSub' ... not found" incident. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_nested_dangling" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-eng34-nested-ref-dangling" name="test-eng34-nested-ref-dangling" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub" />
+    <bpmn:subProcess id="sub" name="sub">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>fGhost</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="fGhost" name="fGhost" sourceRef="subStart" targetRef="ghostInsideSub" />
+      <bpmn:endEvent id="subEnd" name="subEnd" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="sub" targetRef="endTask" />
+    <bpmn:endEvent id="endTask" name="endTask">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

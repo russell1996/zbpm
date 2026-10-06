@@ -8,6 +8,7 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.IncidentEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
+import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -32,6 +33,10 @@ public class GraphRobustnessIntegrationTests {
     @Autowired
     private ProcessDefinitionService processDefinitionService;
 
+    /** WO-ENG-34: puts a broken artifact in the store — see the test's comment. */
+    @Autowired
+    private FileService fileService;
+
     @Autowired
     private RuntimeService runtimeService;
 
@@ -49,8 +54,23 @@ public class GraphRobustnessIntegrationTests {
     void danglingSequenceFlowTargetRaisesInformativeIncident() throws Exception {
         // s1's outgoing flow f2 targets "ghost", which is not in the model: the engine must park a clear
         // incident naming the missing target instead of throwing a bare NullPointerException.
-        String bpmn = Files.readString(Paths.get("src/test/files/test-dangling-flow.bpmn"));
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+        //
+        // WO-ENG-34 (CR-08, criterion 4) — the ROUTE changed, the subject did not. The deploy gate now
+        // refuses a model whose sourceRef/targetRef names no flow node (UnsupportedConstructDeploy
+        // IntegrationTests.criterion4_...), so a broken model can no longer be DEPLOYED to reach this
+        // guard. The state is still real and still reachable: on a cache miss the engine re-parses the
+        // STORED FILE (BpmnServiceImpl.getProcessDefinitionModelById → FileService.getFileBytes), so a
+        // definition whose stored artifact disagrees with its registry row — a model written by an
+        // earlier release, a restored backup, a manual DB edit — parses into a model that is missing
+        // the element, and parks exactly like this. Note the CACHE (60 min by default,
+        // bpmn-cache-ttl-minutes; filled at deploy by ProcessDefinitionServiceImpl), so in production
+        // this shows up after a restart or a TTL expiry, not instantly. Hence: deploy the valid twin,
+        // then put the broken artifact in the store before anything loads the model. Every assertion
+        // below is untouched.
+        ProcessDefinition model = processDefinitionService.addProcessDefinition(
+            Files.readString(Paths.get("src/test/files/test-eng34-dangling-flow-base.bpmn")));
+        fileService.saveFile(model.getId(),
+            Files.readString(Paths.get("src/test/files/test-dangling-flow.bpmn")));
 
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(model.getId());

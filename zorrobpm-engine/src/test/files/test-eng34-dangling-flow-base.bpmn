@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (критерий 4): the VALID twin of test-dangling-flow.bpmn — same process id, same
+     element ids, only f2's target resolves instead of naming "ghost".
+
+     It exists because the deploy gate now REFUSES a model with an unresolvable
+     sourceRef/targetRef (WO-ENG-34, criterion 4), so the runtime guard in FlowNavigator
+     ("target element ... not found" instead of a bare NPE, WO-C8-7) can no longer be reached
+     by deploying a broken model. It is still a real production state: the engine re-parses the
+     STORED FILE on every load (BpmnServiceImpl.getProcessDefinitionModelById), so a definition
+     whose stored artifact disagrees with its registry row — a bad migration, a hand-edited
+     file, a restored backup — parks the same way. GraphRobustnessIntegrationTests deploys
+     THIS model and then replaces the stored file with test-dangling-flow.bpmn, which keeps the
+     runtime guard covered without teaching the deploy path to accept a broken model. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_dangling" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-dangling-flow" name="test-dangling-flow" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="s1" />
+    <bpmn:scriptTask id="s1" name="s1" scriptFormat="feel" resultVariable="x">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:script>1</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="s1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

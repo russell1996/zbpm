@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (г): two executable <process> elements in one resource. The XML model binds a
+     SINGLE <process> field, so one of them was dropped without a word and the deployment silently
+     was not the model the author uploaded. Both processes here are individually valid, so the
+     refusal can only come from the resource holding two of them. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_multiproc" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-eng34-multi-process-first" name="first" isExecutable="true">
+    <bpmn:startEvent id="firstStart" name="firstStart">
+      <bpmn:outgoing>firstFlow</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="firstFlow" name="firstFlow" sourceRef="firstStart" targetRef="firstEnd" />
+    <bpmn:endEvent id="firstEnd" name="firstEnd">
+      <bpmn:incoming>firstFlow</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:process id="test-eng34-multi-process-second" name="second" isExecutable="true">
+    <bpmn:startEvent id="secondStart" name="secondStart">
+      <bpmn:outgoing>secondFlow</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="secondFlow" name="secondFlow" sourceRef="secondStart" targetRef="secondEnd" />
+    <bpmn:endEvent id="secondEnd" name="secondEnd">
+      <bpmn:incoming>secondFlow</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
