@@ -136,7 +136,7 @@ class CamundaHttpJsonWorkerTest {
 
     private CamundaHttpJsonWorker localWorker(HttpConnectorProperties props) {
         return new CamundaHttpJsonWorker(
-            new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService), activityService);
+            new HttpConnectorWorker(props, new HttpSsrfGate(props), activityService), activityService, props);
     }
 
     /** Прод-подобный deny-all: пустой allowlist, приватные запрещены. */
@@ -514,6 +514,113 @@ class CamundaHttpJsonWorkerTest {
     }
 
     /**
+     * B-1 red-team: вход конфигурации авторизации по УРОВНЮ camunda-шаблона (`Configuration`
+     * с `configurationTemplate: io.camunda.connectors:rest-authentication:1`) обязан быть
+     * отвергнут. Пока этот префикс стоял в списке без единого теста, его снятие было
+     * fail-OPEN: у элемента с настроенной «credentials» нет входа `authentication.type`,
+     * значит `http.authType` не ставится, делегат берёт дефолт `none` — и НЕАУТЕНТИФИЦИРОВАННЫЙ
+     * запрос уходит на allowlisted-хост, молча и без ошибки.
+     *
+     * <p>Здесь это отвергается РАНЬШЕ тихо-аутентифицированного поведения и раньше
+     * проверки `enabled`, так что тест ловит именно снятие охранника.
+     */
+    @Test
+    void criterion3_camundaCredentialConfigurationInput_rejectedAndServerNeverCalled() {
+        JobDetailModel model = camundaJob(camundaInputs(
+            "url", baseUrl + "/ok",
+            "method", "GET",
+            "authenticationConfiguration", "my-rest-credential"));
+
+        localWorker().handleJob(model);
+
+        assertServerSawNoSecret("my-rest-credential");
+        assertThat(requestCount.get()).as("credential-конфигурация не должна уйти в неаутентифицированный вызов").isZero();
+        assertConfigErrorNaming(model.getServiceTaskId(), "authenticationConfiguration");
+    }
+
+    /**
+     * B-2 red-team: нетронутое обязательное FEEL-поле Camunda Modeler персистит как
+     * «пустое FEEL» — `value="="`. Такой элемент (шаблон применён, поля ошибки/результата
+     * не заполнялись) обязан исполняться, а не отвергаться: иначе «просто применить шаблон»
+     * не работает никогда, то есть ровно то, против чего заводилась критерий 1.
+     */
+    @Test
+    void criterion1_untouchedFeelHeadersSerializedAsBareEquals_executeNotRejected() {
+        JobDetailModel model = camundaJob(
+            camundaInputs("url", baseUrl + "/ok", "method", "GET"),
+            camundaTaskHeadersWith("errorExpression", "=", "resultVariable", "="));
+
+        List<ProcessVariable> result = localWorker().handleJob(model);
+
+        assertThat(varValue(result, "http.status")).isEqualTo("200");
+        assertThat(requestCount.get()).isEqualTo(1);
+    }
+
+    /** Обратная сторона B-2: настоящее выражение после маркера — авторское ожидание, режется. */
+    @Test
+    void errorExpressionHeaderWithRealExpression_stillRejected() {
+        JobDetailModel model = camundaJob(
+            camundaInputs("url", baseUrl + "/ok"),
+            camundaTaskHeadersWith("errorExpression", "= error.response.statusCode = 404"));
+
+        localWorker().handleJob(model);
+
+        assertConfigError(model.getServiceTaskId());
+        assertThat(requestCount.get()).isZero();
+    }
+
+    /** L-1 red-team: отказ не обходится опечаткой в регистре ключа заголовка. */
+    @Test
+    void resultVariableHeaderKeyCaseInsensitive_stillRejected() {
+        JobDetailModel model = camundaJob(
+            camundaInputs("url", baseUrl + "/ok"),
+            camundaTaskHeadersWith("ResultVariable", "myResponseBody"));
+
+        localWorker().handleJob(model);
+
+        assertConfigError(model.getServiceTaskId());
+        assertThat(requestCount.get()).isZero();
+    }
+
+    /**
+     * Оформительское #5 red-team: выключенный коннектор отвечает на ЛЮБУЮ задачу
+     * {@code HTTP_CONNECTOR_DISABLED} — иначе автор OAuth-элемента читал бы «у меня с
+     * авторизацией что-то», вместо «это выключено администратором».
+     */
+    @Test
+    void connectorDisabled_camundaElementReportsDisabledNotConfigError() {
+        HttpConnectorProperties props = props("127.0.0.1", true);
+        props.setEnabled(false);
+        JobDetailModel model = camundaJob(camundaInputs(
+            "url", baseUrl + "/ok",
+            "authentication.type", "oauth-client-credentials-flow"));
+
+        localWorker(props).handleJob(model);
+
+        verify(activityService).throwServiceTaskError(eq(model.getServiceTaskId()), eq("HTTP_CONNECTOR_DISABLED"), any());
+        assertThat(requestCount.get()).isZero();
+    }
+
+    /**
+     * Оформительское #2 red-team: переведённая переменная носит НАШЕ имя, а не camunda-имя
+     * под нашим ключом (ключ карты и {@code ProcessVariable.name} не должны расходиться).
+     */
+    @Test
+    void translatedVariables_carryOurNamesNotCamundaNames() {
+        HttpConnectorWorker delegate = mock(HttpConnectorWorker.class);
+        when(delegate.handleJob(any())).thenReturn(List.of());
+        new CamundaHttpJsonWorker(delegate, activityService, props("127.0.0.1", true))
+            .handleJob(camundaJob(camundaInputs("url", baseUrl + "/ok", "method", "PATCH", "body", "{\"a\":1}")));
+
+        ArgumentCaptor<JobDetailModel> forwarded = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(delegate).handleJob(forwarded.capture());
+        Map<String, ProcessVariable> vars = forwarded.getValue().getVariables();
+        assertThat(vars.get("http.url").getName()).isEqualTo("http.url");
+        assertThat(vars.get("http.method").getName()).isEqualTo("http.method");
+        assertThat(vars.get("http.body").getName()).isEqualTo("http.body");
+    }
+
+    /**
      * Критерий 3: отказ называет КОНКРЕТНЫЙ отвергнутый вход, и это детерминированно.
      *
      * <p>Элемент как в шаблоне: несколько запрещённых входов сразу. Порядок обхода входа
@@ -548,7 +655,7 @@ class CamundaHttpJsonWorkerTest {
         props.getSecrets().put("approval", "{\"type\":\"bearer\",\"token\":\"srv-side-token\"}");
         HttpConnectorWorker delegate = mock(HttpConnectorWorker.class);
         when(delegate.handleJob(any())).thenReturn(List.of());
-        CamundaHttpJsonWorker worker = new CamundaHttpJsonWorker(delegate, activityService);
+        CamundaHttpJsonWorker worker = new CamundaHttpJsonWorker(delegate, activityService, props("127.0.0.1", true));
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "method", "GET",
@@ -683,8 +790,16 @@ class CamundaHttpJsonWorkerTest {
     }
 
     private static Map<String, String> camundaTaskHeadersWith(String key, String value) {
+        return camundaTaskHeadersWith(key, value, null, null);
+    }
+
+    /** Парный вариант: два заголовка сразу (нужно для «оба как пустое FEEL»). */
+    private static Map<String, String> camundaTaskHeadersWith(String k1, String v1, String k2, String v2) {
         Map<String, String> headers = camundaTaskHeaders();
-        headers.put(key, value);
+        headers.put(k1, v1);
+        if (k2 != null) {
+            headers.put(k2, v2);
+        }
         return headers;
     }
 

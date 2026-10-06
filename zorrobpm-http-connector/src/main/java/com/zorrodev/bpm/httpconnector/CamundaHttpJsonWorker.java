@@ -111,10 +111,13 @@ public class CamundaHttpJsonWorker implements JobHandler {
 
     private final HttpConnectorWorker delegate;
     private final ActivityService activityService;
+    private final HttpConnectorProperties properties;
 
-    public CamundaHttpJsonWorker(HttpConnectorWorker delegate, ActivityService activityService) {
+    public CamundaHttpJsonWorker(HttpConnectorWorker delegate, ActivityService activityService,
+            HttpConnectorProperties properties) {
         this.delegate = delegate;
         this.activityService = activityService;
+        this.properties = properties;
     }
 
     @Override
@@ -124,6 +127,16 @@ public class CamundaHttpJsonWorker implements JobHandler {
 
     @Override
     public List<ProcessVariable> handleJob(JobDetailModel model) {
+        // Проверка «включён ли коннектор» — ПЕРВОЙ, ровно как на нашем диалекте. Иначе
+        // выключенный коннектор отвечал бы на OAuth-элемент ошибкой про OAuth, а автор
+        // читал бы «у меня что-то с авторизацией» вместо «об этом не думайте, это выключено
+        // администратором» (оформительское #5 red-team).
+        if (!properties.isEnabled()) {
+            HttpConnectorWorker.throwDeterministic(activityService, model,
+                new HttpConnectorWorker.HttpConnectorConfigException(HttpConnectorWorker.ERR_DISABLED,
+                    "zorrobpm.http-connector.enabled=false — ask the administrator to enable the connector"));
+            return List.of();
+        }
         JobDetailModel translated;
         try {
             translated = translate(model);
@@ -215,7 +228,8 @@ public class CamundaHttpJsonWorker implements JobHandler {
                 continue;
             }
             if (REJECTED_INPUT_PREFIXES.stream().anyMatch(name::startsWith)) {
-                String original = byLowerName.get(name).getName();
+                ProcessVariable rejected = byLowerName.get(name);
+                String original = rejected != null && rejected.getName() != null ? rejected.getName() : name;
                 String hint = name.startsWith("clienttls.")
                     ? "client TLS (mutual TLS) is not implemented by the connector — separate work order"
                     : "inline secrets must not live in the process model — add an input with "
@@ -233,21 +247,26 @@ public class CamundaHttpJsonWorker implements JobHandler {
      * Пустое значение — отсутствие (шаблон пишет пустые строки), полное — ожидание.
      */
     private static void rejectUnsupportedHeaders(Map<String, String> taskHeaders, UUID serviceTaskId) {
-        if (isSet(taskHeaders.get("resultVariable"))) {
+        // Ключи zeebe:header приходят из BPMN дословно. Сравнение без учёта регистра и
+        // обрезки краёв — иначе отказ обходится тривиальной опечаткой автора
+        // (key="ResultVariable"), и заголовок молча ничего не сделает (L-1 red-team).
+        Map<String, String> normalized = new LinkedHashMap<>();
+        taskHeaders.forEach((key, value) -> normalized.put(key.trim().toLowerCase(Locale.ROOT), value));
+        if (isSet(normalized.get("resultvariable"))) {
             throw new HttpConnectorWorker.HttpConnectorConfigException(
                 HttpConnectorWorker.ERR_CONFIG,
                 "Camunda task header 'resultVariable' is not supported: the response is exposed as "
                     + "http.status / http.headers / http.body — map it with a zeebe:output io-mapping "
                     + "(e.g. source='http.body', target='myResponseBody')");
         }
-        if (isSet(taskHeaders.get("errorExpression"))) {
+        if (isSet(normalized.get("errorexpression"))) {
             throw new HttpConnectorWorker.HttpConnectorConfigException(
                 HttpConnectorWorker.ERR_CONFIG,
                 "Camunda task header 'errorExpression' is not supported (separate work order): "
                     + "a non-2xx response always raises the strict HTTP_<status> BPMN error, "
                     + "which a boundary error event may catch");
         }
-        if (isSet(taskHeaders.get("resultExpression"))) {
+        if (isSet(normalized.get("resultexpression"))) {
             warnResultExpression(serviceTaskId);
         }
     }
@@ -284,7 +303,8 @@ public class CamundaHttpJsonWorker implements JobHandler {
         if (!"true".equalsIgnoreCase(value)) {
             throw new HttpConnectorWorker.HttpConnectorConfigException(
                 HttpConnectorWorker.ERR_CONFIG,
-                "Camunda input 'followRedirects' must be 'true' or 'false' (got '" + value + "')");
+                "Camunda input 'followRedirects' must be 'true' or 'false' (got '"
+                    + HttpConnectorWorker.sanitizeDiag(value) + "')");
         }
         throw new HttpConnectorWorker.HttpConnectorConfigException(
             HttpConnectorWorker.ERR_CONFIG,
@@ -305,7 +325,7 @@ public class CamundaHttpJsonWorker implements JobHandler {
         if (type == null) {
             throw new HttpConnectorWorker.HttpConnectorConfigException(
                 HttpConnectorWorker.ERR_CONFIG,
-                "Camunda authentication.type '" + pv.getValue().strip() + "' is not supported "
+                "Camunda authentication.type '" + HttpConnectorWorker.sanitizeDiag(pv.getValue()) + "' is not supported "
                     + "(separate work order): this connector supports no authentication, api keys, "
                     + "and username/password or token schemes; the secret itself is referenced by "
                     + "the input 'http.authRef'");
@@ -313,11 +333,23 @@ public class CamundaHttpJsonWorker implements JobHandler {
         translated.put("http.authType", textVar("http.authType", type));
     }
 
+    /**
+     * Перенос входа в наше имя.
+     *
+     * <p>Кладём НОВЫЙ {@link ProcessVariable} с переименованным {@code name}, а не тот же
+     * объект под другим ключом: {@code name} читается в местах, которые не обязаны смотреть
+     * только на ключ карты (логи, диагностика, будущий потребитель), и расхождение «ключ
+     * {@code http.url}, имя {@code url}» там выглядит как баг, который потом чинят полчаса.
+     */
     private static void copy(Map<String, ProcessVariable> byLowerName,
             Map<String, ProcessVariable> translated, String from, String to) {
         ProcessVariable pv = byLowerName.get(from);
         if (pv != null) {
-            translated.put(to, pv);
+            ProcessVariable renamed = new ProcessVariable();
+            renamed.setName(to);
+            renamed.setValue(pv.getValue());
+            renamed.setType(pv.getType());
+            translated.put(to, renamed);
         }
     }
 
@@ -329,7 +361,30 @@ public class CamundaHttpJsonWorker implements JobHandler {
         return pv;
     }
 
+    /**
+     * Есть ли в заголовке СОДЕРЖИМОЕ.
+     *
+     * <p>Camunda Modeler пишет нетронутое обязательное FEEL-поле как «пустое FEEL» — просто
+     * {@code value="="}. Доказательство из документации Camunda: пустые значения не
+     * персистятся ТОЛЬКО у биндингов с {@code optional: true}, а у свойства
+     * {@code errorExpression} в шаблоне {@code io.camunda.connectors.HttpJson.v2}
+     * (version 18) {@code feel: required} и {@code optional} не задан. Поэтому «просто
+     * применить шаблон» без заполнения полей ошибки приносит заголовок
+     * {@code errorExpression="="}, и наивная проверка «не пусто» отвергла бы валидный
+     * элемент — ровно то, против чего заводился критерий 1 этой WO. Отличать надо по
+     * СОДЕРЖИМОМУ: FEEL-маркер без выражения — это отсутствие, а не авторское ожидание.
+     *
+     * <p>Проверка fail-safe в обе стороны: {@code "="} и {@code "=   "} — отсутствие
+     * (исполнять нечего), а любое выражение после маркера — авторское ожидание, режется.
+     */
     private static boolean isSet(String value) {
-        return value != null && !value.isBlank();
+        if (value == null) {
+            return false;
+        }
+        String stripped = value.strip();
+        if (stripped.startsWith("=")) {
+            stripped = stripped.substring(1).strip();
+        }
+        return !stripped.isEmpty();
     }
 }
