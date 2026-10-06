@@ -2,9 +2,11 @@ package com.zorrodev.bpm.engine;
 
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -41,13 +43,44 @@ import static org.assertj.core.api.Assertions.within;
  *       the test deployed plus the BPMN's duration instead of to the database wall clock.</li>
  * </ol>
  *
- * <p>Self-cleaning: every row this class creates is removed again in a {@code finally}, so the guard
- * does not push the problem it documents onto the classes that run after it.
+ * <p>Self-cleaning: every row this class creates is removed again by {@link #removeRowsCreatedByCriterion1}
+ * from {@code @AfterEach}, which — because {@code criterion1} deliberately runs without a transaction —
+ * commits. Leaving rows behind would be exactly what WO-QW-13 forbids, and both naive placements were
+ * measured leaking on PG 16 (see that method's javadoc).
  */
 public class PgItIsolationGuardPgIT extends PostgresIT {
 
     @Autowired JdbcTemplate jdbc;
     @Autowired TimerJobRepository timerJobRepository;
+    @Autowired PlatformTransactionManager transactionManager;
+
+    /** Rows created by {@code criterion1}, removed after its transaction has ended (see below). */
+    private final List<UUID> rowsToClean = new ArrayList<>();
+
+    /**
+     * Cleanup runs HERE and NOT in {@code @Transactional}.
+     *
+     * <p>{@code criterion1} deliberately does not open a transaction: what it asserts is WHICH rows the
+     * production query returns, and under autocommit the {@code FOR UPDATE} locks are released at
+     * statement end — nothing needs them held. The naive variants were both measured wrong on PG 16
+     * (@verifier round 4): a plain DELETE in the test's {@code finally} rolled back with the test
+     * transaction while the writer thread's rows stayed committed (11–14 due rows surviving), and a
+     * {@code REQUIRES_NEW} delete from there deadlocked against the {@code FOR UPDATE} locks the test
+     * itself still held. Without a test transaction, {@code @AfterEach} runs in autocommit, so the
+     * cleanup commits — and this guard stops being the source of the residue it exists to prevent.
+     */
+    @AfterEach
+    void removeRowsCreatedByCriterion1() {
+        if (rowsToClean.isEmpty()) {
+            return;
+        }
+        List<UUID> ids;
+        synchronized (rowsToClean) {
+            ids = List.copyOf(rowsToClean);
+            rowsToClean.clear();
+        }
+        PgItIsolation.deleteTimerJobs(jdbc, ids);
+    }
 
     /** The poller is parked so the guard measures the tests' own doing, not a racing scheduler. */
     @DynamicPropertySource
@@ -67,10 +100,10 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
      * rows this test never created cannot.
      */
     @Test
-    @Transactional
     void criterion1_claimSetScopedByOwnIds_ignoresForeignAndConcurrentlyWrittenDueRows() throws Exception {
         UUID foreignLeftover = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
             Instant.now().minusSeconds(30));
+        rowsToClean.add(foreignLeftover);
         AtomicBoolean writerRunning = new AtomicBoolean(true);
         AtomicReference<Throwable> writerError = new AtomicReference<>();
         List<UUID> writtenByWriter = new ArrayList<>();
@@ -85,8 +118,12 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         Thread writer = new Thread(() -> {
             try {
                 while (writerRunning.get()) {
-                    writtenByWriter.add(PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
-                        Instant.now().minusSeconds(5)));
+                    UUID written = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
+                        Instant.now().minusSeconds(5));
+                    synchronized (rowsToClean) {
+                        rowsToClean.add(written);
+                    }
+                    writtenByWriter.add(written);
                     firstWrite.countDown();
                     Thread.sleep(2);
                 }
@@ -110,6 +147,8 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
             Instant now = Instant.now();
             PgItIsolation.insertCatchTimerJob(jdbc, ownFuture, UUID.randomUUID(), now.plusSeconds(3600));
             PgItIsolation.insertCatchTimerJob(jdbc, ownDue, UUID.randomUUID(), now.minusSeconds(10));
+            rowsToClean.add(ownFuture);
+            rowsToClean.add(ownDue);
 
             List<UUID> claimedByEngine = timerJobRepository.findDueLocked(now, 100).stream()
                 .map(TimerJobEntity::getId)
@@ -136,15 +175,19 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         } finally {
             writerRunning.set(false);
             writer.join(5000);
-            List<UUID> toDelete = new ArrayList<>();
-            toDelete.add(foreignLeftover);
-            toDelete.add(ownFuture);
-            toDelete.add(ownDue);
-            toDelete.addAll(writtenByWriter);
-            PgItIsolation.deleteTimerJobs(jdbc, toDelete);
         }
     }
 
+    /**
+     * Deletes rows in a transaction of its OWN, committed.
+     *
+     * <p>{@code criterion1} is {@code @Transactional} so that {@code findDueLocked} can hold
+     * {@code FOR UPDATE} row locks for the whole assertion. That makes the test's transaction
+     * rollback-only, which would also roll back a plain {@code DELETE} in {@code finally} — while the
+     * writer thread's inserts commit independently. The result measured by @verifier was a growing pile
+     * of committed due {@code timer_jobs} rows left in the shared database, i.e. this guard would have
+     * been doing exactly what WO-QW-13 forbids. Hence an explicit committed cleanup.
+     */
     /**
      * Criterion 2: the deployment's own timer-start job, and nothing else.
      *
@@ -191,6 +234,8 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
             // Different definition ids, different answers — no wall-clock, no whole-table count involved.
             assertThat(ownDueAts.get(0)).isAfter(staleCreatedAt.plusSeconds(300).plusSeconds(60));
         } finally {
+            // criterion2 is NOT @Transactional (it inserts a deliberately stale row), so plain JDBC is
+            // already its own committed transaction here — no extra wrapper needed.
             jdbc.update("DELETE FROM timer_start_jobs WHERE process_key = ?", "qw13-stale-key");
         }
     }
