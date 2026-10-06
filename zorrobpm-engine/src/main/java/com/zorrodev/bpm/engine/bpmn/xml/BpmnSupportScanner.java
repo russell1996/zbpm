@@ -7,6 +7,8 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import javax.xml.XMLConstants;
+
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -36,13 +38,6 @@ public final class BpmnSupportScanner {
 
     /** The one namespace the JAXB models bind — checks use it so findings match what parsing sees. */
     private static final String BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
-
-    /**
-     * The XML Schema-instance namespace, read for {@code xsi:type}. Looked up by NAMESPACE, so a
-     * document may bind it to any prefix ({@code xsi:}, {@code xi:}, the default namespace).
-     * The JDK exposes no constant for it ({@code XMLConstants} has none), hence the literal.
-     */
-    private static final String XSI_NS = "http://www.w3.org/2001/XMLSchema-instance";
 
     /**
      * The element kinds multi-instance is NOT implemented for. MI binds only on serviceTask and
@@ -290,6 +285,12 @@ public final class BpmnSupportScanner {
      *                             silently drops (a multi-instance marker this way leaves the
      *                             activity running once, on every kind, including serviceTask and
      *                             userTask where multi-instance itself IS implemented)
+     *
+     * <p>Documented limit: the FIRST loop marker child decides. A schema-VALID activity can carry at
+     * most one (the schema sequence allows one), so nothing is lost in practice; a document carrying
+     * both spellings is schema-invalid and the deploy path performs no XSD validation (recorded in
+     * the report as a hardening follow-up), so the second marker goes unreported rather than being
+     * guessed at.
      */
     private record LoopMarker(LoopKind kind, boolean unreadableSpelling) {
         private static final LoopMarker NONE = new LoopMarker(LoopKind.NONE, false);
@@ -356,7 +357,7 @@ public final class BpmnSupportScanner {
      * model over a type it could not read — the mirror image of the defect above.
      */
     private static LoopKind loopKindOfXsiType(Element head) {
-        String typeName = head.getAttributeNS(XSI_NS, "type");
+        String typeName = head.getAttributeNS(XMLConstants.W3C_XML_SCHEMA_INSTANCE_NS_URI, "type");
         if (typeName == null || typeName.isBlank()) {
             return LoopKind.NONE;
         }
