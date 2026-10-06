@@ -39,9 +39,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>The pre-existing classes cover what the query DOES; this one covers what it REFUSES and what
  * it refuses to answer wrongly:
  * <ul>
- *   <li><b>C0.2 / E-IN2-1</b> — {@code candidateUser} was a declared filter that nothing read, so
- *       the request answered with MORE than was asked. CTO decision 2026-10-06 (variant B): no
- *       candidates table is created here, the parameter is refused with an explicit 400.</li>
+ *   <li><b>C0.2 / E-IN2-1</b> — {@code candidateUser} был объявлен и не читался, так что запрос
+ *       отвечал БОЛЬШЕ, чем спрашивали. Решение CTO 2026-10-06 (вариант B) запрещало фильтр с
+ *       явным 400, потому что таблицы кандидатов ещё не было; <b>WO-IN-3 создал её</b>, и фильтр
+ *       переехал в {@code UserTaskCandidateQueryIntegrationTests} — теперь он фильтрует.</li>
  *   <li><b>MEDIUM-2</b> — {@code pageIndex=2147483647} overflowed {@code pageIndex*pageSize} and
  *       escaped as a 500 out of Spring Data's {@code PageableUtils}; the endpoint must answer an
  *       empty page (200), never a 500, on caller input.</li>
@@ -74,47 +75,19 @@ public class UserTaskQueryGuardrailsIntegrationTests {
         pdId = processDefinitionService.addProcessDefinition(bpmn).getId();
     }
 
-    // ===== C0.2 — candidateUser: refused out loud, never silently ignored =====
+    // ===== C0.2 / E-IN2-1 — candidateUser: ПЕРЕЕХАЛ В WO-IN-3 =====
 
-    /**
-     * RED on the pre-fix code: the parameter was never read, so the query answered 200 with every
-     * task of the caller — MORE rows than the request asked for, which is the very class of defect
-     * criterion C0.1 exists to remove.
+    /*
+     * Отсюда ушли два теста, и это НЕ потеря покрытия, а смена решения CTO:
+     *   • candidateUserFilter_isRefusedWith400_notSilentlyIgnored — удалён НАВСЕГДА. 400 был
+     *     вариантом (B) из эскалации E-IN2-1 («пока таблицы кандидатов нет — откажи явно»);
+     *     WO-IN-3 — это ровно тот вариант (A), и фильтр теперь РАБОТАЕТ. Отказывать в том,
+     *     что уже поддержано, — тот же молчаливый дефект, только в другую сторону.
+     *   • candidateUserAbsentOrBlank_isNoFilter_notAnError — ПЕРЕЕХАЛ в
+     *     UserTaskCandidateQueryIntegrationTests (имя сохранено), потому что на этой фикстуре
+     *     (колонка пишется напрямую в user_tasks) кандидата-пользователя уже не существует.
+     *     Правило «absent/blank = без фильтра» живо и там, на живом пути создания задачи.
      */
-    @Transactional
-    @Test
-    void candidateUserFilter_isRefusedWith400_notSilentlyIgnored() throws Exception {
-        taskWith("alice", "sales");
-
-        UserTaskQuery q = new UserTaskQuery();
-        q.setPageSize(50);
-        q.setCandidateUser("whoever");
-
-        assertThatThrownBy(() -> queryService.findUserTasks(q, List.of(pdId)))
-            .isInstanceOf(ApiException.class)
-            .satisfies(ex -> {
-                ApiException api = (ApiException) ex;
-                assertThat(api.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
-                assertThat(api.getCode()).isEqualTo("UNSUPPORTED_CANDIDATE_USER_FILTER");
-            });
-    }
-
-    /** The project's "absent or blank = no filter" rule must keep holding for this parameter too. */
-    @Transactional
-    @Test
-    void candidateUserAbsentOrBlank_isNoFilter_notAnError() throws Exception {
-        UserTaskEntity a = taskWith("alice", "sales");
-        UserTaskEntity b = taskWith("bob", "support");
-
-        UserTaskQuery absent = new UserTaskQuery();
-        absent.setPageSize(50);
-        UserTaskQuery blank = new UserTaskQuery();
-        blank.setPageSize(50);
-        blank.setCandidateUser("   ");
-
-        assertThat(ids(absent)).containsExactlyInAnyOrder(a.getId(), b.getId());
-        assertThat(ids(blank)).containsExactlyInAnyOrder(a.getId(), b.getId());
-    }
 
     // ===== MEDIUM-2 — pageIndex must not escape as a 500 =====
 
