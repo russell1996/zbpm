@@ -235,6 +235,57 @@ public class InclusiveJoinReadinessIntegrationTests {
         assertThat(incidents(pi)).isEqualTo(0L);
     }
 
+    // ── BLOCKER-6 (red-team раунда 4): граница на хосте, который ЕЩЁ НЕ СТАРТОВАЛ ────────
+    @Transactional
+    @Test
+    void boundaryOnAHostThatHasNotStartedYet_theJoinWaitsAndThenPassesThroughExactlyOnce()
+            throws Exception {
+        // Диаграмма red-team дословно (WO-C8-35-independent-review-r4.md §BLOCKER-6):
+        // pfork -> { taskA -> gC -> join ; taskSvc -> taskX -> endX },
+        // tmrX (таймерная граница на taskX, ещё НЕ взведённая) -> fB -> join.
+        // Это обычная «ветка-таймаут + основная ветка», а не экзотика.
+        UUID pi = start("test-c835-notstarted-host-bnd-incl-join.bpmn");
+
+        assertThat(countOf(pi, "taskX", ActivityStatus.CREATED))
+            .as("premise: taskX has NOT started — no activity row, no armed boundary of its own")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskSvc", ActivityStatus.CREATED))
+            .as("premise: the execution that WILL start taskX is live")
+            .isEqualTo(1L);
+
+        complete(pi, "taskA");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("taskSvc is live and will start taskX, whose tmrX can deliver a branch — "
+                + "the join must wait (red-team: fired here, then fired AGAIN after the timer)")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskNotify", ActivityStatus.CREATED))
+            .as("taskNotify before the boundary delivers is the double business side effect")
+            .isEqualTo(0L);
+
+        // taskSvc completes → taskX really starts → tmrX is armed for real.
+        complete(pi, "taskSvc");
+        UUID taskXId = activities(pi).stream()
+            .filter(a -> a.getBpmnElementId().equals("taskX"))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("taskX must be created by completing taskSvc"))
+            .getId();
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("taskX is live and its armed timer can still deliver — the join must keep waiting")
+            .isEqualTo(0L);
+
+        // The boundary fires for real and delivers the second arrival.
+        activityService.fireBoundaryTimer(taskXId, "tmrX");
+
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("the boundary delivered the second branch — the join must pass through EXACTLY ONCE")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskNotify", ActivityStatus.CREATED))
+            .as("taskNotify CREATED twice is the exact red-team observation (double side effect)")
+            .isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
+    }
+
     // ── BLOCKER-2 (B2): ложное условие выше по потоку, последний доставщик умер ────────────
     @Transactional
     @Test
