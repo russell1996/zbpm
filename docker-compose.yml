@@ -64,6 +64,10 @@ services:
       # WO-OBS-5: per-object prometheus metrics (single-file mount — image's
       # /etc/rabbitmq/conf.d/10-defaults.conf stays in place).
       - ./ci/observability/rabbitmq/conf.d/20-per-object-metrics.conf:/etc/rabbitmq/conf.d/20-per-object-metrics.conf:ro
+      # WO-QW-12 (QW12-1): management UI под префиксом /rabbitmq — чтобы nginx отдавал его на
+      # внешнем домене /rabbitmq/ под SUPER_ADMIN-гейтом. Конфиг, не env: переживает рестарт,
+      # а `ports:` ниже не меняется (порт 9300 и AMQP 5672 — как были).
+      - ./ci/rabbitmq/conf.d/30-management-path-prefix.conf:/etc/rabbitmq/conf.d/30-management-path-prefix.conf:ro
     ports:
       # INTENDED / NORMAL — publish on all host interfaces. DO NOT re-restrict to 127.0.0.1.
       # The host lives inside a protected network perimeter (not reachable from the public
