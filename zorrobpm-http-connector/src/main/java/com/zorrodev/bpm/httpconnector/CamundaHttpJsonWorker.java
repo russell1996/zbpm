@@ -59,11 +59,26 @@ import java.util.UUID;
  *   <li>taskHeader {@code resultExpression} — WARN и игнор (см. {@link #warnResultExpression}).</li>
  * </ul>
  *
+ * <p>«Пустое FEEL» ({@code value="="}, как Camunda Modeler пишет нетронутое обязательное
+ * FEEL-поле) считается ОТСУТСТВИЕМ, а не ожиданием — см. {@link #isSet}. Проверено мутацией:
+ * с наивной проверкой «не пусто» свежеприменённый шаблон отвергался целиком.
+ *
+ * <p>Ключи taskHeader сравниваются без учёта регистра и обрезки краёв: иначе отказ
+ * обходится опечаткой автора в имени ключа.
+ *
+ * <p>Вход {@code authenticationConfiguration} (ссылка на credentials-конфигурацию Camunda)
+ * отвергается наравне с инлайн-секретами: у такого элемента нет входа
+ * {@code authentication.type}, и без отказа он ушёл бы в НЕАУТЕНТИФИЦИРОВАННЫЙ вызов.
+ *
  * <p>Игнорируются без предупреждения (свойства шаблона, не влияющие на результат и не
  * обещающие переменных): {@code storeResponse}, {@code ignoreNullValues}, {@code skipEncoding},
  * {@code documentReturnFormat.*}, {@code urlOverride} (тот же input {@code url}),
- * taskHeaders {@code retryBackoff}/{@code jobTimeout}/{@code elementTemplateId}/
- * {@code elementTemplateVersion} (движок и так их понимает сам).
+ * taskHeaders {@code elementTemplateId}/{@code elementTemplateVersion}.
+ *
+ * <p>Отдельная оговорка: taskHeaders {@code retryBackoff} и {@code jobTimeout} тоже
+ * игнорируются, но их не понимает и движок (греп по дереву — ни одного упоминания):
+ * ретраи идут по {@code retries} из {@code zeebe:taskDefinition}. Поддержка backoff —
+ * отдельная задача движка, не эта.
  */
 @Slf4j
 @Component

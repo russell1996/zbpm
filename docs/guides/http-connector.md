@@ -36,7 +36,7 @@ service-task с `jobType="zorrobpm:http"`. Появился в WO-ENG-31 (Фаз
 |---|---|---|---|
 | `http.url` | да | `https://api.example.com/v1/pay` | цель вызова |
 | `http.method` | нет | `GET` (по умолчанию) | `GET/POST/PUT/PATCH/DELETE` |
-| `http.headers` | нет | `{"X-Tenant":"t1"}` | JSON-объект заголовков. Литеральные секреты здесь запрещены — только `http.authRef` |
+| `http.headers` | нет | `{"X-Tenant":"t1"}` | JSON-объект заголовков. Литеральные `Authorization`/`Proxy-Authorization` здесь запрещены — только `http.authRef`. Остальные имена заголовков не проверяются на «похоже на секрет» (свойство ENG-31, не менялось) |
 | `http.queryParameters` | нет | `{"page":"2"}` | JSON-объект query-параметров |
 | `http.body` | нет | `{"a":1}` | тело запроса (`POST/PUT/PATCH`) |
 | `http.connectionTimeout` / `http.readTimeout` | нет | `5` | перекрывают дефолт модели **в пределах капа** |
@@ -65,8 +65,11 @@ service-task с `jobType="zorrobpm:http"`. Появился в WO-ENG-31 (Фаз
 | `HTTP_<код>` | ответ не-2xx (404, 503, …) | нет — по решению CTO это явный исход, а не молчаливый success |
 | инцидент движка | таймаут, обрыв соединения, нерезолвящийся хост | **да** — транзиентно, `FAILED` → ретраи/инцидент по политике движка |
 
-У всех детерминированных ошибок в BPMN-переменных приходят `http.status` (если ответ
-уже получен), `http.headers`, `http.body` и `error`.
+У детерминированных ошибок, случившихся **после** получения ответа (`HTTP_<код>`, превышение
+`max-response-bytes`, слишком много редиректов), приходят `http.status`, `http.headers`,
+`http.body` и `http.error`. У ошибок, случившихся **до** запроса
+(`HTTP_CONNECTOR_CONFIG`, `HTTP_CONNECTOR_DISABLED`, отказ SSRF-гейта), приходит только
+`http.error` — ответа не было.
 
 ## Секреты
 
@@ -144,13 +147,17 @@ HTTP-вызов в проде.
 | Вход / taskHeader | Поведение | Почему |
 |---|---|---|
 | `authentication.token`, `.password`, `.value`, `.clientSecret`, `.refreshToken`, `.username`, `.name`, `.apiKeyLocation`, `.scopes`, `.audience`, … — **любой** `authentication.*`, кроме `.type` | `HTTP_CONNECTOR_CONFIG` | инлайн-секреты в модели процесса не принимаются; секрет живёт на сервере, в модели — только имя (`http.authRef`) |
+| `authenticationConfiguration` (ссылка на credentials-конфигурацию Camunda, `io.camunda.connectors:rest-authentication:1`) | `HTTP_CONNECTOR_CONFIG` | наш секрет задаётся только через `http.authRef`; молча уйти в неавторизованный вызов нельзя |
 | `clientTls.*` (материал клиентского сертификата) | `HTTP_CONNECTOR_CONFIG` | client TLS (взаимный) не реализован — отдельная задача |
 | `authentication.type = oauth-*` (оба типа шаблона) | `HTTP_CONNECTOR_CONFIG` с текстом «отдельный WO» | OAuth не реализован; молчаливый «без авторизации» недопустим |
 | `followRedirects = true` | `HTTP_CONNECTOR_CONFIG` | бюджет редиректов задаёт администратор (`max-redirects`), расширять его из BPMN нельзя. `followRedirects=false` (дефолт шаблона, приходит всегда) — обычный путь |
-| taskHeader `resultVariable` (заполненный) | `HTTP_CONNECTOR_CONFIG` | «положить ответ в переменную X» мы выполнить не можем и не молчим об этом. Замените на output io-mapping: `<zeebe:output source="http.body" target="myResponseBody" />` |
-| taskHeader `errorExpression` (заполненный) | `HTTP_CONNECTOR_CONFIG` | логику ошибок коннектора мы не исполняем; non-2xx всегда даёт строгую `HTTP_<status>` (её ловит boundary error event) |
+| taskHeader `resultVariable` (заполненный) | `HTTP_CONNECTOR_CONFIG` | «положить ответ в переменную X» мы выполнить не можем и не молчим об этом. Замените на output io-mapping: `<zeebe:output source="http.body" target="myResponseBody" />`. Нетронутое поле приходит как «пустое FEEL» (`value="="`) и пустым считается |
+| taskHeader `errorExpression` (заполненный) | `HTTP_CONNECTOR_CONFIG` | логику ошибок коннектора мы не исполняем; non-2xx всегда даёт строгую `HTTP_<status>` (её ловит boundary error event). **Обязательное FEEL-поле шаблона приходит как `value="="`, даже если автор его не трогал** — такой «пустой» заголовок исполняется как отсутствие, иначе свежеприменённый шаблон не работал бы никогда |
 | taskHeader `resultExpression` | **игнорируется, в лог уходит WARN** | FEEL-выражения не исполняются (второй движок выражений не заводим). Ответ — в `http.status/http.headers/http.body`, выбирается output io-mapping. WARN, а не отказ, потому что это свойство с НЕПУСТЫМ значением по умолчанию: оно есть у каждого элемента, к которому применён шаблон, и отказ здесь означал бы, что «применить шаблон» не работает никогда |
-| `storeResponse`, `ignoreNullValues`, `skipEncoding`, `documentReturnFormat.*`, `urlOverride`, `retryBackoff`, `jobTimeout`, `elementTemplateId`, `elementTemplateVersion` | игнорируются | на результат не влияют и никаких переменных не обещают |
+| `ignoreNullValues`, `skipEncoding`, `documentReturnFormat.*`, `urlOverride`, `elementTemplateId`, `elementTemplateVersion` | игнорируются | на результат не влияют и никаких переменных не обещают |
+| `storeResponse` | игнорируется | входа нет в шаблоне версии 18; приезжает из более старых версий шаблона (в том числе в живом элементе пользователя) |
+| taskHeader `retryBackoff`, `jobTimeout` | игнорируются | **движок их не понимает** (греп по всему дереву: ни одного упоминания). Ретраи идут по `retries` из `zeebe:taskDefinition`. Поддержка backoff — отдельная задача движка |
+| `{{secrets.<name>}}` в URL/заголовках | уходит в запрос **дословно** | резолвера camunda-секретов у нас нет. Значение не утекает, но запрос уходит неверным — секрет берите через `http.authRef` |
 
 ### Известные границы
 
@@ -165,6 +172,11 @@ HTTP-вызов в проде.
   предупреждает ровно об этом в своей документации; здесь это то же самое.
 - **`body` при `GET`.** Наш диалект (и переведённый путь) отклоняет тело при
   `GET/DELETE` — как и раньше, `HTTP_CONNECTOR_CONFIG`.
+- **`followRedirects=false` не отключает редиректы сам по себе.** `false` не отвергается
+  (дефолт шаблона приходит всегда), а фактическую политику задаёт администратор:
+  `max-redirects=0` по умолчанию означает «не следовать», но если администратор поднял
+  `ZORROBPM_HTTP_CONNECTOR_MAX_REDIRECTS`, редиректы будут пройдены и на этом элементе.
+  Каждый хоп заново проходит SSRF-гейт, auth-заголовки снимаются при смене origin.
 
 ### Точка расширения
 
