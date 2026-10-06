@@ -24,6 +24,25 @@ public class UserTaskQueryParametersArgumentResolver implements HttpServiceArgum
             if (parameters.getProcessInstanceId() != null) {
                 requestValues.addRequestParameter("processInstanceId", parameters.getProcessInstanceId().toString());
             }
+            // ─── WO-IN-2: the filters THIS work order added are sent from the SDK too, otherwise
+            // they would be another "declared but never used" gap (P-11). The pre-existing
+            // gaps of this resolver (candidateGroup / candidateUser / completed) are NOT
+            // touched here — they belong to the WO-IN-1 inventory finding, not to this WO (V7).
+            if (parameters.getBpmnElementId() != null) {
+                requestValues.addRequestParameter("bpmnElementId", parameters.getBpmnElementId());
+            }
+            if (parameters.getFormKey() != null) {
+                requestValues.addRequestParameter("formKey", parameters.getFormKey());
+            }
+            if (parameters.getRelatesTo() != null) {
+                requestValues.addRequestParameter("relatesTo", parameters.getRelatesTo().toString());
+            }
+            if (parameters.getSortBy() != null) {
+                requestValues.addRequestParameter("sortBy", parameters.getSortBy());
+            }
+            if (parameters.getSortOrder() != null) {
+                requestValues.addRequestParameter("sortOrder", parameters.getSortOrder());
+            }
             return true;
         }
         return false;
