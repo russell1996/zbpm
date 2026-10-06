@@ -52,20 +52,47 @@ public final class BpmnSupportScanner {
 
     /**
      * The BPMN 2.0 flow-node kinds — the only elements a {@code sequenceFlow} may legally point at,
-     * so the only ones that make a {@code sourceRef}/{@code targetRef} resolvable. An explicit list
-     * on purpose: an absent element kind would silently turn every flow that points at it into a
-     * false "dangling" finding, which is the failure mode this scan must not have (see
-     * {@link #unresolvedFlows}).
+     * so the only ones that make a {@code sourceRef}/{@code targetRef} resolvable.
+     *
+     * <p>Derived from the {@code tFlowNode} closure of the BPMN 2.0 XSD that ships in this repo
+     * ({@code zorrobpm-frontend/node_modules/bpmn-moddle/resources/bpmn/xsd/Semantic.xsd}),
+     * narrowed to the element names a document can actually contain:
+     * <ul>
+     *   <li><b>omitted on purpose:</b> {@code activity}, {@code event}, {@code flowNode},
+     *       {@code gateway}, {@code catchEvent}, {@code throwEvent} — abstract base TYPES of the
+     *       closure, never element names, so they cannot appear in a model;</li>
+     *   <li><b>added beyond the XSD:</b> the {@code *StartEvent}/{@code terminateEndEvent} TAG
+     *       spellings — not BPMN 2.0 elements (the XSD has only {@code startEvent}/{@code endEvent}
+     *       plus the definitions), but they are what Zeebe/Camunda exports contain, and this engine's
+     *       JAXB model binds only {@code <startEvent>}, so such a node is in the document and NOT in
+     *       the executable model. Naming it here is what keeps the refusal message truthful: the
+     *       question this check answers is "does the DOCUMENT declare that node", not "did the parser
+     *       manage to model it" — see {@link #unresolvedFlows}. The elements themselves remain
+     *       unsupported by the engine (a separate finding for CTO), they just must not be mislabelled
+     *       as a typo.</li>
+     * </ul>
+     *
+     * <p>An absent kind is not cosmetic: every flow pointing at it becomes a false "dangling" finding,
+     * i.e. the deploy gate rejects a valid model and tells its author to look for a typo that is not
+     * there. That is precisely the failure mode of the first cut of this check, which resolved refs
+     * against the parsed model and reported every flow out of a {@code <messageStartEvent>} as
+     * unresolvable. Verified against the XSD: {@code implicitThrowEvent} (substitutable, and the one
+     * the verifier caught missing) and the concrete choreography nodes are included.
      */
     private static final Set<String> FLOW_NODE_NAMES = Set.of(
         // events
         "startEvent", "endEvent", "boundaryEvent", "intermediateCatchEvent", "intermediateThrowEvent",
+        "implicitThrowEvent",
         // activities
         "task", "serviceTask", "userTask", "scriptTask", "manualTask", "businessRuleTask",
         "sendTask", "receiveTask", "subProcess", "transaction", "adHocSubProcess", "callActivity",
         // gateways
         "exclusiveGateway", "inclusiveGateway", "parallelGateway", "complexGateway",
-        "eventBasedGateway");
+        "eventBasedGateway",
+        // choreography activities (concrete ones from the same closure)
+        "choreographyActivity", "choreographyTask", "subChoreography", "callChoreography",
+        // NOT in BPMN 2.0 XSD, but real in Zeebe/Camunda exports — see the javadoc above
+        "messageStartEvent", "timerStartEvent", "signalStartEvent", "terminateEndEvent");
 
     private BpmnSupportScanner() {
     }

@@ -152,6 +152,29 @@ public class UnsupportedConstructDeployIntegrationTests {
     }
 
     @Test
+    void criterion6_refsToNodesTheParserDoesNotModel_areNotReportedAsDangling() {
+        // The regression this WO's first cut actually shipped. The ref check resolved against the
+        // ids the PARSER modelled, so every flow to or from a node the parser drops was called
+        // "matches no flow node of the process" — a lie that refuses a valid model and sends its
+        // author looking for a typo. Three such node kinds are declared in
+        // test-eng34-odd-node-refs.bpmn: <implicitThrowEvent> (a real BPMN 2.0 flow node) and the
+        // <messageStartEvent>/<timerStartEvent>/<terminateEndEvent> tag spellings that Zeebe/Camunda
+        // exports contain. NONE of them may produce a finding — the resolver's question is whether the
+        // DOCUMENT declares the node, not whether the engine managed to model it.
+        //
+        // The model is additionally deployed, so this is the criterion-6 half: today those starts and
+        // the implicit throw are silently NOT executed (a separate finding for CTO), and refusing the
+        // deploy would change behaviour this WO must not change.
+        String bpmn = readBpmn("test-eng34-odd-node-refs.bpmn");
+
+        List<String> findings = bpmnParseService.parse(bpmn).getUnsupportedConstructs()
+            .stream().map(c -> c.code() + c.elementIds()).toList();
+
+        assertThat(findings).as("no finding at all for nodes the document declares").isEmpty();
+        assertThat(processDefinitionService.addProcessDefinition(bpmn).getId()).isNotNull();
+    }
+
+    @Test
     void criterion4_danglingRefInsideASubProcess_isFoundToo() {
         // the scan must RECURSE into container bodies: a top-level-only scan would accept this model
         String bpmn = readBpmn("test-eng34-nested-ref-dangling.bpmn");
