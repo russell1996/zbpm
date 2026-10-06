@@ -94,11 +94,11 @@ class RabbitMqMgmtPathPrefixWiringGuardTest {
             if (declaredUrls.isEmpty()) continue;
 
             for (String url : declaredUrls) {
-                boolean urlHasPrefix = url.contains(MGMT_PATH_PREFIX);
+                boolean urlHasPrefix = hasMgmtPathPrefix(url);
                 if (confMounted != urlHasPrefix) {
                     offenders.add(file + ": broker mounts the prefix conf = " + confMounted
                         + ", but base-url '" + url + "' has the "
-                        + MGMT_PATH_PREFIX + " suffix = " + urlHasPrefix);
+                        + MGMT_PATH_PREFIX + " path = " + urlHasPrefix);
                 }
             }
         }
@@ -182,6 +182,46 @@ class RabbitMqMgmtPathPrefixWiringGuardTest {
             .isNotEmpty();
     }
 
+    /**
+     * Есть ли в base-url префиксный ПУТЬ — не подстрока.
+     *
+     * <p>Наивная проверка {@code url.contains("/rabbitmq")} врёт, и это поймал сам
+     * тест на первой же прогонке: в {@code http://rabbitmq:15672} подстрока
+     * {@code /rabbitmq} есть — это схема {@code http://} плюс имя сервиса. Такой
+     * «сторож» зелёный на СЛОМАННОЙ конфигурации, то есть охраняет не то.
+     * Поэтому разбираются схема/authority/path, и префикс ищется в path.
+     */
+    private static boolean hasMgmtPathPrefix(String declaredValue) {
+        String url = unwrapComposeValue(declaredValue);
+        int scheme = url.indexOf("://");
+        if (scheme < 0) {
+            throw new IllegalStateException(
+                "RABBITMQ_MGMT_BASE_URL must be an http(s) URL, got '" + declaredValue
+                    + "' — разбор пути невозможен, значит и проверка инварианта была бы фикцией");
+        }
+        int slash = url.indexOf('/', scheme + 3);
+        if (slash < 0) return false;                       // authority до конца — пути нет
+        String path = url.substring(slash).replaceAll("/+$", "");
+        return path.equals(MGMT_PATH_PREFIX) || path.endsWith(MGMT_PATH_PREFIX);
+    }
+
+    /**
+     * Значение объявления compose → сама строка URL: снимаем обёртку
+     * {@code ${VAR:-value}} / {@code ${VAR:value}} и кавычки.
+     */
+    private static String unwrapComposeValue(String declaredValue) {
+        String v = declaredValue.trim();
+        if (v.length() > 1 && v.startsWith("\"") && v.endsWith("\"")) {
+            v = v.substring(1, v.length() - 1).trim();
+        }
+        if (v.startsWith("${")) {
+            String inner = v.substring(2, v.indexOf('}'));
+            int sep = inner.indexOf(":-");
+            v = sep >= 0 ? inner.substring(sep + 2) : inner.substring(inner.indexOf(':') + 1);
+        }
+        return v.trim();
+    }
+
     /** Объявления base-url в compose: ключ + значение умолчаления. */
     private static List<String> declaredMgmtUrls(String composeText) {
         List<String> urls = new ArrayList<>();
@@ -209,9 +249,23 @@ class RabbitMqMgmtPathPrefixWiringGuardTest {
         return Files.exists(path) ? Files.readString(path) : null;
     }
 
+    /**
+     * Корень репозитория. Ищется по МАРКЕРОМ, а не по первому pom.xml: тест гоняется
+     * из каталога модуля ({@code zorrobpm-app}), и «первый pom.xml вверху» — это сам
+     * модуль, где ни {@code ci/}, ни {@code docker-compose.yml} не лежат. Тот же приём,
+     * что в {@link ModuleConfigImportGuardTest#repoRoot()}.
+     */
     private static Path repoRoot() {
         Path dir = Path.of("").toAbsolutePath();
-        while (dir != null && !Files.exists(dir.resolve("pom.xml"))) dir = dir.getParent();
-        return dir == null ? Path.of("").toAbsolutePath() : dir;
+        while (dir != null) {
+            if (Files.exists(dir.resolve("pom.xml"))
+                && Files.exists(dir.resolve("docker-compose.yml"))
+                && Files.isDirectory(dir.resolve("ci"))
+                && Files.isDirectory(dir.resolve("zorrobpm-engine"))) {
+                return dir;
+            }
+            dir = dir.getParent();
+        }
+        throw new IllegalStateException("корень репозитория не найден (cwd=" + Path.of("") + ")");
     }
 }
