@@ -37,6 +37,14 @@ trap cleanup EXIT
 pass() { echo "PASS  $*"; }
 fail() { echo "FAIL  $*"; FAILED=1; }
 
+# wget -S печатает строку состояния И строку ошибки ("wget: server returned error: HTTP/1.1 401
+# ..."), поэтому awk по ПОСЛЕДНЕМУ совпадению отдавал слово "server" вместо кода. Берём первую
+# строку HTTP/1.x и её второе поле.
+code_of() {
+  docker run --rm --network "${NET}" "${NGINX_IMAGE}" sh -c \
+    "wget -q -S -O /dev/null '$1' ${2:+--header='$2'} 2>&1 | grep -oE 'HTTP/1\\.[01] [0-9]{3}' | head -1 | awk '{print \$2}'" 2>/dev/null
+}
+
 # Sends the URL byte-for-byte: curl would resolve ".." on the CLIENT side before the request
 # leaves, which would silently test a different path than the one written here. --path-as-is
 # keeps the traversal in the request line, where nginx's own normalisation is what we test.
@@ -138,6 +146,24 @@ for _ in $(seq 1 60); do
   if docker exec "${PREFIX}-rabbit" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then BROKER_UP=1; echo " up"; break; fi
   echo -n .; sleep 3
 done
+if [ "${BROKER_UP}" -eq 1 ]; then
+  # rabbitmq-diagnostics ping говорит про AMQP, а не про HTTP-слушатель management-плагина:
+  # между ними есть окно, в котором /rabbitmq/ отвечает 502 -> наш 404-заглушкой, и критерий 3
+  # «падает» на неготовом брокере (видел это живьём: ping=ok, страница=404). Поэтому ждём
+  # именно HTTP: код 200 на /rabbitmq/ из того же docker network.
+  MGMT_UP=0
+  echo -n "waiting for management HTTP"
+  for _ in $(seq 1 40); do
+    if [ "$(code_of "http://rabbitmq:15672/rabbitmq/" "")" = "200" ]; then MGMT_UP=1; echo " up"; break; fi
+    echo -n .; sleep 3
+  done
+  if [ "${MGMT_UP}" -ne 1 ]; then
+    echo
+    fail "management HTTP listener never answered 200 on /rabbitmq/; aborting instead of testing the 404 stub"
+    exit 1
+  fi
+fi
+
 if [ "${BROKER_UP}" -ne 1 ]; then
   # NOT optional: if the broker is down, /rabbitmq/ answers the 404 stub and every check
   # below would pass against a page that has no assets — that is exactly the vacuous green
@@ -157,13 +183,6 @@ sleep 2
 # для "сессия есть, гейт роли не запрошен" — и мутация гейта проходила зелёной.
 STUBURL="http://app:8080/auth/verify"
 STUBURL_R="http://app:8080/auth/verify?requireRole=SUPER_ADMIN"
-# wget -S печатает строку состояния И строку ошибки ("wget: server returned error: HTTP/1.1 401
-# ..."), поэтому awk по ПОСЛЕДНЕМУ совпадению отдавал слово "server" вместо кода. Берём первую
-# строку HTTP/1.x и её второе поле.
-code_of() {
-  docker run --rm --network "${NET}" "${NGINX_IMAGE}" sh -c \
-    "wget -q -S -O /dev/null '$1' ${2:+--header='$2'} 2>&1 | grep -oE 'HTTP/1\\.[01] [0-9]{3}' | head -1 | awk '{print \$2}'" 2>/dev/null
-}
 [ "$(code_of "$STUBURL_R" "")" = "401" ] && pass "stub contract: no token + requireRole -> 401" || fail "stub contract: no token + requireRole -> $(code_of "$STUBURL_R" "") (want 401)"
 [ "$(code_of "$STUBURL_R" "Cookie: zbpm_token=admin-tk")" = "200" ] && pass "stub contract: SUPER_ADMIN + requireRole -> 200" || fail "stub contract: SUPER_ADMIN + requireRole -> $(code_of "$STUBURL_R" "Cookie: zbpm_token=admin-tk") (want 200)"
 [ "$(code_of "$STUBURL_R" "Cookie: zbpm_token=user-tk")" = "403" ] && pass "stub contract: USER + requireRole -> 403" || fail "stub contract: USER + requireRole -> $(code_of "$STUBURL_R" "Cookie: zbpm_token=user-tk") (want 403)"
