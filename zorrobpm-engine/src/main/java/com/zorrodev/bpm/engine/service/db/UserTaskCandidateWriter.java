@@ -44,9 +44,12 @@ public class UserTaskCandidateWriter {
             rows.add(row(userTaskId, UserTaskCandidateKind.USER, user));
         }
         if (!rows.isEmpty()) {
-            // saveAll, а не save поштучно: составной PK не даёт Spring Data понять, что строка
-            // новая, поэтому каждый save ушёл бы в merge (SELECT + INSERT). Одним merge на
-            // пачку — один SELECT на пачку вместо одного на строку.
+            // saveAll, а не save поштучно: Spring Data отправляет всё одной пачкой. Обоснование
+            // НЕ в числе запросов — замер (Hibernate SQL=DEBUG, задача с 4 кандидатами) показал
+            // 4 SELECT'а вида "(user_task_id,kind,candidate) in ((?,?,?))" и 4 INSERT'а, то есть
+            // merge делает по SELECT на строку и save поштучно стоил бы ровно того же. Составной
+            // PK не даёт Spring Data понять, что строка новая, поэтому любой вариант идёт в merge.
+            // Выигрыш saveAll — один транзакционный вход вместо N, а не меньше обращений к БД.
             userTaskCandidateRepository.saveAll(rows);
         }
     }

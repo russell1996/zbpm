@@ -9,11 +9,14 @@ import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserGroupEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.entity.UserTaskCandidateEntity;
+import com.zorrodev.bpm.engine.entity.UserTaskCandidateKind;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskCandidateRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
+import com.zorrodev.bpm.engine.security.CandidateGroups;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -216,6 +219,40 @@ public class UserTaskCandidateQueryIntegrationTests {
             .containsExactlyInAnyOrder("GROUP:sales", "GROUP:east", "USER:alice");
     }
 
+    // ==================== согласованность колонка ↔ таблица (критерий 8) ====================
+
+    /**
+     * ГЛАВНАЯ проверка согласованности, и единственная, которая ловит будущее расхождение: для
+     * каждой задачи, созданной ЖИВЫМ обработчиком, разобранная колонка и GROUP-строки таблицы
+     * обязаны называть ОДИН И ТОТ ЖЕ набор.
+     *
+     * <p>Почему именно эта форма. Два теста рядом ({@code …followsTheTableNotTheLegacyColumn},
+     * {@code …findsTheTableRowEvenWhenTheLegacyColumnIsEmpty}) намеренно СОЗДАЮТ расхождение и
+     * проверяют, что читатель его игнорирует — то есть доказывают «миграция прошла и писатель
+     * пишет», но по определению не могут поймать будущую расхождность (они закрепляют философию
+     * «таблица — истина»). Бэкфилл-PgIT проверяет согласованность один раз, на момент применения
+     * changeset'а. Ловит расхождение только этот тест: если писатель забудет группу, или разбор
+     * разойдётся с разбором авторизации, или колонка перестанет совпадать с таблицей — здесь
+     * упадёт сравнение множеств, а не «где-то в проде кто-то не увидит своей задачи».
+     *
+     * <p>Наборы подобраны так, чтобы проверить границы: обычный список, список с пробелами у
+     * запятых (именно там разбор мог бы разойтись) и пустой список (там最容易 «забыть» запись).
+     */
+    @Transactional
+    @Test
+    void livePath_legacyColumnAndCandidateTableNameTheSameGroups() {
+        UUID plain = startTaskWithCandidates("sales", "alice");
+        UUID spaced = startTaskWithCandidates(" sales , east ", "bob");
+        UUID none = startTaskWithCandidates("", null);
+
+        for (UUID taskId : List.of(plain, spaced, none)) {
+            assertThat(groupCandidateNames(taskId))
+                .as("задача %s: колонка «%s» разбирается в %s — таблица обязана содержать ровно это",
+                    taskId, legacyGroups(taskId), CandidateGroups.parse(legacyGroups(taskId)))
+                .containsExactlyInAnyOrderElementsOf(CandidateGroups.parse(legacyGroups(taskId)));
+        }
+    }
+
     // ==================== читатель читает ТАБЛИЦУ, а не колонку ====================
 
     /**
@@ -312,6 +349,14 @@ public class UserTaskCandidateQueryIntegrationTests {
 
     private String legacyGroups(UUID taskId) {
         return userTaskRepository.findById(taskId).orElseThrow().getCandidateGroups();
+    }
+
+    /** Только GROUP-строки таблицы для задачи — то, с чем сравнивается разобранная колонка. */
+    private List<String> groupCandidateNames(UUID taskId) {
+        return userTaskCandidateRepository.findByUserTaskId(taskId).stream()
+            .filter(row -> row.getKind() == UserTaskCandidateKind.GROUP)
+            .map(UserTaskCandidateEntity::getCandidate)
+            .toList();
     }
 
     private UiUserEntity createUser() {
